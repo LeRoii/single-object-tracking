@@ -39,6 +39,11 @@ target_include_directories(nanotrack_detector_adapter PUBLIC ${CMAKE_CURRENT_SOU
 target_link_libraries(nanotrack_detector_adapter PUBLIC nanotrack_controller_support Threads::Threads)
 target_compile_options(nanotrack_detector_adapter PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(nanotrack_yolov8_postprocess src/yolov8_postprocess.cpp)
+target_include_directories(nanotrack_yolov8_postprocess PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(nanotrack_yolov8_postprocess PUBLIC nanotrack_math)
+target_compile_options(nanotrack_yolov8_postprocess PRIVATE -Wall -Wextra -Wpedantic)
+
 if(BUILD_TESTING)
   add_executable(test_tracker_math tests/test_tracker_math.cpp)
   target_link_libraries(test_tracker_math PRIVATE nanotrack_math)
@@ -71,6 +76,10 @@ if(BUILD_TESTING)
   add_executable(test_yolo_detector_adapter tests/test_yolo_detector_adapter.cpp)
   target_link_libraries(test_yolo_detector_adapter PRIVATE nanotrack_detector_adapter)
   add_test(NAME yolo_detector_adapter COMMAND test_yolo_detector_adapter)
+
+  add_executable(test_yolov8_postprocess tests/test_yolov8_postprocess.cpp)
+  target_link_libraries(test_yolov8_postprocess PRIVATE nanotrack_yolov8_postprocess)
+  add_test(NAME yolov8_postprocess COMMAND test_yolov8_postprocess)
 endif()
 
 if(ENABLE_RKNN_RUNTIME)

@@ -18,6 +18,9 @@
 - Task 2 / adapter API：`test_yolo_detector_adapter` 编译失败，明确缺失
   `yolo_detector_adapter.hpp`。
 - Task 2 / 有界副本：active 状态下用非法图像二次 submit 时错误地先返回 BGR 校验错误，证明旧顺序在拒绝 busy 前仍会创建/校验第二份工作项。
+- Task 3 / API：`test_yolov8_postprocess` 编译失败，明确缺失纯 C++ 后处理接口。
+- Task 3 / 行为：加入可编译接口和占位实现后，定向测试以
+  `YOLOv8 postprocess is not implemented` 失败。
 
 ## GREEN 证据
 
@@ -27,6 +30,8 @@
 - Task 2 adapter 定向测试 1/1 通过，覆盖 stride 深拷贝、有界槽、poll、异常禁用和析构 join。
 - Task 2 ASAN+UBSAN 1/1 通过；受 ptrace 环境限制，以 `ASAN_OPTIONS=detect_leaks=0` 关闭 LSan。
 - Task 2 完整主机回归：CTest 8/8 通过。
+- Task 3 后处理定向测试 1/1 通过，覆盖 6/9 输出、DFL、FP32/INT8、NMS、类别过滤、letterbox 和非法输入。
+- Task 3 ASAN+UBSAN 1/1 通过；完整主机回归 CTest 9/9 通过。
 
 ## 开发板证据
 
