@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -49,6 +50,27 @@ std::pair<int, int> parse_output_size(const std::string& text) {
   return {static_cast<int>(width), static_cast<int>(height)};
 }
 
+int parse_class_id(const std::string& text) {
+  std::size_t consumed = 0;
+  const long long value = std::stoll(text, &consumed);
+  if (consumed != text.size() || value < -1 ||
+      value > std::numeric_limits<int>::max()) {
+    throw std::invalid_argument("--detector-class-id must be -1 or a non-negative integer");
+  }
+  return static_cast<int>(value);
+}
+
+float parse_open_unit(const std::string& text, const char* option) {
+  std::size_t consumed = 0;
+  const float value = std::stof(text, &consumed);
+  if (consumed != text.size() || !std::isfinite(value) || value <= 0.0F ||
+      value >= 1.0F) {
+    throw std::invalid_argument(std::string(option) +
+                                " must be finite and in the open interval (0,1)");
+  }
+  return value;
+}
+
 }  // namespace
 
 std::string usage() {
@@ -57,7 +79,10 @@ std::string usage() {
       "--output-video OUTPUT.avi --output-boxes OUTPUT.csv [--max-frames N] "
       "[--start-frame N --end-frame N] [--output-size WIDTHxHEIGHT] "
       "[--sensor visible|infrared] [--controller-config FILE] "
-      "[--session-metadata FILE]\n";
+      "[--session-metadata FILE] "
+      "[--detector-model MODEL.rknn --detector-manifest MANIFEST.json "
+      "--detector-labels LABELS.txt] [--detector-class-id ID] "
+      "[--detector-conf FLOAT] [--detector-nms FLOAT]\n";
 }
 
 Options parse_options(const std::vector<std::string>& arguments) {
@@ -77,7 +102,10 @@ Options parse_options(const std::vector<std::string>& arguments) {
         option != "--max-frames" && option != "--start-frame" &&
         option != "--end-frame" && option != "--output-size" &&
         option != "--controller-config" && option != "--sensor" &&
-        option != "--session-metadata") {
+        option != "--session-metadata" && option != "--detector-model" &&
+        option != "--detector-manifest" && option != "--detector-labels" &&
+        option != "--detector-class-id" && option != "--detector-conf" &&
+        option != "--detector-nms") {
       throw std::invalid_argument("unknown option: " + option);
     }
     if (index + 1 >= arguments.size()) {
@@ -135,6 +163,35 @@ Options parse_options(const std::vector<std::string>& arguments) {
   if (session_metadata != values.end()) {
     options.session_metadata = session_metadata->second;
   }
+  const auto detector_model = values.find("--detector-model");
+  const auto detector_manifest = values.find("--detector-manifest");
+  const auto detector_labels = values.find("--detector-labels");
+  const int detector_file_count =
+      static_cast<int>(detector_model != values.end()) +
+      static_cast<int>(detector_manifest != values.end()) +
+      static_cast<int>(detector_labels != values.end());
+  if (detector_file_count != 0 && detector_file_count != 3) {
+    throw std::invalid_argument(
+        "--detector-model, --detector-manifest, and --detector-labels must be supplied together");
+  }
+  if (detector_file_count == 3) {
+    options.detector_model = detector_model->second;
+    options.detector_manifest = detector_manifest->second;
+    options.detector_labels = detector_labels->second;
+  }
+  const auto detector_class_id = values.find("--detector-class-id");
+  if (detector_class_id != values.end()) {
+    options.detector_class_id = parse_class_id(detector_class_id->second);
+  }
+  const auto detector_confidence = values.find("--detector-conf");
+  if (detector_confidence != values.end()) {
+    options.detector_confidence =
+        parse_open_unit(detector_confidence->second, "--detector-conf");
+  }
+  const auto detector_nms = values.find("--detector-nms");
+  if (detector_nms != values.end()) {
+    options.detector_nms = parse_open_unit(detector_nms->second, "--detector-nms");
+  }
   return options;
 }
 
@@ -158,6 +215,20 @@ void validate_input_paths(const Options& options) {
       !fs::is_regular_file(options.controller_config)) {
     throw std::invalid_argument("controller config is not a readable regular file: " +
                                 options.controller_config);
+  }
+  if (!options.detector_model.empty()) {
+    const std::pair<const char*, const std::string*> detector_files[] = {
+        {"detector model", &options.detector_model},
+        {"detector manifest", &options.detector_manifest},
+        {"detector labels", &options.detector_labels},
+    };
+    for (const auto& file : detector_files) {
+      if (!fs::is_regular_file(*file.second)) {
+        throw std::invalid_argument(std::string(file.first) +
+                                    " is not a readable regular file: " +
+                                    *file.second);
+      }
+    }
   }
 }
 

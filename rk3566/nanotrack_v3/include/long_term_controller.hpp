@@ -19,6 +19,8 @@ struct SearchPlan {
   BBox predicted_bbox{};
   float search_scale = 1.0F;
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
+  std::optional<int> detector_candidate_class_id;
+  std::optional<float> detector_candidate_confidence;
   bool request_detector = false;
   std::optional<DetectorRequest> detector_request;
 };

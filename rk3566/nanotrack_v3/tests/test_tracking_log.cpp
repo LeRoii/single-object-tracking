@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,10 @@ std::size_t csv_columns(const std::string& line) {
   return columns;
 }
 
+bool contains(const std::string& value, const std::string& expected) {
+  return value.find(expected) != std::string::npos;
+}
+
 }  // namespace
 
 int main() {
@@ -61,7 +66,19 @@ int main() {
   row.bbox = BBox{1, 2, 3, 4};
   row.search_scale = 4.0F;
   row.hypothesis_source = HypothesisSource::kDetector;
+  row.detector_configured = true;
+  row.detector_ready = false;
   row.detector_requested = true;
+  row.detector_request_frame_id = 7;
+  row.detector_worker_status = "error";
+  row.detector_error = "worker, stopped\nretry \"disabled\"";
+  row.detector_batch_frame_id = 6;
+  row.detector_batch_age_ms = 73;
+  row.detector_raw_candidate_count = 11;
+  row.detector_filtered_candidate_count = 3;
+  row.detector_verified_class_id = 2;
+  row.detector_verified_confidence = 0.88F;
+  row.detector_timing = DetectorTiming{1.0F, 7.0F, 2.0F, 10.0F};
   row.detector_status = DetectorBatchStatus::kStale;
   row.pipeline_ms = 50.0F;
   row.anchor_metrics = ResponseMetrics{0.8F, 0.7F, 8.0F, 9.0F, 0.1F};
@@ -71,12 +88,27 @@ int main() {
   const std::string encoded = tracking_csv_row(row);
   expect_true(csv_columns(header) == csv_columns(encoded),
               "CSV header and data rows have identical column counts");
-  expect_true(header.find("control_valid") != std::string::npos &&
-                  header.find("anchor_psr") != std::string::npos &&
-                  header.find("recent_apce") != std::string::npos &&
-                  header.find("tracker_ms") != std::string::npos &&
-                  header.find("pipeline_ms") != std::string::npos,
-              "CSV exposes control, raw metrics, and timing");
+  expect_true(contains(header, "schema_version") &&
+                  contains(header, "control_valid") &&
+                  contains(header, "anchor_psr") &&
+                  contains(header, "recent_apce") &&
+                  contains(header, "tracker_ms") &&
+                  contains(header, "pipeline_ms"),
+              "CSV exposes schema, control, raw metrics, and timing");
+  for (const std::string& column :
+       {"detector_configured", "detector_ready", "detector_requested",
+        "detector_request_frame_id", "detector_worker_status",
+        "detector_error", "detector_batch_frame_id", "detector_batch_age_ms",
+        "detector_raw_candidate_count", "detector_filtered_candidate_count",
+        "detector_verified_class_id", "detector_verified_confidence",
+        "detector_preprocess_ms", "detector_inference_ms",
+        "detector_postprocess_ms", "detector_total_ms"}) {
+    expect_true(contains(header, column), "CSV has exact detector column " + column);
+  }
+  expect_true(encoded.rfind("3,", 0) == 0,
+              "tracking rows carry schema version 3 exactly once");
+  expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
+              "detector errors escape commas, newlines, and quotes");
   expect_true(encoded.find("\"detector, timeout \"\"late\"\"\"") !=
                   std::string::npos,
               "CSV text fields escape commas and quotes");
@@ -87,6 +119,12 @@ int main() {
               "initialization row explicitly records valid tracking state");
   expect_true(csv_columns(tracking_csv_row(initial)) == csv_columns(header),
               "initialization and tracking rows share one schema");
+  const TrackingLogRow detector_initial =
+      make_initial_log_row(0, 0, BBox{10, 20, 30, 40}, true, true);
+  expect_true(detector_initial.detector_configured &&
+                  detector_initial.detector_ready &&
+                  detector_initial.detector_worker_status == "ready",
+              "initialization row records configured detector readiness");
 
   const LatencySummary latency =
       summarize_latencies({10.0F, 20.0F, 30.0F}, {40.0F, 50.0F, 60.0F});
@@ -96,6 +134,90 @@ int main() {
   expect_true(std::fabs(latency.mean_pipeline_ms - 50.0F) < 1e-6F &&
                   std::fabs(latency.end_to_end_fps - 20.0F) < 1e-6F,
               "end-to-end throughput is derived from pipeline latency");
+
+  RuntimeFrameResult runtime;
+  runtime.plan.frame_id = 12;
+  runtime.plan.timestamp_ms = 440;
+  runtime.plan.request_detector = true;
+  runtime.plan.detector_candidate_class_id = 2;
+  runtime.plan.detector_candidate_confidence = 0.91F;
+  runtime.output.frame_id = 12;
+  runtime.output.timestamp_ms = 440;
+  runtime.output.detector_status = DetectorBatchStatus::kAccepted;
+  runtime.detector.configured = true;
+  runtime.detector.ready = true;
+  runtime.detector.request_submitted = true;
+  runtime.detector.request_frame_id = 12;
+  runtime.detector.batch_received = true;
+  runtime.detector.batch_frame_id = 10;
+  runtime.detector.batch_age_ms = 67;
+  runtime.detector.raw_candidate_count = 9;
+  runtime.detector.filtered_candidate_count = 3;
+  runtime.detector.timing = DetectorTiming{1.0F, 4.0F, 2.0F, 7.0F};
+  const TrackingLogRow mapped = make_tracking_log_row(runtime);
+  expect_true(mapped.detector_configured && mapped.detector_ready &&
+                  mapped.detector_requested &&
+                  mapped.detector_request_frame_id == std::optional<std::uint64_t>(12) &&
+                  mapped.detector_worker_status == "completed" &&
+                  mapped.detector_batch_frame_id == std::optional<std::uint64_t>(10) &&
+                  mapped.detector_batch_age_ms == std::optional<std::int64_t>(67) &&
+                  mapped.detector_verified_class_id == std::optional<int>(2) &&
+                  mapped.detector_verified_confidence == std::optional<float>(0.91F) &&
+                  mapped.detector_timing.total_ms == 7.0F,
+              "runtime detector diagnostics and verified candidate are mapped");
+
+  TrackingSessionMetadata metadata;
+  metadata.video = "input,video.mp4";
+  metadata.model_dir = "models";
+  metadata.manifest_hash_algorithm = "fnv1a64";
+  metadata.manifest_hash = "nano-hash";
+  metadata.controller_config = "builtin-defaults";
+  metadata.controller_config_hash_algorithm = "fnv1a64";
+  metadata.controller_config_hash = "controller-hash";
+  metadata.sensor = "visible";
+  metadata.source_fps = 30.0;
+  metadata.frame_step_ms = 33;
+  metadata.tracked_frames = 18;
+  metadata.detector.enabled = true;
+  metadata.detector.calibrated = false;
+  metadata.detector.model_path = "models/yolov8.rknn";
+  metadata.detector.model_sha256 = "model-sha256";
+  metadata.detector.manifest_path = "models/detector-manifest.json";
+  metadata.detector.manifest_sha256 = "manifest-sha256";
+  metadata.detector.labels_path = "models/coco80.txt";
+  metadata.detector.labels_sha256 = "labels-sha256";
+  metadata.detector.class_id = 2;
+  metadata.detector.confidence_threshold = 0.25F;
+  metadata.detector.nms_threshold = 0.45F;
+  metadata.detector.input_tensor_description = "images,1x640x640x3,UINT8,NHWC";
+  metadata.detector.output_tensor_descriptions = {
+      "box_s8,1x64x80x80,INT8,NCHW", "cls_s8,1x80x80x80,INT8,NCHW"};
+  metadata.detector.rknn_api_version = "2.3.2\napi";
+  metadata.detector.rknn_driver_version = "2.3.2\"driver";
+  metadata.detector.request_count = 8;
+  metadata.detector.complete_count = 7;
+  metadata.detector.reject_count = 2;
+  metadata.detector.error_count = 1;
+  const std::string json = tracking_session_metadata_json(metadata);
+  expect_true(contains(json, "\"schema_version\": 3") &&
+                  contains(json, "\"enabled\": true") &&
+                  contains(json, "\"calibrated\": false") &&
+                  contains(json, "\"model_path\": \"models/yolov8.rknn\"") &&
+                  contains(json, "\"model_sha256\": \"model-sha256\"") &&
+                  contains(json, "\"manifest_sha256\": \"manifest-sha256\"") &&
+                  contains(json, "\"labels_sha256\": \"labels-sha256\"") &&
+                  contains(json, "\"class_id\": 2") &&
+                  contains(json, "\"confidence_threshold\": 0.250000") &&
+                  contains(json, "\"nms_threshold\": 0.450000") &&
+                  contains(json, "\"input_tensor_description\"") &&
+                  contains(json, "\"output_tensor_descriptions\"") &&
+                  contains(json, "\"rknn_api_version\": \"2.3.2\\napi\"") &&
+                  contains(json, "\"rknn_driver_version\": \"2.3.2\\\"driver\"") &&
+                  contains(json, "\"request_count\": 8") &&
+                  contains(json, "\"complete_count\": 7") &&
+                  contains(json, "\"reject_count\": 2") &&
+                  contains(json, "\"error_count\": 1"),
+              "schema-v3 metadata exposes detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

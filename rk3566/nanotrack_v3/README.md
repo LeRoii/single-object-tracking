@@ -4,8 +4,9 @@ This project uses the existing three-model NanoTrack V3 RKNN deployment and
 adds a timestamp-driven long-term controller around it. The controller keeps an
 immutable anchor template and a cautiously updated recent template, predicts
 motion, rejects unreliable observations, performs bounded regional recovery,
-and exposes an asynchronous detector adapter. The default executable uses
-`NullDetectorAdapter`; no detector model is required.
+and exposes an asynchronous detector adapter. Detector arguments are optional;
+when they are omitted, the executable uses `NullDetectorAdapter` and requires
+no detector model.
 
 The thresholds in `config/visible-default.conf` and
 `config/infrared-default.conf` are bring-up defaults with `calibrated=false`.
@@ -51,18 +52,44 @@ configuration-explicit run is:
 `--sensor infrared` must be paired with an infrared config. The program fails
 if the CLI modality and config modality disagree.
 
+To enable detector-assisted recovery, supply the model, manifest, and labels as
+one all-or-none set. The thresholds below are uncalibrated bring-up defaults:
+
+```bash
+./build/nanotrack_v3 \
+  --video data/person.mp4 \
+  --bbox 244,161,74,70 \
+  --model-dir models \
+  --detector-model models/yolov8n-rk3566-fp16.rknn \
+  --detector-manifest models/detector-manifest.json \
+  --detector-labels models/coco80.txt \
+  --detector-class-id 0 \
+  --detector-conf 0.25 \
+  --detector-nms 0.45 \
+  --output-video artifacts/output-detector.avi \
+  --output-boxes artifacts/output-detector.csv
+```
+
+Use class `-1` to retain every detector class. Confidence and NMS values must
+be finite and strictly between zero and one. Supplying only part of the three
+detector-file set is rejected before model startup.
+
 ## Outputs and safety contract
 
-The CSV contains one row for initialization and one row for each processed
-frame. It records:
+The schema-v3 CSV contains one row for initialization and one row for each
+processed frame. It records:
 
 - monotonic timestamp, controller state, quality, `control_valid`, horizontal
   box, recovery and template actions;
 - raw anchor/recent score, penalized peak, PSR, APCE and peak margin;
 - template agreement, motion/shape residuals, search scale and hypothesis
   source;
-- detector request/result status, tracker/runtime latency, and full video-pipeline
-  latency (decode, tracking, overlay, and encode).
+- detector configured/ready/requested state, request and completed-batch frame
+  identity, worker/error status, batch age, raw/filtered candidate counts,
+  candidate class/confidence selected for NanoTrack verification, and segmented
+  detector timing;
+- tracker/runtime latency and full video-pipeline latency (decode, tracking,
+  overlay, and encode).
 
 Only a row with `control_valid=1` may drive a gimbal or downstream control
 loop. `UNCERTAIN`, `LOCAL_RECOVERY`, `ASSISTED_RECOVERY`, and `LOST` rows can
@@ -71,7 +98,11 @@ contain a predicted box for visualization while remaining invalid for control.
 If `--session-metadata` is omitted, metadata is written next to the CSV as
 `OUTPUT.csv.metadata.json`. It records the model manifest fingerprint, RKNN
 API/driver versions, timing fallback, threshold identity, calibration marker,
-and latency summary.
+and latency summary. Schema-v3 metadata also has a detector section containing
+artifact paths and SHA-256 identities, tensor descriptions, detector RKNN
+API/driver versions, thresholds, `calibrated=false`, and request/completion/
+rejection/error counters. Disabled runs retain that section with
+`enabled=false` and zero counters so runs remain directly comparable.
 
 The final console summary separates tracker latency, controller runtime latency,
 and video-pipeline latency. `runtime_fps` excludes video I/O and rendering;

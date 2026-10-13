@@ -200,6 +200,10 @@ int main() {
   plan = detector_controller.begin_frame(6, 2140, true);
   expect_true(plan.hypothesis_source == HypothesisSource::kDetector,
               "next frame verifies one queued detector hypothesis");
+  expect_true(plan.detector_candidate_class_id == std::optional<int>(1) &&
+                  plan.detector_candidate_confidence ==
+                      std::optional<float>(0.99F),
+              "detector hypothesis preserves candidate identity for audit logs");
   expect_near(plan.predicted_bbox.x, 70.0F, 1e-6F,
               "highest-confidence detector candidate is verified first");
   detector_controller.finish_frame(plan, {}, std::nullopt);

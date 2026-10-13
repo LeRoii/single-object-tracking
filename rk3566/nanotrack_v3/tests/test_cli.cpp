@@ -1,6 +1,7 @@
 #include "cli.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -66,6 +67,48 @@ int main() {
               "session metadata argument");
   expect_true(parse_options(valid).sensor == "visible",
               "legacy command defaults to visible sensor");
+  const Options legacy_options = parse_options(valid);
+  expect_true(legacy_options.detector_model.empty() &&
+                  legacy_options.detector_manifest.empty() &&
+                  legacy_options.detector_labels.empty() &&
+                  legacy_options.detector_class_id == -1 &&
+                  std::fabs(legacy_options.detector_confidence - 0.25F) <
+                      1e-6F &&
+                  std::fabs(legacy_options.detector_nms - 0.45F) < 1e-6F,
+              "legacy command keeps detector disabled with bring-up defaults");
+
+  std::vector<std::string> detector_command = valid;
+  detector_command.insert(
+      detector_command.end(),
+      {"--detector-model", "/tmp/yolov8.rknn", "--detector-manifest",
+       "/tmp/detector.json", "--detector-labels", "/tmp/coco80.txt",
+       "--detector-class-id", "2", "--detector-conf", "0.30",
+       "--detector-nms", "0.50"});
+  const Options detector_options = parse_options(detector_command);
+  expect_true(detector_options.detector_model == "/tmp/yolov8.rknn" &&
+                  detector_options.detector_manifest == "/tmp/detector.json" &&
+                  detector_options.detector_labels == "/tmp/coco80.txt" &&
+                  detector_options.detector_class_id == 2 &&
+                  std::fabs(detector_options.detector_confidence - 0.30F) <
+                      1e-6F &&
+                  std::fabs(detector_options.detector_nms - 0.50F) < 1e-6F,
+              "complete detector option set is parsed without model inspection");
+
+  const std::vector<std::pair<std::string, std::string>> detector_files{
+      {"--detector-model", "/tmp/yolov8.rknn"},
+      {"--detector-manifest", "/tmp/detector.json"},
+      {"--detector-labels", "/tmp/coco80.txt"}};
+  for (int mask = 1; mask < 7; ++mask) {
+    std::vector<std::string> partial = valid;
+    for (int index = 0; index < 3; ++index) {
+      if ((mask & (1 << index)) != 0) {
+        partial.push_back(detector_files[index].first);
+        partial.push_back(detector_files[index].second);
+      }
+    }
+    expect_throws([&] { parse_options(partial); },
+                  "every partial detector file combination must fail");
+  }
 
   std::vector<std::string> unlimited = valid;
   const auto max_frames_position =
@@ -133,6 +176,31 @@ int main() {
         parse_options(invalid_sensor);
       },
       "unknown sensor must fail");
+  for (const std::string& value : {"0", "1", "nan", "inf", "bad"}) {
+    expect_throws(
+        [&] {
+          std::vector<std::string> invalid = valid;
+          invalid.insert(invalid.end(), {"--detector-conf", value});
+          parse_options(invalid);
+        },
+        "detector confidence must be finite and in the open unit interval");
+  }
+  for (const std::string& value : {"0", "1", "-0.1", "nan"}) {
+    expect_throws(
+        [&] {
+          std::vector<std::string> invalid = valid;
+          invalid.insert(invalid.end(), {"--detector-nms", value});
+          parse_options(invalid);
+        },
+        "detector NMS must be finite and in the open unit interval");
+  }
+  expect_throws(
+      [&] {
+        std::vector<std::string> invalid = valid;
+        invalid.insert(invalid.end(), {"--detector-class-id", "-2"});
+        parse_options(invalid);
+      },
+      "detector class IDs below -1 must fail");
 
   const std::string prefix = "/tmp/nanotrack_v3_cli_test";
   std::ofstream(prefix + ".mp4").put('x');
@@ -153,6 +221,13 @@ int main() {
   files.controller_config = prefix + "_missing_controller.conf";
   expect_throws([&] { validate_input_paths(files); },
                 "configured controller file must exist");
+
+  files.controller_config.clear();
+  files.detector_model = prefix + "_missing_detector.rknn";
+  files.detector_manifest = prefix + "_missing_detector.json";
+  files.detector_labels = prefix + "_missing_labels.txt";
+  expect_throws([&] { validate_input_paths(files); },
+                "configured detector files must exist");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

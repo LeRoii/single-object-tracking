@@ -45,27 +45,6 @@ cv::Scalar state_color(const nanotrack::ControllerOutput& output) {
   return cv::Scalar(0, 0, 255);
 }
 
-std::string json_escape(const std::string& value) {
-  std::ostringstream stream;
-  for (const unsigned char character : value) {
-    switch (character) {
-      case '\\': stream << "\\\\"; break;
-      case '"': stream << "\\\""; break;
-      case '\n': stream << "\\n"; break;
-      case '\r': stream << "\\r"; break;
-      case '\t': stream << "\\t"; break;
-      default:
-        if (character < 0x20) {
-          stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                 << static_cast<int>(character) << std::dec;
-        } else {
-          stream << character;
-        }
-    }
-  }
-  return stream.str();
-}
-
 std::string fnv1a64_file(const std::filesystem::path& path) {
   std::ifstream stream(path, std::ios::binary);
   if (!stream) throw std::runtime_error("cannot hash file: " + path.string());
@@ -114,7 +93,8 @@ void write_session_metadata(const std::string& path,
                             const nanotrack::MonotonicVideoClock& clock,
                             double source_fps,
                             std::size_t tracked_frames,
-                            const nanotrack::LatencySummary& latency) {
+                            const nanotrack::LatencySummary& latency,
+                            const nanotrack::DetectorSessionMetadata& detector) {
   std::ofstream stream(path);
   if (!stream) throw std::runtime_error("cannot open session metadata: " + path);
   const std::filesystem::path manifest =
@@ -125,43 +105,35 @@ void write_session_metadata(const std::string& path,
           : fnv1a64_file(options.controller_config);
   const double finite_source_fps =
       std::isfinite(source_fps) && source_fps > 0.0 ? source_fps : 0.0;
-  stream << std::fixed << std::setprecision(6)
-         << "{\n"
-         << "  \"schema_version\": 2,\n"
-         << "  \"video\": \"" << json_escape(options.video) << "\",\n"
-         << "  \"model_dir\": \"" << json_escape(options.model_dir) << "\",\n"
-         << "  \"manifest_hash_algorithm\": \"fnv1a64\",\n"
-         << "  \"manifest_hash\": \"" << fnv1a64_file(manifest) << "\",\n"
-         << "  \"controller_config\": \""
-         << json_escape(options.controller_config.empty() ? "builtin-defaults"
-                                                          : options.controller_config)
-         << "\",\n"
-         << "  \"controller_config_hash_algorithm\": \"fnv1a64\",\n"
-         << "  \"controller_config_hash\": \"" << config_hash << "\",\n"
-         << "  \"sensor\": \"" << config.sensor << "\",\n"
-         << "  \"calibrated\": " << (config.calibrated ? "true" : "false") << ",\n"
-         << "  \"rknn_api_version\": \"" << json_escape(tracker.api_version()) << "\",\n"
-         << "  \"rknn_driver_version\": \"" << json_escape(tracker.driver_version()) << "\",\n"
-         << "  \"source_fps\": " << finite_source_fps << ",\n"
-         << "  \"fps_fallback\": " << (clock.fps_fallback() ? "true" : "false") << ",\n"
-         << "  \"frame_step_ms\": " << clock.frame_step_ms() << ",\n"
-         << "  \"reliable_score\": " << config.reliable_score << ",\n"
-         << "  \"reliable_psr\": " << config.reliable_psr << ",\n"
-         << "  \"reliable_apce\": " << config.reliable_apce << ",\n"
-         << "  \"reliable_peak_margin\": " << config.reliable_peak_margin << ",\n"
-         << "  \"uncertain_ms\": " << config.uncertain_ms << ",\n"
-         << "  \"local_recovery_ms\": " << config.local_recovery_ms << ",\n"
-         << "  \"assisted_recovery_ms\": " << config.assisted_recovery_ms << ",\n"
-         << "  \"tracked_frames\": " << tracked_frames << ",\n"
-         << "  \"mean_runtime_ms\": " << latency.mean_runtime_ms << ",\n"
-         << "  \"p50_runtime_ms\": " << latency.p50_runtime_ms << ",\n"
-         << "  \"p95_runtime_ms\": " << latency.p95_runtime_ms << ",\n"
-         << "  \"runtime_fps\": " << latency.runtime_fps << ",\n"
-         << "  \"mean_pipeline_ms\": " << latency.mean_pipeline_ms << ",\n"
-         << "  \"p50_pipeline_ms\": " << latency.p50_pipeline_ms << ",\n"
-         << "  \"p95_pipeline_ms\": " << latency.p95_pipeline_ms << ",\n"
-         << "  \"end_to_end_fps\": " << latency.end_to_end_fps << "\n"
-         << "}\n";
+  nanotrack::TrackingSessionMetadata metadata;
+  metadata.video = options.video;
+  metadata.model_dir = options.model_dir;
+  metadata.manifest_hash_algorithm = "fnv1a64";
+  metadata.manifest_hash = fnv1a64_file(manifest);
+  metadata.controller_config = options.controller_config.empty()
+                                   ? "builtin-defaults"
+                                   : options.controller_config;
+  metadata.controller_config_hash_algorithm = "fnv1a64";
+  metadata.controller_config_hash = config_hash;
+  metadata.sensor = config.sensor;
+  metadata.calibrated = config.calibrated;
+  metadata.rknn_api_version = tracker.api_version();
+  metadata.rknn_driver_version = tracker.driver_version();
+  metadata.source_fps = finite_source_fps;
+  metadata.fps_fallback = clock.fps_fallback();
+  metadata.frame_step_ms = clock.frame_step_ms();
+  metadata.reliable_score = config.reliable_score;
+  metadata.reliable_psr = config.reliable_psr;
+  metadata.reliable_apce = config.reliable_apce;
+  metadata.reliable_peak_margin = config.reliable_peak_margin;
+  metadata.uncertain_ms = config.uncertain_ms;
+  metadata.local_recovery_ms = config.local_recovery_ms;
+  metadata.assisted_recovery_ms = config.assisted_recovery_ms;
+  metadata.tracked_frames = tracked_frames;
+  metadata.latency = latency;
+  metadata.detector = detector;
+  stream << nanotrack::tracking_session_metadata_json(metadata);
+  if (!stream) throw std::runtime_error("cannot write session metadata: " + path);
 }
 
 }  // namespace
@@ -259,7 +231,9 @@ int main(int argc, char** argv) {
     initial_output.control_valid = true;
     initial_output.accepted = true;
     boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
-                 options.start_frame, initial_timestamp, options.bbox))
+                 options.start_frame, initial_timestamp, options.bbox,
+                 detector.available(),
+                 detector.available() && detector.can_submit()))
           << '\n';
     write_annotated(frame, options.bbox, initial_output);
 
@@ -309,12 +283,22 @@ int main(int argc, char** argv) {
         tracker_sum / static_cast<float>(tracker_latencies.size());
     const nanotrack::LatencySummary latency =
         nanotrack::summarize_latencies(runtime_latencies, pipeline_latencies);
+    nanotrack::DetectorSessionMetadata detector_metadata;
+    detector_metadata.enabled = !options.detector_model.empty();
+    detector_metadata.calibrated = false;
+    detector_metadata.model_path = options.detector_model;
+    detector_metadata.manifest_path = options.detector_manifest;
+    detector_metadata.labels_path = options.detector_labels;
+    detector_metadata.class_id = options.detector_class_id;
+    detector_metadata.confidence_threshold = options.detector_confidence;
+    detector_metadata.nms_threshold = options.detector_nms;
     const std::string metadata_path =
         options.session_metadata.empty()
             ? options.output_boxes + ".metadata.json"
             : options.session_metadata;
     write_session_metadata(metadata_path, options, controller_config, tracker,
-                           video_clock, source_fps, tracked_count, latency);
+                           video_clock, source_fps, tracked_count, latency,
+                           detector_metadata);
     std::cout << std::fixed << std::setprecision(3)
               << "SUMMARY tracked_frames=" << tracked_count
               << " mean_tracker_ms=" << mean_tracker

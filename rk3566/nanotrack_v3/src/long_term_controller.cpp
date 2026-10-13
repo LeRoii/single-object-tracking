@@ -148,9 +148,11 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   mode_ = mode_for_timestamp(timestamp_ms);
   BBox predicted = motion_.predict(timestamp_ms);
   HypothesisSource source = HypothesisSource::kMotion;
+  std::optional<DetectorCandidate> selected_detector_candidate;
   if ((mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost) &&
       !detector_candidates_.empty()) {
-    predicted = detector_candidates_.front().bbox;
+    selected_detector_candidate = detector_candidates_.front();
+    predicted = selected_detector_candidate->bbox;
     detector_candidates_.pop_front();
     source = HypothesisSource::kDetector;
   }
@@ -162,6 +164,10 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.predicted_bbox = predicted;
   plan.search_scale = search_scale_for(mode_, timestamp_ms);
   plan.hypothesis_source = source;
+  if (selected_detector_candidate) {
+    plan.detector_candidate_class_id = selected_detector_candidate->class_id;
+    plan.detector_candidate_confidence = selected_detector_candidate->confidence;
+  }
   const bool recovery_uses_detector =
       mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost;
   const bool interval_ready =

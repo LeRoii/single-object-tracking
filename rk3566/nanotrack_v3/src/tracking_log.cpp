@@ -29,6 +29,36 @@ std::string csv_escape(const std::string& value) {
   return escaped;
 }
 
+std::string json_escape(const std::string& value) {
+  std::ostringstream stream;
+  for (const unsigned char character : value) {
+    switch (character) {
+      case '\\': stream << "\\\\"; break;
+      case '"': stream << "\\\""; break;
+      case '\n': stream << "\\n"; break;
+      case '\r': stream << "\\r"; break;
+      case '\t': stream << "\\t"; break;
+      default:
+        if (character < 0x20) {
+          stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                 << static_cast<int>(character) << std::dec << std::setfill(' ');
+        } else {
+          stream << character;
+        }
+    }
+  }
+  return stream.str();
+}
+
+template <typename Value>
+std::string optional_integer(const std::optional<Value>& value) {
+  return value ? std::to_string(*value) : "";
+}
+
+std::string optional_number(const std::optional<float>& value) {
+  return value ? number(*value) : "";
+}
+
 void append_metrics(std::vector<std::string>& fields,
                     bool present,
                     const ResponseMetrics& metrics) {
@@ -80,18 +110,25 @@ std::int64_t MonotonicVideoClock::next(double pts_ms) {
 }
 
 std::string tracking_csv_header() {
-  return "frame_id,timestamp_ms,state,quality,control_valid,accepted,reacquired,"
+  return "schema_version,frame_id,timestamp_ms,state,quality,control_valid,accepted,reacquired,"
          "x,y,width,height,selected_template,template_action,"
          "anchor_score,anchor_penalized_peak,anchor_psr,anchor_apce,anchor_peak_margin,"
          "recent_score,recent_penalized_peak,recent_psr,recent_apce,recent_peak_margin,"
          "template_iou,normalized_center_residual,area_log_change,aspect_log_change,"
-         "search_scale,hypothesis_source,detector_requested,detector_status,"
-         "detector_candidates_queued,tracker_ms,detector_ms,runtime_ms,pipeline_ms,note";
+         "search_scale,hypothesis_source,detector_configured,detector_ready,"
+         "detector_requested,detector_request_frame_id,detector_worker_status,"
+         "detector_error,detector_batch_frame_id,detector_batch_age_ms,"
+         "detector_raw_candidate_count,detector_filtered_candidate_count,"
+         "detector_verified_class_id,detector_verified_confidence,"
+         "detector_preprocess_ms,detector_inference_ms,detector_postprocess_ms,"
+         "detector_total_ms,detector_status,detector_candidates_queued,"
+         "tracker_ms,runtime_ms,pipeline_ms,note";
 }
 
 std::string tracking_csv_row(const TrackingLogRow& row) {
   std::vector<std::string> fields{
-      std::to_string(row.frame_id), std::to_string(row.timestamp_ms),
+      std::to_string(kTrackingSchemaVersion), std::to_string(row.frame_id),
+      std::to_string(row.timestamp_ms),
       to_string(row.mode), to_string(row.quality),
       row.control_valid ? "1" : "0", row.accepted ? "1" : "0",
       row.reacquired ? "1" : "0", number(row.bbox.x), number(row.bbox.y),
@@ -103,18 +140,35 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                 {number(row.template_iou), number(row.normalized_center_residual),
                  number(row.area_log_change), number(row.aspect_log_change),
                  number(row.search_scale), to_string(row.hypothesis_source),
+                 row.detector_configured ? "1" : "0",
+                 row.detector_ready ? "1" : "0",
                  row.detector_requested ? "1" : "0",
+                 optional_integer(row.detector_request_frame_id),
+                 csv_escape(row.detector_worker_status),
+                 csv_escape(row.detector_error),
+                 optional_integer(row.detector_batch_frame_id),
+                 optional_integer(row.detector_batch_age_ms),
+                 std::to_string(row.detector_raw_candidate_count),
+                 std::to_string(row.detector_filtered_candidate_count),
+                 optional_integer(row.detector_verified_class_id),
+                 optional_number(row.detector_verified_confidence),
+                 number(row.detector_timing.preprocess_ms),
+                 number(row.detector_timing.inference_ms),
+                 number(row.detector_timing.postprocess_ms),
+                 number(row.detector_timing.total_ms),
                  to_string(row.detector_status),
                  std::to_string(row.detector_candidates_queued),
-                 number(row.tracker_ms), number(row.detector_ms),
-                 number(row.runtime_ms), number(row.pipeline_ms),
+                 number(row.tracker_ms), number(row.runtime_ms),
+                 number(row.pipeline_ms),
                  csv_escape(row.note)});
   return join(fields);
 }
 
 TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     std::int64_t timestamp_ms,
-                                    const BBox& bbox) {
+                                    const BBox& bbox,
+                                    bool detector_configured,
+                                    bool detector_ready) {
   TrackingLogRow row;
   row.frame_id = frame_id;
   row.timestamp_ms = timestamp_ms;
@@ -127,6 +181,11 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.recent_present = true;
   row.anchor_metrics = ResponseMetrics{1.0F, 1.0F, 0.0F, 0.0F, 1.0F};
   row.recent_metrics = row.anchor_metrics;
+  row.detector_configured = detector_configured;
+  row.detector_ready = detector_ready;
+  row.detector_worker_status = !detector_configured
+                                   ? "disabled"
+                                   : (detector_ready ? "ready" : "busy");
   row.note = "INITIALIZED";
   return row;
 }
@@ -160,13 +219,44 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.aspect_log_change = output.aspect_log_change;
   row.search_scale = output.search_scale;
   row.hypothesis_source = output.hypothesis_source;
+  row.detector_configured = result.detector.configured;
+  row.detector_ready = result.detector.ready;
   row.detector_requested = result.plan.request_detector;
+  if (result.plan.detector_request) {
+    row.detector_request_frame_id = result.plan.detector_request->frame_id;
+  } else if (result.detector.request_submitted) {
+    row.detector_request_frame_id = result.detector.request_frame_id;
+  }
+  row.detector_error = result.detector.error;
+  if (!row.detector_error.empty()) {
+    row.detector_worker_status = "error";
+  } else if (!row.detector_configured) {
+    row.detector_worker_status = "disabled";
+  } else if (result.detector.batch_received) {
+    row.detector_worker_status = "completed";
+  } else if (result.detector.request_submitted) {
+    row.detector_worker_status = "submitted";
+  } else if (row.detector_ready) {
+    row.detector_worker_status = "ready";
+  } else {
+    row.detector_worker_status = "busy";
+  }
+  if (result.detector.batch_received) {
+    row.detector_batch_frame_id = result.detector.batch_frame_id;
+    row.detector_batch_age_ms = result.detector.batch_age_ms;
+  }
+  row.detector_raw_candidate_count = result.detector.raw_candidate_count;
+  row.detector_filtered_candidate_count =
+      result.detector.filtered_candidate_count;
+  row.detector_verified_class_id = result.plan.detector_candidate_class_id;
+  row.detector_verified_confidence =
+      result.plan.detector_candidate_confidence;
+  row.detector_timing = result.detector.timing;
   row.detector_status = output.detector_status;
   row.detector_candidates_queued = output.detector_candidates_queued;
   row.tracker_ms = result.tracker_ms;
-  row.detector_ms = result.detector.timing.total_ms;
   row.runtime_ms = result.runtime_ms;
-  row.note = result.detector.error.empty() ? note : result.detector.error;
+  row.note = note;
   return row;
 }
 
@@ -200,6 +290,119 @@ LatencySummary summarize_latencies(const std::vector<float>& runtime_ms,
   summary.p95_pipeline_ms = percentile_ms(pipeline_ms, 0.95F);
   summary.end_to_end_fps = 1000.0F / summary.mean_pipeline_ms;
   return summary;
+}
+
+std::string tracking_session_metadata_json(
+    const TrackingSessionMetadata& metadata) {
+  const double numeric_values[] = {
+      metadata.source_fps,
+      metadata.reliable_score,
+      metadata.reliable_psr,
+      metadata.reliable_apce,
+      metadata.reliable_peak_margin,
+      metadata.latency.mean_runtime_ms,
+      metadata.latency.p50_runtime_ms,
+      metadata.latency.p95_runtime_ms,
+      metadata.latency.runtime_fps,
+      metadata.latency.mean_pipeline_ms,
+      metadata.latency.p50_pipeline_ms,
+      metadata.latency.p95_pipeline_ms,
+      metadata.latency.end_to_end_fps,
+      metadata.detector.confidence_threshold,
+      metadata.detector.nms_threshold,
+  };
+  for (const double value : numeric_values) {
+    if (!std::isfinite(value)) {
+      throw std::invalid_argument("session metadata numeric values must be finite");
+    }
+  }
+
+  const DetectorSessionMetadata& detector = metadata.detector;
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(6)
+         << "{\n"
+         << "  \"schema_version\": " << kTrackingSchemaVersion << ",\n"
+         << "  \"video\": \"" << json_escape(metadata.video) << "\",\n"
+         << "  \"model_dir\": \"" << json_escape(metadata.model_dir) << "\",\n"
+         << "  \"manifest_hash_algorithm\": \""
+         << json_escape(metadata.manifest_hash_algorithm) << "\",\n"
+         << "  \"manifest_hash\": \"" << json_escape(metadata.manifest_hash)
+         << "\",\n"
+         << "  \"controller_config\": \""
+         << json_escape(metadata.controller_config) << "\",\n"
+         << "  \"controller_config_hash_algorithm\": \""
+         << json_escape(metadata.controller_config_hash_algorithm) << "\",\n"
+         << "  \"controller_config_hash\": \""
+         << json_escape(metadata.controller_config_hash) << "\",\n"
+         << "  \"sensor\": \"" << json_escape(metadata.sensor) << "\",\n"
+         << "  \"calibrated\": " << (metadata.calibrated ? "true" : "false")
+         << ",\n"
+         << "  \"rknn_api_version\": \""
+         << json_escape(metadata.rknn_api_version) << "\",\n"
+         << "  \"rknn_driver_version\": \""
+         << json_escape(metadata.rknn_driver_version) << "\",\n"
+         << "  \"source_fps\": " << metadata.source_fps << ",\n"
+         << "  \"fps_fallback\": "
+         << (metadata.fps_fallback ? "true" : "false") << ",\n"
+         << "  \"frame_step_ms\": " << metadata.frame_step_ms << ",\n"
+         << "  \"reliable_score\": " << metadata.reliable_score << ",\n"
+         << "  \"reliable_psr\": " << metadata.reliable_psr << ",\n"
+         << "  \"reliable_apce\": " << metadata.reliable_apce << ",\n"
+         << "  \"reliable_peak_margin\": " << metadata.reliable_peak_margin
+         << ",\n"
+         << "  \"uncertain_ms\": " << metadata.uncertain_ms << ",\n"
+         << "  \"local_recovery_ms\": " << metadata.local_recovery_ms << ",\n"
+         << "  \"assisted_recovery_ms\": " << metadata.assisted_recovery_ms
+         << ",\n"
+         << "  \"tracked_frames\": " << metadata.tracked_frames << ",\n"
+         << "  \"mean_runtime_ms\": " << metadata.latency.mean_runtime_ms << ",\n"
+         << "  \"p50_runtime_ms\": " << metadata.latency.p50_runtime_ms << ",\n"
+         << "  \"p95_runtime_ms\": " << metadata.latency.p95_runtime_ms << ",\n"
+         << "  \"runtime_fps\": " << metadata.latency.runtime_fps << ",\n"
+         << "  \"mean_pipeline_ms\": " << metadata.latency.mean_pipeline_ms
+         << ",\n"
+         << "  \"p50_pipeline_ms\": " << metadata.latency.p50_pipeline_ms << ",\n"
+         << "  \"p95_pipeline_ms\": " << metadata.latency.p95_pipeline_ms << ",\n"
+         << "  \"end_to_end_fps\": " << metadata.latency.end_to_end_fps << ",\n"
+         << "  \"detector\": {\n"
+         << "    \"enabled\": " << (detector.enabled ? "true" : "false") << ",\n"
+         << "    \"calibrated\": "
+         << (detector.calibrated ? "true" : "false") << ",\n"
+         << "    \"model_path\": \"" << json_escape(detector.model_path) << "\",\n"
+         << "    \"model_sha256\": \"" << json_escape(detector.model_sha256)
+         << "\",\n"
+         << "    \"manifest_path\": \"" << json_escape(detector.manifest_path)
+         << "\",\n"
+         << "    \"manifest_sha256\": \""
+         << json_escape(detector.manifest_sha256) << "\",\n"
+         << "    \"labels_path\": \"" << json_escape(detector.labels_path)
+         << "\",\n"
+         << "    \"labels_sha256\": \"" << json_escape(detector.labels_sha256)
+         << "\",\n"
+         << "    \"class_id\": " << detector.class_id << ",\n"
+         << "    \"confidence_threshold\": " << detector.confidence_threshold
+         << ",\n"
+         << "    \"nms_threshold\": " << detector.nms_threshold << ",\n"
+         << "    \"input_tensor_description\": \""
+         << json_escape(detector.input_tensor_description) << "\",\n"
+         << "    \"output_tensor_descriptions\": [";
+  for (std::size_t index = 0;
+       index < detector.output_tensor_descriptions.size(); ++index) {
+    if (index != 0) stream << ", ";
+    stream << '"' << json_escape(detector.output_tensor_descriptions[index]) << '"';
+  }
+  stream << "],\n"
+         << "    \"rknn_api_version\": \""
+         << json_escape(detector.rknn_api_version) << "\",\n"
+         << "    \"rknn_driver_version\": \""
+         << json_escape(detector.rknn_driver_version) << "\",\n"
+         << "    \"request_count\": " << detector.request_count << ",\n"
+         << "    \"complete_count\": " << detector.complete_count << ",\n"
+         << "    \"reject_count\": " << detector.reject_count << ",\n"
+         << "    \"error_count\": " << detector.error_count << "\n"
+         << "  }\n"
+         << "}\n";
+  return stream.str();
 }
 
 }  // namespace nanotrack
