@@ -24,6 +24,8 @@
 - Task 4 / CLI：`test_cli` 编译失败，明确缺少 detector 文件、类别、置信度和 NMS 配置字段。
 - Task 4 / 日志与元数据：`test_tracking_log` 编译失败，明确缺少 schema-v3 detector 字段、候选类别/置信度审计信息和会话元数据序列化接口。
 - Task 4 / 初始化行：新增配置/就绪状态测试后，编译失败，证明旧接口无法记录 detector 初始化状态。
+- Task 5 / manifest：pytest 收集失败，明确缺少 `verify_detector_manifest.py`。
+- Task 5 / 转换 CLI：pytest 收集失败，明确缺少 `convert_yolov8_rk3566.py`。
 
 ## GREEN 证据
 
@@ -38,6 +40,12 @@
 - Task 4 定向测试 3/3 通过，覆盖 detector CLI 完整性与阈值边界、schema-v3 精确列、CSV 转义、候选审计字段、初始化行和 detector 元数据。
 - Task 4 `main.cpp` 使用系统 OpenCV 头和最小临时 RKNN 类型桩完成 `-fsyntax-only` 检查；这不是板端链接或运行证据。
 - Task 4 完整主机回归：CTest 9/9 通过。
+- Task 5 manifest/转换工具测试 19/19 通过；`python -S` 环境中的 `--help` 和仅校验 manifest 路径通过，证明不会提前导入 RKNN。
+- 固定环境 `/home/u20/single-object-tracking/.venvs/rknn-convert/bin/python` 为 Python 3.10.12；`rknn-toolkit2==2.3.2` 实际导入成功，未替换版本。
+- 官方来源：`airockchip/rknn_model_zoo@837db8e992815ff8647eadb709f07067f4bc3a71`。优化版 ONNX 为 12,650,184 字节，SHA-256 `0c8716701f471067932b797eeb67c8e5db47c693c2557c881d7679ec12e21bc5`；ONNX checker 通过并确认 9 输出契约。
+- 官方 COCO 标签为 621 字节、80 行，SHA-256 `bd17f1ee35d5f3c862a4894605855abbb9dda4b0621fdb0ac4c2c8c7bb7e730a`。
+- RK3566 FP16 转换成功：最终保留 RKNN 8,097,993 字节，SHA-256 `4d53a9b1e12996556294be8e099fe2dc0815d5c9cfdc327edfe350832baf8cf6`；完整日志 84,868 字节，SHA-256 `ab45cbe6eb167d626bf9cefc182b2c3972cbd3c8b129ade24b9d1535032be3cb`。
+- 生成 manifest 校验通过；RKNN 内嵌元数据可见 `target_platform:["rk3566"]`、版本 2.3.2、一个 640×640 输入和 9 个预期输出。这里只证明转换产物，不等同于板端推理。
 
 ## 开发板证据
 
@@ -54,9 +62,12 @@
 - `tracking_log.cpp` 在 Task 1 先做最小兼容映射；完整 schema v3 仍在 Task 4 实施。
 - schema-v3 序列化放在可主机测试的 `tracking_log` 模块；Task 6 接入实际 detector engine 后再填入 tensor 描述、SHA-256、detector RKNN 版本及运行计数。
 - `SearchPlan` 仅为审计保留被取出的 detector 候选类别和置信度；候选仍只能作为 NanoTrack 搜索假设，不能直接产生有效控制框。
+- 本独立实现保留已批准的 letterbox pad=114；官方当前 Python 示例因 RGA 初始化路径使用黑色 padding。两者可能令边缘输出略有差异，必须以板端 smoke 的候选合理性作为后续验证门槛。
+- 相同声明输入的第二次 Toolkit2 转换得到相同文件大小但不同 RKNN SHA-256，因此不宣称序列化字节级确定性；manifest 始终绑定最终保留产物，任何重建都必须重新生成并复核哈希。
 - 当前托管环境不支持 ptrace 下的 LeakSanitizer；本阶段保留 ASAN/UBSAN，并由析构 join 测试覆盖线程生命周期，LSan 证据缺失明确保留。
 
 ## 未解决风险
 
 - RKNN-Toolkit2 2.3.2 的导入和模型转换尚未在本次执行中验证。
 - detector 模型尚未在 RK3566 上执行真实推理。
+- Toolkit 转换日志包含部分常量空 tensor 与默认 float16 qtype 警告；转换成功且产物契约通过，但其板端影响仍需 Task 6/8 实测。

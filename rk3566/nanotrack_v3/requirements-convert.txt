@@ -1,7 +1,8 @@
-numpy<2
+numpy==1.26.4
 onnx==1.16.1
 onnxruntime==1.23.2
 pytest==9.1.1
 PyYAML==6.0.3
+rknn-toolkit2==2.3.2
 torch==2.4.0
 yacs==0.1.8

@@ -1,0 +1,169 @@
+{
+  "artifact": {
+    "file": "yolov8n-rk3566-fp16.rknn",
+    "sha256": "4d53a9b1e12996556294be8e099fe2dc0815d5c9cfdc327edfe350832baf8cf6",
+    "size_bytes": 8097993
+  },
+  "calibrated": false,
+  "class_count": 80,
+  "conversion": {
+    "mean_values": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "quantized": false,
+    "std_values": [
+      [
+        255.0,
+        255.0,
+        255.0
+      ]
+    ],
+    "target_platform": "rk3566"
+  },
+  "deployment_status": "function_only_board_unverified",
+  "dfl_bins": 16,
+  "input": {
+    "color_order": "RGB",
+    "dtype": "uint8",
+    "layout": "NHWC",
+    "name": "images",
+    "pad_value": 114,
+    "shape": [
+      1,
+      640,
+      640,
+      3
+    ]
+  },
+  "labels": {
+    "count": 80,
+    "file": "coco80.txt",
+    "sha256": "bd17f1ee35d5f3c862a4894605855abbb9dda4b0621fdb0ac4c2c8c7bb7e730a"
+  },
+  "outputs": [
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "box_s8",
+      "role": "box_s8",
+      "shape": [
+        1,
+        64,
+        80,
+        80
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "class_s8",
+      "role": "class_s8",
+      "shape": [
+        1,
+        80,
+        80,
+        80
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "score_sum_s8",
+      "role": "score_sum_s8",
+      "shape": [
+        1,
+        1,
+        80,
+        80
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "box_s16",
+      "role": "box_s16",
+      "shape": [
+        1,
+        64,
+        40,
+        40
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "class_s16",
+      "role": "class_s16",
+      "shape": [
+        1,
+        80,
+        40,
+        40
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "score_sum_s16",
+      "role": "score_sum_s16",
+      "shape": [
+        1,
+        1,
+        40,
+        40
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "box_s32",
+      "role": "box_s32",
+      "shape": [
+        1,
+        64,
+        20,
+        20
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "class_s32",
+      "role": "class_s32",
+      "shape": [
+        1,
+        80,
+        20,
+        20
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "score_sum_s32",
+      "role": "score_sum_s32",
+      "shape": [
+        1,
+        1,
+        20,
+        20
+      ]
+    }
+  ],
+  "provenance": {
+    "host_os": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35",
+    "python_executable": "/home/u20/single-object-tracking/.venvs/rknn-convert/bin/python",
+    "source_commit": "837db8e992815ff8647eadb709f07067f4bc3a71",
+    "source_file": "yolov8n.onnx",
+    "source_repository": "https://github.com/airockchip/rknn_model_zoo",
+    "source_sha256": "0c8716701f471067932b797eeb67c8e5db47c693c2557c881d7679ec12e21bc5",
+    "source_size_bytes": 12650184,
+    "source_url": "https://ftrg.zbox.filez.com/v2/delivery/data/95f00b0fc900458ba134f8b180b3f7a1/examples/yolov8/yolov8n.onnx",
+    "toolkit_version": "2.3.2"
+  },
+  "schema_version": 1
+}
