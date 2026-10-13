@@ -176,6 +176,8 @@ int main() {
 
   NullDetectorAdapter detector;
   expect_true(!detector.available(), "null detector reports unavailable");
+  expect_true(!detector.can_submit(),
+              "null detector never reports submission readiness");
   const ImageView empty_image{};
   detector.submit(empty_image,
                   DetectorRequest{1, 100, BBox{0, 0, 10, 10}, 3});

@@ -164,9 +164,9 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.detector_status = output.detector_status;
   row.detector_candidates_queued = output.detector_candidates_queued;
   row.tracker_ms = result.tracker_ms;
-  row.detector_ms = result.detector_ms;
+  row.detector_ms = result.detector.timing.total_ms;
   row.runtime_ms = result.runtime_ms;
-  row.note = result.detector_error ? result.detector_error_message : note;
+  row.note = result.detector.error.empty() ? note : result.detector.error;
   return row;
 }
 

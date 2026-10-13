@@ -135,7 +135,7 @@ float LongTermController::search_scale_for(TrackingMode mode,
 
 SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
                                            std::int64_t timestamp_ms,
-                                           bool detector_available) {
+                                           bool detector_ready) {
   if (!initialized_) throw std::logic_error("controller is not initialized");
   if (frame_open_) throw std::logic_error("previous controller frame is unfinished");
   if (frame_id <= last_frame_id_) {
@@ -167,7 +167,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   const bool interval_ready =
       !last_detector_request_ms_ ||
       timestamp_ms - *last_detector_request_ms_ >= config_.detector_interval_ms;
-  if (detector_available && recovery_uses_detector && interval_ready) {
+  if (detector_ready && recovery_uses_detector && interval_ready) {
     plan.request_detector = true;
     plan.detector_request = DetectorRequest{
         frame_id,

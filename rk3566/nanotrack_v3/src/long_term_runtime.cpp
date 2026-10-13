@@ -10,7 +10,10 @@ namespace nanotrack {
 LongTermRuntime::LongTermRuntime(const ControllerConfig& config,
                                  ShortTermTracker& tracker,
                                  DetectorAdapter& detector)
-    : tracker_(tracker), detector_(detector), controller_(config) {}
+    : tracker_(tracker),
+      detector_(detector),
+      controller_(config),
+      detector_configured_(detector.available()) {}
 
 void LongTermRuntime::validate_image(const ImageView& image) {
   if (image.data == nullptr || image.width <= 0 || image.height <= 0 ||
@@ -40,34 +43,40 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   validate_image(image);
   const auto total_start = std::chrono::steady_clock::now();
   RuntimeFrameResult result;
-  result.plan =
-      controller_.begin_frame(frame_id, timestamp_ms, detector_.available());
+  result.detector.configured = detector_configured_;
+  result.detector.ready = detector_.available() && detector_.can_submit();
+  result.plan = controller_.begin_frame(frame_id, timestamp_ms,
+                                        result.detector.ready);
 
   if (result.plan.request_detector && result.plan.detector_request) {
-    const auto detector_start = std::chrono::steady_clock::now();
+    result.detector.request_frame_id =
+        result.plan.detector_request->frame_id;
     try {
       detector_.submit(image, *result.plan.detector_request);
+      result.detector.request_submitted = true;
     } catch (const std::exception& error) {
-      result.detector_error = true;
-      result.detector_error_message = error.what();
+      result.detector.error = error.what();
     }
-    result.detector_ms += std::chrono::duration<float, std::milli>(
-                              std::chrono::steady_clock::now() - detector_start)
-                              .count();
   }
 
   std::optional<DetectorBatch> detector_batch;
-  if (detector_.available() && !result.detector_error) {
-    const auto detector_start = std::chrono::steady_clock::now();
+  if (detector_.available() && result.detector.error.empty()) {
     try {
       detector_batch = detector_.poll();
     } catch (const std::exception& error) {
-      result.detector_error = true;
-      result.detector_error_message = error.what();
+      result.detector.error = error.what();
     }
-    result.detector_ms += std::chrono::duration<float, std::milli>(
-                              std::chrono::steady_clock::now() - detector_start)
-                              .count();
+    if (detector_batch) {
+      result.detector.batch_received = true;
+      result.detector.batch_frame_id = detector_batch->source_frame_id;
+      result.detector.batch_age_ms =
+          timestamp_ms - detector_batch->source_timestamp_ms;
+      result.detector.raw_candidate_count =
+          detector_batch->raw_candidate_count;
+      result.detector.filtered_candidate_count =
+          detector_batch->filtered_candidate_count;
+      result.detector.timing = detector_batch->timing;
+    }
   }
 
   const auto tracker_start = std::chrono::steady_clock::now();

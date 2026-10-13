@@ -55,7 +55,7 @@ class LongTermController {
                   FrameSize frame_size);
   SearchPlan begin_frame(std::uint64_t frame_id,
                          std::int64_t timestamp_ms,
-                         bool detector_available);
+                         bool detector_ready);
   ControllerOutput finish_frame(
       const SearchPlan& plan,
       const std::vector<TrackerObservation>& observations,

@@ -64,10 +64,34 @@ struct DetectorRequest {
   std::size_t max_candidates = 3;
 };
 
+struct DetectorTiming {
+  float preprocess_ms = 0.0F;
+  float inference_ms = 0.0F;
+  float postprocess_ms = 0.0F;
+  float total_ms = 0.0F;
+};
+
 struct DetectorBatch {
   std::uint64_t source_frame_id = 0;
   std::int64_t source_timestamp_ms = 0;
   std::vector<DetectorCandidate> candidates;
+  std::size_t raw_candidate_count = 0;
+  std::size_t filtered_candidate_count = 0;
+  DetectorTiming timing{};
+};
+
+struct DetectorDiagnostics {
+  bool configured = false;
+  bool ready = false;
+  bool request_submitted = false;
+  bool batch_received = false;
+  std::uint64_t request_frame_id = 0;
+  std::uint64_t batch_frame_id = 0;
+  std::int64_t batch_age_ms = 0;
+  std::size_t raw_candidate_count = 0;
+  std::size_t filtered_candidate_count = 0;
+  DetectorTiming timing{};
+  std::string error;
 };
 
 const char* to_string(TrackingMode value);

@@ -14,10 +14,8 @@ struct RuntimeFrameResult {
   SearchPlan plan{};
   std::vector<TrackerObservation> observations;
   ControllerOutput output{};
-  bool detector_error = false;
-  std::string detector_error_message;
+  DetectorDiagnostics detector{};
   float tracker_ms = 0.0F;
-  float detector_ms = 0.0F;
   float runtime_ms = 0.0F;
 };
 
@@ -43,6 +41,7 @@ class LongTermRuntime {
   ShortTermTracker& tracker_;
   DetectorAdapter& detector_;
   LongTermController controller_;
+  bool detector_configured_ = false;
   bool initialized_ = false;
 };
 
