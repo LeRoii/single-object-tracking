@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CTest)
+find_package(Threads REQUIRED)
 
 option(ENABLE_RKNN_RUNTIME "Build the RK3566 RKNN/OpenCV executable" OFF)
 
@@ -32,6 +33,11 @@ add_library(nanotrack_controller_support
 target_include_directories(nanotrack_controller_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(nanotrack_controller_support PUBLIC nanotrack_math)
 target_compile_options(nanotrack_controller_support PRIVATE -Wall -Wextra -Wpedantic)
+
+add_library(nanotrack_detector_adapter src/yolo_detector_adapter.cpp)
+target_include_directories(nanotrack_detector_adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(nanotrack_detector_adapter PUBLIC nanotrack_controller_support Threads::Threads)
+target_compile_options(nanotrack_detector_adapter PRIVATE -Wall -Wextra -Wpedantic)
 
 if(BUILD_TESTING)
   add_executable(test_tracker_math tests/test_tracker_math.cpp)
@@ -61,6 +67,10 @@ if(BUILD_TESTING)
   add_executable(test_long_term_replay tests/test_long_term_replay.cpp)
   target_link_libraries(test_long_term_replay PRIVATE nanotrack_controller_support)
   add_test(NAME long_term_replay COMMAND test_long_term_replay)
+
+  add_executable(test_yolo_detector_adapter tests/test_yolo_detector_adapter.cpp)
+  target_link_libraries(test_yolo_detector_adapter PRIVATE nanotrack_detector_adapter)
+  add_test(NAME yolo_detector_adapter COMMAND test_yolo_detector_adapter)
 endif()
 
 if(ENABLE_RKNN_RUNTIME)

@@ -15,12 +15,18 @@
   `NullDetectorAdapter has no member named can_submit`。
 - Task 1 / runtime 诊断：`test_long_term_runtime` 编译失败，明确缺失
   `DetectorDiagnostics`、`DetectorTiming` 和 `DetectorBatch` 诊断字段。
+- Task 2 / adapter API：`test_yolo_detector_adapter` 编译失败，明确缺失
+  `yolo_detector_adapter.hpp`。
+- Task 2 / 有界副本：active 状态下用非法图像二次 submit 时错误地先返回 BGR 校验错误，证明旧顺序在拒绝 busy 前仍会创建/校验第二份工作项。
 
 ## GREEN 证据
 
 - 基线：主机 CTest 7/7 通过。
 - Task 1 定向测试：`controller_support`、`long_term_runtime` 2/2 通过。
 - Task 1 完整主机回归：CTest 7/7 通过。
+- Task 2 adapter 定向测试 1/1 通过，覆盖 stride 深拷贝、有界槽、poll、异常禁用和析构 join。
+- Task 2 ASAN+UBSAN 1/1 通过；受 ptrace 环境限制，以 `ASAN_OPTIONS=detect_leaks=0` 关闭 LSan。
+- Task 2 完整主机回归：CTest 8/8 通过。
 
 ## 开发板证据
 
@@ -35,6 +41,7 @@
 - 使用实际 Git 提交和 SDD ledger 取代计划中“非 Git 工作区”的假设；测试、模型和板端证据要求不变。
 - `DetectorBatch` 保留原有 `frame/timestamp/candidates` 三字段顺序，新增计数和耗时字段追加在后，避免破坏旧聚合初始化调用方。
 - `tracking_log.cpp` 在 Task 1 先做最小兼容映射；完整 schema v3 仍在 Task 4 实施。
+- 当前托管环境不支持 ptrace 下的 LeakSanitizer；本阶段保留 ASAN/UBSAN，并由析构 join 测试覆盖线程生命周期，LSan 证据缺失明确保留。
 
 ## 未解决风险
 
