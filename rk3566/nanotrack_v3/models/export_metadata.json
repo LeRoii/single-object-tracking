@@ -1,0 +1,129 @@
+{
+  "graphs": {
+    "head": {
+      "file": "head.onnx",
+      "inputs": [
+        {
+          "dtype": "float",
+          "layout": "NCHW",
+          "name": "template_feature",
+          "shape": [
+            1,
+            96,
+            8,
+            8
+          ]
+        },
+        {
+          "dtype": "float",
+          "layout": "NCHW",
+          "name": "search_feature",
+          "shape": [
+            1,
+            96,
+            16,
+            16
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "dtype": "float",
+          "layout": "NCHW",
+          "name": "cls",
+          "shape": [
+            1,
+            2,
+            15,
+            15
+          ]
+        },
+        {
+          "dtype": "float",
+          "layout": "NCHW",
+          "name": "loc",
+          "shape": [
+            1,
+            4,
+            15,
+            15
+          ]
+        }
+      ],
+      "sha256": "72ac584b821b2dc96c75a2691190df4052e08d8c54084bb4026fad1534ea0ee1"
+    },
+    "search_backbone": {
+      "file": "search_backbone.onnx",
+      "inputs": [
+        {
+          "dtype": "float",
+          "layout": "NCHW",
+          "name": "image",
+          "shape": [
+            1,
+            3,
+            255,
+            255
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "dtype": "float",
+          "layout": "NCHW",
+          "name": "feature",
+          "shape": [
+            1,
+            96,
+            16,
+            16
+          ]
+        }
+      ],
+      "sha256": "2a14ee5a35a45b4014be530a2a8b331349cfd28c190b716a75a2dcfdf21d996f"
+    },
+    "template_backbone": {
+      "file": "template_backbone.onnx",
+      "inputs": [
+        {
+          "dtype": "float",
+          "layout": "NCHW",
+          "name": "image",
+          "shape": [
+            1,
+            3,
+            127,
+            127
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "dtype": "float",
+          "layout": "NCHW",
+          "name": "feature",
+          "shape": [
+            1,
+            96,
+            8,
+            8
+          ]
+        }
+      ],
+      "sha256": "3865fdbd43b8df5fd1eee13d884777dd12f2e61e2e00ddab4ad3d1bc388308b0"
+    }
+  },
+  "max_abs_error": {
+    "head_cls": 5.826354026794434e-06,
+    "head_loc": 0.000133514404296875,
+    "search_backbone": 1.8149614334106445e-05,
+    "template_backbone": 1.71661376953125e-05
+  },
+  "onnx_version": "1.22.0",
+  "onnxruntime_version": "1.23.2",
+  "opset": 14,
+  "seed": 20260929,
+  "source_commit": "248663fde6bf7c40190cf10ee396d5662919ecd3",
+  "torch_version": "2.4.0+cu121",
+  "weight_sha256": "4f0d25108385a67bdec5fa01ca37c74acb72343b53996dd645fe18b86e512e69"
+}

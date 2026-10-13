@@ -1,0 +1,124 @@
+{
+  "models": {
+    "head": {
+      "file": "head.rknn",
+      "inputs": [
+        {
+          "dtype": "float32",
+          "layout": "NHWC",
+          "name": "template_feature",
+          "shape": [
+            1,
+            8,
+            8,
+            96
+          ]
+        },
+        {
+          "dtype": "float32",
+          "layout": "NHWC",
+          "name": "search_feature",
+          "shape": [
+            1,
+            16,
+            16,
+            96
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "dtype": "float32",
+          "layout": "NCHW",
+          "name": "cls",
+          "shape": [
+            1,
+            2,
+            15,
+            15
+          ]
+        },
+        {
+          "dtype": "float32",
+          "layout": "NCHW",
+          "name": "loc",
+          "shape": [
+            1,
+            4,
+            15,
+            15
+          ]
+        }
+      ],
+      "sha256": "2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600"
+    },
+    "search_backbone": {
+      "file": "search_backbone.rknn",
+      "inputs": [
+        {
+          "dtype": "uint8",
+          "layout": "NHWC",
+          "name": "image",
+          "shape": [
+            1,
+            255,
+            255,
+            3
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "dtype": "float32",
+          "layout": "NCHW",
+          "name": "feature",
+          "shape": [
+            1,
+            96,
+            16,
+            16
+          ]
+        }
+      ],
+      "sha256": "92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a"
+    },
+    "template_backbone": {
+      "file": "template_backbone.rknn",
+      "inputs": [
+        {
+          "dtype": "uint8",
+          "layout": "NHWC",
+          "name": "image",
+          "shape": [
+            1,
+            127,
+            127,
+            3
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "dtype": "float32",
+          "layout": "NCHW",
+          "name": "feature",
+          "shape": [
+            1,
+            96,
+            8,
+            8
+          ]
+        }
+      ],
+      "sha256": "38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709"
+    }
+  },
+  "provenance": {
+    "quantized": false,
+    "source_commit": "248663fde6bf7c40190cf10ee396d5662919ecd3",
+    "target_platform": "rk3566",
+    "toolkit_version": "2.3.2",
+    "weight_sha256": "4f0d25108385a67bdec5fa01ca37c74acb72343b53996dd645fe18b86e512e69"
+  },
+  "schema_version": 1
+}

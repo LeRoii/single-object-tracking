@@ -1,0 +1,102 @@
+# Local environments and tool installations
+.venv/
+.venvs/
+venv/
+env/
+.tools/
+
+# Codex/editor/workspace-local state
+.agents/
+.aws/
+.codex/
+.superpowers/
+.vscode/
+.idea/
+.worktrees/
+
+# External repository checkouts (retain their own version control)
+repos/
+src/mobile-cv/
+ancient-tracker/
+
+# Datasets, generated artifacts, and experiment outputs
+data/
+artifacts/
+**/data/
+**/artifacts/
+outputs/
+results/
+runs/
+snapshots/
+coordinates.txt
+
+# Model weights and converted inference models
+*.onnx
+*.rknn
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.engine
+*.weights
+
+# Media and binary assets
+*.avi
+*.mp4
+*.mkv
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tif
+*.tiff
+*.ttc
+
+# Compiled libraries, executables, and build products
+build/
+build-*/
+cmake-build-*/
+**/build/
+**/build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile.generated
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+*.out
+
+# Python caches and test/tool caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated logs, tables, temporary files, and editor backups
+*.log
+*.csv
+*.tsv
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
+*.cvbak
+*.hpp_bak
+
+# OS metadata
+.DS_Store
+Thumbs.db

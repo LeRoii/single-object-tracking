@@ -1,0 +1,24 @@
+{
+  "workspace": "/home/u20/single-object-tracking",
+  "python_executable": "/home/u20/single-object-tracking/.venvs/nanotrack/bin/python",
+  "nanotrack_root": "/home/u20/single-object-tracking/repos/siamtrackers/NanoTrack",
+  "official_checkpoint": "/home/u20/single-object-tracking/repos/siamtrackers/NanoTrack/models/pretrained/nanotrackv3.pth",
+  "stage_configs": {
+    "stage1": "/home/u20/single-object-tracking/configs/nanotrack_v3_three_stage_stage1.yaml",
+    "stage2": "/home/u20/single-object-tracking/configs/nanotrack_v3_three_stage_stage2.yaml",
+    "stage3": "/home/u20/single-object-tracking/configs/nanotrack_v3_three_stage_stage3.yaml"
+  },
+  "stage_policies": {
+    "stage1": "head_only",
+    "stage2": "tail2",
+    "stage3": "head_only"
+  },
+  "uav123_dataset_root": "/home/u20/dataset/Dataset_UAV123_10fps/UAV123_10fps",
+  "uav123_prepared_root": "/home/u20/single-object-tracking/data/uav123_nanotrack",
+  "validation_panel": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/val-aerial.json",
+  "hidden_panel": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/test-aerial-hidden.json",
+  "device": "cuda:0",
+  "seed": 123456,
+  "artifact_root": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage",
+  "run_root": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run"
+}

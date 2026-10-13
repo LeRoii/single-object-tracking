@@ -1,0 +1,209 @@
+META_ARC: nanotrack-v3-got-replay-stage2-head-only
+BACKBONE:
+  TYPE: mobilenetv3_small_v3
+  KWARGS:
+    used_layers:
+    - 4
+  PRETRAINED: ''
+  TRAIN_LAYERS:
+  - features
+  TRAIN_EPOCH: 2
+  LAYERS_LR: 0.05
+ADJUST:
+  ADJUST: true
+  TYPE: AdjustLayer
+  KWARGS:
+    in_channels: 96
+    out_channels: 96
+BAN:
+  BAN: true
+  TYPE: DepthwiseBAN
+  KWARGS:
+    in_channels: 96
+    out_channels: 96
+CUDA: true
+POINT:
+  STRIDE: 16
+TRACK:
+  TYPE: NanoTracker
+  WINDOW_INFLUENCE: 0.455
+  PENALTY_K: 0.138
+  LR: 0.348
+  EXEMPLAR_SIZE: 127
+  INSTANCE_SIZE: 255
+  BASE_SIZE: 7
+  CONTEXT_AMOUNT: 0.5
+  OUTPUT_SIZE: 15
+TRAIN:
+  EPOCH: 1
+  START_EPOCH: 0
+  BATCH_SIZE: 64
+  NUM_WORKERS: 0
+  BASE_LR: 2.2627416997969522e-05
+  CLS_WEIGHT: 1.0
+  LOC_WEIGHT: 1.0
+  NUM_CONVS: 4
+  BASE_SIZE: 7
+  OUTPUT_SIZE: 15
+  PRINT_FREQ: 25
+  GRAD_CLIP: 10.0
+  LOG_GRADS: false
+  RESUME: ''
+  PRETRAINED: ''
+  SNAPSHOT_DIR: /home/u20/single-object-tracking/artifacts/nanotrack_got_replay_v1/run/stage2
+  LR:
+    TYPE: log
+    KWARGS:
+      start_lr: 2.2627416997969522e-05
+      end_lr: 8.485281374238571e-06
+  LR_WARMUP:
+    WARMUP: false
+    TYPE: step
+    EPOCH: 0
+    KWARGS:
+      start_lr: 2.2627416997969522e-05
+      end_lr: 2.2627416997969522e-05
+      step: 1
+DATASET:
+  NAMES:
+  - GOT_OTHER_NORMAL
+  - GOT_PERSON_NORMAL
+  - GOT_VEHICLE_NORMAL
+  - UAV123_BIKE_HARD
+  - UAV123_BIKE_NORMAL
+  - UAV123_OTHER_HARD
+  - UAV123_OTHER_NORMAL
+  - UAV123_PERSON_HARD
+  - UAV123_PERSON_NORMAL
+  - UAV123_VEHICLE_HARD
+  - UAV123_VEHICLE_NORMAL
+  - UAVDT_VEHICLE_HARD
+  - UAVDT_VEHICLE_NORMAL
+  - VISDRONE_MOT_BIKE_HARD
+  - VISDRONE_MOT_BIKE_NORMAL
+  - VISDRONE_MOT_PERSON_HARD
+  - VISDRONE_MOT_PERSON_NORMAL
+  - VISDRONE_MOT_VEHICLE_HARD
+  - VISDRONE_MOT_VEHICLE_NORMAL
+  - VISDRONE_SOT_UNKNOWN_HARD
+  - VISDRONE_SOT_UNKNOWN_NORMAL
+  VIDEOS_PER_EPOCH: 30144
+  TEMPLATE:
+    SHIFT: 4
+    SCALE: 0.05
+    BLUR: 0.0
+    FLIP: 0.0
+    COLOR: 1.0
+  SEARCH:
+    SHIFT: 64
+    SCALE: 0.18
+    BLUR: 0.2
+    FLIP: 0.0
+    COLOR: 1.0
+  NEG: 0.2
+  GRAY: 0.0
+  GOT_OTHER_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/other.json
+    FRAME_RANGE: 100
+    NUM_USE: 2261
+  GOT_PERSON_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/person.json
+    FRAME_RANGE: 100
+    NUM_USE: 2638
+  GOT_VEHICLE_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/vehicle.json
+    FRAME_RANGE: 100
+    NUM_USE: 2638
+  UAV123_BIKE_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/hard/bike.json
+    FRAME_RANGE: 50
+    NUM_USE: 75
+  UAV123_BIKE_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/normal/bike.json
+    FRAME_RANGE: 50
+    NUM_USE: 226
+  UAV123_OTHER_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/hard/other.json
+    FRAME_RANGE: 50
+    NUM_USE: 226
+  UAV123_OTHER_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/normal/other.json
+    FRAME_RANGE: 50
+    NUM_USE: 528
+  UAV123_PERSON_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/hard/person.json
+    FRAME_RANGE: 50
+    NUM_USE: 452
+  UAV123_PERSON_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/normal/person.json
+    FRAME_RANGE: 50
+    NUM_USE: 1356
+  UAV123_VEHICLE_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/hard/vehicle.json
+    FRAME_RANGE: 50
+    NUM_USE: 377
+  UAV123_VEHICLE_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/normal/vehicle.json
+    FRAME_RANGE: 50
+    NUM_USE: 904
+  UAVDT_VEHICLE_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uavdt/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uavdt/hard/vehicle.json
+    FRAME_RANGE: 30
+    NUM_USE: 1507
+  UAVDT_VEHICLE_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uavdt/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uavdt/normal/vehicle.json
+    FRAME_RANGE: 30
+    NUM_USE: 2261
+  VISDRONE_MOT_BIKE_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/hard/bike.json
+    FRAME_RANGE: 30
+    NUM_USE: 301
+  VISDRONE_MOT_BIKE_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/normal/bike.json
+    FRAME_RANGE: 30
+    NUM_USE: 452
+  VISDRONE_MOT_PERSON_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/hard/person.json
+    FRAME_RANGE: 30
+    NUM_USE: 1507
+  VISDRONE_MOT_PERSON_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/normal/person.json
+    FRAME_RANGE: 30
+    NUM_USE: 2261
+  VISDRONE_MOT_VEHICLE_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/hard/vehicle.json
+    FRAME_RANGE: 30
+    NUM_USE: 1206
+  VISDRONE_MOT_VEHICLE_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/normal/vehicle.json
+    FRAME_RANGE: 30
+    NUM_USE: 1809
+  VISDRONE_SOT_UNKNOWN_HARD:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_sot/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_sot/hard/unknown.json
+    FRAME_RANGE: 100
+    NUM_USE: 1884
+  VISDRONE_SOT_UNKNOWN_NORMAL:
+    ROOT: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_sot/crop511
+    ANNO: /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_sot/normal/unknown.json
+    FRAME_RANGE: 100
+    NUM_USE: 5275
