@@ -120,6 +120,10 @@ std::string tracking_csv_header() {
          "detector_error,detector_batch_frame_id,detector_batch_age_ms,"
          "detector_raw_candidate_count,detector_filtered_candidate_count,"
          "detector_verified_class_id,detector_verified_confidence,"
+         "detector_target_mode,detector_candidate_id,detector_region_x,"
+         "detector_region_y,detector_region_width,detector_region_height,"
+         "detector_candidate_locked,detector_probe_index,"
+         "detector_confirmation_attempts,detector_confirmation_hits,"
          "detector_preprocess_ms,detector_inference_ms,detector_postprocess_ms,"
          "detector_total_ms,detector_status,detector_candidates_queued,"
          "tracker_ms,runtime_ms,pipeline_ms,note";
@@ -152,6 +156,24 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                  std::to_string(row.detector_filtered_candidate_count),
                  optional_integer(row.detector_verified_class_id),
                  optional_number(row.detector_verified_confidence),
+                 to_string(row.detector_target_mode),
+                 optional_integer(row.detector_candidate_id),
+                 row.detector_candidate_region
+                     ? number(row.detector_candidate_region->x)
+                     : "",
+                 row.detector_candidate_region
+                     ? number(row.detector_candidate_region->y)
+                     : "",
+                 row.detector_candidate_region
+                     ? number(row.detector_candidate_region->width)
+                     : "",
+                 row.detector_candidate_region
+                     ? number(row.detector_candidate_region->height)
+                     : "",
+                 row.detector_candidate_locked ? "1" : "0",
+                 std::to_string(row.detector_probe_index),
+                 std::to_string(row.detector_confirmation_attempts),
+                 std::to_string(row.detector_confirmation_hits),
                  number(row.detector_timing.preprocess_ms),
                  number(row.detector_timing.inference_ms),
                  number(row.detector_timing.postprocess_ms),
@@ -251,6 +273,14 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.detector_verified_class_id = result.plan.detector_candidate_class_id;
   row.detector_verified_confidence =
       result.plan.detector_candidate_confidence;
+  row.detector_target_mode = result.plan.detector_target_mode;
+  row.detector_candidate_id = result.output.detector_candidate_id;
+  row.detector_candidate_region = result.plan.detector_candidate_region;
+  row.detector_candidate_locked = result.output.detector_candidate_locked;
+  row.detector_probe_index = result.output.detector_probe_index;
+  row.detector_confirmation_attempts =
+      result.output.detector_confirmation_attempts;
+  row.detector_confirmation_hits = result.output.detector_confirmation_hits;
   row.detector_timing = result.detector.timing;
   row.detector_status = output.detector_status;
   row.detector_candidates_queued = output.detector_candidates_queued;
@@ -337,6 +367,8 @@ std::string tracking_session_metadata_json(
          << "  \"sensor\": \"" << json_escape(metadata.sensor) << "\",\n"
          << "  \"calibrated\": " << (metadata.calibrated ? "true" : "false")
          << ",\n"
+         << "  \"detector_target_mode\": \""
+         << to_string(metadata.detector_target_mode) << "\",\n"
          << "  \"rknn_api_version\": \""
          << json_escape(metadata.rknn_api_version) << "\",\n"
          << "  \"rknn_driver_version\": \""

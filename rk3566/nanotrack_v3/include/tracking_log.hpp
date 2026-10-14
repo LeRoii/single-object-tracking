@@ -9,7 +9,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 3;
+constexpr int kTrackingSchemaVersion = 4;
 
 class MonotonicVideoClock {
  public:
@@ -57,6 +57,13 @@ struct TrackingLogRow {
   std::size_t detector_filtered_candidate_count = 0;
   std::optional<int> detector_verified_class_id;
   std::optional<float> detector_verified_confidence;
+  DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
+  std::optional<std::uint64_t> detector_candidate_id;
+  std::optional<BBox> detector_candidate_region;
+  bool detector_candidate_locked = false;
+  std::size_t detector_probe_index = 0;
+  std::size_t detector_confirmation_attempts = 0;
+  std::size_t detector_confirmation_hits = 0;
   DetectorTiming detector_timing{};
   DetectorBatchStatus detector_status = DetectorBatchStatus::kNone;
   std::size_t detector_candidates_queued = 0;
@@ -109,6 +116,7 @@ struct TrackingSessionMetadata {
   std::string controller_config_hash;
   std::string sensor;
   bool calibrated = false;
+  DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
   std::string rknn_api_version;
   std::string rknn_driver_version;
   double source_fps = 0.0;

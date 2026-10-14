@@ -78,6 +78,13 @@ int main() {
   row.detector_filtered_candidate_count = 3;
   row.detector_verified_class_id = 2;
   row.detector_verified_confidence = 0.88F;
+  row.detector_target_mode = DetectorTargetMode::kSubtarget;
+  row.detector_candidate_id = 42;
+  row.detector_candidate_region = BBox{10, 20, 80, 100};
+  row.detector_candidate_locked = true;
+  row.detector_probe_index = 3;
+  row.detector_confirmation_attempts = 2;
+  row.detector_confirmation_hits = 1;
   row.detector_timing = DetectorTiming{1.0F, 7.0F, 2.0F, 10.0F};
   row.detector_status = DetectorBatchStatus::kStale;
   row.pipeline_ms = 50.0F;
@@ -101,12 +108,17 @@ int main() {
         "detector_error", "detector_batch_frame_id", "detector_batch_age_ms",
         "detector_raw_candidate_count", "detector_filtered_candidate_count",
         "detector_verified_class_id", "detector_verified_confidence",
+        "detector_target_mode", "detector_candidate_id",
+        "detector_region_x", "detector_region_y", "detector_region_width",
+        "detector_region_height", "detector_candidate_locked",
+        "detector_probe_index", "detector_confirmation_attempts",
+        "detector_confirmation_hits",
         "detector_preprocess_ms", "detector_inference_ms",
         "detector_postprocess_ms", "detector_total_ms"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("3,", 0) == 0,
-              "tracking rows carry schema version 3 exactly once");
+  expect_true(encoded.rfind("4,", 0) == 0,
+              "tracking rows carry schema version 4 exactly once");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
               "detector errors escape commas, newlines, and quotes");
   expect_true(encoded.find("\"detector, timeout \"\"late\"\"\"") !=
@@ -141,9 +153,19 @@ int main() {
   runtime.plan.request_detector = true;
   runtime.plan.detector_candidate_class_id = 2;
   runtime.plan.detector_candidate_confidence = 0.91F;
+  runtime.plan.detector_target_mode = DetectorTargetMode::kSubtarget;
+  runtime.plan.detector_candidate_id = 88;
+  runtime.plan.detector_candidate_region = BBox{30, 40, 100, 80};
+  runtime.plan.detector_candidate_locked = true;
+  runtime.plan.detector_probe_index = 4;
   runtime.output.frame_id = 12;
   runtime.output.timestamp_ms = 440;
   runtime.output.detector_status = DetectorBatchStatus::kAccepted;
+  runtime.output.detector_candidate_id = 88;
+  runtime.output.detector_candidate_locked = true;
+  runtime.output.detector_probe_index = 4;
+  runtime.output.detector_confirmation_attempts = 3;
+  runtime.output.detector_confirmation_hits = 2;
   runtime.detector.configured = true;
   runtime.detector.ready = true;
   runtime.detector.request_submitted = true;
@@ -163,6 +185,14 @@ int main() {
                   mapped.detector_batch_age_ms == std::optional<std::int64_t>(67) &&
                   mapped.detector_verified_class_id == std::optional<int>(2) &&
                   mapped.detector_verified_confidence == std::optional<float>(0.91F) &&
+                  mapped.detector_target_mode == DetectorTargetMode::kSubtarget &&
+                  mapped.detector_candidate_id ==
+                      std::optional<std::uint64_t>(88) &&
+                  mapped.detector_candidate_region.has_value() &&
+                  mapped.detector_candidate_locked &&
+                  mapped.detector_probe_index == 4 &&
+                  mapped.detector_confirmation_attempts == 3 &&
+                  mapped.detector_confirmation_hits == 2 &&
                   mapped.detector_timing.total_ms == 7.0F,
               "runtime detector diagnostics and verified candidate are mapped");
 
@@ -175,6 +205,7 @@ int main() {
   metadata.controller_config_hash_algorithm = "fnv1a64";
   metadata.controller_config_hash = "controller-hash";
   metadata.sensor = "visible";
+  metadata.detector_target_mode = DetectorTargetMode::kSubtarget;
   metadata.source_fps = 30.0;
   metadata.frame_step_ms = 33;
   metadata.tracked_frames = 18;
@@ -199,7 +230,8 @@ int main() {
   metadata.detector.reject_count = 2;
   metadata.detector.error_count = 1;
   const std::string json = tracking_session_metadata_json(metadata);
-  expect_true(contains(json, "\"schema_version\": 3") &&
+  expect_true(contains(json, "\"schema_version\": 4") &&
+                  contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json, "\"enabled\": true") &&
                   contains(json, "\"calibrated\": false") &&
                   contains(json, "\"model_path\": \"models/yolov8.rknn\"") &&
@@ -217,7 +249,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v3 metadata exposes detector identity, tensors, versions, and counters");
+              "schema-v4 metadata exposes recovery mode, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

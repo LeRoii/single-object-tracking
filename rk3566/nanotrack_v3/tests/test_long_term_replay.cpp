@@ -182,6 +182,7 @@ int main() {
       2, 1100,
       {{distractor_box, 0.99F, 0}, {distractor_box, 0.98F, 0}}};
   same_class_distractor.finish_frame(detector_plan, {}, distractor_batch);
+  std::optional<std::uint64_t> previous_distractor_candidate;
   for (std::uint64_t frame = 3; frame <= 4; ++frame) {
     detector_plan = same_class_distractor.begin_frame(
         frame, 1140 + static_cast<std::int64_t>(frame - 3) * 40, false);
@@ -190,6 +191,12 @@ int main() {
         {reliable_for_plan(detector_plan, initial, frame)}, std::nullopt);
     expect_true(!output.accepted && !output.control_valid,
                 "same-class confidence cannot override failed template geometry");
+    if (previous_distractor_candidate) {
+      expect_true(detector_plan.detector_candidate_id !=
+                      previous_distractor_candidate,
+                  "failed same-class candidates retain distinct identities");
+    }
+    previous_distractor_candidate = detector_plan.detector_candidate_id;
   }
 
   LongTermController deformation(config);

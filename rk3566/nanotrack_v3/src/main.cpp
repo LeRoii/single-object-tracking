@@ -84,6 +84,13 @@ std::string builtin_config_identity(const nanotrack::ControllerConfig& config) {
          << config.reliable_apce << '|' << config.reliable_peak_margin << '|'
          << config.weak_score << '|' << config.weak_psr << '|'
          << config.weak_apce << '|' << config.weak_peak_margin << '|'
+         << nanotrack::to_string(config.detector_target_mode) << '|'
+         << config.detector_search_scale << '|'
+         << config.detector_subtarget_max_probes << '|'
+         << config.detector_confirmation_iou << '|'
+         << config.detector_confirmation_center_distance << '|'
+         << config.detector_confirmation_max_area_log_change << '|'
+         << config.detector_confirmation_max_aspect_log_change << '|'
          << config.uncertain_ms << '|' << config.local_recovery_ms << '|'
          << config.assisted_recovery_ms;
   return stream.str();
@@ -120,6 +127,7 @@ void write_session_metadata(const std::string& path,
   metadata.controller_config_hash = config_hash;
   metadata.sensor = config.sensor;
   metadata.calibrated = config.calibrated;
+  metadata.detector_target_mode = config.detector_target_mode;
   metadata.rknn_api_version = tracker.api_version();
   metadata.rknn_driver_version = tracker.driver_version();
   metadata.source_fps = finite_source_fps;
