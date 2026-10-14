@@ -1,7 +1,9 @@
 # RK3566 Detector Board Verification
 
-Verification date: 2026-10-14  
-Board release: `/home/cat/Project/SOT/nanotrack_v3_longterm/releases/rk3566-yolov8-detector`  
+Verification date: 2026-10-14
+
+Board release: `/home/cat/Project/SOT/nanotrack_v3_longterm/releases/rk3566-yolov8-detector`
+
 Acceptance root: `artifacts/20261014-acceptance`
 
 ## Platform and identities
