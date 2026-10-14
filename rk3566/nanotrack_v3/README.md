@@ -167,7 +167,22 @@ Use class `-1` to retain every detector class. Confidence and NMS values must
 be finite and strictly between zero and one. Supplying only part of the three
 detector-file set is rejected before model startup.
 
-For a retained run, verify source-coordinate boxes, schema-v3 metadata, model
+Detector recovery has two explicit controller modes:
+
+- `detector_target_mode=full_object` is the default for whole persons and
+  vehicles. A detector bbox is a provisional target hypothesis, but cannot
+  authorize control without agreeing anchor/recent NanoTrack evidence and
+  same-candidate 2-of-3 confirmation.
+- `detector_target_mode=subtarget` is for a face, vehicle part, or arbitrary
+  initial subtarget. The detector bbox is only a search region. Up to
+  `detector_subtarget_max_probes` bounded locations are checked while retaining
+  the last accepted subtarget width and height.
+
+Once a candidate produces agreeing NanoTrack evidence, its generated candidate
+id is locked for the three-frame confirmation window. Pending candidates and
+new detector batches cannot contribute confirmations to that lock.
+
+For a retained run, verify source-coordinate boxes, schema-v4 metadata, model
 hashes, detector state and output frame count with:
 
 ```bash
@@ -184,7 +199,7 @@ refer to the source/CSV coordinate system, not a downscaled preview video.
 
 ## Outputs and safety contract
 
-The schema-v3 CSV contains one row for initialization and one row for each
+The schema-v4 CSV contains one row for initialization and one row for each
 processed frame. It records:
 
 - monotonic timestamp, controller state, quality, `control_valid`, horizontal
@@ -196,6 +211,8 @@ processed frame. It records:
   identity, worker/error status, batch age, raw/filtered candidate counts,
   candidate class/confidence selected for NanoTrack verification, and segmented
   detector timing;
+- detector target mode, candidate id and region, probe index, lock state, and
+  confirmation attempt/hit counts;
 - tracker/runtime latency and full video-pipeline latency (decode, tracking,
   overlay, and encode).
 
@@ -206,7 +223,8 @@ contain a predicted box for visualization while remaining invalid for control.
 If `--session-metadata` is omitted, metadata is written next to the CSV as
 `OUTPUT.csv.metadata.json`. It records the model manifest fingerprint, RKNN
 API/driver versions, timing fallback, threshold identity, calibration marker,
-and latency summary. Schema-v3 metadata also has a detector section containing
+and latency summary. Schema-v4 metadata also records the detector target mode
+and has a detector section containing
 artifact paths and SHA-256 identities, tensor descriptions, detector RKNN
 API/driver versions, thresholds, `calibrated=false`, and request/completion/
 rejection/error counters. Disabled runs retain that section with
@@ -222,10 +240,11 @@ RK3566 board are board-performance evidence.
 
 Implement `DetectorAdapter` from `include/detector_adapter.hpp`. Requests carry
 `frame_id`, monotonic timestamp, ROI, and a maximum of three candidates.
-Returned candidates never overwrite the tracker box directly: the controller
-uses them as bounded search hypotheses and requires NanoTrack template
-verification plus 2-of-3 confirmation. Results older than 150 ms or not tied
-to a known request are rejected.
+In `full_object` mode a returned bbox can be a provisional target hypothesis;
+in `subtarget` mode it is only a search region and cannot replace subtarget
+geometry. In both modes the controller requires agreeing anchor/recent
+NanoTrack verification plus same-candidate 2-of-3 confirmation. Results older
+than 150 ms or not tied to a known request are rejected.
 
 ## Verified scope and known limitations
 
@@ -248,5 +267,8 @@ recovery:
   path still needs memory investigation;
 - measured FPS values are observations without a performance pass threshold.
 
-Only schema-v3 rows with `control_valid=1` are valid control outputs. Detector
+Only schema-v4 rows with `control_valid=1` are valid control outputs. Detector
 confidence never directly authorizes control.
+
+The remaining data, calibration, board, and optional ReID work is tracked in
+`docs/detector-recapture-todo.md`.
