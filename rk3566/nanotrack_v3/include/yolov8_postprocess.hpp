@@ -46,6 +46,17 @@ struct LetterboxTransform {
   float pad_y = 0.0F;
 };
 
+struct YoloV8DecodeResult {
+  std::vector<DetectorCandidate> candidates;
+  std::size_t raw_candidate_count = 0;
+  std::size_t filtered_candidate_count = 0;
+};
+
+YoloV8DecodeResult decode_yolov8_with_stats(
+    const std::vector<YoloV8ScaleTensors>& scales,
+    const YoloV8DecodeOptions& options,
+    const LetterboxTransform& transform);
+
 std::vector<DetectorCandidate> decode_yolov8(
     const std::vector<YoloV8ScaleTensors>& scales,
     const YoloV8DecodeOptions& options,

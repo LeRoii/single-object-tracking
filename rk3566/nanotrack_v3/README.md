@@ -23,6 +23,36 @@ cmake -S . -B build -DBUILD_TESTING=OFF -DENABLE_RKNN_RUNTIME=ON \
 cmake --build build -- -j2
 ```
 
+Deployments are versioned below the isolated long-term root and never replace
+the earlier `/home/cat/Project/SOT/nanotrack_v3` project or an existing release:
+
+```bash
+SSH_PORT=10022 SSH_CONTROL_PATH=/tmp/codex_rk_ctrl \
+  ./scripts/deploy_board.sh cat@127.0.0.1
+# default release:
+# /home/cat/Project/SOT/nanotrack_v3_longterm/releases/rk3566-yolov8-detector
+```
+
+Set `DEPLOY_RELEASE_NAME` to create a second immutable release. The script
+rejects an existing destination instead of updating it in place.
+
+Before the full tracker is run, the detector can be checked independently:
+
+```bash
+./build/yolo_detector_smoke \
+  --model models/yolov8n-rk3566-fp16.rknn \
+  --manifest models/detector-manifest.json \
+  --labels models/coco80.txt \
+  --image data/bus.jpg --conf 0.25 --nms 0.45 --class-id -1 \
+  --output-image artifacts/yolo-smoke.jpg \
+  --output-csv artifacts/yolo-smoke.csv
+```
+
+The smoke executable performs manifest, file-hash, target, input, output and
+class-contract validation before inference. It writes both an annotated image
+and a candidate CSV; an empty candidate list is valid, but missing output
+artifacts are not.
+
 ## Headless run
 
 ```bash

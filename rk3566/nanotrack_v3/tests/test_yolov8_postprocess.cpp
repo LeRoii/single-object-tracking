@@ -266,6 +266,12 @@ int main() {
   expect_true(nms_result.size() == 2 && nms_result[0].class_id == 0 &&
                   nms_result[1].class_id == 1,
               "NMS suppresses overlap per class but preserves another class");
+  const YoloV8DecodeResult counted =
+      decode_yolov8_with_stats(views(ranked, false), nms_options, identity);
+  expect_true(counted.raw_candidate_count == 3 &&
+                  counted.filtered_candidate_count == 2 &&
+                  counted.candidates.size() == 2,
+              "decoder reports pre-NMS and delivered candidate counts");
   nms_options.class_id = 1;
   nms_result = decode_yolov8(views(ranked, false), nms_options, identity);
   expect_true(nms_result.size() == 1 && nms_result[0].class_id == 1,

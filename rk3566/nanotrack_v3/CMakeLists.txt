@@ -44,6 +44,10 @@ target_include_directories(nanotrack_yolov8_postprocess PUBLIC ${CMAKE_CURRENT_S
 target_link_libraries(nanotrack_yolov8_postprocess PUBLIC nanotrack_math)
 target_compile_options(nanotrack_yolov8_postprocess PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(nanotrack_sha256 src/sha256.cpp)
+target_include_directories(nanotrack_sha256 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(nanotrack_sha256 PRIVATE -Wall -Wextra -Wpedantic)
+
 if(BUILD_TESTING)
   add_executable(test_tracker_math tests/test_tracker_math.cpp)
   target_link_libraries(test_tracker_math PRIVATE nanotrack_math)
@@ -80,6 +84,13 @@ if(BUILD_TESTING)
   add_executable(test_yolov8_postprocess tests/test_yolov8_postprocess.cpp)
   target_link_libraries(test_yolov8_postprocess PRIVATE nanotrack_yolov8_postprocess)
   add_test(NAME yolov8_postprocess COMMAND test_yolov8_postprocess)
+
+  add_executable(test_sha256 tests/test_sha256.cpp)
+  target_link_libraries(test_sha256 PRIVATE nanotrack_sha256)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+    target_link_libraries(test_sha256 PRIVATE stdc++fs)
+  endif()
+  add_test(NAME sha256 COMMAND test_sha256)
 endif()
 
 if(ENABLE_RKNN_RUNTIME)
@@ -97,10 +108,32 @@ if(ENABLE_RKNN_RUNTIME)
   target_link_libraries(nanotrack_runtime PUBLIC nanotrack_controller_support ${RKNN_LIBRARY} ${OpenCV_LIBS} dl)
   target_compile_options(nanotrack_runtime PRIVATE -Wall -Wextra -Wpedantic)
 
+  add_library(nanotrack_yolo_detector src/yolo_rknn_engine.cpp)
+  target_include_directories(nanotrack_yolo_detector
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${RKNN_INCLUDE_DIR} ${OpenCV_INCLUDE_DIRS}
+  )
+  target_link_libraries(nanotrack_yolo_detector
+    PUBLIC nanotrack_detector_adapter nanotrack_yolov8_postprocess
+           nanotrack_sha256 ${RKNN_LIBRARY} ${OpenCV_LIBS} dl
+  )
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+    target_link_libraries(nanotrack_yolo_detector PUBLIC stdc++fs)
+  endif()
+  target_compile_options(nanotrack_yolo_detector PRIVATE -Wall -Wextra -Wpedantic)
+
   add_executable(nanotrack_v3 src/main.cpp)
-  target_link_libraries(nanotrack_v3 PRIVATE nanotrack_cli nanotrack_runtime ${OpenCV_LIBS})
+  target_link_libraries(nanotrack_v3
+    PRIVATE nanotrack_cli nanotrack_runtime nanotrack_yolo_detector
+            nanotrack_detector_adapter ${OpenCV_LIBS}
+  )
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
     target_link_libraries(nanotrack_v3 PRIVATE stdc++fs)
   endif()
   target_compile_options(nanotrack_v3 PRIVATE -Wall -Wextra -Wpedantic)
+
+  add_executable(yolo_detector_smoke src/yolo_detector_smoke.cpp)
+  target_link_libraries(yolo_detector_smoke
+    PRIVATE nanotrack_yolo_detector ${OpenCV_LIBS}
+  )
+  target_compile_options(yolo_detector_smoke PRIVATE -Wall -Wextra -Wpedantic)
 endif()

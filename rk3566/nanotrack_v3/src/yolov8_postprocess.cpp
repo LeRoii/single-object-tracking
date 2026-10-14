@@ -330,7 +330,7 @@ std::vector<ValidatedScale> validate_scales(
 
 }  // namespace
 
-std::vector<DetectorCandidate> decode_yolov8(
+YoloV8DecodeResult decode_yolov8_with_stats(
     const std::vector<YoloV8ScaleTensors>& scales,
     const YoloV8DecodeOptions& options,
     const LetterboxTransform& transform) {
@@ -432,7 +432,18 @@ std::vector<DetectorCandidate> decode_yolov8(
       if (kept.size() == options.max_candidates) break;
     }
   }
-  return kept;
+  YoloV8DecodeResult result;
+  result.raw_candidate_count = candidates.size();
+  result.filtered_candidate_count = kept.size();
+  result.candidates = std::move(kept);
+  return result;
+}
+
+std::vector<DetectorCandidate> decode_yolov8(
+    const std::vector<YoloV8ScaleTensors>& scales,
+    const YoloV8DecodeOptions& options,
+    const LetterboxTransform& transform) {
+  return decode_yolov8_with_stats(scales, options, transform).candidates;
 }
 
 }  // namespace nanotrack

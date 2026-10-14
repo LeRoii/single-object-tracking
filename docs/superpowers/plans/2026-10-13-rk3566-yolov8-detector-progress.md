@@ -46,14 +46,26 @@
 - 官方 COCO 标签为 621 字节、80 行，SHA-256 `bd17f1ee35d5f3c862a4894605855abbb9dda4b0621fdb0ac4c2c8c7bb7e730a`。
 - RK3566 FP16 转换成功：最终保留 RKNN 8,097,993 字节，SHA-256 `4d53a9b1e12996556294be8e099fe2dc0815d5c9cfdc327edfe350832baf8cf6`；完整日志 84,868 字节，SHA-256 `ab45cbe6eb167d626bf9cefc182b2c3972cbd3c8b129ade24b9d1535032be3cb`。
 - 生成 manifest 校验通过；RKNN 内嵌元数据可见 `target_platform:["rk3566"]`、版本 2.3.2、一个 640×640 输入和 9 个预期输出。这里只证明转换产物，不等同于板端推理。
+- Task 6 主机逻辑构建及 CTest 10/10 通过；使用板端 RKNN Runtime 2.3.2 真实头文件对 engine、smoke 和 main 完成语法检查。
+- Task 6 第一次板端构建在 GCC 8.3 的 `std::filesystem` 链接处 RED（缺失 `stdc++fs`）；添加旧 GCC 条件链接后原生构建 GREEN。
+- Task 6 第一次模型启动在错误的 NCHW 输入假设处被严格契约检查拒绝；真实模型属性为 `1×640×640×3 FP16 NHWC`。修正为实际 NHWC 内部张量验证后，保留外部 `UINT8 NHWC RGB` 提交契约，真实推理 GREEN。
 
 ## 开发板证据
 
-待执行。
+- 隔离发布目录：`/home/cat/Project/SOT/nanotrack_v3_longterm/releases/rk3566-yolov8-detector`；未修改 `/home/cat/Project/SOT/nanotrack_v3`，也未覆盖已有长期跟踪目录。
+- 板卡：`lubancat`，AArch64，Linux `4.19.232`，内存 3,990,208 kB，验证时可用 3,628,296 kB；根分区 29 GiB，验证时剩余 20 GiB。
+- 编译器 GCC 8.3.0，OpenCV 4.10.0，RKNN API `2.3.2 (429f97ae6b@2025-04-09T09:09:27)`，driver `0.8.2`。
+- 板端干净配置并原生构建成功；进入构建目录执行完整 CTest 10/10 通过。板端旧 CTest 不支持 `--test-dir`，因此最终证据采用 `cd build-board-yolo && ctest --output-on-failure`。
+- `ldd` 确认两个 AArch64 ELF 均解析到 `/home/cat/ThirdParty/OpenCV4100/lib/libopencv_world.so.410` 与 `/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so`，没有 `not found`。
+- 真实视频帧 smoke 推理成功：2 个 `person` 候选，置信度 0.948730/0.937012；raw=20、filtered=2；单次 preprocess=19.475 ms、inference=190.856 ms、postprocess=44.834 ms、total=255.165 ms。该值只是一帧功能证据，不设性能门槛。
 
 ## 工件
 
-待执行。
+- 板端 `nanotrack_v3`：SHA-256 `9a16f4a8a0eaa3dbaea9d2c7150f9e1585743def9be1e47a64aa702089e1480e`。
+- 板端 `yolo_detector_smoke`：SHA-256 `47a54eb7713f1fb54b44a2ae892bb43b6a0a7ce75a8071a0cdc6f7f3482eaba1`。
+- smoke 输入：`artifacts/task6-smoke/input.jpg`，SHA-256 `cdda98096936407912313796db1aa44801a58c224c547e6238fe66c65e350a42`。
+- smoke 标注图：`artifacts/task6-smoke/output.jpg`，SHA-256 `957aa3f6a79b9501865dd4205968db78ad76f3259ce6bef2241c50b7bb791eb6`。
+- smoke 候选：`artifacts/task6-smoke/candidates.csv`，SHA-256 `53fc2666a47a479283b067a30702ca480adb662f2c856930b67898e19203e305`。
 
 ## 偏差与裁决
 
@@ -65,9 +77,11 @@
 - 本独立实现保留已批准的 letterbox pad=114；官方当前 Python 示例因 RGA 初始化路径使用黑色 padding。两者可能令边缘输出略有差异，必须以板端 smoke 的候选合理性作为后续验证门槛。
 - 相同声明输入的第二次 Toolkit2 转换得到相同文件大小但不同 RKNN SHA-256，因此不宣称序列化字节级确定性；manifest 始终绑定最终保留产物，任何重建都必须重新生成并复核哈希。
 - 当前托管环境不支持 ptrace 下的 LeakSanitizer；本阶段保留 ASAN/UBSAN，并由析构 join 测试覆盖线程生命周期，LSan 证据缺失明确保留。
+- 板端系统时钟停留在 2019，部署文件时间来自 2026，GNU Make 会报告 clock skew 并保守重建；本次使用干净构建且产物/测试/推理均已核验，但量产环境应同步系统时钟。
+- 原计划指定固定长期目录；该目录已有本工程之前的部署。为避免破坏或覆盖，当前版本放入其 `releases/rk3566-yolov8-detector` 子目录。
 
 ## 未解决风险
 
-- RKNN-Toolkit2 2.3.2 的导入和模型转换尚未在本次执行中验证。
-- detector 模型尚未在 RK3566 上执行真实推理。
+- generic COCO detector 尚未做业务域阈值标定，`calibrated=false` 保持不变。
+- 单帧 smoke 已证明模型加载和真实推理；视频集成、恢复正确性、detector-disabled 回归和 10 分钟稳定性仍需 Task 8。
 - Toolkit 转换日志包含部分常量空 tensor 与默认 float16 qtype 警告；转换成功且产物契约通过，但其板端影响仍需 Task 6/8 实测。

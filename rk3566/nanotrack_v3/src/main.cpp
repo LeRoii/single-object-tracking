@@ -5,6 +5,8 @@
 #include "nanotrack_v3.hpp"
 #include "tracker_math.hpp"
 #include "tracking_log.hpp"
+#include "yolo_detector_adapter.hpp"
+#include "yolo_rknn_engine.hpp"
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
@@ -17,6 +19,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -187,8 +190,25 @@ int main(int argc, char** argv) {
     boxes << nanotrack::tracking_csv_header() << '\n';
 
     nanotrack::NanoTrackV3 tracker(options.model_dir);
-    nanotrack::NullDetectorAdapter detector;
-    nanotrack::LongTermRuntime runtime(controller_config, tracker, detector);
+    std::unique_ptr<nanotrack::DetectorAdapter> detector;
+    nanotrack::YoloRknnEngine* yolo_engine = nullptr;
+    if (options.detector_model.empty()) {
+      detector = std::make_unique<nanotrack::NullDetectorAdapter>();
+    } else {
+      nanotrack::YoloRknnEngineConfig detector_config;
+      detector_config.model_path = options.detector_model;
+      detector_config.manifest_path = options.detector_manifest;
+      detector_config.labels_path = options.detector_labels;
+      detector_config.class_id = options.detector_class_id;
+      detector_config.confidence_threshold = options.detector_confidence;
+      detector_config.nms_threshold = options.detector_nms;
+      auto engine =
+          std::make_unique<nanotrack::YoloRknnEngine>(detector_config);
+      yolo_engine = engine.get();
+      detector = std::make_unique<nanotrack::YoloDetectorAdapter>(
+          std::move(engine));
+    }
+    nanotrack::LongTermRuntime runtime(controller_config, tracker, *detector);
     runtime.initialize(image_view(frame), options.bbox, options.start_frame,
                        initial_timestamp);
 
@@ -232,14 +252,18 @@ int main(int argc, char** argv) {
     initial_output.accepted = true;
     boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
                  options.start_frame, initial_timestamp, options.bbox,
-                 detector.available(),
-                 detector.available() && detector.can_submit()))
+                 detector->available(),
+                 detector->available() && detector->can_submit()))
           << '\n';
     write_annotated(frame, options.bbox, initial_output);
 
     std::vector<float> runtime_latencies;
     std::vector<float> pipeline_latencies;
     std::vector<float> tracker_latencies;
+    std::size_t detector_request_count = 0;
+    std::size_t detector_complete_count = 0;
+    std::size_t detector_reject_count = 0;
+    std::size_t detector_error_count = 0;
     std::size_t tracked_count = 0;
     std::size_t source_frame = options.start_frame;
     while (source_frame < options.end_frame &&
@@ -251,6 +275,15 @@ int main(int argc, char** argv) {
           video_clock.next(capture.get(cv::CAP_PROP_POS_MSEC));
       const nanotrack::RuntimeFrameResult result =
           runtime.process_frame(image_view(frame), source_frame, timestamp_ms);
+      if (result.detector.request_submitted) ++detector_request_count;
+      if (result.detector.batch_received) {
+        ++detector_complete_count;
+        if (result.output.detector_status !=
+            nanotrack::DetectorBatchStatus::kAccepted) {
+          ++detector_reject_count;
+        }
+      }
+      if (!result.detector.error.empty()) ++detector_error_count;
       if (!std::isfinite(result.runtime_ms) || result.runtime_ms <= 0.0F ||
           !std::isfinite(result.tracker_ms) || result.tracker_ms <= 0.0F) {
         throw std::runtime_error("measured tracking latency is invalid");
@@ -284,7 +317,7 @@ int main(int argc, char** argv) {
     const nanotrack::LatencySummary latency =
         nanotrack::summarize_latencies(runtime_latencies, pipeline_latencies);
     nanotrack::DetectorSessionMetadata detector_metadata;
-    detector_metadata.enabled = !options.detector_model.empty();
+    detector_metadata.enabled = yolo_engine != nullptr;
     detector_metadata.calibrated = false;
     detector_metadata.model_path = options.detector_model;
     detector_metadata.manifest_path = options.detector_manifest;
@@ -292,6 +325,21 @@ int main(int argc, char** argv) {
     detector_metadata.class_id = options.detector_class_id;
     detector_metadata.confidence_threshold = options.detector_confidence;
     detector_metadata.nms_threshold = options.detector_nms;
+    detector_metadata.request_count = detector_request_count;
+    detector_metadata.complete_count = detector_complete_count;
+    detector_metadata.reject_count = detector_reject_count;
+    detector_metadata.error_count = detector_error_count;
+    if (yolo_engine != nullptr) {
+      detector_metadata.model_sha256 = yolo_engine->model_sha256();
+      detector_metadata.manifest_sha256 = yolo_engine->manifest_sha256();
+      detector_metadata.labels_sha256 = yolo_engine->labels_sha256();
+      detector_metadata.input_tensor_description =
+          yolo_engine->input_tensor_description();
+      detector_metadata.output_tensor_descriptions =
+          yolo_engine->output_tensor_descriptions();
+      detector_metadata.rknn_api_version = yolo_engine->api_version();
+      detector_metadata.rknn_driver_version = yolo_engine->driver_version();
+    }
     const std::string metadata_path =
         options.session_metadata.empty()
             ? options.output_boxes + ".metadata.json"
