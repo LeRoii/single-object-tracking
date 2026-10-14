@@ -173,8 +173,9 @@ The controls are:
 - `Space`: toggle continuous playback at the source video frame period (or a
   30 FPS fallback when the source does not report a valid FPS);
 - `R`: pause and select an ROI on the currently displayed source frame;
-- `Q` or `Esc`: quit. While the ROI selector is active, `Esc` cancels that
-  selection and returns to the paused player.
+- `Q` or `Esc`: quit. While the ROI selector is active, `Esc` or `C` cancels
+  that selection and returns to the paused player; `Enter` or `Space` confirms
+  the drawn ROI.
 
 Before the first ROI is accepted, video navigation does not invoke NanoTrack
 and does not write tracking rows. The first accepted ROI initializes the

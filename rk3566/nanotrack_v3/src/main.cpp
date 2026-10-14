@@ -107,6 +107,82 @@ cv::Mat render_interactive(const cv::Mat& source,
   return rendered;
 }
 
+bool window_visible(const std::string& window_name) noexcept {
+  try {
+    return cv::getWindowProperty(window_name, cv::WND_PROP_VISIBLE) >= 1.0;
+  } catch (const cv::Exception&) {
+    return false;
+  }
+}
+
+void destroy_window(const std::string& window_name) noexcept {
+  try {
+    cv::destroyWindow(window_name);
+  } catch (const cv::Exception&) {
+  }
+}
+
+void roi_mouse_callback(int event, int x, int y, int, void* userdata) {
+  auto* selection = static_cast<nanotrack::InteractiveRoiSelection*>(userdata);
+  if (selection == nullptr) return;
+  switch (event) {
+    case cv::EVENT_LBUTTONDOWN:
+      selection->handle_mouse(nanotrack::RoiMouseEvent::kDown, x, y);
+      break;
+    case cv::EVENT_MOUSEMOVE:
+      selection->handle_mouse(nanotrack::RoiMouseEvent::kMove, x, y);
+      break;
+    case cv::EVENT_LBUTTONUP:
+      selection->handle_mouse(nanotrack::RoiMouseEvent::kUp, x, y);
+      break;
+    default: break;
+  }
+}
+
+struct RoiSelectionResult {
+  std::optional<nanotrack::BBox> bbox;
+  bool window_closed = false;
+};
+
+RoiSelectionResult select_target_roi(const std::string& window_name,
+                                     const cv::Mat& frame) {
+  nanotrack::InteractiveRoiSelection selection(frame.cols, frame.rows);
+  cv::setMouseCallback(window_name, roi_mouse_callback, &selection);
+  while (!selection.finished()) {
+    cv::Mat rendered = frame.clone();
+    if (const auto rectangle = selection.current_rect()) {
+      cv::rectangle(rendered,
+                    cv::Rect(rectangle->x, rectangle->y, rectangle->width,
+                             rectangle->height),
+                    cv::Scalar(0, 255, 255), 2);
+    }
+    cv::rectangle(rendered, cv::Rect(0, 0, rendered.cols, 30),
+                  cv::Scalar(0, 0, 0), cv::FILLED);
+    cv::putText(rendered, "Drag ROI, Enter/Space: confirm, Esc/C: cancel",
+                cv::Point(12, 22), cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+    cv::imshow(window_name, rendered);
+    const int key = cv::waitKeyEx(20);
+    if (!window_visible(window_name)) {
+      return RoiSelectionResult{std::nullopt, true};
+    }
+    selection.handle_key(key);
+  }
+  try {
+    cv::setMouseCallback(window_name, nullptr, nullptr);
+  } catch (const cv::Exception&) {
+  }
+  if (const auto rectangle = selection.confirmed_rect()) {
+    return RoiSelectionResult{
+        nanotrack::BBox{static_cast<float>(rectangle->x),
+                        static_cast<float>(rectangle->y),
+                        static_cast<float>(rectangle->width),
+                        static_cast<float>(rectangle->height)},
+        false};
+  }
+  return RoiSelectionResult{};
+}
+
 std::string fnv1a64_file(const std::filesystem::path& path) {
   std::ifstream stream(path, std::ios::binary);
   if (!stream) throw std::runtime_error("cannot hash file: " + path.string());
@@ -250,13 +326,9 @@ int main(int argc, char** argv) {
         options.output_width > 0 ? options.output_width : frame.cols;
     const int output_height =
         options.output_height > 0 ? options.output_height : frame.rows;
-    cv::VideoWriter writer(options.output_video,
-                           cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
-                           output_fps, cv::Size(output_width, output_height));
-    if (!writer.isOpened()) throw std::runtime_error("cannot open output video writer");
-    std::ofstream boxes(options.output_boxes);
-    if (!boxes) throw std::runtime_error("cannot open output CSV");
-    boxes << nanotrack::tracking_csv_header() << '\n';
+    cv::VideoWriter writer;
+    std::ofstream boxes;
+    bool outputs_open = false;
 
     nanotrack::NanoTrackV3 tracker(options.model_dir);
     std::unique_ptr<nanotrack::DetectorAdapter> detector;
@@ -303,6 +375,16 @@ int main(int argc, char** argv) {
       initial_output.accepted = true;
       displayed_output = initial_output;
       if (!initialized) {
+        writer.open(options.output_video,
+                    cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), output_fps,
+                    cv::Size(output_width, output_height));
+        if (!writer.isOpened()) {
+          throw std::runtime_error("cannot open output video writer");
+        }
+        boxes.open(options.output_boxes);
+        if (!boxes) throw std::runtime_error("cannot open output CSV");
+        boxes << nanotrack::tracking_csv_header() << '\n';
+        outputs_open = true;
         boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
                      source_frame, timestamp_ms, bbox, detector->available(),
                      detector->available() && detector->can_submit(),
@@ -328,7 +410,10 @@ int main(int argc, char** argv) {
                    "R(select/reset), Q/Esc(quit)\n";
     }
 
-    while (!options.max_frames || tracked_count < options.max_frames) {
+    while (true) {
+      const bool frame_limit_reached =
+          options.max_frames && tracked_count >= options.max_frames;
+      if (!options.interactive && frame_limit_reached) break;
       bool advance = !options.interactive;
       if (options.interactive) {
         cv::imshow(kInteractiveWindow,
@@ -337,21 +422,14 @@ int main(int argc, char** argv) {
         const int key = cv::waitKeyEx(nanotrack::interactive_wait_delay_ms(
             playback.playing(), source_fps));
         advance = playback.handle_key(key);
-        if (cv::getWindowProperty(kInteractiveWindow, cv::WND_PROP_VISIBLE) <
-            1.0) {
-          break;
-        }
+        if (!window_visible(kInteractiveWindow)) break;
         if (playback.take_selection_request()) {
-          const cv::Rect selected =
-              cv::selectROI(kInteractiveWindow, frame, false, false);
-          if (selected.width > 0 && selected.height > 0) {
-            const nanotrack::BBox selected_bbox{
-                static_cast<float>(selected.x),
-                static_cast<float>(selected.y),
-                static_cast<float>(selected.width),
-                static_cast<float>(selected.height)};
-            nanotrack::validate_bbox(selected_bbox, frame.cols, frame.rows);
-            initialize_target(selected_bbox);
+          const RoiSelectionResult selection =
+              select_target_roi(kInteractiveWindow, frame);
+          if (selection.window_closed) break;
+          if (selection.bbox) {
+            nanotrack::validate_bbox(*selection.bbox, frame.cols, frame.rows);
+            initialize_target(*selection.bbox);
           } else {
             std::cout << "ROI_SELECTION_CANCELLED frame=" << source_frame
                       << '\n';
@@ -360,6 +438,10 @@ int main(int argc, char** argv) {
         }
         if (playback.quit_requested()) break;
         if (!advance) continue;
+        if (frame_limit_reached) {
+          playback.pause();
+          continue;
+        }
       }
       if (source_frame >= options.end_frame) break;
       const auto pipeline_start = std::chrono::steady_clock::now();
@@ -404,9 +486,11 @@ int main(int argc, char** argv) {
       log_row.pipeline_ms = pipeline_ms;
       boxes << nanotrack::tracking_csv_row(log_row) << '\n';
     }
-    if (options.interactive) cv::destroyWindow(kInteractiveWindow);
-    writer.release();
-    boxes.close();
+    if (options.interactive) destroy_window(kInteractiveWindow);
+    if (outputs_open) {
+      writer.release();
+      boxes.close();
+    }
     if (!initialized) {
       std::cout << "SUMMARY tracked_frames=0 initialized=0\n";
       return 0;

@@ -62,12 +62,54 @@ int main() {
   expect_true(!playback.handle_key('q') && playback.quit_requested(),
               "quit stops advancement and records exit request");
 
+  InteractivePlayback limited_playback;
+  limited_playback.handle_key(' ');
+  limited_playback.pause();
+  expect_true(!limited_playback.playing(),
+              "a decode limit can pause continuous playback on its last frame");
+
   expect_true(interactive_wait_delay_ms(false, 30.0) == 0,
               "paused playback blocks for a key");
   expect_true(interactive_wait_delay_ms(true, 25.0) == 40,
               "continuous playback uses source frame period");
   expect_true(interactive_wait_delay_ms(true, 0.0) == 33,
               "invalid source FPS uses 30 FPS fallback");
+
+  InteractiveRoiSelection cancelled(100, 80);
+  cancelled.handle_mouse(RoiMouseEvent::kDown, 10, 15);
+  cancelled.handle_mouse(RoiMouseEvent::kMove, 50, 45);
+  cancelled.handle_mouse(RoiMouseEvent::kUp, 50, 45);
+  expect_true(cancelled.current_rect().has_value(),
+              "completed drag exposes a pending rectangle");
+  cancelled.handle_key(27);
+  expect_true(cancelled.cancelled() && !cancelled.confirmed_rect().has_value(),
+              "escape cancels even after a non-empty rectangle was drawn");
+
+  InteractiveRoiSelection confirmed(100, 80);
+  confirmed.handle_mouse(RoiMouseEvent::kDown, 70, 60);
+  confirmed.handle_mouse(RoiMouseEvent::kMove, 20, 10);
+  confirmed.handle_mouse(RoiMouseEvent::kUp, 20, 10);
+  confirmed.handle_key(13);
+  const auto confirmed_rect = confirmed.confirmed_rect();
+  expect_true(confirmed_rect.has_value() && confirmed_rect->x == 20 &&
+                  confirmed_rect->y == 10 && confirmed_rect->width == 50 &&
+                  confirmed_rect->height == 50,
+              "enter confirms a normalized reverse-drag rectangle");
+
+  InteractiveRoiSelection clipped(100, 80);
+  clipped.handle_mouse(RoiMouseEvent::kDown, -10, -20);
+  clipped.handle_mouse(RoiMouseEvent::kUp, 130, 95);
+  clipped.handle_key(' ');
+  const auto clipped_rect = clipped.confirmed_rect();
+  expect_true(clipped_rect.has_value() && clipped_rect->x == 0 &&
+                  clipped_rect->y == 0 && clipped_rect->width == 99 &&
+                  clipped_rect->height == 79,
+              "mouse coordinates are clipped to source-frame boundaries");
+
+  InteractiveRoiSelection empty(100, 80);
+  empty.handle_key(13);
+  expect_true(!empty.finished() && !empty.confirmed_rect().has_value(),
+              "confirm without a non-empty drag keeps selection active");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";
