@@ -22,6 +22,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_L
 endif()
 target_compile_options(nanotrack_cli PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(nanotrack_interactive_control src/interactive_control.cpp)
+target_include_directories(nanotrack_interactive_control
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_options(nanotrack_interactive_control PRIVATE -Wall -Wextra -Wpedantic)
+
 add_library(nanotrack_controller_support
   src/controller_config.cpp
   src/long_term_controller.cpp
@@ -56,6 +62,10 @@ if(BUILD_TESTING)
   add_executable(test_cli tests/test_cli.cpp)
   target_link_libraries(test_cli PRIVATE nanotrack_cli)
   add_test(NAME cli COMMAND test_cli)
+
+  add_executable(test_interactive_control tests/test_interactive_control.cpp)
+  target_link_libraries(test_interactive_control PRIVATE nanotrack_interactive_control)
+  add_test(NAME interactive_control COMMAND test_interactive_control)
 
   add_executable(test_controller_support tests/test_controller_support.cpp)
   target_link_libraries(test_controller_support PRIVATE nanotrack_controller_support)
@@ -107,7 +117,7 @@ if(ENABLE_RKNN_RUNTIME)
   if(NOT DEFINED RKNN_INCLUDE_DIR OR NOT DEFINED RKNN_LIBRARY)
     message(FATAL_ERROR "Set RKNN_INCLUDE_DIR and RKNN_LIBRARY")
   endif()
-  find_package(OpenCV REQUIRED)
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio highgui)
   add_library(nanotrack_runtime
     src/rknn_model.cpp
     src/nanotrack_v3.cpp
@@ -134,7 +144,7 @@ if(ENABLE_RKNN_RUNTIME)
   add_executable(nanotrack_v3 src/main.cpp)
   target_link_libraries(nanotrack_v3
     PRIVATE nanotrack_cli nanotrack_runtime nanotrack_yolo_detector
-            nanotrack_detector_adapter ${OpenCV_LIBS}
+            nanotrack_detector_adapter nanotrack_interactive_control ${OpenCV_LIBS}
   )
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
     target_link_libraries(nanotrack_v3 PRIVATE stdc++fs)

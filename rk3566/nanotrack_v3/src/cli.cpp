@@ -75,9 +75,10 @@ float parse_open_unit(const std::string& text, const char* option) {
 
 std::string usage() {
   return
-      "Usage: nanotrack_v3 --video VIDEO --bbox X,Y,W,H --model-dir DIR "
+      "Usage: nanotrack_v3 --video VIDEO [--bbox X,Y,W,H] --model-dir DIR "
       "--output-video OUTPUT.avi --output-boxes OUTPUT.csv [--max-frames N] "
       "[--start-frame N --end-frame N] [--output-size WIDTHxHEIGHT] "
+      "[--interactive] "
       "[--sensor visible|infrared] [--controller-config FILE] "
       "[--session-metadata FILE] "
       "[--detector-model MODEL.rknn --detector-manifest MANIFEST.json "
@@ -92,10 +93,20 @@ Options parse_options(const std::vector<std::string>& arguments) {
     return options;
   }
   std::unordered_map<std::string, std::string> values;
+  bool interactive_seen = false;
   for (std::size_t index = 1; index < arguments.size();) {
     const std::string& option = arguments[index];
     if (option == "--help") {
       throw std::invalid_argument("--help must be used alone");
+    }
+    if (option == "--interactive") {
+      if (interactive_seen) {
+        throw std::invalid_argument("duplicate option: --interactive");
+      }
+      interactive_seen = true;
+      options.interactive = true;
+      ++index;
+      continue;
     }
     if (option != "--video" && option != "--bbox" && option != "--model-dir" &&
         option != "--output-video" && option != "--output-boxes" &&
@@ -117,15 +128,22 @@ Options parse_options(const std::vector<std::string>& arguments) {
     index += 2;
   }
 
-  const char* required[] = {"--video", "--bbox", "--model-dir", "--output-video",
+  const char* required[] = {"--video", "--model-dir", "--output-video",
                             "--output-boxes"};
   for (const char* option : required) {
     if (values.find(option) == values.end()) {
       throw std::invalid_argument(std::string("missing required option: ") + option);
     }
   }
+  if (!options.interactive && values.find("--bbox") == values.end()) {
+    throw std::invalid_argument("missing required option: --bbox");
+  }
   options.video = values.at("--video");
-  options.bbox = parse_bbox(values.at("--bbox"));
+  const auto bbox = values.find("--bbox");
+  if (bbox != values.end()) {
+    options.bbox = parse_bbox(bbox->second);
+    options.has_bbox = true;
+  }
   options.model_dir = values.at("--model-dir");
   options.output_video = values.at("--output-video");
   options.output_boxes = values.at("--output-boxes");

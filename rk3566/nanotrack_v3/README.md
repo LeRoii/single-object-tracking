@@ -145,6 +145,52 @@ configuration-explicit run is:
 `--sensor infrared` must be paired with an infrared config. The program fails
 if the CLI modality and config modality disagree.
 
+## RK3566 interactive debug run
+
+The interactive mode is intended for a development board with a local desktop,
+display, keyboard, and mouse. It requires an OpenCV build with the `highgui`
+component and a valid GUI environment such as `DISPLAY=:0`. The headless mode
+above is unchanged.
+
+Start without `--bbox` to pause on `--start-frame` and choose the target later:
+
+```bash
+export DISPLAY=:0
+./build/nanotrack_v3 \
+  --video "$TRACKER_TEST_VIDEO" \
+  --interactive \
+  --model-dir models \
+  --sensor visible \
+  --controller-config config/visible-default.conf \
+  --output-video artifacts/interactive-output.avi \
+  --output-boxes artifacts/interactive-boxes.csv
+```
+
+The controls are:
+
+- `N` or Right Arrow: decode and process exactly one next frame, then remain
+  paused;
+- `Space`: toggle continuous playback at the source video frame period (or a
+  30 FPS fallback when the source does not report a valid FPS);
+- `R`: pause and select an ROI on the currently displayed source frame;
+- `Q` or `Esc`: quit. While the ROI selector is active, `Esc` cancels that
+  selection and returns to the paused player.
+
+Before the first ROI is accepted, video navigation does not invoke NanoTrack
+and does not write tracking rows. The first accepted ROI initializes the
+tracker and starts the output video/CSV at that source frame. Pressing `R`
+again resets the anchor/recent templates, motion state, recovery state, and
+detector confirmation state at the current frame. A reset is printed as an
+`INITIALIZED` console line; it does not duplicate that already-written source
+frame in the CSV or output video. The following frame is tracked from the new
+ROI.
+
+Supplying both `--interactive` and `--bbox X,Y,W,H` initializes immediately at
+`--start-frame`, while retaining pause, step, play, and re-selection controls.
+Manually selected boxes are explicit operator initialization; detector boxes
+remain provisional hypotheses and still cannot directly produce
+`control_valid=1`.
+
 To enable detector-assisted recovery, supply the model, manifest, and labels as
 one all-or-none set. The thresholds below are uncalibrated bring-up defaults:
 

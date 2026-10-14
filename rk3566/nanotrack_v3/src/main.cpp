@@ -1,6 +1,7 @@
 #include "cli.hpp"
 #include "controller_config.hpp"
 #include "detector_adapter.hpp"
+#include "interactive_control.hpp"
 #include "long_term_runtime.hpp"
 #include "nanotrack_v3.hpp"
 #include "tracker_math.hpp"
@@ -8,6 +9,7 @@
 #include "yolo_detector_adapter.hpp"
 #include "yolo_rknn_engine.hpp"
 
+#include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
@@ -21,6 +23,7 @@
 #include <iostream>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -46,6 +49,62 @@ cv::Scalar state_color(const nanotrack::ControllerOutput& output) {
     case nanotrack::TrackingMode::kLost: return cv::Scalar(0, 0, 255);
   }
   return cv::Scalar(0, 0, 255);
+}
+
+cv::Mat render_annotated(const cv::Mat& source,
+                         const nanotrack::BBox& bbox,
+                         const nanotrack::ControllerOutput& output,
+                         int output_width,
+                         int output_height) {
+  cv::Mat rendered;
+  if (source.cols != output_width || source.rows != output_height) {
+    cv::resize(source, rendered, cv::Size(output_width, output_height), 0.0,
+               0.0, cv::INTER_AREA);
+  } else {
+    rendered = source.clone();
+  }
+  const float scale_x = static_cast<float>(output_width) / source.cols;
+  const float scale_y = static_cast<float>(output_height) / source.rows;
+  const cv::Rect rectangle(
+      static_cast<int>(std::lround(bbox.x * scale_x)),
+      static_cast<int>(std::lround(bbox.y * scale_y)),
+      std::max(1, static_cast<int>(std::lround(bbox.width * scale_x))),
+      std::max(1, static_cast<int>(std::lround(bbox.height * scale_y))));
+  const cv::Scalar color = state_color(output);
+  cv::rectangle(rendered, rectangle, color, 2);
+  const std::string label =
+      std::string(nanotrack::to_string(output.mode)) + " " +
+      nanotrack::to_string(output.quality) +
+      (output.control_valid ? " CTRL" : " NO_CTRL");
+  cv::putText(rendered, label,
+              cv::Point(std::max(0, rectangle.x),
+                        std::max(18, rectangle.y - 6)),
+              cv::FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv::LINE_AA);
+  return rendered;
+}
+
+cv::Mat render_interactive(const cv::Mat& source,
+                           const std::optional<nanotrack::ControllerOutput>& output,
+                           std::size_t frame_id,
+                           bool playing) {
+  cv::Mat rendered = output
+                         ? render_annotated(source, output->bbox, *output,
+                                            source.cols, source.rows)
+                         : source.clone();
+  const std::string status =
+      "frame=" + std::to_string(frame_id) +
+      (playing ? " PLAY" : " PAUSE") +
+      (output ? "" : " NO_TARGET");
+  cv::rectangle(rendered, cv::Rect(0, 0, rendered.cols, 58),
+                cv::Scalar(0, 0, 0), cv::FILLED);
+  cv::putText(rendered, status, cv::Point(12, 23),
+              cv::FONT_HERSHEY_SIMPLEX, 0.60, cv::Scalar(0, 255, 255), 2,
+              cv::LINE_AA);
+  cv::putText(rendered,
+              "N/Right: step  Space: play/pause  R: select/reset  Q/Esc: quit",
+              cv::Point(12, 49), cv::FONT_HERSHEY_SIMPLEX, 0.52,
+              cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+  return rendered;
 }
 
 std::string fnv1a64_file(const std::filesystem::path& path) {
@@ -177,11 +236,13 @@ int main(int argc, char** argv) {
     if (!capture.read(frame) || frame.empty()) {
       throw std::runtime_error("input video has no decodable start frame");
     }
-    nanotrack::validate_bbox(options.bbox, frame.cols, frame.rows);
+    if (options.has_bbox) {
+      nanotrack::validate_bbox(options.bbox, frame.cols, frame.rows);
+    }
 
     const double source_fps = capture.get(cv::CAP_PROP_FPS);
     nanotrack::MonotonicVideoClock video_clock(source_fps);
-    const std::int64_t initial_timestamp =
+    std::int64_t timestamp_ms =
         video_clock.next(capture.get(cv::CAP_PROP_POS_MSEC));
     const double output_fps =
         std::isfinite(source_fps) && source_fps > 0.0 ? source_fps : 30.0;
@@ -217,54 +278,6 @@ int main(int argc, char** argv) {
           std::move(engine));
     }
     nanotrack::LongTermRuntime runtime(controller_config, tracker, *detector);
-    runtime.initialize(image_view(frame), options.bbox, options.start_frame,
-                       initial_timestamp);
-
-    const auto write_annotated = [&](const cv::Mat& source,
-                                     const nanotrack::BBox& bbox,
-                                     const nanotrack::ControllerOutput& output) {
-      cv::Mat rendered;
-      if (source.cols != output_width || source.rows != output_height) {
-        cv::resize(source, rendered, cv::Size(output_width, output_height), 0.0,
-                   0.0, cv::INTER_AREA);
-      } else {
-        rendered = source.clone();
-      }
-      const float scale_x = static_cast<float>(output_width) / source.cols;
-      const float scale_y = static_cast<float>(output_height) / source.rows;
-      const cv::Rect rectangle(
-          static_cast<int>(std::lround(bbox.x * scale_x)),
-          static_cast<int>(std::lround(bbox.y * scale_y)),
-          std::max(1, static_cast<int>(std::lround(bbox.width * scale_x))),
-          std::max(1, static_cast<int>(std::lround(bbox.height * scale_y))));
-      const cv::Scalar color = state_color(output);
-      cv::rectangle(rendered, rectangle, color, 2);
-      const std::string label =
-          std::string(nanotrack::to_string(output.mode)) + " " +
-          nanotrack::to_string(output.quality) +
-          (output.control_valid ? " CTRL" : " NO_CTRL");
-      cv::putText(rendered, label,
-                  cv::Point(std::max(0, rectangle.x),
-                            std::max(18, rectangle.y - 6)),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv::LINE_AA);
-      writer.write(rendered);
-    };
-
-    nanotrack::ControllerOutput initial_output;
-    initial_output.frame_id = options.start_frame;
-    initial_output.timestamp_ms = initial_timestamp;
-    initial_output.mode = nanotrack::TrackingMode::kTracking;
-    initial_output.quality = nanotrack::QualityLevel::kReliable;
-    initial_output.bbox = options.bbox;
-    initial_output.control_valid = true;
-    initial_output.accepted = true;
-    boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
-                 options.start_frame, initial_timestamp, options.bbox,
-                 detector->available(),
-                 detector->available() && detector->can_submit(),
-                 controller_config.detector_target_mode))
-          << '\n';
-    write_annotated(frame, options.bbox, initial_output);
 
     std::vector<float> runtime_latencies;
     std::vector<float> pipeline_latencies;
@@ -275,13 +288,88 @@ int main(int argc, char** argv) {
     std::size_t detector_error_count = 0;
     std::size_t tracked_count = 0;
     std::size_t source_frame = options.start_frame;
-    while (source_frame < options.end_frame &&
-           (!options.max_frames || tracked_count < options.max_frames)) {
+    std::size_t initialization_count = 0;
+    bool initialized = false;
+    std::optional<nanotrack::ControllerOutput> displayed_output;
+    const auto initialize_target = [&](const nanotrack::BBox& bbox) {
+      runtime.initialize(image_view(frame), bbox, source_frame, timestamp_ms);
+      nanotrack::ControllerOutput initial_output;
+      initial_output.frame_id = source_frame;
+      initial_output.timestamp_ms = timestamp_ms;
+      initial_output.mode = nanotrack::TrackingMode::kTracking;
+      initial_output.quality = nanotrack::QualityLevel::kReliable;
+      initial_output.bbox = bbox;
+      initial_output.control_valid = true;
+      initial_output.accepted = true;
+      displayed_output = initial_output;
+      if (!initialized) {
+        boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
+                     source_frame, timestamp_ms, bbox, detector->available(),
+                     detector->available() && detector->can_submit(),
+                     controller_config.detector_target_mode))
+              << '\n';
+        writer.write(render_annotated(frame, bbox, initial_output, output_width,
+                                      output_height));
+      }
+      initialized = true;
+      ++initialization_count;
+      std::cout << "INITIALIZED frame=" << source_frame << " bbox=" << bbox.x
+                << ',' << bbox.y << ',' << bbox.width << ',' << bbox.height
+                << " count=" << initialization_count << '\n';
+    };
+
+    if (options.has_bbox) initialize_target(options.bbox);
+
+    constexpr const char* kInteractiveWindow = "NanoTrack V3 RK3566 Debug";
+    nanotrack::InteractivePlayback playback;
+    if (options.interactive) {
+      cv::namedWindow(kInteractiveWindow, cv::WINDOW_NORMAL);
+      std::cout << "INTERACTIVE keys=N/Right(step), Space(play/pause), "
+                   "R(select/reset), Q/Esc(quit)\n";
+    }
+
+    while (!options.max_frames || tracked_count < options.max_frames) {
+      bool advance = !options.interactive;
+      if (options.interactive) {
+        cv::imshow(kInteractiveWindow,
+                   render_interactive(frame, displayed_output, source_frame,
+                                      playback.playing()));
+        const int key = cv::waitKeyEx(nanotrack::interactive_wait_delay_ms(
+            playback.playing(), source_fps));
+        advance = playback.handle_key(key);
+        if (cv::getWindowProperty(kInteractiveWindow, cv::WND_PROP_VISIBLE) <
+            1.0) {
+          break;
+        }
+        if (playback.take_selection_request()) {
+          const cv::Rect selected =
+              cv::selectROI(kInteractiveWindow, frame, false, false);
+          if (selected.width > 0 && selected.height > 0) {
+            const nanotrack::BBox selected_bbox{
+                static_cast<float>(selected.x),
+                static_cast<float>(selected.y),
+                static_cast<float>(selected.width),
+                static_cast<float>(selected.height)};
+            nanotrack::validate_bbox(selected_bbox, frame.cols, frame.rows);
+            initialize_target(selected_bbox);
+          } else {
+            std::cout << "ROI_SELECTION_CANCELLED frame=" << source_frame
+                      << '\n';
+          }
+          continue;
+        }
+        if (playback.quit_requested()) break;
+        if (!advance) continue;
+      }
+      if (source_frame >= options.end_frame) break;
       const auto pipeline_start = std::chrono::steady_clock::now();
       if (!capture.read(frame)) break;
       ++source_frame;
-      const std::int64_t timestamp_ms =
-          video_clock.next(capture.get(cv::CAP_PROP_POS_MSEC));
+      timestamp_ms = video_clock.next(capture.get(cv::CAP_PROP_POS_MSEC));
+      if (!initialized) {
+        displayed_output.reset();
+        continue;
+      }
       const nanotrack::RuntimeFrameResult result =
           runtime.process_frame(image_view(frame), source_frame, timestamp_ms);
       if (result.detector.request_submitted) ++detector_request_count;
@@ -297,7 +385,9 @@ int main(int argc, char** argv) {
           !std::isfinite(result.tracker_ms) || result.tracker_ms <= 0.0F) {
         throw std::runtime_error("measured tracking latency is invalid");
       }
-      write_annotated(frame, result.output.bbox, result.output);
+      writer.write(render_annotated(frame, result.output.bbox, result.output,
+                                    output_width, output_height));
+      displayed_output = result.output;
       const float pipeline_ms = std::chrono::duration<float, std::milli>(
                                     std::chrono::steady_clock::now() -
                                     pipeline_start)
@@ -314,17 +404,26 @@ int main(int argc, char** argv) {
       log_row.pipeline_ms = pipeline_ms;
       boxes << nanotrack::tracking_csv_row(log_row) << '\n';
     }
+    if (options.interactive) cv::destroyWindow(kInteractiveWindow);
     writer.release();
     boxes.close();
-    if (runtime_latencies.empty()) {
+    if (!initialized) {
+      std::cout << "SUMMARY tracked_frames=0 initialized=0\n";
+      return 0;
+    }
+    if (runtime_latencies.empty() && !options.interactive) {
       throw std::runtime_error("no post-initialization frame tracked");
     }
-    const float tracker_sum =
-        std::accumulate(tracker_latencies.begin(), tracker_latencies.end(), 0.0F);
-    const float mean_tracker =
-        tracker_sum / static_cast<float>(tracker_latencies.size());
-    const nanotrack::LatencySummary latency =
-        nanotrack::summarize_latencies(runtime_latencies, pipeline_latencies);
+    float mean_tracker = 0.0F;
+    nanotrack::LatencySummary latency;
+    if (!runtime_latencies.empty()) {
+      const float tracker_sum = std::accumulate(
+          tracker_latencies.begin(), tracker_latencies.end(), 0.0F);
+      mean_tracker =
+          tracker_sum / static_cast<float>(tracker_latencies.size());
+      latency =
+          nanotrack::summarize_latencies(runtime_latencies, pipeline_latencies);
+    }
     nanotrack::DetectorSessionMetadata detector_metadata;
     detector_metadata.enabled = yolo_engine != nullptr;
     detector_metadata.calibrated = false;
@@ -367,6 +466,7 @@ int main(int argc, char** argv) {
               << " p50_pipeline_ms=" << latency.p50_pipeline_ms
               << " p95_pipeline_ms=" << latency.p95_pipeline_ms
               << " end_to_end_fps=" << latency.end_to_end_fps
+              << " initializations=" << initialization_count
               << " calibrated=" << (controller_config.calibrated ? 1 : 0)
               << " metadata=" << metadata_path << '\n';
     return 0;

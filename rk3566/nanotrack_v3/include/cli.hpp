@@ -29,6 +29,8 @@ struct Options {
   std::size_t end_frame = std::numeric_limits<std::size_t>::max();
   int output_width = 0;
   int output_height = 0;
+  bool interactive = false;
+  bool has_bbox = false;
   bool help = false;
 };
 
