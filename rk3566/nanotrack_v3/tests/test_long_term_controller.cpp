@@ -53,6 +53,16 @@ nanotrack::TrackerObservation rejected_observation(
       token};
 }
 
+std::vector<nanotrack::TrackerObservation> reliable_pair(
+    const nanotrack::SearchPlan& plan,
+    const nanotrack::BBox& bbox,
+    std::uint64_t token) {
+  return {
+      reliable_observation(plan, nanotrack::TemplateKind::kAnchor, bbox, token),
+      reliable_observation(plan, nanotrack::TemplateKind::kRecent, bbox, token),
+  };
+}
+
 nanotrack::ControllerOutput reject_frame(nanotrack::LongTermController& controller,
                                          std::uint64_t frame_id,
                                          std::int64_t timestamp_ms,
@@ -178,6 +188,114 @@ int main() {
   expect_true(!plan.request_detector,
               "detector requests are limited to once per 500 ms");
   detector_controller.finish_frame(plan, {}, std::nullopt);
+
+  ControllerConfig lock_config = config;
+  LongTermController candidate_lock(lock_config);
+  candidate_lock.initialize(BBox{40, 30, 20, 20}, 0, 0,
+                            FrameSize{200, 120});
+  reject_frame(candidate_lock, 1, 100);
+  plan = candidate_lock.begin_frame(2, 1100, true);
+  DetectorBatch lock_batch{
+      2, 1100,
+      {{BBox{20, 20, 30, 40}, 0.95F, 0},
+       {BBox{120, 20, 30, 40}, 0.90F, 0}}};
+  output = candidate_lock.finish_frame(plan, {}, lock_batch);
+  expect_true(output.detector_candidates_queued == 2,
+              "whole-object candidates are queued before verification");
+
+  plan = candidate_lock.begin_frame(3, 1140, false);
+  const std::optional<std::uint64_t> locked_id = plan.detector_candidate_id;
+  expect_true(locked_id.has_value() &&
+                  plan.detector_target_mode == DetectorTargetMode::kFullObject &&
+                  plan.detector_candidate_region.has_value(),
+              "detector plan exposes candidate identity, mode, and source region");
+  expect_near(plan.predicted_bbox.width, 30.0F, 1e-6F,
+              "whole-object mode uses detector target width");
+  output = candidate_lock.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 31), std::nullopt);
+  expect_true(!output.control_valid && output.detector_candidate_locked &&
+                  output.detector_confirmation_hits == 1 &&
+                  output.detector_confirmation_attempts == 1,
+              "first agreeing NanoTrack pair locks but cannot control");
+
+  plan = candidate_lock.begin_frame(4, 1640, true);
+  expect_true(plan.detector_candidate_id == locked_id &&
+                  plan.detector_candidate_locked && plan.request_detector,
+              "locked candidate survives while a new detector request is submitted");
+  DetectorBatch replacement{
+      4, 1640, {{BBox{130, 60, 20, 20}, 0.99F, 0}}};
+  output = candidate_lock.finish_frame(plan, {}, replacement);
+  expect_true(!output.control_valid && output.detector_candidate_locked &&
+                  output.detector_confirmation_attempts == 2 &&
+                  output.detector_confirmation_hits == 1,
+              "one miss in the locked three-frame window remains invalid");
+
+  plan = candidate_lock.begin_frame(5, 1680, false);
+  expect_true(plan.detector_candidate_id == locked_id,
+              "new batch cannot replace a candidate under confirmation");
+  output = candidate_lock.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 32), std::nullopt);
+  expect_true(output.control_valid && output.accepted && output.reacquired &&
+                  output.detector_confirmation_hits == 2 &&
+                  output.detector_confirmation_attempts == 3,
+              "two agreeing hits in three locked frames reacquire");
+
+  ControllerConfig subtarget_config = config;
+  subtarget_config.detector_target_mode = DetectorTargetMode::kSubtarget;
+  LongTermController subtarget(subtarget_config);
+  subtarget.initialize(BBox{40, 30, 20, 10}, 0, 0, FrameSize{200, 120});
+  reject_frame(subtarget, 1, 100);
+  plan = subtarget.begin_frame(2, 1100, true);
+  DetectorBatch region_batch{
+      2, 1100, {{BBox{20, 10, 100, 90}, 0.95F, 0}}};
+  subtarget.finish_frame(plan, {}, region_batch);
+  plan = subtarget.begin_frame(3, 1140, false);
+  const std::optional<std::uint64_t> subtarget_id = plan.detector_candidate_id;
+  expect_true(plan.detector_target_mode == DetectorTargetMode::kSubtarget &&
+                  plan.detector_candidate_region.has_value() &&
+                  plan.detector_candidate_region->x == 20.0F &&
+                  plan.detector_candidate_region->y == 10.0F &&
+                  plan.detector_candidate_region->width == 100.0F &&
+                  plan.detector_candidate_region->height == 90.0F &&
+                  plan.detector_probe_index == 0,
+              "subtarget probe identifies its enclosing detector region");
+  expect_near(plan.predicted_bbox.width, 20.0F, 1e-6F,
+              "subtarget probe preserves target width");
+  expect_near(plan.predicted_bbox.height, 10.0F, 1e-6F,
+              "subtarget probe preserves target height");
+  expect_near(plan.search_scale, subtarget_config.detector_search_scale, 1e-6F,
+              "subtarget probe uses bounded detector search scale");
+  subtarget.finish_frame(plan, {}, std::nullopt);
+  plan = subtarget.begin_frame(4, 1180, false);
+  expect_true(plan.detector_candidate_id == subtarget_id &&
+                  plan.detector_probe_index == 1 &&
+                  (plan.predicted_bbox.x != 20.0F ||
+                   plan.predicted_bbox.y != 10.0F),
+              "failed subtarget probe advances within the same candidate");
+  subtarget.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController strict_geometry(lock_config);
+  strict_geometry.initialize(BBox{40, 30, 20, 20}, 0, 0,
+                             FrameSize{200, 120});
+  reject_frame(strict_geometry, 1, 100);
+  plan = strict_geometry.begin_frame(2, 1100, true);
+  DetectorBatch strict_batch{
+      2, 1100, {{BBox{50, 30, 20, 20}, 0.95F, 0}}};
+  strict_geometry.finish_frame(plan, {}, strict_batch);
+  plan = strict_geometry.begin_frame(3, 1140, false);
+  output = strict_geometry.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 41), std::nullopt);
+  expect_true(output.detector_candidate_locked && !output.control_valid,
+              "strict geometry test establishes one locked hit");
+  plan = strict_geometry.begin_frame(4, 1180, false);
+  const BBox oversized{plan.predicted_bbox.x - 5.0F,
+                       plan.predicted_bbox.y - 5.0F, 30.0F, 30.0F};
+  output = strict_geometry.finish_frame(
+      plan, reliable_pair(plan, oversized, 42), std::nullopt);
+  expect_true(!output.control_valid &&
+                  output.detector_confirmation_hits == 1 &&
+                  output.detector_confirmation_attempts == 2,
+              "excess detector-origin area drift cannot count as confirmation");
 
   LongTermController detector_identity(config);
   detector_identity.initialize(BBox{40, 30, 20, 20}, 0, 0,

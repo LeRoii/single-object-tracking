@@ -53,6 +53,14 @@ int quality_rank(QualityLevel value) {
   return 0;
 }
 
+BBox centered_box(float center_x, float center_y, const BBox& reference,
+                  FrameSize frame_size) {
+  return clip_bbox(BBox{center_x - 0.5F * reference.width,
+                        center_y - 0.5F * reference.height,
+                        reference.width, reference.height},
+                   frame_size.width, frame_size.height);
+}
+
 }  // namespace
 
 float bbox_iou(const BBox& first, const BBox& second) {
@@ -92,6 +100,8 @@ void LongTermController::initialize(const BBox& initial_bbox,
   last_detector_request_ms_.reset();
   last_detector_request_frame_.reset();
   detector_candidates_.clear();
+  active_detector_candidate_.reset();
+  next_detector_candidate_id_ = 1;
   confirmations_.clear();
   last_frame_id_ = frame_id;
   last_timestamp_ms_ = timestamp_ms;
@@ -148,12 +158,22 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   mode_ = mode_for_timestamp(timestamp_ms);
   BBox predicted = motion_.predict(timestamp_ms);
   HypothesisSource source = HypothesisSource::kMotion;
-  std::optional<DetectorCandidate> selected_detector_candidate;
-  if ((mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost) &&
-      !detector_candidates_.empty()) {
-    selected_detector_candidate = detector_candidates_.front();
-    predicted = selected_detector_candidate->bbox;
-    detector_candidates_.pop_front();
+  const bool recovery_uses_detector =
+      mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost;
+  if (recovery_uses_detector && !active_detector_candidate_) {
+    activate_next_detector_candidate();
+  }
+  if (recovery_uses_detector && active_detector_candidate_) {
+    ActiveDetectorCandidate& active = *active_detector_candidate_;
+    if (!active.locked && active.next_probe >= active.queued.probes.size()) {
+      active_detector_candidate_.reset();
+      activate_next_detector_candidate();
+    }
+  }
+  if (recovery_uses_detector && active_detector_candidate_) {
+    ActiveDetectorCandidate& active = *active_detector_candidate_;
+    predicted = active.locked ? active.locked_bbox
+                              : active.queued.probes[active.next_probe++];
     source = HypothesisSource::kDetector;
   }
 
@@ -162,14 +182,21 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.timestamp_ms = timestamp_ms;
   plan.mode = mode_;
   plan.predicted_bbox = predicted;
-  plan.search_scale = search_scale_for(mode_, timestamp_ms);
+  plan.search_scale = source == HypothesisSource::kDetector
+                          ? config_.detector_search_scale
+                          : search_scale_for(mode_, timestamp_ms);
   plan.hypothesis_source = source;
-  if (selected_detector_candidate) {
-    plan.detector_candidate_class_id = selected_detector_candidate->class_id;
-    plan.detector_candidate_confidence = selected_detector_candidate->confidence;
+  plan.detector_target_mode = config_.detector_target_mode;
+  if (active_detector_candidate_ && source == HypothesisSource::kDetector) {
+    const ActiveDetectorCandidate& active = *active_detector_candidate_;
+    plan.detector_candidate_id = active.queued.id;
+    plan.detector_candidate_region = active.queued.candidate.bbox;
+    plan.detector_candidate_class_id = active.queued.candidate.class_id;
+    plan.detector_candidate_confidence = active.queued.candidate.confidence;
+    plan.detector_candidate_locked = active.locked;
+    plan.detector_probe_index = active.locked ? active.next_probe
+                                              : active.next_probe - 1;
   }
-  const bool recovery_uses_detector =
-      mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost;
   const bool interval_ready =
       !last_detector_request_ms_ ||
       timestamp_ms - *last_detector_request_ms_ >= config_.detector_interval_ms;
@@ -255,6 +282,60 @@ bool LongTermController::add_confirmation(std::uint64_t frame_id,
   return consistent >= config_.confirmation_required;
 }
 
+std::vector<BBox> LongTermController::detector_probes(
+    const DetectorCandidate& candidate) const {
+  if (config_.detector_target_mode == DetectorTargetMode::kFullObject) {
+    return {candidate.bbox};
+  }
+
+  static constexpr float kProbeCoordinates[][2] = {
+      {0.50F, 0.50F}, {0.50F, 0.20F}, {0.50F, 0.80F},
+      {0.20F, 0.50F}, {0.80F, 0.50F}, {0.20F, 0.20F},
+      {0.80F, 0.20F}, {0.20F, 0.80F}, {0.80F, 0.80F},
+  };
+  std::vector<BBox> probes;
+  probes.reserve(config_.detector_subtarget_max_probes);
+  for (const auto& coordinate : kProbeCoordinates) {
+    if (probes.size() >= config_.detector_subtarget_max_probes) break;
+    const float center_x = candidate.bbox.x + coordinate[0] * candidate.bbox.width;
+    const float center_y = candidate.bbox.y + coordinate[1] * candidate.bbox.height;
+    const BBox probe = centered_box(center_x, center_y, current_bbox_, frame_size_);
+    const bool duplicate = std::any_of(
+        probes.begin(), probes.end(), [&](const BBox& existing) {
+          return std::fabs(existing.x - probe.x) < 1e-4F &&
+                 std::fabs(existing.y - probe.y) < 1e-4F;
+        });
+    if (!duplicate) probes.push_back(probe);
+  }
+  return probes;
+}
+
+void LongTermController::activate_next_detector_candidate() {
+  if (active_detector_candidate_ || detector_candidates_.empty()) return;
+  ActiveDetectorCandidate active;
+  active.queued = std::move(detector_candidates_.front());
+  detector_candidates_.pop_front();
+  active_detector_candidate_ = std::move(active);
+  confirmations_.clear();
+}
+
+bool LongTermController::detector_confirmation_consistent(
+    const BBox& bbox) const {
+  if (!active_detector_candidate_ ||
+      active_detector_candidate_->confirmation_boxes.empty()) {
+    return true;
+  }
+  const BBox& reference =
+      active_detector_candidate_->confirmation_boxes.front();
+  return bbox_iou(reference, bbox) >= config_.detector_confirmation_iou &&
+         normalized_center_distance(bbox, reference) <=
+             config_.detector_confirmation_center_distance &&
+         area_log_delta(bbox, reference) <=
+             config_.detector_confirmation_max_area_log_change &&
+         aspect_log_delta(bbox, reference) <=
+             config_.detector_confirmation_max_aspect_log_change;
+}
+
 DetectorBatchStatus LongTermController::ingest_detector_batch(
     const SearchPlan& plan,
     const std::optional<DetectorBatch>& batch) {
@@ -282,7 +363,15 @@ DetectorBatchStatus LongTermController::ingest_detector_batch(
     valid.resize(config_.detector_max_candidates);
   }
   detector_candidates_.clear();
-  detector_candidates_.insert(detector_candidates_.end(), valid.begin(), valid.end());
+  for (const DetectorCandidate& candidate : valid) {
+    QueuedDetectorCandidate queued;
+    queued.id = next_detector_candidate_id_++;
+    queued.candidate = candidate;
+    queued.probes = detector_probes(candidate);
+    if (!queued.probes.empty()) {
+      detector_candidates_.push_back(std::move(queued));
+    }
+  }
   return DetectorBatchStatus::kAccepted;
 }
 
@@ -303,6 +392,9 @@ ControllerOutput LongTermController::finish_frame(
   output.bbox = plan.predicted_bbox;
   output.search_scale = plan.search_scale;
   output.hypothesis_source = plan.hypothesis_source;
+  output.detector_candidate_id = plan.detector_candidate_id;
+  output.detector_candidate_locked = plan.detector_candidate_locked;
+  output.detector_probe_index = plan.detector_probe_index;
   output.detector_status = ingest_detector_batch(plan, detector_batch);
 
   std::optional<EvaluatedObservation> anchor;
@@ -364,7 +456,8 @@ ControllerOutput LongTermController::finish_frame(
     output.normalized_center_residual = selected->center_residual;
     output.area_log_change = selected->area_log_change;
     output.aspect_log_change = selected->aspect_log_change;
-    if (selected->quality == QualityLevel::kReliable) {
+    if (selected->quality == QualityLevel::kReliable &&
+        plan.hypothesis_source != HypothesisSource::kDetector) {
       const bool recovery = loss_start_ms_.has_value() ||
                             plan.mode != TrackingMode::kTracking ||
                             force_confirmation;
@@ -374,6 +467,51 @@ ControllerOutput LongTermController::finish_frame(
         accepted = true;
         reacquired = true;
       }
+    }
+  }
+
+  const bool detector_plan =
+      plan.hypothesis_source == HypothesisSource::kDetector &&
+      plan.detector_candidate_id && active_detector_candidate_ &&
+      active_detector_candidate_->queued.id == *plan.detector_candidate_id;
+  bool discard_active_detector = false;
+  if (detector_plan) {
+    ActiveDetectorCandidate& active = *active_detector_candidate_;
+    const bool templates_agree =
+        anchor && recent && anchor->quality == QualityLevel::kReliable &&
+        recent->quality == QualityLevel::kReliable &&
+        output.template_iou >= config_.template_agreement_iou;
+    if (!active.locked) {
+      if (selected && templates_agree &&
+          selected->quality == QualityLevel::kReliable) {
+        active.locked = true;
+        active.locked_bbox = selected->observation.bbox;
+        active.confirmation_attempts = 1;
+        active.confirmation_boxes = {selected->observation.bbox};
+      } else if (active.next_probe >= active.queued.probes.size()) {
+        discard_active_detector = true;
+      }
+    } else {
+      ++active.confirmation_attempts;
+      if (selected && templates_agree &&
+          selected->quality == QualityLevel::kReliable &&
+          detector_confirmation_consistent(selected->observation.bbox)) {
+        active.locked_bbox = selected->observation.bbox;
+        active.confirmation_boxes.push_back(selected->observation.bbox);
+      }
+    }
+    output.detector_candidate_locked = active.locked;
+    output.detector_confirmation_attempts = active.confirmation_attempts;
+    output.detector_confirmation_hits = active.confirmation_boxes.size();
+    if (active.locked &&
+        active.confirmation_boxes.size() >=
+            static_cast<std::size_t>(config_.confirmation_required)) {
+      accepted = true;
+      reacquired = true;
+    } else if (active.locked &&
+               active.confirmation_attempts >=
+                   static_cast<std::size_t>(config_.confirmation_window)) {
+      discard_active_detector = true;
     }
   }
 
@@ -391,6 +529,8 @@ ControllerOutput LongTermController::finish_frame(
     current_bbox_ = output.bbox;
     loss_start_ms_.reset();
     confirmations_.clear();
+    active_detector_candidate_.reset();
+    detector_candidates_.clear();
     mode_ = TrackingMode::kTracking;
     output.mode = mode_;
     ++stable_frames_;
@@ -401,6 +541,11 @@ ControllerOutput LongTermController::finish_frame(
     output.control_valid = false;
     output.accepted = false;
     stable_frames_ = 0;
+  }
+
+  if (!accepted && discard_active_detector) {
+    active_detector_candidate_.reset();
+    confirmations_.clear();
   }
 
   if (recent_probation_) {

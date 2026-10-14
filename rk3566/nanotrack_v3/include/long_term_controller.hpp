@@ -19,8 +19,13 @@ struct SearchPlan {
   BBox predicted_bbox{};
   float search_scale = 1.0F;
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
+  DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
+  std::optional<std::uint64_t> detector_candidate_id;
+  std::optional<BBox> detector_candidate_region;
   std::optional<int> detector_candidate_class_id;
   std::optional<float> detector_candidate_confidence;
+  bool detector_candidate_locked = false;
+  std::size_t detector_probe_index = 0;
   bool request_detector = false;
   std::optional<DetectorRequest> detector_request;
 };
@@ -45,6 +50,11 @@ struct ControllerOutput {
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
   DetectorBatchStatus detector_status = DetectorBatchStatus::kNone;
   std::size_t detector_candidates_queued = 0;
+  std::optional<std::uint64_t> detector_candidate_id;
+  bool detector_candidate_locked = false;
+  std::size_t detector_probe_index = 0;
+  std::size_t detector_confirmation_attempts = 0;
+  std::size_t detector_confirmation_hits = 0;
 };
 
 class LongTermController {
@@ -81,11 +91,29 @@ class LongTermController {
     BBox bbox{};
   };
 
+  struct QueuedDetectorCandidate {
+    std::uint64_t id = 0;
+    DetectorCandidate candidate{};
+    std::vector<BBox> probes;
+  };
+
+  struct ActiveDetectorCandidate {
+    QueuedDetectorCandidate queued{};
+    std::size_t next_probe = 0;
+    bool locked = false;
+    BBox locked_bbox{};
+    std::size_t confirmation_attempts = 0;
+    std::vector<BBox> confirmation_boxes;
+  };
+
   TrackingMode mode_for_timestamp(std::int64_t timestamp_ms) const;
   float search_scale_for(TrackingMode mode, std::int64_t timestamp_ms) const;
   EvaluatedObservation evaluate(const TrackerObservation& observation,
                                 const SearchPlan& plan) const;
   bool add_confirmation(std::uint64_t frame_id, const BBox& bbox);
+  std::vector<BBox> detector_probes(const DetectorCandidate& candidate) const;
+  void activate_next_detector_candidate();
+  bool detector_confirmation_consistent(const BBox& bbox) const;
   DetectorBatchStatus ingest_detector_batch(
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
@@ -98,7 +126,9 @@ class LongTermController {
   std::optional<std::int64_t> loss_start_ms_;
   std::optional<std::int64_t> last_detector_request_ms_;
   std::optional<std::uint64_t> last_detector_request_frame_;
-  std::deque<DetectorCandidate> detector_candidates_;
+  std::deque<QueuedDetectorCandidate> detector_candidates_;
+  std::optional<ActiveDetectorCandidate> active_detector_candidate_;
+  std::uint64_t next_detector_candidate_id_ = 1;
   std::deque<Confirmation> confirmations_;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_timestamp_ms_ = 0;

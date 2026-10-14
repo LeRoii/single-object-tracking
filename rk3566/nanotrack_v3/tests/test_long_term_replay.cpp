@@ -37,11 +37,22 @@ nanotrack::ControllerOutput step(
 nanotrack::TrackerObservation reliable_for_plan(
     const nanotrack::SearchPlan& plan,
     const nanotrack::BBox& bbox,
-    std::uint64_t token) {
+    std::uint64_t token,
+    nanotrack::TemplateKind kind = nanotrack::TemplateKind::kAnchor) {
   return nanotrack::TrackerObservation{
       plan.frame_id, plan.timestamp_ms, bbox,
       nanotrack::ResponseMetrics{0.93F, 0.91F, 11.0F, 14.0F, 0.22F},
-      nanotrack::TemplateKind::kAnchor, token};
+      kind, token};
+}
+
+std::vector<nanotrack::TrackerObservation> reliable_pair_for_plan(
+    const nanotrack::SearchPlan& plan,
+    const nanotrack::BBox& bbox,
+    std::uint64_t token) {
+  return {
+      reliable_for_plan(plan, bbox, token, nanotrack::TemplateKind::kAnchor),
+      reliable_for_plan(plan, bbox, token, nanotrack::TemplateKind::kRecent),
+  };
 }
 
 }  // namespace
@@ -127,14 +138,14 @@ int main() {
   detector_plan = confirmed_detector.begin_frame(3, 1140, false);
   output = confirmed_detector.finish_frame(
       detector_plan,
-      {reliable_for_plan(detector_plan, detector_plan.predicted_bbox, 3)},
+      reliable_pair_for_plan(detector_plan, detector_plan.predicted_bbox, 3),
       std::nullopt);
   expect_true(!output.control_valid,
               "first detector-guided NanoTrack verification stays invalid");
   detector_plan = confirmed_detector.begin_frame(4, 1180, false);
   output = confirmed_detector.finish_frame(
       detector_plan,
-      {reliable_for_plan(detector_plan, detector_plan.predicted_bbox, 4)},
+      reliable_pair_for_plan(detector_plan, detector_plan.predicted_bbox, 4),
       std::nullopt);
   expect_true(output.accepted && output.reacquired && output.control_valid,
               "two spatially consistent verifications in three frames reacquire");
