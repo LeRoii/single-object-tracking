@@ -47,6 +47,9 @@ int main() {
   using namespace nanotrack;
 
   const ControllerConfig default_visible = default_controller_config("visible");
+  expect_true(default_visible.detector_target_mode ==
+                  DetectorTargetMode::kFullObject,
+              "whole-object detector hypotheses remain the default");
   expect_near(default_visible.reliable_psr, 6.0F, 1e-6F,
               "visible bring-up default accepts observed RKNN PSR range");
   expect_near(default_visible.reliable_peak_margin, 0.06F, 1e-6F,
@@ -62,6 +65,13 @@ int main() {
   write_file(visible_path,
              "sensor=visible\n"
              "calibrated=false\n"
+             "detector_target_mode=subtarget\n"
+             "detector_search_scale=1.6\n"
+             "detector_subtarget_max_probes=7\n"
+             "detector_confirmation_iou=0.55\n"
+             "detector_confirmation_center_distance=0.30\n"
+             "detector_confirmation_max_area_log_change=0.45\n"
+             "detector_confirmation_max_aspect_log_change=0.35\n"
              "reliable_score=0.82\n"
              "reliable_psr=8.5\n"
              "weak_score=0.57\n"
@@ -74,6 +84,14 @@ int main() {
   const ControllerConfig visible = load_controller_config(visible_path);
   expect_true(visible.sensor == "visible" && !visible.calibrated,
               "visible config identity and calibration marker");
+  expect_true(visible.detector_target_mode == DetectorTargetMode::kSubtarget,
+              "subtarget detector mode parses explicitly");
+  expect_near(visible.detector_search_scale, 1.6F, 1e-6F,
+              "detector search scale override");
+  expect_true(visible.detector_subtarget_max_probes == 7,
+              "subtarget probe budget override");
+  expect_near(visible.detector_confirmation_iou, 0.55F, 1e-6F,
+              "detector confirmation IoU override");
   expect_near(visible.reliable_score, 0.82F, 1e-6F,
               "visible reliable score override");
   expect_true(visible.uncertain_ms == 200 &&
@@ -108,6 +126,20 @@ int main() {
              "sensor=visible\nuncertain_ms=1000\nlocal_recovery_ms=500\n");
   expect_throws([&] { load_controller_config(timing_path); },
                 "non-increasing state timing must fail");
+  const std::string invalid_mode_path =
+      "/tmp/nanotrack_invalid_target_mode_test.conf";
+  write_file(invalid_mode_path,
+             "sensor=visible\ndetector_target_mode=automatic\n");
+  expect_throws([&] { load_controller_config(invalid_mode_path); },
+                "unsupported detector target mode must fail");
+  ControllerConfig invalid_detector_geometry = default_visible;
+  invalid_detector_geometry.detector_confirmation_iou = 1.1F;
+  expect_throws([&] { validate_controller_config(invalid_detector_geometry); },
+                "detector confirmation IoU must stay in unit interval");
+  invalid_detector_geometry = default_visible;
+  invalid_detector_geometry.detector_subtarget_max_probes = 0;
+  expect_throws([&] { validate_controller_config(invalid_detector_geometry); },
+                "subtarget probe budget must be positive");
 
   ControllerConfig motion_config;
   motion_config.motion_alpha = 1.0F;

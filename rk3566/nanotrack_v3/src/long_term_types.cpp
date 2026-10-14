@@ -40,6 +40,10 @@ const char* to_string(HypothesisSource value) {
   return value == HypothesisSource::kMotion ? "MOTION" : "DETECTOR";
 }
 
+const char* to_string(DetectorTargetMode value) {
+  return value == DetectorTargetMode::kFullObject ? "FULL_OBJECT" : "SUBTARGET";
+}
+
 const char* to_string(DetectorBatchStatus value) {
   switch (value) {
     case DetectorBatchStatus::kNone: return "NONE";

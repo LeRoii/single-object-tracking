@@ -1,5 +1,7 @@
 #pragma once
 
+#include "long_term_types.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -29,6 +31,13 @@ struct ControllerConfig {
   std::int64_t detector_interval_ms = 500;
   std::int64_t detector_stale_ms = 150;
   std::size_t detector_max_candidates = 3;
+  DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
+  float detector_search_scale = 1.5F;
+  std::size_t detector_subtarget_max_probes = 9;
+  float detector_confirmation_iou = 0.50F;
+  float detector_confirmation_center_distance = 0.35F;
+  float detector_confirmation_max_area_log_change = 0.50F;
+  float detector_confirmation_max_aspect_log_change = 0.40F;
 
   int stable_frames_for_update = 15;
   std::int64_t recent_update_interval_ms = 1000;

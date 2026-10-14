@@ -21,6 +21,7 @@ enum class QualityLevel { kReliable, kWeak, kRejected };
 enum class TemplateKind { kAnchor, kRecent };
 enum class TemplateAction { kNone, kStageRecent, kCommitRecent, kRollbackRecent };
 enum class HypothesisSource { kMotion, kDetector };
+enum class DetectorTargetMode { kFullObject, kSubtarget };
 enum class DetectorBatchStatus {
   kNone,
   kAccepted,
@@ -99,6 +100,7 @@ const char* to_string(QualityLevel value);
 const char* to_string(TemplateKind value);
 const char* to_string(TemplateAction value);
 const char* to_string(HypothesisSource value);
+const char* to_string(DetectorTargetMode value);
 const char* to_string(DetectorBatchStatus value);
 
 }  // namespace nanotrack

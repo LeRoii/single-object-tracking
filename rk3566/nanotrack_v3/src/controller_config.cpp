@@ -51,6 +51,13 @@ bool parse_bool(const std::string& key, const std::string& text) {
   throw std::invalid_argument("config key " + key + " must be true or false");
 }
 
+DetectorTargetMode parse_detector_target_mode(const std::string& text) {
+  if (text == "full_object") return DetectorTargetMode::kFullObject;
+  if (text == "subtarget") return DetectorTargetMode::kSubtarget;
+  throw std::invalid_argument(
+      "detector_target_mode must be full_object or subtarget");
+}
+
 void set_value(ControllerConfig& config,
                const std::string& key,
                const std::string& value) {
@@ -74,6 +81,13 @@ void set_value(ControllerConfig& config,
   else if (key == "detector_interval_ms") config.detector_interval_ms = parse_integer(key, value);
   else if (key == "detector_stale_ms") config.detector_stale_ms = parse_integer(key, value);
   else if (key == "detector_max_candidates") config.detector_max_candidates = static_cast<std::size_t>(parse_integer(key, value));
+  else if (key == "detector_target_mode") config.detector_target_mode = parse_detector_target_mode(value);
+  else if (key == "detector_search_scale") config.detector_search_scale = parse_float(key, value);
+  else if (key == "detector_subtarget_max_probes") config.detector_subtarget_max_probes = static_cast<std::size_t>(parse_integer(key, value));
+  else if (key == "detector_confirmation_iou") config.detector_confirmation_iou = parse_float(key, value);
+  else if (key == "detector_confirmation_center_distance") config.detector_confirmation_center_distance = parse_float(key, value);
+  else if (key == "detector_confirmation_max_area_log_change") config.detector_confirmation_max_area_log_change = parse_float(key, value);
+  else if (key == "detector_confirmation_max_aspect_log_change") config.detector_confirmation_max_aspect_log_change = parse_float(key, value);
   else if (key == "stable_frames_for_update") config.stable_frames_for_update = parse_int(key, value);
   else if (key == "recent_update_interval_ms") config.recent_update_interval_ms = parse_integer(key, value);
   else if (key == "recent_probation_frames") config.recent_probation_frames = parse_int(key, value);
@@ -111,7 +125,8 @@ void validate_controller_config(const ControllerConfig& config) {
     throw std::invalid_argument("sensor must be visible or infrared");
   }
   const float probabilities[] = {
-      config.reliable_score, config.weak_score, config.template_agreement_iou};
+      config.reliable_score, config.weak_score, config.template_agreement_iou,
+      config.detector_confirmation_iou};
   for (const float value : probabilities) {
     if (!std::isfinite(value) || !in_unit_interval(value)) {
       throw std::invalid_argument("probability-like controller values must be in [0,1]");
@@ -121,7 +136,10 @@ void validate_controller_config(const ControllerConfig& config) {
       config.reliable_psr, config.reliable_apce, config.reliable_peak_margin,
       config.weak_psr, config.weak_apce, config.weak_peak_margin,
       config.max_center_distance, config.max_area_log_change,
-      config.max_aspect_log_change};
+      config.max_aspect_log_change,
+      config.detector_confirmation_center_distance,
+      config.detector_confirmation_max_area_log_change,
+      config.detector_confirmation_max_aspect_log_change};
   for (const float value : nonnegative) {
     if (!std::isfinite(value) || value < 0.0F) {
       throw std::invalid_argument("controller thresholds must be finite and non-negative");
@@ -141,6 +159,12 @@ void validate_controller_config(const ControllerConfig& config) {
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
     throw std::invalid_argument("detector limits are invalid");
+  }
+  if (!std::isfinite(config.detector_search_scale) ||
+      config.detector_search_scale < 1.0F ||
+      config.detector_subtarget_max_probes == 0 ||
+      config.detector_subtarget_max_probes > 9) {
+    throw std::invalid_argument("detector recovery search limits are invalid");
   }
   if (config.stable_frames_for_update <= 0 ||
       config.recent_update_interval_ms <= 0 ||
