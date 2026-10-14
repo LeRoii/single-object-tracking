@@ -34,6 +34,16 @@ nanotrack::ControllerOutput step(
   return controller.finish_frame(plan, observations, std::nullopt);
 }
 
+nanotrack::TrackerObservation reliable_for_plan(
+    const nanotrack::SearchPlan& plan,
+    const nanotrack::BBox& bbox,
+    std::uint64_t token) {
+  return nanotrack::TrackerObservation{
+      plan.frame_id, plan.timestamp_ms, bbox,
+      nanotrack::ResponseMetrics{0.93F, 0.91F, 11.0F, 14.0F, 0.22F},
+      nanotrack::TemplateKind::kAnchor, token};
+}
+
 }  // namespace
 
 int main() {
@@ -82,6 +92,94 @@ int main() {
   }
   expect_true(output.mode == TrackingMode::kLost && !output.control_valid,
               "permanent loss stays invalid without detector");
+
+  LongTermController single_detector(config);
+  single_detector.initialize(initial, 0, 0, frame_size);
+  step(single_detector, 1, 100, std::nullopt);
+  SearchPlan detector_plan = single_detector.begin_frame(2, 1100, true);
+  DetectorBatch single_batch{
+      2, 1100, {{BBox{120, 40, 20, 20}, 0.99F, 0}}};
+  output = single_detector.finish_frame(detector_plan, {}, single_batch);
+  expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                  !output.control_valid,
+              "detector batch only queues a hypothesis");
+  detector_plan = single_detector.begin_frame(3, 1140, false);
+  expect_true(detector_plan.hypothesis_source == HypothesisSource::kDetector &&
+                  detector_plan.detector_candidate_class_id ==
+                      std::optional<int>(0),
+              "queued candidate becomes an auditable detector hypothesis");
+  output = single_detector.finish_frame(
+      detector_plan,
+      {reliable_for_plan(detector_plan, detector_plan.predicted_bbox, 3)},
+      std::nullopt);
+  expect_true(!output.accepted && !output.control_valid && !output.reacquired,
+              "one high-confidence candidate plus one reliable verification cannot reacquire");
+
+  LongTermController confirmed_detector(config);
+  confirmed_detector.initialize(initial, 0, 0, frame_size);
+  step(confirmed_detector, 1, 100, std::nullopt);
+  detector_plan = confirmed_detector.begin_frame(2, 1100, true);
+  const BBox recovered{120, 40, 20, 20};
+  DetectorBatch consistent_batch{
+      2, 1100,
+      {{recovered, 0.99F, 0}, {BBox{121, 40, 20, 20}, 0.98F, 0}}};
+  confirmed_detector.finish_frame(detector_plan, {}, consistent_batch);
+  detector_plan = confirmed_detector.begin_frame(3, 1140, false);
+  output = confirmed_detector.finish_frame(
+      detector_plan,
+      {reliable_for_plan(detector_plan, detector_plan.predicted_bbox, 3)},
+      std::nullopt);
+  expect_true(!output.control_valid,
+              "first detector-guided NanoTrack verification stays invalid");
+  detector_plan = confirmed_detector.begin_frame(4, 1180, false);
+  output = confirmed_detector.finish_frame(
+      detector_plan,
+      {reliable_for_plan(detector_plan, detector_plan.predicted_bbox, 4)},
+      std::nullopt);
+  expect_true(output.accepted && output.reacquired && output.control_valid,
+              "two spatially consistent verifications in three frames reacquire");
+
+  LongTermController filtered_detector(config);
+  filtered_detector.initialize(initial, 0, 0, frame_size);
+  step(filtered_detector, 1, 100, std::nullopt);
+  detector_plan = filtered_detector.begin_frame(2, 1100, true);
+  DetectorBatch empty_after_class_filter{2, 1100, {}};
+  output = filtered_detector.finish_frame(detector_plan, {},
+                                          empty_after_class_filter);
+  expect_true(output.detector_status == DetectorBatchStatus::kInvalid &&
+                  output.detector_candidates_queued == 0 &&
+                  !output.control_valid,
+              "wrong-class detections filtered by the engine cannot enter recovery");
+
+  LongTermController invalid_detector(config);
+  invalid_detector.initialize(initial, 0, 0, frame_size);
+  step(invalid_detector, 1, 100, std::nullopt);
+  detector_plan = invalid_detector.begin_frame(2, 1100, true);
+  DetectorBatch invalid_batch{
+      2, 1100, {{BBox{-1, 40, 20, 20}, 0.99F, 0}}};
+  output = invalid_detector.finish_frame(detector_plan, {}, invalid_batch);
+  expect_true(output.detector_status == DetectorBatchStatus::kInvalid &&
+                  !output.control_valid,
+              "invalid detector geometry is discarded");
+
+  LongTermController same_class_distractor(config);
+  same_class_distractor.initialize(initial, 0, 0, frame_size);
+  step(same_class_distractor, 1, 100, std::nullopt);
+  detector_plan = same_class_distractor.begin_frame(2, 1100, true);
+  const BBox distractor_box{180, 100, 20, 20};
+  DetectorBatch distractor_batch{
+      2, 1100,
+      {{distractor_box, 0.99F, 0}, {distractor_box, 0.98F, 0}}};
+  same_class_distractor.finish_frame(detector_plan, {}, distractor_batch);
+  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
+    detector_plan = same_class_distractor.begin_frame(
+        frame, 1140 + static_cast<std::int64_t>(frame - 3) * 40, false);
+    output = same_class_distractor.finish_frame(
+        detector_plan,
+        {reliable_for_plan(detector_plan, initial, frame)}, std::nullopt);
+    expect_true(!output.accepted && !output.control_valid,
+                "same-class confidence cannot override failed template geometry");
+  }
 
   LongTermController deformation(config);
   deformation.initialize(initial, 0, 0, frame_size);

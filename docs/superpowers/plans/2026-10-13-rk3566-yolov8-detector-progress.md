@@ -49,6 +49,9 @@
 - Task 6 主机逻辑构建及 CTest 10/10 通过；使用板端 RKNN Runtime 2.3.2 真实头文件对 engine、smoke 和 main 完成语法检查。
 - Task 6 第一次板端构建在 GCC 8.3 的 `std::filesystem` 链接处 RED（缺失 `stdc++fs`）；添加旧 GCC 条件链接后原生构建 GREEN。
 - Task 6 第一次模型启动在错误的 NCHW 输入假设处被严格契约检查拒绝；真实模型属性为 `1×640×640×3 FP16 NHWC`。修正为实际 NHWC 内部张量验证后，保留外部 `UINT8 NHWC RGB` 提交契约，真实推理 GREEN。
+- Task 7 detector 身份测试 RED：同一源帧号但错误源时间戳的 batch 被旧逻辑接收。controller 改为同时核对 request 的 frame ID 和视频时间戳后 GREEN。
+- Task 7 恢复回放覆盖：单一高置信候选不能直接恢复、两个一致的 NanoTrack 验证才满足 2/3、空 batch（含类别过滤后为空）、非法框、同类干扰目标、慢 detector 原始请求身份及 170 ms 过期结果丢弃。
+- Task 7 主机 CTest 10/10、Python manifest/conversion 测试 25/25 通过；ASAN+UBSAN CTest 10/10 通过，延续 `detect_leaks=0` 的已记录环境限制。
 
 ## 开发板证据
 

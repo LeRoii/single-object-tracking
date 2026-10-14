@@ -178,16 +178,32 @@ int main() {
   expect_true(!plan.request_detector,
               "detector requests are limited to once per 500 ms");
   detector_controller.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController detector_identity(config);
+  detector_identity.initialize(BBox{40, 30, 20, 20}, 0, 0,
+                               FrameSize{200, 120});
+  reject_frame(detector_identity, 1, 100);
+  plan = detector_identity.begin_frame(2, 1100, true);
+  expect_true(plan.request_detector,
+              "identity test schedules a detector request");
+  DetectorBatch wrong_timestamp{
+      2, 1099, {{BBox{10, 10, 20, 20}, 0.9F, 0}}};
+  output = detector_identity.finish_frame(plan, {}, wrong_timestamp);
+  expect_true(output.detector_status == DetectorBatchStatus::kFrameMismatch &&
+                  output.detector_candidates_queued == 0,
+              "detector result must preserve both frame and timestamp identity");
   plan = detector_controller.begin_frame(4, 1600, true);
   expect_true(plan.request_detector, "detector interval permits next request");
-  DetectorBatch stale{4, 1400, {{BBox{10, 10, 20, 20}, 0.9F, 1}}};
+  detector_controller.finish_frame(plan, {}, std::nullopt);
+  plan = detector_controller.begin_frame(5, 1800, false);
+  DetectorBatch stale{4, 1600, {{BBox{10, 10, 20, 20}, 0.9F, 1}}};
   output = detector_controller.finish_frame(plan, {}, stale);
   expect_true(output.detector_status == DetectorBatchStatus::kStale,
               "detector batch older than 150 ms is rejected");
 
-  plan = detector_controller.begin_frame(5, 2100, true);
+  plan = detector_controller.begin_frame(6, 2100, true);
   expect_true(plan.request_detector, "later detector request is scheduled");
-  DetectorBatch valid{5,
+  DetectorBatch valid{6,
                       2100,
                       {{BBox{10, 10, 20, 20}, 0.7F, 1},
                        {BBox{30, 10, 20, 20}, 0.95F, 1},
@@ -197,7 +213,7 @@ int main() {
   expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
                   output.detector_candidates_queued == 3,
               "valid detector batch is confidence-sorted and capped at three");
-  plan = detector_controller.begin_frame(6, 2140, true);
+  plan = detector_controller.begin_frame(7, 2140, true);
   expect_true(plan.hypothesis_source == HypothesisSource::kDetector,
               "next frame verifies one queued detector hypothesis");
   expect_true(plan.detector_candidate_class_id == std::optional<int>(1) &&

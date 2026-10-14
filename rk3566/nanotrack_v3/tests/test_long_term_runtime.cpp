@@ -226,6 +226,35 @@ int main() {
                   completed.detector.timing.total_ms == 10.0F,
               "runtime exposes detector batch diagnostics without changing policy");
 
+  FakeTracker stale_tracker;
+  FakeDetector stale_detector;
+  stale_detector.enabled = true;
+  LongTermRuntime stale_runtime(recovery_config, stale_tracker, stale_detector);
+  stale_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  stale_tracker.emit_reliable = false;
+  stale_runtime.process_frame(image, 1, 10);
+  RuntimeFrameResult stale_submitted =
+      stale_runtime.process_frame(image, 2, 50);
+  expect_true(stale_submitted.detector.request_submitted,
+              "slow detector replay submits the initial request");
+  stale_runtime.process_frame(image, 3, 100);
+  stale_runtime.process_frame(image, 4, 160);
+  DetectorBatch stale_completion;
+  stale_completion.source_frame_id = 2;
+  stale_completion.source_timestamp_ms = 50;
+  stale_completion.candidates = {{BBox{70, 35, 20, 20}, 0.9F, 0}};
+  stale_detector.next_batch = stale_completion;
+  RuntimeFrameResult stale_completed =
+      stale_runtime.process_frame(image, 5, 220);
+  expect_true(stale_detector.submit_calls == 1 &&
+                  stale_completed.detector.batch_received &&
+                  stale_completed.detector.batch_frame_id == 2 &&
+                  stale_completed.detector.batch_age_ms == 170 &&
+                  stale_completed.output.detector_status ==
+                      DetectorBatchStatus::kStale &&
+                  stale_completed.output.detector_candidates_queued == 0,
+              "slow completion keeps original identity and is logged then discarded");
+
   FakeTracker error_tracker;
   FakeDetector error_detector;
   error_detector.enabled = true;

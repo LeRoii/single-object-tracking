@@ -259,8 +259,9 @@ DetectorBatchStatus LongTermController::ingest_detector_batch(
     const SearchPlan& plan,
     const std::optional<DetectorBatch>& batch) {
   if (!batch) return DetectorBatchStatus::kNone;
-  if (!last_detector_request_frame_ ||
-      batch->source_frame_id != *last_detector_request_frame_) {
+  if (!last_detector_request_frame_ || !last_detector_request_ms_ ||
+      batch->source_frame_id != *last_detector_request_frame_ ||
+      batch->source_timestamp_ms != *last_detector_request_ms_) {
     return DetectorBatchStatus::kFrameMismatch;
   }
   const std::int64_t age = plan.timestamp_ms - batch->source_timestamp_ms;
