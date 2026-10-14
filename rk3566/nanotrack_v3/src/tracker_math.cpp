@@ -11,6 +11,12 @@ namespace {
 
 bool finite(float value) { return std::isfinite(value); }
 
+class DecodedBoxOutsideFrame final : public std::runtime_error {
+ public:
+  DecodedBoxOutsideFrame()
+      : std::runtime_error("decoded box is outside the frame") {}
+};
+
 float change(float value) {
   if (!finite(value) || value <= 0.0F) {
     throw std::runtime_error("tracker ratio must be finite and positive");
@@ -291,7 +297,7 @@ DecodeResult decode_head(const std::vector<float>& cls,
            updated.center_y - 0.5F * updated.height, updated.width, updated.height};
   box = clip_bbox(box, frame_width, frame_height);
   if (box.width <= 0.0F || box.height <= 0.0F) {
-    throw std::runtime_error("decoded box is outside the frame");
+    throw DecodedBoxOutsideFrame();
   }
   updated.center_x = box.x + 0.5F * box.width;
   updated.center_y = box.y + 0.5F * box.height;
@@ -302,6 +308,21 @@ DecodeResult decode_head(const std::vector<float>& cls,
       updated,
       best_score,
       ResponseMetrics{best_score, best_pscore, psr, apce, peak_margin}};
+}
+
+std::optional<DecodeResult> try_decode_head(const std::vector<float>& cls,
+                                            const std::vector<float>& loc,
+                                            const TrackerState& state,
+                                            const TrackerConfig& config,
+                                            float scale_z,
+                                            int frame_width,
+                                            int frame_height) {
+  try {
+    return decode_head(cls, loc, state, config, scale_z, frame_width,
+                       frame_height);
+  } catch (const DecodedBoxOutsideFrame&) {
+    return std::nullopt;
+  }
 }
 
 }  // namespace nanotrack

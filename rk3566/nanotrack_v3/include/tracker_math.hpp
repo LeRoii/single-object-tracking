@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -58,5 +59,12 @@ DecodeResult decode_head(const std::vector<float>& cls,
                          float scale_z,
                          int frame_width,
                          int frame_height);
+std::optional<DecodeResult> try_decode_head(const std::vector<float>& cls,
+                                            const std::vector<float>& loc,
+                                            const TrackerState& state,
+                                            const TrackerConfig& config,
+                                            float scale_z,
+                                            int frame_width,
+                                            int frame_height);
 
 }  // namespace nanotrack

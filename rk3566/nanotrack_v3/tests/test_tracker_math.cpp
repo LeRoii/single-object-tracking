@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -139,6 +140,12 @@ int main() {
                     TrackerState{50, 50, 20, 10}, config, 1.0F, 100, 100);
       },
       "non-finite head output must fail");
+
+  const std::optional<DecodeResult> outside = try_decode_head(
+      {0.0F, 2.0F}, {-1000.0F, 0.0F, 1100.0F, 10.0F},
+      TrackerState{50.0F, 50.0F, 20.0F, 10.0F}, config, 1.0F, 100, 100);
+  expect_true(!outside,
+              "a finite head proposal wholly outside the frame becomes no observation");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

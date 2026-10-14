@@ -33,10 +33,11 @@ class NanoTrackV3 final : public ShortTermTracker {
   void validate_model_interfaces();
   std::vector<float> extract_template_feature(const cv::Mat& frame,
                                               const BBox& bbox);
-  DecodeResult run_head(const std::vector<float>& template_feature,
-                        const std::vector<float>& search_feature,
-                        const TrackerState& reference_state,
-                        float scale_z);
+  std::optional<DecodeResult> run_head(
+      const std::vector<float>& template_feature,
+      const std::vector<float>& search_feature,
+      const TrackerState& reference_state,
+      float scale_z);
   cv::Mat mat_view(const ImageView& image) const;
 
   std::unique_ptr<RknnModel> template_model_;

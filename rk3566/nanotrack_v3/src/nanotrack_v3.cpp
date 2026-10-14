@@ -147,10 +147,11 @@ std::vector<float> NanoTrackV3::extract_template_feature(const cv::Mat& frame,
   return feature_for_nhwc_input(outputs[0], head_model_->inputs()[0]);
 }
 
-DecodeResult NanoTrackV3::run_head(const std::vector<float>& template_feature,
-                                   const std::vector<float>& search_feature,
-                                   const TrackerState& reference_state,
-                                   float scale_z) {
+std::optional<DecodeResult> NanoTrackV3::run_head(
+    const std::vector<float>& template_feature,
+    const std::vector<float>& search_feature,
+    const TrackerState& reference_state,
+    float scale_z) {
   auto head_outputs = head_model_->run(
       {{template_feature.data(), template_feature.size() * sizeof(float),
         RKNN_TENSOR_FLOAT32, RKNN_TENSOR_NHWC},
@@ -159,8 +160,8 @@ DecodeResult NanoTrackV3::run_head(const std::vector<float>& template_feature,
   if (head_outputs.size() != 2) {
     throw std::runtime_error("head returned an unexpected output count");
   }
-  return decode_head(head_outputs[0], head_outputs[1], reference_state,
-                     config_, scale_z, frame_width_, frame_height_);
+  return try_decode_head(head_outputs[0], head_outputs[1], reference_state,
+                         config_, scale_z, frame_width_, frame_height_);
 }
 
 cv::Mat NanoTrackV3::mat_view(const ImageView& image) const {
@@ -215,19 +216,27 @@ std::vector<TrackerObservation> NanoTrackV3::infer(const ImageView& image,
   }
   const std::vector<float> search_feature =
       feature_for_nhwc_input(search_outputs[0], head_model_->inputs()[1]);
-  const DecodeResult anchor = run_head(anchor_feature_, search_feature,
-                                       reference_state, effective_scale_z);
-  const DecodeResult recent =
+  const std::optional<DecodeResult> anchor =
+      run_head(anchor_feature_, search_feature, reference_state,
+               effective_scale_z);
+  const std::optional<DecodeResult> recent =
       recent_matches_anchor_
           ? anchor
           : run_head(recent_feature_, search_feature, reference_state,
                      effective_scale_z);
   const std::uint64_t token = ++search_token_;
-  return {
-      TrackerObservation{plan.frame_id, plan.timestamp_ms, anchor.bbox,
-                         anchor.metrics, TemplateKind::kAnchor, token},
-      TrackerObservation{plan.frame_id, plan.timestamp_ms, recent.bbox,
-                         recent.metrics, TemplateKind::kRecent, token}};
+  std::vector<TrackerObservation> observations;
+  if (anchor) {
+    observations.push_back(
+        TrackerObservation{plan.frame_id, plan.timestamp_ms, anchor->bbox,
+                           anchor->metrics, TemplateKind::kAnchor, token});
+  }
+  if (recent) {
+    observations.push_back(
+        TrackerObservation{plan.frame_id, plan.timestamp_ms, recent->bbox,
+                           recent->metrics, TemplateKind::kRecent, token});
+  }
+  return observations;
 }
 
 void NanoTrackV3::commit_bbox(const BBox& bbox) {

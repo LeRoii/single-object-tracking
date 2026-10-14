@@ -52,6 +52,8 @@
 - Task 7 detector 身份测试 RED：同一源帧号但错误源时间戳的 batch 被旧逻辑接收。controller 改为同时核对 request 的 frame ID 和视频时间戳后 GREEN。
 - Task 7 恢复回放覆盖：单一高置信候选不能直接恢复、两个一致的 NanoTrack 验证才满足 2/3、空 batch（含类别过滤后为空）、非法框、同类干扰目标、慢 detector 原始请求身份及 170 ms 过期结果丢弃。
 - Task 7 主机 CTest 10/10、Python manifest/conversion 测试 25/25 通过；ASAN+UBSAN CTest 10/10 通过，延续 `detect_leaks=0` 的已记录环境限制。
+- Task 8 第一次 4200 帧稳定性运行在 543 秒/2380 输出帧处 RED：LOST 大范围搜索中的一个有限数值 NanoTrack proposal 整体落在画面外，旧代码以 `decoded box is outside the frame` 终止进程。
+- Task 8 修复将且仅将“完整落在画面外”的 head proposal 转换为本帧无 observation；非有限数值、模型接口及 RKNN 错误仍为致命错误。新增纯函数回归后，主机及 ASAN+UBSAN CTest 均 10/10 通过。
 
 ## 开发板证据
 
@@ -61,14 +63,29 @@
 - 板端干净配置并原生构建成功；进入构建目录执行完整 CTest 10/10 通过。板端旧 CTest 不支持 `--test-dir`，因此最终证据采用 `cd build-board-yolo && ctest --output-on-failure`。
 - `ldd` 确认两个 AArch64 ELF 均解析到 `/home/cat/ThirdParty/OpenCV4100/lib/libopencv_world.so.410` 与 `/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so`，没有 `not found`。
 - 真实视频帧 smoke 推理成功：2 个 `person` 候选，置信度 0.948730/0.937012；raw=20、filtered=2；单次 preprocess=19.475 ms、inference=190.856 ms、postprocess=44.834 ms、total=255.165 ms。该值只是一帧功能证据，不设性能门槛。
+- Task 8 使用独立 `build-board-acceptance` 做干净原生构建；修复后的最终板端 CTest 10/10 通过。
+- 官方 Ultralytics `bus.jpg`（810×1080，SHA-256 `c02019c4979c191eb739ddd944445ef408dad5679acab6fd520ef9d434bfbc63`）真实推理得到 5 个候选：4 个 `person`、1 个 `bus`。人工检查标注框和类别合理；total=257.344 ms，仅作单帧功能证据。
+- 人员视频 detector-enabled：987 输出帧校验通过，58/58 detector request/complete、0 reject、0 error；58 个 batch 与 113 个 detector hypothesis 可在 schema-v3 中分别审计。目标在第 99 帧后丢失且未找回，`reacquired=0`，因此视频推理通过但恢复效果失败。
+- 车辆两轮循环 detector-enabled：701 输出帧校验通过，32/32 request/complete、0 error；LOST 429 行且全部 `control_valid=false`。第二轮目标重现后未找回；4 次 `reacquired` 均发生在第一轮且来源为 motion，不作为 detector 长时找回证据。
+- 同一人员视频 detector-disabled：987 输出帧校验通过，metadata `enabled=false`，CSV 全部 `detector_configured=0`，request/complete/error 均为 0；旧命令行为和 schema-v3 保持可用。
+- 修复后的稳定性运行：连续 1267 秒、4201 输出帧/4200 跟踪帧，272/272 request/complete、0 reject、0 error，线程数恒为 9，最大在途差为 1，温度 28.888–31.875°C，瞬时 NPU load 2%–18%。所有 4012 个 LOST 行均 `control_valid=false`。
+- 稳定性时延边界：mean runtime=214.973 ms、`runtime_fps=4.652`（跟踪 runtime，不含视频 I/O/叠加/编码）；mean pipeline=295.998 ms、`end_to_end_fps=3.378`（完整管线）。不设置性能通过线。
+- 稳定性内存：60 秒后 RSS 首/尾为 147,152/149,328 kB，中位数 171,772 kB，线程恒定且多次回落到约 149 MB；但周期峰值随运行抬升，最大 RSS 446,320 kB、VmHWM 476,684 kB，线性拟合约 +102.116 kB/s。因此功能稳定性通过，但内存峰值风险未关闭。
+- Task 8 分项：板端构建 PASS；单元测试 PASS；模型加载 PASS；官方图推理 PASS；人员/车辆视频推理 PASS；detector-disabled 回归 PASS；控制安全门 PASS；21 分钟进程与队列稳定 PASS；目标消失后找回 FAIL；内存峰值稳定性 RISK。
 
 ## 工件
 
-- 板端 `nanotrack_v3`：SHA-256 `9a16f4a8a0eaa3dbaea9d2c7150f9e1585743def9be1e47a64aa702089e1480e`。
+- 最终板端 `build-board-acceptance/nanotrack_v3`：SHA-256 `e95ef3d17b2673ec4fb5b26f9d2c2875806ffa101ef4f5deb9f69bcbacc36f5c`。
 - 板端 `yolo_detector_smoke`：SHA-256 `47a54eb7713f1fb54b44a2ae892bb43b6a0a7ce75a8071a0cdc6f7f3482eaba1`。
 - smoke 输入：`artifacts/task6-smoke/input.jpg`，SHA-256 `cdda98096936407912313796db1aa44801a58c224c547e6238fe66c65e350a42`。
 - smoke 标注图：`artifacts/task6-smoke/output.jpg`，SHA-256 `957aa3f6a79b9501865dd4205968db78ad76f3259ce6bef2241c50b7bb791eb6`。
 - smoke 候选：`artifacts/task6-smoke/candidates.csv`，SHA-256 `53fc2666a47a479283b067a30702ca480adb662f2c856930b67898e19203e305`。
+- Task 8 根目录：`artifacts/20261014-acceptance`。
+- 官方图标注输出：`official-smoke/bus-annotated.jpg`，SHA-256 `b710b489f7f097975b6b2b6453e6b9706f344f357201c3d1faaac6289cc87e08`；候选 CSV SHA-256 `34d3c06ab1ca0b56540f8443c8a2e7aae6b31cb2b7c11f71a91fce9373e2a235`。
+- 人员 detector-enabled：`person-video/{output.avi,bboxes.csv,session-metadata.json,run.log}`；对应 SHA-256 `2ec5e34265ca85563849a380bcd99e0008f37d8229c1c6a7e888c58e7fbb60ce`、`f735bac077079dae1560b34df81b2e59b4cffd0bc86e82e192404e1da41039b0`、`abbc509a3a9ad53788a82e698f14c925e5b58ccc171e58176526dea8146639af`、`57ab757ebc7cca5654339349e928eda47d5260b367aa894d26f4d7f70d24ebe9`。
+- 车辆循环：`car-loop-700/{output.avi,bboxes.csv,session-metadata.json,run.log}`；对应 SHA-256 `f049a94651f7f4fff666fbca181d41f31a7cc5dea1e204e9fb84b072db1dcb56`、`4fdb9b616f725a96a7eb389ab87fc46e06fd6b08a1e492d19f348ef2c5929522`、`74f464cfd08b33a712b3529e1ed80729ee7f7c043dfd9e0dbb164fbcbf2e58c6`、`7a6f46ddc5f4294713ef173d26d66cd5445283af064ee4156b250f67cb3934ab`。
+- detector-disabled：`person-no-detector/{output.avi,bboxes.csv,session-metadata.json,run.log}`；对应 SHA-256 `0786b850b6691da2ce8837634d7c2ce3e9075fb7d9bd57ceb965405c403827f1`、`9f18a2389af9f296ae8f3d446c5d805460f5da9d4b0cb3bfb677466f7fe021ec`、`4e044dfa98ea7e331194cf4c8c4f28c8483d45c30b17fbeb27ef8b843ad1b9d8`、`5782f052ebea60070601f9fcf7cb99c635f8234c8fe43c9bc23330a9ec5572a2`。
+- 21 分钟稳定性：`stability-4200-v2/{output.avi,bboxes.csv,session-metadata.json,run.log,resources.csv,wall-seconds.txt}`；完整 SHA-256 依次为 `7c9d71fe612959fa167f13339c1ee71cbed1a6f73144062e1132d77128d8dc86`、`e69af12359720a4eb2f94122599bb35c802f02c2ec43429a07afe69401330b17`、`0bb09e5d2e512754591a797fee9f525e5a27d054052844b1e9cc1c680fd7d0e1`、`f7ea149fac9b05e59d945e31bb1986797f443ef2f99297c78ca976098b26f981`、`9364ff75bbb48649119aab5dc1599cde5761ee7a18ba749b7d9e6714717be79f`、`2faac09313662ca9ae94dde4aaba6fd7c86d6d58e9b84ae749604c9e9db30646`。
 
 ## 偏差与裁决
 
@@ -82,9 +99,13 @@
 - 当前托管环境不支持 ptrace 下的 LeakSanitizer；本阶段保留 ASAN/UBSAN，并由析构 join 测试覆盖线程生命周期，LSan 证据缺失明确保留。
 - 板端系统时钟停留在 2019，部署文件时间来自 2026，GNU Make 会报告 clock skew 并保守重建；本次使用干净构建且产物/测试/推理均已核验，但量产环境应同步系统时钟。
 - 原计划指定固定长期目录；该目录已有本工程之前的部署。为避免破坏或覆盖，当前版本放入其 `releases/rk3566-yolov8-detector` 子目录。
+- 官方图来源采用 Ultralytics 官方 GitHub release asset，而非 Rockchip 示例中未随仓库保存的本地图片；图像只用于通用 COCO 输出合理性检查。
+- 首次稳定性失败工件 `stability-4200` 被保留，修复后使用新目录 `stability-4200-v2` 从零重新运行，没有覆盖或拼接时长。
 
 ## 未解决风险
 
 - generic COCO detector 尚未做业务域阈值标定，`calibrated=false` 保持不变。
-- 单帧 smoke 已证明模型加载和真实推理；视频集成、恢复正确性、detector-disabled 回归和 10 分钟稳定性仍需 Task 8。
-- Toolkit 转换日志包含部分常量空 tensor 与默认 float16 qtype 警告；转换成功且产物契约通过，但其板端影响仍需 Task 6/8 实测。
+- 人员和车辆实测均未证明“丢失后可找回”；detector 候选进入了 NanoTrack 验证链，但现有模板验证/确认配置没有重新建立有效控制。恢复正确性当前为 FAIL，不能作为长时稳定跟踪交付。
+- 通用 COCO 类别不能解决同类多目标身份歧义；当前没有 ReID 或目标特征检索，错误同类目标只能依赖 NanoTrack 模板门抑制。
+- 21 分钟运行的首尾 RSS 接近，但周期峰值和 VmHWM 随进度抬升；需进一步隔离 OpenCV AVI writer、帧缓冲及 allocator 行为，并在修复后重复稳定性验收。
+- Toolkit 转换日志包含部分常量空 tensor 与默认 float16 qtype 警告；真实板端图像/视频推理已成功，但这些警告仍应随模型替换重新审查。
