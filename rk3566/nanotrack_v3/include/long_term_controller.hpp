@@ -101,6 +101,7 @@ class LongTermController {
     QueuedDetectorCandidate queued{};
     std::size_t next_probe = 0;
     bool locked = false;
+    std::size_t locked_probe_index = 0;
     BBox locked_bbox{};
     std::size_t confirmation_attempts = 0;
     std::vector<BBox> confirmation_boxes;
@@ -113,6 +114,8 @@ class LongTermController {
   bool add_confirmation(std::uint64_t frame_id, const BBox& bbox);
   std::vector<BBox> detector_probes(const DetectorCandidate& candidate) const;
   void activate_next_detector_candidate();
+  bool detector_geometry_consistent(const BBox& reference,
+                                    const BBox& bbox) const;
   bool detector_confirmation_consistent(const BBox& bbox) const;
   DetectorBatchStatus ingest_detector_batch(
       const SearchPlan& plan,

@@ -95,6 +95,12 @@ if(BUILD_TESTING)
   add_executable(test_scoped_cleanup tests/test_scoped_cleanup.cpp)
   target_include_directories(test_scoped_cleanup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME scoped_cleanup COMMAND test_scoped_cleanup)
+
+  add_test(
+    NAME verify_board_schema
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_verify_board_schema.sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_board.sh
+  )
 endif()
 
 if(ENABLE_RKNN_RUNTIME)

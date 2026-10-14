@@ -220,7 +220,8 @@ int main() {
 
   plan = candidate_lock.begin_frame(4, 1640, true);
   expect_true(plan.detector_candidate_id == locked_id &&
-                  plan.detector_candidate_locked && plan.request_detector,
+                  plan.detector_candidate_locked &&
+                  plan.detector_probe_index == 0 && plan.request_detector,
               "locked candidate survives while a new detector request is submitted");
   DetectorBatch replacement{
       4, 1640, {{BBox{130, 60, 20, 20}, 0.99F, 0}}};
@@ -273,6 +274,76 @@ int main() {
                    plan.predicted_bbox.y != 10.0F),
               "failed subtarget probe advances within the same candidate");
   subtarget.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController edge_subtarget(subtarget_config);
+  edge_subtarget.initialize(BBox{40, 30, 20, 10}, 0, 0,
+                            FrameSize{200, 120});
+  reject_frame(edge_subtarget, 1, 100);
+  plan = edge_subtarget.begin_frame(2, 1100, true);
+  DetectorBatch edge_region_batch{
+      2, 1100, {{BBox{0, 0, 30, 60}, 0.95F, 0}}};
+  edge_subtarget.finish_frame(plan, {}, edge_region_batch);
+  for (std::uint64_t frame = 3; frame <= 5; ++frame) {
+    plan = edge_subtarget.begin_frame(frame, 1020 + frame * 40, false);
+    edge_subtarget.finish_frame(plan, {}, std::nullopt);
+  }
+  plan = edge_subtarget.begin_frame(6, 1260, false);
+  expect_true(plan.detector_probe_index == 3,
+              "edge subtarget test reaches the left-side probe");
+  expect_near(plan.predicted_bbox.width, 20.0F, 1e-6F,
+              "edge subtarget probe preserves width by shifting inside frame");
+  expect_near(plan.predicted_bbox.height, 10.0F, 1e-6F,
+              "edge subtarget probe preserves height by shifting inside frame");
+  expect_true(plan.predicted_bbox.x >= 0.0F && plan.predicted_bbox.y >= 0.0F,
+              "edge subtarget probe stays inside frame");
+  edge_subtarget.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController opposite_edge_subtarget(subtarget_config);
+  opposite_edge_subtarget.initialize(BBox{40, 30, 20, 30}, 0, 0,
+                                     FrameSize{200, 120});
+  reject_frame(opposite_edge_subtarget, 1, 100);
+  plan = opposite_edge_subtarget.begin_frame(2, 1100, true);
+  DetectorBatch opposite_edge_batch{
+      2, 1100, {{BBox{170, 90, 30, 30}, 0.95F, 0}}};
+  opposite_edge_subtarget.finish_frame(plan, {}, opposite_edge_batch);
+  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
+    plan = opposite_edge_subtarget.begin_frame(
+        frame, 1020 + static_cast<std::int64_t>(frame) * 40, false);
+    opposite_edge_subtarget.finish_frame(plan, {}, std::nullopt);
+  }
+  plan = opposite_edge_subtarget.begin_frame(5, 1220, false);
+  expect_true(plan.detector_probe_index == 2 &&
+                  plan.predicted_bbox.y + plan.predicted_bbox.height <= 120.0F,
+              "bottom probe shifts inside frame without shrinking geometry");
+  expect_near(plan.predicted_bbox.height, 30.0F, 1e-6F,
+              "bottom probe preserves subtarget height");
+  opposite_edge_subtarget.finish_frame(plan, {}, std::nullopt);
+  plan = opposite_edge_subtarget.begin_frame(6, 1260, false);
+  opposite_edge_subtarget.finish_frame(plan, {}, std::nullopt);
+  plan = opposite_edge_subtarget.begin_frame(7, 1300, false);
+  expect_true(plan.detector_probe_index == 4 &&
+                  plan.predicted_bbox.x + plan.predicted_bbox.width <= 200.0F,
+              "right probe shifts inside frame without shrinking geometry");
+  expect_near(plan.predicted_bbox.width, 20.0F, 1e-6F,
+              "right probe preserves subtarget width");
+  opposite_edge_subtarget.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController strict_initial_geometry(lock_config);
+  strict_initial_geometry.initialize(BBox{40, 30, 20, 20}, 0, 0,
+                                     FrameSize{200, 120});
+  reject_frame(strict_initial_geometry, 1, 100);
+  plan = strict_initial_geometry.begin_frame(2, 1100, true);
+  DetectorBatch strict_initial_batch{
+      2, 1100, {{BBox{50, 30, 20, 20}, 0.95F, 0}}};
+  strict_initial_geometry.finish_frame(plan, {}, strict_initial_batch);
+  plan = strict_initial_geometry.begin_frame(3, 1140, false);
+  const BBox oversized_first{plan.predicted_bbox.x - 5.0F,
+                             plan.predicted_bbox.y - 5.0F, 30.0F, 30.0F};
+  output = strict_initial_geometry.finish_frame(
+      plan, reliable_pair(plan, oversized_first, 40), std::nullopt);
+  expect_true(!output.control_valid && !output.detector_candidate_locked &&
+                  output.detector_confirmation_hits == 0,
+              "excess geometry drift cannot establish the first detector lock");
 
   LongTermController strict_geometry(lock_config);
   strict_geometry.initialize(BBox{40, 30, 20, 20}, 0, 0,

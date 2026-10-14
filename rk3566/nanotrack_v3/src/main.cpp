@@ -261,7 +261,8 @@ int main(int argc, char** argv) {
     boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
                  options.start_frame, initial_timestamp, options.bbox,
                  detector->available(),
-                 detector->available() && detector->can_submit()))
+                 detector->available() && detector->can_submit(),
+                 controller_config.detector_target_mode))
           << '\n';
     write_annotated(frame, options.bbox, initial_output);
 

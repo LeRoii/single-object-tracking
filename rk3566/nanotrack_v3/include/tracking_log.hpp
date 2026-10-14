@@ -140,7 +140,9 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     std::int64_t timestamp_ms,
                                     const BBox& bbox,
                                     bool detector_configured = false,
-                                    bool detector_ready = false);
+                                    bool detector_ready = false,
+                                    DetectorTargetMode detector_target_mode =
+                                        DetectorTargetMode::kFullObject);
 TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
                                      const std::string& note = "");
 LatencySummary summarize_latencies(const std::vector<float>& runtime_ms,

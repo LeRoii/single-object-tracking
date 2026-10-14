@@ -55,10 +55,11 @@ int quality_rank(QualityLevel value) {
 
 BBox centered_box(float center_x, float center_y, const BBox& reference,
                   FrameSize frame_size) {
-  return clip_bbox(BBox{center_x - 0.5F * reference.width,
-                        center_y - 0.5F * reference.height,
-                        reference.width, reference.height},
-                   frame_size.width, frame_size.height);
+  const float max_x = static_cast<float>(frame_size.width) - reference.width;
+  const float max_y = static_cast<float>(frame_size.height) - reference.height;
+  return BBox{std::clamp(center_x - 0.5F * reference.width, 0.0F, max_x),
+              std::clamp(center_y - 0.5F * reference.height, 0.0F, max_y),
+              reference.width, reference.height};
 }
 
 }  // namespace
@@ -194,7 +195,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.detector_candidate_class_id = active.queued.candidate.class_id;
     plan.detector_candidate_confidence = active.queued.candidate.confidence;
     plan.detector_candidate_locked = active.locked;
-    plan.detector_probe_index = active.locked ? active.next_probe
+    plan.detector_probe_index = active.locked ? active.locked_probe_index
                                               : active.next_probe - 1;
   }
   const bool interval_ready =
@@ -327,6 +328,11 @@ bool LongTermController::detector_confirmation_consistent(
   }
   const BBox& reference =
       active_detector_candidate_->confirmation_boxes.front();
+  return detector_geometry_consistent(reference, bbox);
+}
+
+bool LongTermController::detector_geometry_consistent(
+    const BBox& reference, const BBox& bbox) const {
   return bbox_iou(reference, bbox) >= config_.detector_confirmation_iou &&
          normalized_center_distance(bbox, reference) <=
              config_.detector_confirmation_center_distance &&
@@ -483,8 +489,11 @@ ControllerOutput LongTermController::finish_frame(
         output.template_iou >= config_.template_agreement_iou;
     if (!active.locked) {
       if (selected && templates_agree &&
-          selected->quality == QualityLevel::kReliable) {
+          selected->quality == QualityLevel::kReliable &&
+          detector_geometry_consistent(plan.predicted_bbox,
+                                       selected->observation.bbox)) {
         active.locked = true;
+        active.locked_probe_index = plan.detector_probe_index;
         active.locked_bbox = selected->observation.bbox;
         active.confirmation_attempts = 1;
         active.confirmation_boxes = {selected->observation.bbox};

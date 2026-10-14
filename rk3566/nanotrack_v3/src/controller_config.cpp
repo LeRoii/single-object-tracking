@@ -173,6 +173,9 @@ void validate_controller_config(const ControllerConfig& config) {
       config.confirmation_required > config.confirmation_window) {
     throw std::invalid_argument("template or confirmation counts are invalid");
   }
+  if (config.confirmation_window != 3 || config.confirmation_required != 2) {
+    throw std::invalid_argument("recovery confirmation policy must be two of three");
+  }
   const float search_scales[] = {
       config.search_tracking, config.search_uncertain, config.search_local_initial,
       config.search_local_late, config.search_assisted, config.search_lost};

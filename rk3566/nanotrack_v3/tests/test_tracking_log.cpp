@@ -132,11 +132,14 @@ int main() {
   expect_true(csv_columns(tracking_csv_row(initial)) == csv_columns(header),
               "initialization and tracking rows share one schema");
   const TrackingLogRow detector_initial =
-      make_initial_log_row(0, 0, BBox{10, 20, 30, 40}, true, true);
+      make_initial_log_row(0, 0, BBox{10, 20, 30, 40}, true, true,
+                           DetectorTargetMode::kSubtarget);
   expect_true(detector_initial.detector_configured &&
                   detector_initial.detector_ready &&
+                  detector_initial.detector_target_mode ==
+                      DetectorTargetMode::kSubtarget &&
                   detector_initial.detector_worker_status == "ready",
-              "initialization row records configured detector readiness");
+              "initialization row records detector readiness and target mode");
 
   const LatencySummary latency =
       summarize_latencies({10.0F, 20.0F, 30.0F}, {40.0F, 50.0F, 60.0F});

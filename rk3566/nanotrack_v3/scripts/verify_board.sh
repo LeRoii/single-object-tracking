@@ -60,6 +60,8 @@ height = int(sys.argv[5])
 detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
+EXPECTED_TRACKING_SCHEMA = 4
+VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 
 manifest = json.loads((artifact_dir / "manifest.json").read_text())
 for model in manifest["models"].values():
@@ -82,6 +84,10 @@ required = {
     "detector_batch_frame_id", "detector_batch_age_ms",
     "detector_raw_candidate_count", "detector_filtered_candidate_count",
     "detector_verified_class_id", "detector_verified_confidence",
+    "detector_target_mode", "detector_candidate_id", "detector_region_x",
+    "detector_region_y", "detector_region_width", "detector_region_height",
+    "detector_candidate_locked", "detector_probe_index",
+    "detector_confirmation_attempts", "detector_confirmation_hits",
     "detector_preprocess_ms", "detector_inference_ms", "detector_postprocess_ms",
     "detector_total_ms", "tracker_ms", "runtime_ms", "pipeline_ms",
 }
@@ -91,7 +97,7 @@ if missing:
 first_frame_id = int(rows[0]["frame_id"])
 last_timestamp = None
 for index, row in enumerate(rows):
-    if row["schema_version"] != "3":
+    if row["schema_version"] != str(EXPECTED_TRACKING_SCHEMA):
         raise SystemExit(f"unexpected CSV schema version at row {index}")
     values = {key: float(row[key]) for key in {"x", "y", "width", "height"}}
     if int(row["frame_id"]) != first_frame_id + index:
@@ -102,6 +108,10 @@ for index, row in enumerate(rows):
     last_timestamp = timestamp
     if row["control_valid"] not in {"0", "1"}:
         raise SystemExit(f"invalid control_valid at row {index}")
+    if row["detector_target_mode"] not in VALID_TARGET_MODES:
+        raise SystemExit(f"invalid detector_target_mode at row {index}")
+    if row["detector_candidate_locked"] not in {"0", "1"}:
+        raise SystemExit(f"invalid detector_candidate_locked at row {index}")
     if not all(math.isfinite(value) for value in values.values()):
         raise SystemExit(f"non-finite value at row {index}")
     if values["width"] <= 0 or values["height"] <= 0:
@@ -119,17 +129,22 @@ for index, row in enumerate(rows):
         raise SystemExit(f"box exceeds frame height at row {index}")
 
 metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
-if metadata.get("schema_version") != 3:
-    raise SystemExit("session metadata schema_version must be 3")
+if metadata.get("schema_version") != EXPECTED_TRACKING_SCHEMA:
+    raise SystemExit(
+        f"session metadata schema_version must be {EXPECTED_TRACKING_SCHEMA}"
+    )
 for key in {
     "schema_version", "manifest_hash", "controller_config_hash", "sensor",
-    "calibrated", "rknn_api_version", "rknn_driver_version",
+    "calibrated", "detector_target_mode", "rknn_api_version",
+    "rknn_driver_version",
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",
     "end_to_end_fps",
 }:
     if key not in metadata:
         raise SystemExit(f"session metadata missing {key}")
+if metadata["detector_target_mode"] not in VALID_TARGET_MODES:
+    raise SystemExit("session metadata detector_target_mode is invalid")
 if metadata["tracked_frames"] != expected - 1:
     raise SystemExit("session metadata tracked frame count mismatch")
 

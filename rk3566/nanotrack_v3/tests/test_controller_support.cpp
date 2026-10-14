@@ -140,6 +140,10 @@ int main() {
   invalid_detector_geometry.detector_subtarget_max_probes = 0;
   expect_throws([&] { validate_controller_config(invalid_detector_geometry); },
                 "subtarget probe budget must be positive");
+  ControllerConfig unsafe_confirmation = default_visible;
+  unsafe_confirmation.confirmation_required = 1;
+  expect_throws([&] { validate_controller_config(unsafe_confirmation); },
+                "recovery confirmation policy must remain two of three");
 
   ControllerConfig motion_config;
   motion_config.motion_alpha = 1.0F;

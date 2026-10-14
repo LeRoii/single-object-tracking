@@ -190,7 +190,8 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     std::int64_t timestamp_ms,
                                     const BBox& bbox,
                                     bool detector_configured,
-                                    bool detector_ready) {
+                                    bool detector_ready,
+                                    DetectorTargetMode detector_target_mode) {
   TrackingLogRow row;
   row.frame_id = frame_id;
   row.timestamp_ms = timestamp_ms;
@@ -205,6 +206,7 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.recent_metrics = row.anchor_metrics;
   row.detector_configured = detector_configured;
   row.detector_ready = detector_ready;
+  row.detector_target_mode = detector_target_mode;
   row.detector_worker_status = !detector_configured
                                    ? "disabled"
                                    : (detector_ready ? "ready" : "busy");
