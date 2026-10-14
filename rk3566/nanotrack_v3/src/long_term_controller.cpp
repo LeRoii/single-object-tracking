@@ -194,6 +194,10 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.detector_candidate_region = active.queued.candidate.bbox;
     plan.detector_candidate_class_id = active.queued.candidate.class_id;
     plan.detector_candidate_confidence = active.queued.candidate.confidence;
+    plan.detector_same_class_candidates =
+        active.queued.same_class_candidates;
+    plan.detector_same_class_ambiguous =
+        active.queued.same_class_candidates > 1;
     plan.detector_candidate_locked = active.locked;
     plan.detector_probe_index = active.locked ? active.locked_probe_index
                                               : active.next_probe - 1;
@@ -373,6 +377,10 @@ DetectorBatchStatus LongTermController::ingest_detector_batch(
     QueuedDetectorCandidate queued;
     queued.id = next_detector_candidate_id_++;
     queued.candidate = candidate;
+    queued.same_class_candidates = static_cast<std::size_t>(std::count_if(
+        valid.begin(), valid.end(), [&](const DetectorCandidate& other) {
+          return other.class_id == candidate.class_id;
+        }));
     queued.probes = detector_probes(candidate);
     if (!queued.probes.empty()) {
       detector_candidates_.push_back(std::move(queued));
@@ -399,6 +407,10 @@ ControllerOutput LongTermController::finish_frame(
   output.search_scale = plan.search_scale;
   output.hypothesis_source = plan.hypothesis_source;
   output.detector_candidate_id = plan.detector_candidate_id;
+  output.detector_same_class_candidates =
+      plan.detector_same_class_candidates;
+  output.detector_same_class_ambiguous =
+      plan.detector_same_class_ambiguous;
   output.detector_candidate_locked = plan.detector_candidate_locked;
   output.detector_probe_index = plan.detector_probe_index;
   output.detector_status = ingest_detector_batch(plan, detector_batch);
@@ -488,7 +500,7 @@ ControllerOutput LongTermController::finish_frame(
         recent->quality == QualityLevel::kReliable &&
         output.template_iou >= config_.template_agreement_iou;
     if (!active.locked) {
-      if (selected && templates_agree &&
+      if (!plan.detector_same_class_ambiguous && selected && templates_agree &&
           selected->quality == QualityLevel::kReliable &&
           detector_geometry_consistent(plan.predicted_bbox,
                                        selected->observation.bbox)) {

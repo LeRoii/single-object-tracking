@@ -24,6 +24,8 @@ struct SearchPlan {
   std::optional<BBox> detector_candidate_region;
   std::optional<int> detector_candidate_class_id;
   std::optional<float> detector_candidate_confidence;
+  std::size_t detector_same_class_candidates = 0;
+  bool detector_same_class_ambiguous = false;
   bool detector_candidate_locked = false;
   std::size_t detector_probe_index = 0;
   bool request_detector = false;
@@ -51,6 +53,8 @@ struct ControllerOutput {
   DetectorBatchStatus detector_status = DetectorBatchStatus::kNone;
   std::size_t detector_candidates_queued = 0;
   std::optional<std::uint64_t> detector_candidate_id;
+  std::size_t detector_same_class_candidates = 0;
+  bool detector_same_class_ambiguous = false;
   bool detector_candidate_locked = false;
   std::size_t detector_probe_index = 0;
   std::size_t detector_confirmation_attempts = 0;
@@ -95,6 +99,7 @@ class LongTermController {
     std::uint64_t id = 0;
     DetectorCandidate candidate{};
     std::vector<BBox> probes;
+    std::size_t same_class_candidates = 0;
   };
 
   struct ActiveDetectorCandidate {

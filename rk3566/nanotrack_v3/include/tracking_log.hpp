@@ -9,7 +9,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 4;
+constexpr int kTrackingSchemaVersion = 5;
 
 class MonotonicVideoClock {
  public:
@@ -60,6 +60,8 @@ struct TrackingLogRow {
   DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
   std::optional<std::uint64_t> detector_candidate_id;
   std::optional<BBox> detector_candidate_region;
+  std::size_t detector_same_class_candidates = 0;
+  bool detector_same_class_ambiguous = false;
   bool detector_candidate_locked = false;
   std::size_t detector_probe_index = 0;
   std::size_t detector_confirmation_attempts = 0;

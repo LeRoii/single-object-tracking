@@ -198,7 +198,7 @@ int main() {
   DetectorBatch lock_batch{
       2, 1100,
       {{BBox{20, 20, 30, 40}, 0.95F, 0},
-       {BBox{120, 20, 30, 40}, 0.90F, 0}}};
+       {BBox{120, 20, 30, 40}, 0.90F, 1}}};
   output = candidate_lock.finish_frame(plan, {}, lock_batch);
   expect_true(output.detector_candidates_queued == 2,
               "whole-object candidates are queued before verification");
@@ -240,6 +240,30 @@ int main() {
                   output.detector_confirmation_hits == 2 &&
                   output.detector_confirmation_attempts == 3,
               "two agreeing hits in three locked frames reacquire");
+
+  LongTermController same_class_ambiguity(lock_config);
+  same_class_ambiguity.initialize(BBox{40, 30, 20, 20}, 0, 0,
+                                  FrameSize{200, 120});
+  reject_frame(same_class_ambiguity, 1, 100);
+  plan = same_class_ambiguity.begin_frame(2, 1100, true);
+  DetectorBatch ambiguous_batch{
+      2, 1100,
+      {{BBox{20, 20, 30, 40}, 0.95F, 0},
+       {BBox{120, 20, 30, 40}, 0.90F, 0}}};
+  same_class_ambiguity.finish_frame(plan, {}, ambiguous_batch);
+  plan = same_class_ambiguity.begin_frame(3, 1140, false);
+  expect_true(plan.detector_same_class_candidates == 2 &&
+                  plan.detector_same_class_ambiguous,
+              "same-class alternatives are exposed as ambiguous");
+  output = same_class_ambiguity.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 33), std::nullopt);
+  expect_true(!output.control_valid && !output.detector_candidate_locked,
+              "same-class alternatives cannot establish a detector lock");
+  plan = same_class_ambiguity.begin_frame(4, 1180, false);
+  output = same_class_ambiguity.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 34), std::nullopt);
+  expect_true(!output.control_valid && !output.reacquired,
+              "same-class ambiguity cannot pass two-of-three confirmation");
 
   ControllerConfig subtarget_config = config;
   subtarget_config.detector_target_mode = DetectorTargetMode::kSubtarget;

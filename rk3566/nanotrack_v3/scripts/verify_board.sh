@@ -60,7 +60,7 @@ height = int(sys.argv[5])
 detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
-EXPECTED_TRACKING_SCHEMA = 4
+EXPECTED_TRACKING_SCHEMA = 5
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 
 manifest = json.loads((artifact_dir / "manifest.json").read_text())
@@ -86,6 +86,7 @@ required = {
     "detector_verified_class_id", "detector_verified_confidence",
     "detector_target_mode", "detector_candidate_id", "detector_region_x",
     "detector_region_y", "detector_region_width", "detector_region_height",
+    "detector_same_class_candidates", "detector_same_class_ambiguous",
     "detector_candidate_locked", "detector_probe_index",
     "detector_confirmation_attempts", "detector_confirmation_hits",
     "detector_preprocess_ms", "detector_inference_ms", "detector_postprocess_ms",
@@ -112,6 +113,18 @@ for index, row in enumerate(rows):
         raise SystemExit(f"invalid detector_target_mode at row {index}")
     if row["detector_candidate_locked"] not in {"0", "1"}:
         raise SystemExit(f"invalid detector_candidate_locked at row {index}")
+    if row["detector_same_class_ambiguous"] not in {"0", "1"}:
+        raise SystemExit(f"invalid detector_same_class_ambiguous at row {index}")
+    same_class_candidates = int(row["detector_same_class_candidates"])
+    if same_class_candidates < 0:
+        raise SystemExit(f"invalid detector_same_class_candidates at row {index}")
+    if (row["detector_same_class_ambiguous"] == "1") != (
+            same_class_candidates > 1):
+        raise SystemExit(f"inconsistent same-class ambiguity at row {index}")
+    if row["detector_same_class_ambiguous"] == "1" and (
+            row["detector_candidate_locked"] == "1" or
+            row["control_valid"] == "1"):
+        raise SystemExit(f"ambiguous same-class candidate controls at row {index}")
     if not all(math.isfinite(value) for value in values.values()):
         raise SystemExit(f"non-finite value at row {index}")
     if values["width"] <= 0 or values["height"] <= 0:

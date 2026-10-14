@@ -21,6 +21,8 @@
 ## Review Focus
 
 - Two different same-class candidates must not combine into one 2/3 confirmation.
+- A batch with multiple candidates of one class must not establish any lock
+  until target-specific identity evidence exists.
 - A new detector batch must not replace a candidate already under confirmation.
 - Subtarget mode must never change target geometry to the detector region geometry.
 - One failed frame inside a three-frame confirmation window must still permit two valid hits.
@@ -75,11 +77,12 @@
 
 **Interfaces:**
 - Consumes: SearchPlan and ControllerOutput diagnostics from Task 2.
-- Produces: schema-v4 CSV fields for candidate identity and confirmation state.
+- Produces: schema-v5 CSV fields for candidate identity, same-class ambiguity,
+  and confirmation state.
 
 - [ ] Add failing log and replay assertions for candidate identity and no cross-candidate reacquisition.
 - [ ] Run the focused tests and observe failure from missing schema fields.
-- [ ] Add schema-v4 serialization and replay coverage.
+- [x] Add schema-v5 serialization and replay coverage.
 - [ ] Run the focused tests and complete CTest suite.
 - [ ] Commit the task.
 

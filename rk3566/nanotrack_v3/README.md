@@ -181,8 +181,13 @@ Detector recovery has two explicit controller modes:
 Once a candidate produces agreeing NanoTrack evidence, its generated candidate
 id is locked for the three-frame confirmation window. Pending candidates and
 new detector batches cannot contribute confirmations to that lock.
+If one detector batch contains more than one candidate of the candidate's
+class, every such hypothesis is marked same-class ambiguous and is prohibited
+from entering the lock. This conservative rule prefers continued
+`control_valid=false` over an identity switch until target-specific appearance
+or ReID evidence is available.
 
-For a retained run, verify source-coordinate boxes, schema-v4 metadata, model
+For a retained run, verify source-coordinate boxes, schema-v5 metadata, model
 hashes, detector state and output frame count with:
 
 ```bash
@@ -199,7 +204,7 @@ refer to the source/CSV coordinate system, not a downscaled preview video.
 
 ## Outputs and safety contract
 
-The schema-v4 CSV contains one row for initialization and one row for each
+The schema-v5 CSV contains one row for initialization and one row for each
 processed frame. It records:
 
 - monotonic timestamp, controller state, quality, `control_valid`, horizontal
@@ -211,8 +216,9 @@ processed frame. It records:
   identity, worker/error status, batch age, raw/filtered candidate counts,
   candidate class/confidence selected for NanoTrack verification, and segmented
   detector timing;
-- detector target mode, candidate id and region, probe index, lock state, and
-  confirmation attempt/hit counts;
+- detector target mode, candidate id and region, same-class candidate count and
+  ambiguity state, probe index, lock state, and confirmation attempt/hit
+  counts;
 - tracker/runtime latency and full video-pipeline latency (decode, tracking,
   overlay, and encode).
 
@@ -223,7 +229,7 @@ contain a predicted box for visualization while remaining invalid for control.
 If `--session-metadata` is omitted, metadata is written next to the CSV as
 `OUTPUT.csv.metadata.json`. It records the model manifest fingerprint, RKNN
 API/driver versions, timing fallback, threshold identity, calibration marker,
-and latency summary. Schema-v4 metadata also records the detector target mode
+and latency summary. Schema-v5 metadata also records the detector target mode
 and has a detector section containing
 artifact paths and SHA-256 identities, tensor descriptions, detector RKNN
 API/driver versions, thresholds, `calibrated=false`, and request/completion/
@@ -260,14 +266,16 @@ recovery:
 - the tested person and car videos did not recover the target after the main
   long-term loss, even though detector candidates reached NanoTrack
   verification;
-- same-class ambiguity has no ReID or target-specific appearance retrieval;
+- same-class ambiguity has no ReID or target-specific appearance retrieval, so
+  ambiguous detector batches are deliberately prevented from locking and may
+  increase recovery delay or prevent recovery;
 - the FP16 model is a function-first artifact, not an optimized INT8 release;
 - the 1267-second run returned repeatedly to about 149 MB RSS, but periodic
   peaks rose to 446 MB and VmHWM reached 477 MB, so the video writer/buffering
   path still needs memory investigation;
 - measured FPS values are observations without a performance pass threshold.
 
-Only schema-v4 rows with `control_valid=1` are valid control outputs. Detector
+Only schema-v5 rows with `control_valid=1` are valid control outputs. Detector
 confidence never directly authorizes control.
 
 The remaining data, calibration, board, and optional ReID work is tracked in

@@ -133,7 +133,7 @@ int main() {
   const BBox recovered{120, 40, 20, 20};
   DetectorBatch consistent_batch{
       2, 1100,
-      {{recovered, 0.99F, 0}, {BBox{121, 40, 20, 20}, 0.98F, 0}}};
+      {{recovered, 0.99F, 0}, {BBox{121, 40, 20, 20}, 0.98F, 1}}};
   confirmed_detector.finish_frame(detector_plan, {}, consistent_batch);
   detector_plan = confirmed_detector.begin_frame(3, 1140, false);
   output = confirmed_detector.finish_frame(
@@ -186,6 +186,9 @@ int main() {
   for (std::uint64_t frame = 3; frame <= 4; ++frame) {
     detector_plan = same_class_distractor.begin_frame(
         frame, 1140 + static_cast<std::int64_t>(frame - 3) * 40, false);
+    expect_true(detector_plan.detector_same_class_candidates == 2 &&
+                    detector_plan.detector_same_class_ambiguous,
+                "same-class detector alternatives are marked ambiguous");
     output = same_class_distractor.finish_frame(
         detector_plan,
         {reliable_for_plan(detector_plan, initial, frame)}, std::nullopt);

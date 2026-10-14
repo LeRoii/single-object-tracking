@@ -16,7 +16,10 @@ capability.
 - [x] Require two consistent NanoTrack hits in a three-frame locked window.
 - [x] Keep `control_valid=false` until NanoTrack confirmation succeeds.
 - [x] Apply detector-origin center, IoU, area, and aspect gates.
-- [x] Add schema-v4 candidate, probe, lock, and confirmation audit fields.
+- [x] Prevent a detector batch containing multiple candidates of one class
+  from establishing a lock; prefer invalid control over an identity switch.
+- [x] Add schema-v5 candidate, same-class ambiguity, probe, lock, and
+  confirmation audit fields.
 - [x] Cover the controller with deterministic unit and replay tests.
 
 ## Test-data preparation
@@ -56,7 +59,7 @@ capability.
 - [ ] Run all CTest targets on the board.
 - [ ] Deploy to a new immutable release; do not modify
   `releases/rk3566-yolov8-detector` in place.
-- [ ] Run both `girl_dance` cases and retain configuration, hashes, schema-v4
+- [ ] Run both `girl_dance` cases and retain configuration, hashes, schema-v5
   CSV, metadata, console log, and annotated output video.
 - [ ] Manually inspect every `reacquired=1` event against the target identity.
 - [ ] Measure sustained tracker/runtime/end-to-end latency, detector duty
@@ -71,6 +74,9 @@ capability.
   active, using motion and geometry rather than confidence alone.
 - [ ] Consider a target-specific ReID/embedding model if conservative template
   verification cannot meet same-class interference acceptance criteria.
+- [ ] Replace the conservative same-class quarantine with calibrated identity
+  ranking only after labeled distractor data and a target-specific appearance
+  signal are available; detector confidence alone is not an identity score.
 - [ ] If ReID is added, measure its RK3566 latency/memory and require it to
   remain advisory: detector/ReID evidence alone must not set `control_valid`.
 - [ ] Investigate the previously observed video writer/buffering memory peaks.

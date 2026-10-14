@@ -43,6 +43,10 @@ candidate id. Only one candidate may be active at a time.
    can be tried.
 6. New detector batches may refresh pending candidates but cannot replace an
    active lock.
+7. If an accepted detector batch contains multiple candidates with the same
+   class id, those candidates remain auditable hypotheses but cannot establish
+   a lock. Without target-specific appearance evidence, continued invalid
+   control is safer than selecting one by detector confidence.
 
 ## Geometry and deformation
 
@@ -56,6 +60,7 @@ and probation policy handles gradual deformation; the anchor remains fixed.
 - A detector batch, detector confidence, or detector bbox never directly sets
   `accepted`, `reacquired`, or `control_valid`.
 - Confirmations from different candidate ids never combine.
+- Same-class ambiguous detector candidates cannot lock or authorize control.
 - A detector-origin recovery requires anchor and recent evidence.
 - Ambiguous or failed candidates leave control invalid.
 - The existing detector implementation and ABI remain unchanged.
@@ -63,8 +68,8 @@ and probation policy handles gradual deformation; the anchor remains fixed.
 ## Observability
 
 The CSV log records target mode, candidate id, detector candidate region,
-lock state, probe index, confirmation attempts, and confirmation hits. The
-schema version is incremented.
+same-class count and ambiguity, lock state, probe index, confirmation attempts,
+and confirmation hits. The schema version is incremented.
 
 ## Validation boundary
 

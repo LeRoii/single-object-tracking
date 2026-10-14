@@ -122,6 +122,7 @@ std::string tracking_csv_header() {
          "detector_verified_class_id,detector_verified_confidence,"
          "detector_target_mode,detector_candidate_id,detector_region_x,"
          "detector_region_y,detector_region_width,detector_region_height,"
+         "detector_same_class_candidates,detector_same_class_ambiguous,"
          "detector_candidate_locked,detector_probe_index,"
          "detector_confirmation_attempts,detector_confirmation_hits,"
          "detector_preprocess_ms,detector_inference_ms,detector_postprocess_ms,"
@@ -170,6 +171,8 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                  row.detector_candidate_region
                      ? number(row.detector_candidate_region->height)
                      : "",
+                 std::to_string(row.detector_same_class_candidates),
+                 row.detector_same_class_ambiguous ? "1" : "0",
                  row.detector_candidate_locked ? "1" : "0",
                  std::to_string(row.detector_probe_index),
                  std::to_string(row.detector_confirmation_attempts),
@@ -278,6 +281,10 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.detector_target_mode = result.plan.detector_target_mode;
   row.detector_candidate_id = result.output.detector_candidate_id;
   row.detector_candidate_region = result.plan.detector_candidate_region;
+  row.detector_same_class_candidates =
+      result.output.detector_same_class_candidates;
+  row.detector_same_class_ambiguous =
+      result.output.detector_same_class_ambiguous;
   row.detector_candidate_locked = result.output.detector_candidate_locked;
   row.detector_probe_index = result.output.detector_probe_index;
   row.detector_confirmation_attempts =

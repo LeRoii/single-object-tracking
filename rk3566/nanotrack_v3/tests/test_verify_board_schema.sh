@@ -41,6 +41,7 @@ header = [
     "detector_verified_class_id", "detector_verified_confidence",
     "detector_target_mode", "detector_candidate_id", "detector_region_x",
     "detector_region_y", "detector_region_width", "detector_region_height",
+    "detector_same_class_candidates", "detector_same_class_ambiguous",
     "detector_candidate_locked", "detector_probe_index",
     "detector_confirmation_attempts", "detector_confirmation_hits",
     "detector_preprocess_ms", "detector_inference_ms",
@@ -53,7 +54,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
     for frame_id, timestamp_ms in ((0, 0), (1, 33)):
         row = {key: "" for key in header}
         row.update({
-            "schema_version": "4", "frame_id": frame_id,
+            "schema_version": "5", "frame_id": frame_id,
             "timestamp_ms": timestamp_ms, "state": "TRACKING",
             "quality": "RELIABLE", "control_valid": "1", "accepted": "1",
             "reacquired": "0", "x": "1", "y": "1", "width": "4",
@@ -63,6 +64,8 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
             "detector_raw_candidate_count": "0",
             "detector_filtered_candidate_count": "0",
             "detector_target_mode": "FULL_OBJECT",
+            "detector_same_class_candidates": "0",
+            "detector_same_class_ambiguous": "0",
             "detector_candidate_locked": "0", "detector_probe_index": "0",
             "detector_confirmation_attempts": "0",
             "detector_confirmation_hits": "0", "tracker_ms": "1",
@@ -71,7 +74,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
         writer.writerow(row)
 
 metadata = {
-    "schema_version": 4, "manifest_hash": "hash",
+    "schema_version": 5, "manifest_hash": "hash",
     "controller_config_hash": "config", "sensor": "visible",
     "calibrated": False, "detector_target_mode": "FULL_OBJECT",
     "rknn_api_version": "api", "rknn_driver_version": "driver",

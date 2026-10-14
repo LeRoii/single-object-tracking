@@ -81,6 +81,8 @@ int main() {
   row.detector_target_mode = DetectorTargetMode::kSubtarget;
   row.detector_candidate_id = 42;
   row.detector_candidate_region = BBox{10, 20, 80, 100};
+  row.detector_same_class_candidates = 2;
+  row.detector_same_class_ambiguous = true;
   row.detector_candidate_locked = true;
   row.detector_probe_index = 3;
   row.detector_confirmation_attempts = 2;
@@ -110,15 +112,16 @@ int main() {
         "detector_verified_class_id", "detector_verified_confidence",
         "detector_target_mode", "detector_candidate_id",
         "detector_region_x", "detector_region_y", "detector_region_width",
-        "detector_region_height", "detector_candidate_locked",
+        "detector_region_height", "detector_same_class_candidates",
+        "detector_same_class_ambiguous", "detector_candidate_locked",
         "detector_probe_index", "detector_confirmation_attempts",
         "detector_confirmation_hits",
         "detector_preprocess_ms", "detector_inference_ms",
         "detector_postprocess_ms", "detector_total_ms"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("4,", 0) == 0,
-              "tracking rows carry schema version 4 exactly once");
+  expect_true(encoded.rfind("5,", 0) == 0,
+              "tracking rows carry schema version 5 exactly once");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
               "detector errors escape commas, newlines, and quotes");
   expect_true(encoded.find("\"detector, timeout \"\"late\"\"\"") !=
@@ -159,12 +162,16 @@ int main() {
   runtime.plan.detector_target_mode = DetectorTargetMode::kSubtarget;
   runtime.plan.detector_candidate_id = 88;
   runtime.plan.detector_candidate_region = BBox{30, 40, 100, 80};
+  runtime.plan.detector_same_class_candidates = 2;
+  runtime.plan.detector_same_class_ambiguous = true;
   runtime.plan.detector_candidate_locked = true;
   runtime.plan.detector_probe_index = 4;
   runtime.output.frame_id = 12;
   runtime.output.timestamp_ms = 440;
   runtime.output.detector_status = DetectorBatchStatus::kAccepted;
   runtime.output.detector_candidate_id = 88;
+  runtime.output.detector_same_class_candidates = 2;
+  runtime.output.detector_same_class_ambiguous = true;
   runtime.output.detector_candidate_locked = true;
   runtime.output.detector_probe_index = 4;
   runtime.output.detector_confirmation_attempts = 3;
@@ -192,6 +199,8 @@ int main() {
                   mapped.detector_candidate_id ==
                       std::optional<std::uint64_t>(88) &&
                   mapped.detector_candidate_region.has_value() &&
+                  mapped.detector_same_class_candidates == 2 &&
+                  mapped.detector_same_class_ambiguous &&
                   mapped.detector_candidate_locked &&
                   mapped.detector_probe_index == 4 &&
                   mapped.detector_confirmation_attempts == 3 &&
@@ -233,7 +242,7 @@ int main() {
   metadata.detector.reject_count = 2;
   metadata.detector.error_count = 1;
   const std::string json = tracking_session_metadata_json(metadata);
-  expect_true(contains(json, "\"schema_version\": 4") &&
+  expect_true(contains(json, "\"schema_version\": 5") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json, "\"enabled\": true") &&
                   contains(json, "\"calibrated\": false") &&
@@ -252,7 +261,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v4 metadata exposes recovery mode, detector identity, tensors, versions, and counters");
+              "schema-v5 metadata exposes recovery mode, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";
