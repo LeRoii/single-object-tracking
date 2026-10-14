@@ -13,26 +13,67 @@ The thresholds in `config/visible-default.conf` and
 They are not product thresholds and must be calibrated independently for the
 two modalities.
 
+## Clean-checkout host verification
+
+From this directory, build and test the RKNN-independent logic with:
+
+```bash
+python3 -m venv .venv-host
+.venv-host/bin/python -m pip install pytest==9.1.1
+cmake -S . -B build-host -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF
+cmake --build build-host -- -j2
+ctest --test-dir build-host --output-on-failure
+.venv-host/bin/python -m pytest -q \
+  tests/test_model_manifest.py tests/test_detector_manifest.py
+```
+
 The generated `models/yolov8n-rk3566-fp16.rknn` is intentionally ignored by
-Git. A clean checkout must first generate or restore the exact RK3566 artifact
-described by `models/detector-manifest.json`, then run:
+Git. To reproduce it, use RKNN Toolkit2 2.3.2 on an x86-64 conversion host and
+the optimized ONNX identity recorded in the manifest:
+
+```bash
+python3 -m venv .venv-rknn
+.venv-rknn/bin/python -m pip install -r requirements-convert.txt
+mkdir -p artifacts/model-source models
+curl -fL \
+  'https://ftrg.zbox.filez.com/v2/delivery/data/95f00b0fc900458ba134f8b180b3f7a1/examples/yolov8/yolov8n.onnx' \
+  -o artifacts/model-source/yolov8n.onnx
+printf '%s  %s\n' \
+  '0c8716701f471067932b797eeb67c8e5db47c693c2557c881d7679ec12e21bc5' \
+  'artifacts/model-source/yolov8n.onnx' | sha256sum -c -
+.venv-rknn/bin/python tools/convert_yolov8_rk3566.py \
+  --onnx artifacts/model-source/yolov8n.onnx \
+  --output models/yolov8n-rk3566-fp16.rknn \
+  --manifest models/detector-manifest.json \
+  --labels models/coco80.txt \
+  --source-url 'https://ftrg.zbox.filez.com/v2/delivery/data/95f00b0fc900458ba134f8b180b3f7a1/examples/yolov8/yolov8n.onnx' \
+  --source-repository 'https://github.com/airockchip/rknn_model_zoo' \
+  --source-commit 837db8e992815ff8647eadb709f07067f4bc3a71 \
+  --output-count 9
+```
+
+Alternatively, restore the exact 8,097,993-byte RKNN artifact whose SHA-256 is
+`4d53a9b1e12996556294be8e099fe2dc0815d5c9cfdc327edfe350832baf8cf6`.
+In either case, run:
 
 ```bash
 python3 tools/verify_detector_manifest.py \
   --manifest models/detector-manifest.json
 ```
 
-The verifier checks model and label hashes plus the RK3566 FP16, RGB/NHWC
-640x640 and 6/9-output contract before deployment.
+The verifier checks the model/label hashes and the manifest's declared RK3566
+FP16, RGB/NHWC 640x640 and 6/9-output contract. The board runtime separately
+queries and validates the RKNN artifact's actual input/output tensor metadata.
 
 ## Board build
 
 ```bash
-cmake -S . -B build -DBUILD_TESTING=OFF -DENABLE_RKNN_RUNTIME=ON \
+cmake -S . -B build -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON \
   -DOpenCV_DIR=/home/cat/ThirdParty/OpenCV4100/lib/cmake/opencv4 \
   -DRKNN_INCLUDE_DIR=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/include \
   -DRKNN_LIBRARY=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so
 cmake --build build -- -j2
+ctest --test-dir build --output-on-failure
 ```
 
 Deployments are versioned below the isolated long-term root and never replace
@@ -51,11 +92,14 @@ rejects an existing destination instead of updating it in place.
 Before the full tracker is run, the detector can be checked independently:
 
 ```bash
+export DETECTOR_TEST_IMAGE=/absolute/path/to/bus.jpg
+test -s "$DETECTOR_TEST_IMAGE"
+mkdir -p artifacts
 ./build/yolo_detector_smoke \
   --model models/yolov8n-rk3566-fp16.rknn \
   --manifest models/detector-manifest.json \
   --labels models/coco80.txt \
-  --image data/bus.jpg --conf 0.25 --nms 0.45 --class-id -1 \
+  --image "$DETECTOR_TEST_IMAGE" --conf 0.25 --nms 0.45 --class-id -1 \
   --output-image artifacts/yolo-smoke.jpg \
   --output-csv artifacts/yolo-smoke.csv
 ```
@@ -67,9 +111,16 @@ artifacts are not.
 
 ## Headless run
 
+Videos and images are deliberately not versioned. Set `TRACKER_TEST_VIDEO` to
+an operator-supplied video, verify its identity separately, and choose the
+first-frame box for that exact input before running:
+
 ```bash
+export TRACKER_TEST_VIDEO=/absolute/path/to/input.mp4
+test -s "$TRACKER_TEST_VIDEO"
+mkdir -p artifacts
 ./build/nanotrack_v3 \
-  --video data/girl_dance.mp4 \
+  --video "$TRACKER_TEST_VIDEO" \
   --bbox 244,161,74,70 \
   --model-dir models \
   --output-video artifacts/output.avi \
@@ -81,7 +132,7 @@ configuration-explicit run is:
 
 ```bash
 ./build/nanotrack_v3 \
-  --video data/girl_dance.mp4 \
+  --video "$TRACKER_TEST_VIDEO" \
   --bbox 244,161,74,70 \
   --model-dir models \
   --sensor visible \
@@ -99,7 +150,7 @@ one all-or-none set. The thresholds below are uncalibrated bring-up defaults:
 
 ```bash
 ./build/nanotrack_v3 \
-  --video data/person.mp4 \
+  --video "$TRACKER_TEST_VIDEO" \
   --bbox 244,161,74,70 \
   --model-dir models \
   --detector-model models/yolov8n-rk3566-fp16.rknn \
@@ -115,6 +166,21 @@ one all-or-none set. The thresholds below are uncalibrated bring-up defaults:
 Use class `-1` to retain every detector class. Confidence and NMS values must
 be finite and strictly between zero and one. Supplying only part of the three
 detector-file set is rejected before model startup.
+
+For a retained run, verify source-coordinate boxes, schema-v3 metadata, model
+hashes, detector state and output frame count with:
+
+```bash
+./scripts/verify_board.sh \
+  artifacts/retained-run models EXPECTED_OUTPUT_FRAMES \
+  SOURCE_FRAME_WIDTH SOURCE_FRAME_HEIGHT \
+  models/yolov8n-rk3566-fp16.rknn \
+  models/detector-manifest.json models/coco80.txt
+```
+
+`ARTIFACT_DIR` must contain `run.log`, `bboxes.csv`, `output.avi`,
+`manifest.json`, and `session-metadata.json`. The width and height arguments
+refer to the source/CSV coordinate system, not a downscaled preview video.
 
 ## Outputs and safety contract
 

@@ -72,14 +72,15 @@
 - 稳定性时延边界：mean runtime=214.973 ms、`runtime_fps=4.652`（跟踪 runtime，不含视频 I/O/叠加/编码）；mean pipeline=295.998 ms、`end_to_end_fps=3.378`（完整管线）。不设置性能通过线。
 - 稳定性内存：60 秒后 RSS 首/尾为 147,152/149,328 kB，中位数 171,772 kB，线程恒定且多次回落到约 149 MB；但周期峰值随运行抬升，最大 RSS 446,320 kB、VmHWM 476,684 kB，线性拟合约 +102.116 kB/s。因此功能稳定性通过，但内存峰值风险未关闭。
 - Task 8 分项：板端构建 PASS；单元测试 PASS；模型加载 PASS；官方图推理 PASS；人员/车辆视频推理 PASS；detector-disabled 回归 PASS；控制安全门 PASS；21 分钟进程与队列稳定 PASS；目标消失后找回 FAIL；内存峰值稳定性 RISK。
-- Task 9 清理审计发现旧 NanoTrack RKNN wrapper 的异常/析构清理返回码未记录；最终版本对所有正常路径返回码做失败检查，对不可抛出的清理路径记录明确错误，同时保留原始异常。
-- 清理审计后的最终二进制完成 120 跟踪帧 detector 集成 smoke、`verify_board.sh` 工件校验和板端 CTest 10/10。长稳证据使用清理审计前、推理逻辑相同的 SHA-256 `e95ef3d1...f5c` 二进制；最终交付二进制 SHA-256 见下。
+- Task 9 清理审计发现旧 NanoTrack RKNN wrapper 的异常/析构清理返回码未记录；独立代码审查又发现 `outputs_release` 失败时可能二次释放，以及 YOLO 清理失败会遮蔽主异常。最终版本使用可单测的一次性清理守卫：调用前先撤销 armed 状态，任何结果都只尝试一次；异常路径保留主异常并单独记录清理错误。
+- 审查前的 `final-smoke-120` 完成 120 跟踪帧和工件校验，但 request/complete 为 0/0，只证明 detector 配置/模型启动和 NanoTrack 正常路径，不再称为 detector 推理证据。
+- 修复后二进制完成板端 CTest 11/11，并在 `final-detector-250` 完成 250 跟踪帧：request/complete/reject/error=9/8/0/0，结束时仅保留一个允许的在途请求，`verify_board.sh` 通过。长稳证据仍使用修复前、正常推理逻辑相同的 SHA-256 `e95ef3d1...f5c` 二进制；清理错误路径修复后的最终交付二进制 SHA-256 见下。
 
 ## 工件
 
 - 21 分钟稳定性二进制 `build-board-acceptance/nanotrack_v3`：SHA-256 `e95ef3d17b2673ec4fb5b26f9d2c2875806ffa101ef4f5deb9f69bcbacc36f5c`。
-- 最终清理审计后二进制：SHA-256 `a1ef2e47af35a1a849e347ff73871541b8562f81f6530024551d12a2db9f22e5`。
-- 板端 `yolo_detector_smoke`：SHA-256 `47a54eb7713f1fb54b44a2ae892bb43b6a0a7ce75a8071a0cdc6f7f3482eaba1`。
+- 最终清理审计后二进制：SHA-256 `a1bf9773ed2c042f542ffdd28b78ef75a69b3d9a051f3b564aa7a1c8c2c108c4`。
+- 板端 `yolo_detector_smoke`：SHA-256 `c83f9c4dc3a64cc6af9f569e0a57c7499d6b1b68a6bae2401cae9f1b9e59407f`。
 - smoke 输入：`artifacts/task6-smoke/input.jpg`，SHA-256 `cdda98096936407912313796db1aa44801a58c224c547e6238fe66c65e350a42`。
 - smoke 标注图：`artifacts/task6-smoke/output.jpg`，SHA-256 `957aa3f6a79b9501865dd4205968db78ad76f3259ce6bef2241c50b7bb791eb6`。
 - smoke 候选：`artifacts/task6-smoke/candidates.csv`，SHA-256 `53fc2666a47a479283b067a30702ca480adb662f2c856930b67898e19203e305`。
@@ -89,7 +90,9 @@
 - 车辆循环：`car-loop-700/{output.avi,bboxes.csv,session-metadata.json,run.log}`；对应 SHA-256 `f049a94651f7f4fff666fbca181d41f31a7cc5dea1e204e9fb84b072db1dcb56`、`4fdb9b616f725a96a7eb389ab87fc46e06fd6b08a1e492d19f348ef2c5929522`、`74f464cfd08b33a712b3529e1ed80729ee7f7c043dfd9e0dbb164fbcbf2e58c6`、`7a6f46ddc5f4294713ef173d26d66cd5445283af064ee4156b250f67cb3934ab`。
 - detector-disabled：`person-no-detector/{output.avi,bboxes.csv,session-metadata.json,run.log}`；对应 SHA-256 `0786b850b6691da2ce8837634d7c2ce3e9075fb7d9bd57ceb965405c403827f1`、`9f18a2389af9f296ae8f3d446c5d805460f5da9d4b0cb3bfb677466f7fe021ec`、`4e044dfa98ea7e331194cf4c8c4f28c8483d45c30b17fbeb27ef8b843ad1b9d8`、`5782f052ebea60070601f9fcf7cb99c635f8234c8fe43c9bc23330a9ec5572a2`。
 - 21 分钟稳定性：`stability-4200-v2/{output.avi,bboxes.csv,session-metadata.json,run.log,resources.csv,wall-seconds.txt}`；完整 SHA-256 依次为 `7c9d71fe612959fa167f13339c1ee71cbed1a6f73144062e1132d77128d8dc86`、`e69af12359720a4eb2f94122599bb35c802f02c2ec43429a07afe69401330b17`、`0bb09e5d2e512754591a797fee9f525e5a27d054052844b1e9cc1c680fd7d0e1`、`f7ea149fac9b05e59d945e31bb1986797f443ef2f99297c78ca976098b26f981`、`9364ff75bbb48649119aab5dc1599cde5761ee7a18ba749b7d9e6714717be79f`、`2faac09313662ca9ae94dde4aaba6fd7c86d6d58e9b84ae749604c9e9db30646`。
-- 最终 120 帧集成 smoke：`final-smoke-120/{output.avi,bboxes.csv,session-metadata.json,run.log}`；对应 SHA-256 `8859ae3d14653315cf76419c069d0f198950d7751026a1ec5392fb6e7075cb21`、`6a27e842abde999b7c49549c9869bbd1652582c5decf69f98a0a140ce7d4a29a`、`1ee32c0b628837888ca9bad3df29adcdb5dec349c014485cc90d76d7cbd6fc9f`、`61727d35fadc0fc30325ea44decedc08c39f44f00a576052d77f79b5f462a603`。
+- 审查前 120 帧配置/启动 smoke：`final-smoke-120/{output.avi,bboxes.csv,session-metadata.json,run.log}`；request/complete=0/0，对应 SHA-256 `8859ae3d14653315cf76419c069d0f198950d7751026a1ec5392fb6e7075cb21`、`6a27e842abde999b7c49549c9869bbd1652582c5decf69f98a0a140ce7d4a29a`、`1ee32c0b628837888ca9bad3df29adcdb5dec349c014485cc90d76d7cbd6fc9f`、`61727d35fadc0fc30325ea44decedc08c39f44f00a576052d77f79b5f462a603`。
+- 最终 detector 推理短测：`final-detector-250/{output.avi,bboxes.csv,session-metadata.json,run.log}`；对应 SHA-256 `204c0170c7bbec5329cabfcf38e16a1b81e263429a1bf229a6c59e3bd4095fec`、`fe59aa495ba5005125ce4d90d11e8656df0921fe2be3c17402d9d7e2a58ac032`、`15a0fce8943d4fd7b71dd7d43998a7e82629f674402578c3cd07ab013bc21c01`、`93b0aa0d9bb1940d0d2e74021d9846ce53d17800d74b4ee59c78cb5e24063d7f`。
+- 最终板端 CTest 日志：`ctest-final-cleanup.log`，11/11，通过；SHA-256 `666d76800eda9c0b3e7d00495bbadcf71d2e71ab6e46881bcf135f2418308c7d`。
 
 ## 偏差与裁决
 

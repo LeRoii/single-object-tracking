@@ -1,5 +1,7 @@
 #include "rknn_model.hpp"
 
+#include "scoped_cleanup.hpp"
+
 #include <cstring>
 #include <exception>
 #include <fstream>
@@ -129,6 +131,15 @@ std::vector<std::vector<float>> RknnModel::run(
   }
   check_rknn(rknn_outputs_get(context_, native_outputs.size(), native_outputs.data(), nullptr),
              "rknn_outputs_get");
+  ScopedCleanup output_cleanup(
+      [&] {
+        return rknn_outputs_release(context_, native_outputs.size(),
+                                    native_outputs.data());
+      },
+      [&](int status) {
+        log_rknn_cleanup(status,
+                         "rknn_outputs_release from fallback cleanup");
+      });
   try {
     std::vector<std::vector<float>> result(outputs_.size());
     for (std::size_t index = 0; index < outputs_.size(); ++index) {
@@ -140,15 +151,14 @@ std::vector<std::vector<float>> RknnModel::run(
       const float* begin = static_cast<const float*>(native_outputs[index].buf);
       result[index].assign(begin, begin + outputs_[index].n_elems);
     }
-    check_rknn(rknn_outputs_release(context_, native_outputs.size(), native_outputs.data()),
-               "rknn_outputs_release");
+    check_rknn(output_cleanup.release(), "rknn_outputs_release");
     return result;
   } catch (...) {
     const std::exception_ptr original = std::current_exception();
-    log_rknn_cleanup(
-        rknn_outputs_release(context_, native_outputs.size(),
-                             native_outputs.data()),
-        "rknn_outputs_release after inference failure");
+    if (output_cleanup.armed()) {
+      log_rknn_cleanup(output_cleanup.release(),
+                       "rknn_outputs_release after inference failure");
+    }
     std::rethrow_exception(original);
   }
 }

@@ -1,5 +1,6 @@
 #include "yolo_rknn_engine.hpp"
 
+#include "scoped_cleanup.hpp"
 #include "sha256.hpp"
 #include "yolov8_postprocess.hpp"
 
@@ -460,15 +461,18 @@ class YoloRknnEngine::Impl {
     check_rknn(rknn_outputs_get(context_, native_outputs.size(),
                                 native_outputs.data(), nullptr),
                "outputs_get", config_.model_path);
-    bool outputs_acquired = true;
-    const auto release_outputs = [&] {
-      if (!outputs_acquired) return;
-      const int status = rknn_outputs_release(
-          context_, static_cast<std::uint32_t>(native_outputs.size()),
-          native_outputs.data());
-      outputs_acquired = false;
-      check_rknn(status, "outputs_release", config_.model_path);
-    };
+    ScopedCleanup output_cleanup(
+        [&] {
+          return rknn_outputs_release(
+              context_, static_cast<std::uint32_t>(native_outputs.size()),
+              native_outputs.data());
+        },
+        [&](int status) {
+          if (status != 0) {
+            std::cerr << "ERROR: RKNN stage=outputs_release_fallback status="
+                      << status << " model=" << config_.model_path << '\n';
+          }
+        });
     const auto inference_end = std::chrono::steady_clock::now();
 
     DetectorEngineResult result;
@@ -509,13 +513,16 @@ class YoloRknnEngine::Impl {
       result.candidates = std::move(decoded.candidates);
       result.raw_candidate_count = decoded.raw_candidate_count;
       result.filtered_candidate_count = decoded.filtered_candidate_count;
-      release_outputs();
+      check_rknn(output_cleanup.release(), "outputs_release",
+                 config_.model_path);
     } catch (...) {
       const std::exception_ptr original = std::current_exception();
-      try {
-        release_outputs();
-      } catch (...) {
-        throw;
+      if (output_cleanup.armed()) {
+        const int status = output_cleanup.release();
+        if (status != 0) {
+          std::cerr << "ERROR: RKNN stage=outputs_release_after_inference_failure status="
+                    << status << " model=" << config_.model_path << '\n';
+        }
       }
       std::rethrow_exception(original);
     }

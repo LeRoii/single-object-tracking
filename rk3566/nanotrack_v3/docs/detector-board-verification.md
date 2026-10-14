@@ -15,20 +15,22 @@ Acceptance root: `artifacts/20261014-acceptance`
 - COCO labels SHA-256:
   `bd17f1ee35d5f3c862a4894605855abbb9dda4b0621fdb0ac4c2c8c7bb7e730a`.
 - Final `nanotrack_v3` SHA-256:
-  `a1ef2e47af35a1a849e347ff73871541b8562f81f6530024551d12a2db9f22e5`.
+  `a1bf9773ed2c042f542ffdd28b78ef75a69b3d9a051f3b564aa7a1c8c2c108c4`.
 - `yolo_detector_smoke` SHA-256:
-  `47a54eb7713f1fb54b44a2ae892bb43b6a0a7ce75a8071a0cdc6f7f3482eaba1`.
+  `c83f9c4dc3a64cc6af9f569e0a57c7499d6b1b68a6bae2401cae9f1b9e59407f`.
 
 Both executables are AArch64 ELF binaries. `ldd` resolves
 `libopencv_world.so.410` and `librknnrt.so` from the declared board SDK paths
-with no missing libraries. The final board CTest result is 10/10 passed.
+with no missing libraries. The final board CTest result is 11/11 passed; the
+retained log is `ctest-final-cleanup.log`, SHA-256
+`666d76800eda9c0b3e7d00495bbadcf71d2e71ab6e46881bcf135f2418308c7d`.
 
 ## Acceptance matrix
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
 | Clean board-native build | PASS | `build-board-acceptance` |
-| Board CTest | PASS | 10/10, `ctest-after-stability.log` |
+| Board CTest | PASS | 11/11, `ctest-final-cleanup.log` |
 | Model and tensor contract | PASS | 1 NHWC input, 9 NCHW outputs, RK3566 target |
 | Official image inference | PASS | 5 plausible candidates: 4 person, 1 bus |
 | Person video inference | PASS | 987 output frames, 58/58 detector batches |
@@ -82,14 +84,32 @@ Directory: `person-no-detector`
 - Metadata has `detector.enabled=false`; all CSV rows have
   `detector_configured=0`; all detector counters are zero.
 
+### Final cleanup binary, detector exercised
+
+Directory: `final-detector-250`
+
+- 251 output frames and 250 tracked frames passed `verify_board.sh`.
+- Detector request/complete/reject/error: 9/8/0/0. The bounded worker had one
+  request still in flight when the deliberately limited run ended.
+- Output, CSV, metadata and log SHA-256 values are respectively
+  `204c0170c7bbec5329cabfcf38e16a1b81e263429a1bf229a6c59e3bd4095fec`,
+  `fe59aa495ba5005125ce4d90d11e8656df0921fe2be3c17402d9d7e2a58ac032`,
+  `15a0fce8943d4fd7b71dd7d43998a7e82629f674402578c3cd07ab013bc21c01`,
+  and `93b0aa0d9bb1940d0d2e74021d9846ce53d17800d74b4ee59c78cb5e24063d7f`.
+
+The earlier `final-smoke-120` had detector configuration and model startup but
+request/complete counters of 0/0. It is retained as startup/NanoTrack evidence,
+not described as detector-inference evidence.
+
 ## Stability run
 
 Directory: `stability-4200-v2`
 
 The stability binary SHA-256 was
 `e95ef3d17b2673ec4fb5b26f9d2c2875806ffa101ef4f5deb9f69bcbacc36f5c`.
-The final handoff binary differs only by RKNN cleanup-return logging and was
-separately verified with the 120-frame `final-smoke-120` run and board CTest.
+The final handoff binary changes only RKNN cleanup/error paths relative to the
+normal inference logic used here. It was separately verified with the
+detector-exercising `final-detector-250` run and board CTest 11/11.
 
 - Wall time: 1267 seconds.
 - Output/tracked frames: 4201/4200.

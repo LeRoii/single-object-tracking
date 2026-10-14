@@ -91,6 +91,10 @@ if(BUILD_TESTING)
     target_link_libraries(test_sha256 PRIVATE stdc++fs)
   endif()
   add_test(NAME sha256 COMMAND test_sha256)
+
+  add_executable(test_scoped_cleanup tests/test_scoped_cleanup.cpp)
+  target_include_directories(test_scoped_cleanup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME scoped_cleanup COMMAND test_scoped_cleanup)
 endif()
 
 if(ENABLE_RKNN_RUNTIME)
