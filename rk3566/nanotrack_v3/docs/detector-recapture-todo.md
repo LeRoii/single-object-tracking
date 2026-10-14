@@ -55,9 +55,10 @@ capability.
 
 ## RK3566 board verification
 
-- [ ] Build the branch natively on the RK3566 board with RKNN runtime enabled.
-- [ ] Run all CTest targets on the board.
-- [ ] Deploy to a new immutable release; do not modify
+- [x] Build source commit `1552b7d14f67006768757dff039327253e3a60cb`
+  natively on the RK3566 board with RKNN runtime enabled.
+- [x] Run all 12 CTest targets on the board.
+- [x] Deploy to a new immutable release; do not modify
   `releases/rk3566-yolov8-detector` in place.
 - [ ] Run both `girl_dance` cases and retain configuration, hashes, schema-v5
   CSV, metadata, console log, and annotated output video.
@@ -65,6 +66,26 @@ capability.
 - [ ] Measure sustained tracker/runtime/end-to-end latency, detector duty
   cycle, CPU, NPU, RSS, and peak memory.
 - [ ] Repeat detector-disabled regression and a long-duration stability run.
+
+Current unlabeled board evidence is retained under
+`releases/rk3566-detector-recapture-1552b7d`:
+
+- `artifacts/girl_dance-subtarget-300f-1552b7d`: 301 output frames passed
+  schema-v5 artifact verification. All 169 detector hypothesis rows contained
+  two same-class candidates; none locked or produced control.
+- `artifacts/girl_dance-subtarget-full-1552b7d`: all 987 source frames passed
+  artifact verification. It recorded 823 ambiguous hypothesis rows, zero
+  ambiguous locks, zero detector control rows, and zero reacquisitions.
+  Runtime-only throughput was 19.837 FPS; the measured decode/track/overlay/
+  encode pipeline was 7.328 FPS.
+- The preceding `22a15d0` diagnostic falsely recovered the right-side dancer
+  at frame 287 after a valid 2/3 lock. Visual inspection of that event motivated
+  the conservative same-class ambiguity quarantine in `1552b7d`.
+
+These are safety and runtime diagnostics, not recovery-accuracy evidence. The
+final full-video run avoided the observed identity switch but did not recover
+the target after loss. It contained 27 single-candidate hypothesis rows; none
+met the reliable dual-template and geometry gates.
 
 ## Deferred product improvements
 
