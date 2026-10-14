@@ -13,6 +13,18 @@ The thresholds in `config/visible-default.conf` and
 They are not product thresholds and must be calibrated independently for the
 two modalities.
 
+The generated `models/yolov8n-rk3566-fp16.rknn` is intentionally ignored by
+Git. A clean checkout must first generate or restore the exact RK3566 artifact
+described by `models/detector-manifest.json`, then run:
+
+```bash
+python3 tools/verify_detector_manifest.py \
+  --manifest models/detector-manifest.json
+```
+
+The verifier checks model and label hashes plus the RK3566 FP16, RGB/NHWC
+640x640 and 6/9-output contract before deployment.
+
 ## Board build
 
 ```bash
@@ -148,3 +160,27 @@ Returned candidates never overwrite the tracker box directly: the controller
 uses them as bounded search hypotheses and requires NanoTrack template
 verification plus 2-of-3 confirmation. Results older than 150 ms or not tied
 to a known request are rejected.
+
+## Verified scope and known limitations
+
+The current RK3566 evidence is documented in
+`docs/detector-board-verification.md`. The board-native build, unit tests,
+official-image inference, detector-enabled video inference, detector-disabled
+regression and a 1267-second run completed with bounded one-request/one-result
+queue behavior. These results do not establish product-quality long-term
+recovery:
+
+- the generic COCO detector, confidence/NMS values and controller thresholds
+  remain uncalibrated;
+- the tested person and car videos did not recover the target after the main
+  long-term loss, even though detector candidates reached NanoTrack
+  verification;
+- same-class ambiguity has no ReID or target-specific appearance retrieval;
+- the FP16 model is a function-first artifact, not an optimized INT8 release;
+- the 1267-second run returned repeatedly to about 149 MB RSS, but periodic
+  peaks rose to 446 MB and VmHWM reached 477 MB, so the video writer/buffering
+  path still needs memory investigation;
+- measured FPS values are observations without a performance pass threshold.
+
+Only schema-v3 rows with `control_valid=1` are valid control outputs. Detector
+confidence never directly authorizes control.

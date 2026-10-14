@@ -1,6 +1,7 @@
 #include "rknn_model.hpp"
 
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -9,9 +10,16 @@ namespace nanotrack {
 namespace {
 
 void check_rknn(int status, const std::string& operation) {
-  if (status < 0) {
+  if (status != 0) {
     throw std::runtime_error(operation + " failed with RKNN status " +
                              std::to_string(status));
+  }
+}
+
+void log_rknn_cleanup(int status, const char* operation) noexcept {
+  if (status != 0) {
+    std::cerr << "ERROR: " << operation << " failed with RKNN status "
+              << status << '\n';
   }
 }
 
@@ -76,14 +84,19 @@ RknnModel::RknnModel(const std::string& path) : model_bytes_(read_file(path)) {
     std::cout << "RKNN_MODEL path=" << path << " api=" << api_version_
               << " driver=" << driver_version_ << '\n';
   } catch (...) {
-    if (context_ != 0) rknn_destroy(context_);
+    if (context_ != 0) {
+      log_rknn_cleanup(rknn_destroy(context_),
+                       "rknn_destroy after initialization failure");
+    }
     context_ = 0;
     throw;
   }
 }
 
 RknnModel::~RknnModel() {
-  if (context_ != 0) rknn_destroy(context_);
+  if (context_ != 0) {
+    log_rknn_cleanup(rknn_destroy(context_), "rknn_destroy");
+  }
 }
 
 std::vector<std::vector<float>> RknnModel::run(
@@ -131,8 +144,12 @@ std::vector<std::vector<float>> RknnModel::run(
                "rknn_outputs_release");
     return result;
   } catch (...) {
-    rknn_outputs_release(context_, native_outputs.size(), native_outputs.data());
-    throw;
+    const std::exception_ptr original = std::current_exception();
+    log_rknn_cleanup(
+        rknn_outputs_release(context_, native_outputs.size(),
+                             native_outputs.data()),
+        "rknn_outputs_release after inference failure");
+    std::rethrow_exception(original);
   }
 }
 
