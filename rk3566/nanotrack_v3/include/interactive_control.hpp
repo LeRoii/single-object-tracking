@@ -52,6 +52,7 @@ class InteractiveRoiSelection {
 
 InteractiveCommand decode_interactive_key(int key);
 int interactive_wait_delay_ms(bool playing, double source_fps);
+bool interactive_window_visible(double property_value);
 
 class InteractivePlayback {
  public:

@@ -36,6 +36,18 @@ int main() {
   expect_true(decode_interactive_key('R') ==
                   InteractiveCommand::kSelectRoi,
               "uppercase R starts or resets ROI selection");
+  expect_true(decode_interactive_key(0x100072) ==
+                  InteractiveCommand::kSelectRoi,
+              "GTK-prefixed R starts or resets ROI selection");
+  expect_true(decode_interactive_key(0x10006e) == InteractiveCommand::kStep,
+              "GTK-prefixed N advances exactly one frame");
+  expect_true(decode_interactive_key(0x100020) ==
+                  InteractiveCommand::kTogglePlayback,
+              "GTK-prefixed space toggles continuous playback");
+  expect_true(decode_interactive_key(0x100071) == InteractiveCommand::kQuit &&
+                  decode_interactive_key(0x10001b) ==
+                      InteractiveCommand::kQuit,
+              "GTK-prefixed q and escape quit");
   expect_true(decode_interactive_key('q') == InteractiveCommand::kQuit &&
                   decode_interactive_key(27) == InteractiveCommand::kQuit,
               "q and escape quit");
@@ -74,6 +86,12 @@ int main() {
               "continuous playback uses source frame period");
   expect_true(interactive_wait_delay_ms(true, 0.0) == 33,
               "invalid source FPS uses 30 FPS fallback");
+  expect_true(interactive_window_visible(1.0),
+              "a supported visible window remains active");
+  expect_true(!interactive_window_visible(0.0),
+              "a supported closed window stops interaction");
+  expect_true(interactive_window_visible(-1.0),
+              "an unsupported GTK visibility property is not a close event");
 
   InteractiveRoiSelection cancelled(100, 80);
   cancelled.handle_mouse(RoiMouseEvent::kDown, 10, 15);
@@ -85,6 +103,13 @@ int main() {
   expect_true(cancelled.cancelled() && !cancelled.confirmed_rect().has_value(),
               "escape cancels even after a non-empty rectangle was drawn");
 
+  InteractiveRoiSelection gtk_cancelled(100, 80);
+  gtk_cancelled.handle_mouse(RoiMouseEvent::kDown, 10, 15);
+  gtk_cancelled.handle_mouse(RoiMouseEvent::kUp, 50, 45);
+  gtk_cancelled.handle_key(0x10001b);
+  expect_true(gtk_cancelled.cancelled(),
+              "GTK-prefixed escape cancels ROI selection");
+
   InteractiveRoiSelection confirmed(100, 80);
   confirmed.handle_mouse(RoiMouseEvent::kDown, 70, 60);
   confirmed.handle_mouse(RoiMouseEvent::kMove, 20, 10);
@@ -95,6 +120,13 @@ int main() {
                   confirmed_rect->y == 10 && confirmed_rect->width == 50 &&
                   confirmed_rect->height == 50,
               "enter confirms a normalized reverse-drag rectangle");
+
+  InteractiveRoiSelection gtk_confirmed(100, 80);
+  gtk_confirmed.handle_mouse(RoiMouseEvent::kDown, 10, 15);
+  gtk_confirmed.handle_mouse(RoiMouseEvent::kUp, 50, 45);
+  gtk_confirmed.handle_key(0x10000d);
+  expect_true(gtk_confirmed.confirmed_rect().has_value(),
+              "GTK-prefixed enter confirms ROI selection");
 
   InteractiveRoiSelection clipped(100, 80);
   clipped.handle_mouse(RoiMouseEvent::kDown, -10, -20);

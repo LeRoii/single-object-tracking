@@ -5,6 +5,16 @@
 #include <stdexcept>
 
 namespace nanotrack {
+namespace {
+
+int normalize_highgui_key(int key) {
+  if (key <= 0xffff) return key;
+  const int keyval = key & 0xffff;
+  if ((keyval > 0 && keyval <= 0xff) || keyval >= 0xff00) return keyval;
+  return key;
+}
+
+}  // namespace
 
 InteractiveRoiSelection::InteractiveRoiSelection(int frame_width,
                                                  int frame_height)
@@ -63,6 +73,7 @@ std::optional<InteractiveRect> InteractiveRoiSelection::current_rect() const {
 
 void InteractiveRoiSelection::handle_key(int key) {
   if (finished()) return;
+  key = normalize_highgui_key(key);
   if (key == 27 || key == 'c' || key == 'C') {
     cancelled_ = true;
     confirmed_rect_.reset();
@@ -74,6 +85,7 @@ void InteractiveRoiSelection::handle_key(int key) {
 }
 
 InteractiveCommand decode_interactive_key(int key) {
+  key = normalize_highgui_key(key);
   switch (key) {
     case 'n':
     case 'N':
@@ -95,6 +107,10 @@ int interactive_wait_delay_ms(bool playing, double source_fps) {
                          ? source_fps
                          : 30.0;
   return std::max(1, static_cast<int>(std::lround(1000.0 / fps)));
+}
+
+bool interactive_window_visible(double property_value) {
+  return std::isfinite(property_value) && property_value != 0.0;
 }
 
 bool InteractivePlayback::handle_key(int key) {

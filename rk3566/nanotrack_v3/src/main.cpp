@@ -109,7 +109,8 @@ cv::Mat render_interactive(const cv::Mat& source,
 
 bool window_visible(const std::string& window_name) noexcept {
   try {
-    return cv::getWindowProperty(window_name, cv::WND_PROP_VISIBLE) >= 1.0;
+    return nanotrack::interactive_window_visible(
+        cv::getWindowProperty(window_name, cv::WND_PROP_VISIBLE));
   } catch (const cv::Exception&) {
     return false;
   }
