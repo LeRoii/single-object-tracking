@@ -83,6 +83,14 @@ def test_non_finite_annotation_values_are_rejected(value):
         parse_annotation(f"{value},5,20,10,1,4,0,0")
 
 
+def test_annotation_accepts_one_trailing_comma_from_source_dataset():
+    annotation = parse_annotation("440,541,271,152,1,6,0,0,")
+
+    assert annotation.category == 6
+    assert annotation.width == 271
+    assert annotation.height == 152
+
+
 def create_source_dataset(root: Path) -> None:
     for split in ("train", "val"):
         split_root = root / f"VisDrone2019-DET-{split}"

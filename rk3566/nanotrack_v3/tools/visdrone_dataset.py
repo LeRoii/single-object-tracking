@@ -80,6 +80,8 @@ BoxResult = Union[ConvertedBox, SkipReason]
 
 def parse_annotation(line: str) -> RawAnnotation:
     fields = [field.strip() for field in line.strip().split(",")]
+    if len(fields) == 9 and fields[-1] == "":
+        fields.pop()
     if len(fields) != 8:
         raise ValueError("annotation must contain exactly eight comma-separated fields")
     try:
