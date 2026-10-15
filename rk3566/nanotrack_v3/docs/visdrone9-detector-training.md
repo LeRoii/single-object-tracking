@@ -199,7 +199,78 @@ identity containing the mode, repository commit, dataset audit hash, data YAML
 hash, initial-weight hash, class list, and seed. Resume is refused if any
 identity field differs.
 
+### Five-epoch smoke training
+
+The smoke run used the complete 6471-image training split and the untouched
+548-image validation split. It is a pipeline check, not a release candidate.
+
+```bash
+env MPLCONFIGDIR=/tmp/mplcache-visdrone9 \
+  YOLO_CONFIG_DIR=/tmp/yolo-config-visdrone9 \
+  .venvs/yolov8-visdrone/bin/python \
+  rk3566/nanotrack_v3/tools/train_visdrone9.py \
+  --mode smoke \
+  --repo .tools/ultralytics_yolov8 \
+  --weights artifacts/yolov8-visdrone9/source/yolov8n.pt \
+  --data rk3566/nanotrack_v3/training/visdrone9-data.yaml \
+  --dataset-audit artifacts/yolov8-visdrone9/dataset-audit.json \
+  --project artifacts/yolov8-visdrone9/runs
+```
+
+- Run directory: `artifacts/yolov8-visdrone9/runs/visdrone9-smoke`
+- Wall-clock evidence: 2026-10-15 14:43:40 to 14:53:15 +08:00
+- Trainer-reported duration: 0.133 hours
+- Device: NVIDIA GeForce RTX 2060; AMP enabled
+- Highest `GPU_mem` value observed in the trainer progress: 4.93 GiB
+- Transferred pretrained parameters: 319/355
+- Data scan: 6471 train images and 548 val images, zero corrupt images
+- Run identity SHA-256:
+  `6e61bc757f3e8708200a264bf59359fa7975a842e3133b8ac6ea1ad709f7df00`
+
+Epoch metrics from `results.csv`:
+
+| Epoch | train box | train cls | train DFL | Precision | Recall | mAP50 | mAP50-95 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.8356 | 2.1855 | 1.0373 | 0.32094 | 0.17246 | 0.14486 | 0.07950 |
+| 2 | 1.6896 | 1.5220 | 0.99523 | 0.27836 | 0.19256 | 0.17501 | 0.09786 |
+| 3 | 1.6322 | 1.4037 | 0.97903 | 0.29424 | 0.22786 | 0.20640 | 0.11815 |
+| 4 | 1.6002 | 1.3396 | 0.97007 | 0.31583 | 0.23900 | 0.22542 | 0.13017 |
+| 5 | 1.5752 | 1.2779 | 0.96255 | 0.33684 | 0.24893 | 0.23975 | 0.13879 |
+
+Final best-checkpoint validation by class:
+
+| Class | Precision | Recall | AP50 | AP50-95 |
+| --- | ---: | ---: | ---: | ---: |
+| person | 0.393 | 0.325 | 0.297 | 0.109 |
+| bicycle | 0.0745 | 0.00855 | 0.0242 | 0.0096 |
+| car | 0.464 | 0.710 | 0.657 | 0.427 |
+| van | 0.365 | 0.240 | 0.241 | 0.156 |
+| truck | 0.379 | 0.185 | 0.199 | 0.133 |
+| tricycle | 0.315 | 0.146 | 0.125 | 0.0671 |
+| awning-tricycle | 0.250 | 0.062 | 0.0722 | 0.0451 |
+| bus | 0.449 | 0.315 | 0.327 | 0.226 |
+| motor | 0.339 | 0.248 | 0.216 | 0.0768 |
+
+Artifact identities:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `weights/best.pt` | `87e615378cd45ce8f015255811d8d93b5a690ee3b3af0c77670d23ef673512e3` |
+| `weights/last.pt` | `8bfc0f2ab461280181ca1340cc38a4059823967af89fdecffd16611d2809802d` |
+| `results.csv` | `47187083ca1e0cf08ff2d1b4c91b7f3ac4811fc15f14d24d550e78b8f86f60f1` |
+| `args.yaml` | `fddded5dba60908518e40150cb83bcdf34008e6e5eff376f28a08dbd335feff9` |
+| `confusion_matrix.png` | `4b9ff0e4643ac4427aa67635b0f30f455356b5b12e8393b8dc5d1df46b569d27` |
+| `PR_curve.png` | `ae8a0645c4f24cec77e34e607ac21efb871cd8bc83e0231254e3f4d3ac768a22` |
+
+The run identity accepted `last.pt`, and both checkpoints loaded with the
+exact nine-class name table. A fixed inference on
+`val/0000069_00713_d_0000003.jpg` produced 50 finite detections (classes 0
+and 8), with confidence range 0.252935..0.947168. No NaN, Inf, corrupt image,
+out-of-memory event, or training failure occurred. PyTorch emitted only a
+future-deprecation warning for the legacy AMP scaler used by the pinned
+Rockchip fork.
+
 ### Pending stages
 
-The 5-epoch smoke run, the 100-epoch run, export, RKNN conversion, and board
-verification will be appended only after their respective commands complete.
+The 100-epoch run, export, RKNN conversion, and board verification will be
+appended only after their respective commands complete.
