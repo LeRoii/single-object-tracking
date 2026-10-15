@@ -98,6 +98,42 @@ def _validate_provenance(provenance: Dict[str, Any]) -> None:
     _require_sha256(provenance["source_sha256"], "provenance.source_sha256")
 
 
+def _validate_training_artifact(value: Any, name: str) -> None:
+    artifact = _require_mapping(value, name)
+    _require_keys(artifact, ("file", "size_bytes", "sha256"), name)
+    if not isinstance(artifact["file"], str) or not artifact["file"]:
+        raise ManifestError(f"{name}.file must be a non-empty string")
+    if (
+        not isinstance(artifact["size_bytes"], int)
+        or isinstance(artifact["size_bytes"], bool)
+        or artifact["size_bytes"] <= 0
+    ):
+        raise ManifestError(f"{name}.size_bytes must be a positive integer")
+    _require_sha256(artifact["sha256"], f"{name}.sha256")
+
+
+def _validate_training(value: Any) -> None:
+    training = _require_mapping(value, "training")
+    _require_keys(
+        training,
+        ("checkpoint", "repository", "config", "dataset_audit"),
+        "training",
+    )
+    _validate_training_artifact(training["checkpoint"], "training.checkpoint")
+    _validate_training_artifact(training["config"], "training.config")
+    _validate_training_artifact(training["dataset_audit"], "training.dataset_audit")
+    repository = _require_mapping(training["repository"], "training.repository")
+    _require_keys(repository, ("url", "commit"), "training.repository")
+    if not isinstance(repository["url"], str) or not repository["url"]:
+        raise ManifestError("training.repository.url must be a non-empty string")
+    if not isinstance(repository["commit"], str) or len(repository["commit"]) != 40:
+        raise ManifestError("training.repository.commit must contain 40 characters")
+    try:
+        int(repository["commit"], 16)
+    except ValueError as error:
+        raise ManifestError("training.repository.commit must be hexadecimal") from error
+
+
 def _validate_input(input_tensor: Dict[str, Any]) -> None:
     _require_keys(
         input_tensor,
@@ -213,6 +249,8 @@ def load_and_verify_manifest(
     )
 
     _validate_provenance(provenance)
+    if "training" in manifest:
+        _validate_training(manifest["training"])
     if conversion["target_platform"] != "rk3566":
         raise ManifestError("conversion.target_platform must be rk3566")
     if conversion["quantized"] is not False:

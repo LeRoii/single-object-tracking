@@ -269,6 +269,104 @@ def test_conversion_manifest_records_reproducible_inputs(tmp_path):
     assert manifest["deployment_status"] == "function_only_board_unverified"
 
 
+def test_visdrone9_manifest_records_complete_training_provenance(tmp_path):
+    onnx = tmp_path / "yolov8n-visdrone9-rkopt.onnx"
+    model = tmp_path / "yolov8n-visdrone9-rk3566-fp16.rknn"
+    labels = tmp_path / "visdrone9.txt"
+    checkpoint = tmp_path / "yolov8n-visdrone9-best.pt"
+    config = tmp_path / "args.yaml"
+    audit = tmp_path / "dataset-audit.json"
+    onnx.write_bytes(b"rkopt onnx")
+    model.write_bytes(b"converted rknn")
+    labels.write_text(
+        "person\nbicycle\ncar\nvan\ntruck\ntricycle\nawning-tricycle\nbus\nmotor\n",
+        encoding="utf-8",
+    )
+    checkpoint.write_bytes(b"trained checkpoint")
+    config.write_bytes(b"epochs: 100\nseed: 42\n")
+    audit.write_bytes(b'{"status":"pass"}\n')
+
+    manifest = build_detector_manifest(
+        onnx_path=onnx,
+        rknn_path=model,
+        labels_path=labels,
+        source_url="local://trained-rkopt-export",
+        source_repository="https://github.com/airockchip/ultralytics_yolov8",
+        source_commit="a" * 40,
+        toolkit_version="2.3.2",
+        python_executable="/opt/rknn/bin/python",
+        host_os="Ubuntu 22.04",
+        output_count=9,
+        training_checkpoint=checkpoint,
+        training_repository="https://github.com/airockchip/ultralytics_yolov8",
+        training_commit="a" * 40,
+        training_config=config,
+        dataset_audit=audit,
+    )
+
+    assert manifest["class_count"] == 9
+    assert [tensor["shape"][1] for tensor in manifest["outputs"][1::3]] == [9, 9, 9]
+    assert manifest["training"] == {
+        "checkpoint": {
+            "file": checkpoint.name,
+            "size_bytes": checkpoint.stat().st_size,
+            "sha256": sha256(checkpoint.read_bytes()),
+        },
+        "repository": {
+            "url": "https://github.com/airockchip/ultralytics_yolov8",
+            "commit": "a" * 40,
+        },
+        "config": {
+            "file": config.name,
+            "size_bytes": config.stat().st_size,
+            "sha256": sha256(config.read_bytes()),
+        },
+        "dataset_audit": {
+            "file": audit.name,
+            "size_bytes": audit.stat().st_size,
+            "sha256": sha256(audit.read_bytes()),
+        },
+    }
+
+
+def test_partial_training_provenance_is_rejected(tmp_path):
+    manifest = valid_manifest()
+    manifest["training"] = {
+        "checkpoint": {
+            "file": "best.pt",
+            "size_bytes": 1,
+            "sha256": "a" * 64,
+        }
+    }
+
+    with pytest.raises(ManifestError, match="training.*repository"):
+        load_and_verify_manifest(write_fixture(tmp_path, manifest))
+
+
+def test_manifest_builder_rejects_partial_training_arguments(tmp_path):
+    onnx = tmp_path / "model.onnx"
+    model = tmp_path / "model.rknn"
+    labels = tmp_path / "labels.txt"
+    checkpoint = tmp_path / "best.pt"
+    for path in (onnx, model, labels, checkpoint):
+        path.write_bytes(b"x\n")
+
+    with pytest.raises(ValueError, match="training provenance arguments"):
+        build_detector_manifest(
+            onnx_path=onnx,
+            rknn_path=model,
+            labels_path=labels,
+            source_url="local://export",
+            source_repository="https://example.invalid/repo",
+            source_commit="a" * 40,
+            toolkit_version="2.3.2",
+            python_executable="python",
+            host_os="linux",
+            output_count=9,
+            training_checkpoint=checkpoint,
+        )
+
+
 def test_conversion_help_and_manifest_check_do_not_import_rknn(tmp_path):
     script = TOOLS_DIR / "convert_yolov8_rk3566.py"
     help_result = subprocess.run(

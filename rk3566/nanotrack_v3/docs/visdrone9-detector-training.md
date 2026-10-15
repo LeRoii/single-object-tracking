@@ -448,7 +448,57 @@ All three parity gates pass. The higher ONNX candidate total is expected
 because it includes detections down to 0.25 while the PT gate denominator is
 filtered at 0.35; it is not evidence of detector-quality improvement.
 
+## RK3566 FP16 RKNN conversion
+
+Conversion used the isolated `.venvs/rknn-convert` environment with pinned
+RKNN-Toolkit2 2.3.2 and target platform `rk3566`. No quantization or
+calibration dataset was enabled.
+
+```bash
+.venvs/rknn-convert/bin/python \
+  rk3566/nanotrack_v3/tools/convert_yolov8_rk3566.py \
+  --onnx artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-rkopt.onnx \
+  --output artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-rk3566-fp16.rknn \
+  --manifest artifacts/yolov8-visdrone9/export/detector-manifest.json \
+  --labels artifacts/yolov8-visdrone9/export/visdrone9.txt \
+  --source-url local://yolov8n-visdrone9-rkopt.onnx \
+  --source-repository https://github.com/airockchip/ultralytics_yolov8 \
+  --source-commit 4674fe6e003dfbc5f2250d3b39dd31faaf7a9877 \
+  --output-count 9 \
+  --training-checkpoint artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-best.pt \
+  --training-repository https://github.com/airockchip/ultralytics_yolov8 \
+  --training-commit 4674fe6e003dfbc5f2250d3b39dd31faaf7a9877 \
+  --training-config artifacts/yolov8-visdrone9/runs/visdrone9-full/args.yaml \
+  --dataset-audit artifacts/yolov8-visdrone9/dataset-audit.json
+```
+
+| Artifact | Size (bytes) | SHA-256 |
+| --- | ---: | --- |
+| RKNN | 7797510 | `3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0` |
+| Detector manifest | 3890 | `05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e` |
+| `visdrone9.txt` | 64 | `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992` |
+
+The schema remains version 1 and the existing C++ loader ignores the new
+optional `training` object. Old manifests without it remain valid. When the
+object is present, the verifier requires all four provenance groups:
+checkpoint, Rockchip repository/commit, expanded `args.yaml`, and dataset
+audit. The generated manifest records these identities:
+
+| Provenance item | SHA-256 |
+| --- | --- |
+| Training checkpoint | `6744672ac5e35debba2a647ad570e9fe84a1cabd1c45c9840080d0a4127fe36d` |
+| RKOPT ONNX | `b2948072f01da7fe3b686392a47fe742380c98775c4149111527b7ddf26a5cc8` |
+| Expanded training arguments | `78bcce30fa02b6b54cceabffaa85c7702f50f18712a55a915d7a74e8aa5648c6` |
+| Dataset audit | `879d0d0bc7d890747c26ea1ec4bc1ae643e3e815570c448269d61f2d3692fc8e` |
+
+Manifest verification passes with `class_count=9`, nine ordered outputs,
+`quantized=false`, `calibrated=false`, and
+`deployment_status=function_only_board_unverified`. Toolkit2 reported FP16
+defaults for internal tensors and two empty ONNX Resize optional constants;
+the build and export still completed successfully. These host-side facts do
+not prove that the board runtime exposes the declared logical NCHW tensors;
+that is a Task 8 acceptance condition.
+
 ### Pending stages
 
-RKNN conversion and board verification will be appended only after their
-respective commands complete.
+Board verification will be appended only after its commands complete.

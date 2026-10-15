@@ -41,6 +41,17 @@ def _output_tensor(role: str, channels: int, grid: int) -> Dict[str, Any]:
     }
 
 
+def _training_artifact(path: Path) -> Dict[str, Any]:
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"training provenance file does not exist: {path}")
+    return {
+        "file": path.name,
+        "size_bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
+
+
 def build_detector_manifest(
     *,
     onnx_path: Path,
@@ -53,6 +64,11 @@ def build_detector_manifest(
     python_executable: str,
     host_os: str,
     output_count: int,
+    training_checkpoint: Path | None = None,
+    training_repository: str | None = None,
+    training_commit: str | None = None,
+    training_config: Path | None = None,
+    dataset_audit: Path | None = None,
 ) -> Dict[str, Any]:
     onnx_path = Path(onnx_path)
     rknn_path = Path(rknn_path)
@@ -70,7 +86,21 @@ def build_detector_manifest(
         )
         if output_count == 9:
             outputs.append(_output_tensor(f"score_sum_s{stride}", 1, grid))
-    return {
+    training_values = (
+        training_checkpoint,
+        training_repository,
+        training_commit,
+        training_config,
+        dataset_audit,
+    )
+    if any(value is not None for value in training_values) and not all(
+        value is not None for value in training_values
+    ):
+        raise ValueError("training provenance arguments must be provided together")
+    if training_commit is not None and len(training_commit) != 40:
+        raise ValueError("training commit must contain the full 40-character commit")
+
+    manifest = {
         "schema_version": 1,
         "artifact": {
             "file": rknn_path.name,
@@ -113,6 +143,17 @@ def build_detector_manifest(
         "calibrated": False,
         "deployment_status": "function_only_board_unverified",
     }
+    if training_checkpoint is not None:
+        manifest["training"] = {
+            "checkpoint": _training_artifact(training_checkpoint),
+            "repository": {
+                "url": training_repository,
+                "commit": training_commit,
+            },
+            "config": _training_artifact(training_config),
+            "dataset_audit": _training_artifact(dataset_audit),
+        }
+    return manifest
 
 
 def _check_rknn_result(stage: str, result: int) -> None:
@@ -123,6 +164,24 @@ def _check_rknn_result(stage: str, result: int) -> None:
 def _convert(arguments: argparse.Namespace) -> None:
     for path, name in ((arguments.onnx, "ONNX"), (arguments.labels, "labels")):
         if not path.is_file():
+            raise ValueError(f"{name} file does not exist: {path}")
+    training_values = (
+        arguments.training_checkpoint,
+        arguments.training_repository,
+        arguments.training_commit,
+        arguments.training_config,
+        arguments.dataset_audit,
+    )
+    if any(value is not None for value in training_values) and not all(
+        value is not None for value in training_values
+    ):
+        raise ValueError("training provenance arguments must be provided together")
+    for path, name in (
+        (arguments.training_checkpoint, "training checkpoint"),
+        (arguments.training_config, "training config"),
+        (arguments.dataset_audit, "dataset audit"),
+    ):
+        if path is not None and not path.is_file():
             raise ValueError(f"{name} file does not exist: {path}")
     if arguments.output.parent != arguments.manifest.parent or arguments.labels.parent != arguments.manifest.parent:
         raise ValueError("output, labels, and manifest must share one directory")
@@ -168,6 +227,11 @@ def _convert(arguments: argparse.Namespace) -> None:
         python_executable=sys.executable,
         host_os=platform.platform(),
         output_count=arguments.output_count,
+        training_checkpoint=arguments.training_checkpoint,
+        training_repository=arguments.training_repository,
+        training_commit=arguments.training_commit,
+        training_config=arguments.training_config,
+        dataset_audit=arguments.dataset_audit,
     )
     arguments.manifest.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -190,6 +254,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-repository")
     parser.add_argument("--source-commit")
     parser.add_argument("--output-count", type=int, choices=(6, 9), default=9)
+    parser.add_argument("--training-checkpoint", type=Path)
+    parser.add_argument("--training-repository")
+    parser.add_argument("--training-commit")
+    parser.add_argument("--training-config", type=Path)
+    parser.add_argument("--dataset-audit", type=Path)
     return parser
 
 
