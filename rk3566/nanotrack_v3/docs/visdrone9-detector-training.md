@@ -378,7 +378,77 @@ false-negative count: class-aware IoU matching was not run for this visual
 review. The count gap is only a qualitative warning. Quantitative validation
 remains the complete validation-set metrics above.
 
+## Rockchip-optimized ONNX export
+
+The byte-identified best checkpoint was exported through the official
+`YOLO.export(format="rknn")` path in the pinned Rockchip fork. This invokes
+that fork's `Exporter.export_rknn`, which removes DFL decoding from the graph
+and emits box, sigmoid class, and score-sum tensors for CPU postprocessing.
+
+```bash
+env PYTHONPATH=/home/u20/single-object-tracking/.tools/ultralytics_yolov8 \
+  .venvs/yolov8-visdrone/bin/python -c \
+  'from ultralytics import YOLO; YOLO("artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-best.pt").export(format="rknn", imgsz=640, batch=1, dynamic=False, device="cpu", opset=12)'
+```
+
+Export identity and contract:
+
+| Field | Value |
+| --- | --- |
+| Rockchip repository commit | `4674fe6e003dfbc5f2250d3b39dd31faaf7a9877` |
+| Source PT SHA-256 | `6744672ac5e35debba2a647ad570e9fe84a1cabd1c45c9840080d0a4127fe36d` |
+| ONNX file | `artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-rkopt.onnx` |
+| ONNX size | 12072229 bytes |
+| ONNX SHA-256 | `b2948072f01da7fe3b686392a47fe742380c98775c4149111527b7ddf26a5cc8` |
+| ONNX opset | 12 |
+| Input | float32 NCHW `1x3x640x640`, name `images` |
+| Outputs | 9 float32 NCHW tensors |
+| Contract report SHA-256 | `a878698354b8f7457b519430786709d8043d64422d79b7c6d927ef642e739f28` |
+
+Output order is fixed and was verified both statically and with a finite
+ONNX Runtime zero-input execution:
+
+```text
+box_s8 [1,64,80,80], class_s8 [1,9,80,80], score_sum_s8 [1,1,80,80]
+box_s16 [1,64,40,40], class_s16 [1,9,40,40], score_sum_s16 [1,1,40,40]
+box_s32 [1,64,20,20], class_s32 [1,9,20,20], score_sum_s32 [1,1,20,20]
+```
+
+The verification tool rejects missing or reordered outputs, dynamic batch,
+wrong class count, wrong grids, and non-finite model initializers or runtime
+outputs before the model may enter RKNN conversion.
+
+### PT/ONNX numerical parity
+
+Fifty unique validation images were sampled from the sorted val file list by
+`random.Random(42).sample(..., 50)`. The manifest was hashed before inference:
+
+- Sample manifest SHA-256:
+  `329373dcf809e3fbd462ea7d6276ac05ba58f3871886c7f9f82484c932e5a47e`
+- Parity report SHA-256:
+  `a5ab965772a6077ad6a9b92f3ea90623253ae643b979e4af2fb82d1dc1a33096`
+- Runtime: ONNX Runtime `CPUExecutionProvider`; PyTorch CPU, fused evaluation
+  model with the same Rockchip RKOPT head path.
+
+Both paths consumed the same RGB float32 640x640 centered-letterbox tensor
+(pad 114). Both used confidence 0.25 and class-aware NMS 0.45. The gate uses
+only PT reference detections with confidence at least 0.35 and greedily
+requires the same class and IoU at least 0.90.
+
+| Metric | Required | Observed | Result |
+| --- | ---: | ---: | --- |
+| PT reference detections | - | 1643 | information |
+| ONNX candidate detections | - | 2155 | information |
+| Matched detections | - | 1643 | information |
+| Matched recall | >=0.98 | 1.000000 | pass |
+| Matched median IoU | >=0.99 | 0.9999991 | pass |
+| Confidence absolute delta p95 | <=0.02 | 0.00000113 | pass |
+
+All three parity gates pass. The higher ONNX candidate total is expected
+because it includes detections down to 0.25 while the PT gate denominator is
+filtered at 0.35; it is not evidence of detector-quality improvement.
+
 ### Pending stages
 
-RKOPT ONNX export, RKNN conversion, and board verification will be appended
-only after their respective commands complete.
+RKNN conversion and board verification will be appended only after their
+respective commands complete.
