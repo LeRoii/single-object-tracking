@@ -160,6 +160,46 @@ val/0000242_06452_d_0000018.jpg
 
 ## Training status
 
-Training has not started at this evidence point. CUDA framework validation,
-the 5-epoch smoke run, the 100-epoch run, export, RKNN conversion, and board
+### Reproducible environment
+
+The training environment is isolated at `.venvs/yolov8-visdrone` (Git
+ignored). Its complete dependency lock is
+`rk3566/nanotrack_v3/training/requirements-yolov8-visdrone.lock`.
+
+| Component | Verified value |
+| --- | --- |
+| Python | 3.10.12 |
+| Rockchip YOLOv8 repository | `https://github.com/airockchip/ultralytics_yolov8` |
+| Rockchip commit | `4674fe6e003dfbc5f2250d3b39dd31faaf7a9877` |
+| Ultralytics package | 8.2.82, editable from the pinned checkout |
+| PyTorch / torchvision | 2.4.0+cu121 / 0.19.0+cu121 |
+| CUDA runtime reported by PyTorch | 12.1 |
+| cuDNN reported by PyTorch | 90100 (9.1.0) |
+| GPU | NVIDIA GeForce RTX 2060, 6144 MiB |
+| NVIDIA driver | 580.178.04 |
+
+Validation did not stop at device enumeration. A tensor was allocated on
+`cuda:0`, multiplied on the GPU, synchronized, and returned `2.0` from input
+`1.0`. The fixed training entrypoint also rejects a missing CUDA device or a
+failed CUDA tensor operation before constructing the model.
+
+Initial weights:
+
+- URL: `https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt`
+- Local file: `artifacts/yolov8-visdrone9/source/yolov8n.pt` (Git ignored)
+- Size: 6549796 bytes
+- SHA-256: `f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36`
+- Load check: Rockchip `YOLO` constructed a `DetectionModel` successfully.
+
+The entrypoint is `rk3566/nanotrack_v3/tools/train_visdrone9.py`. Both modes
+use image size 640, batch 8, seed 42, AMP, deterministic mode, CUDA device 0,
+four workers, patience 20, checkpoint saving, and plots. Smoke mode runs 5
+epochs; full mode runs at most 100 epochs. Before a fresh run it records an
+identity containing the mode, repository commit, dataset audit hash, data YAML
+hash, initial-weight hash, class list, and seed. Resume is refused if any
+identity field differs.
+
+### Pending stages
+
+The 5-epoch smoke run, the 100-epoch run, export, RKNN conversion, and board
 verification will be appended only after their respective commands complete.
