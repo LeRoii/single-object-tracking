@@ -270,7 +270,115 @@ out-of-memory event, or training failure occurred. PyTorch emitted only a
 future-deprecation warning for the legacy AMP scaler used by the pinned
 Rockchip fork.
 
+### Full 100-epoch training
+
+The release-candidate training started from the original pretrained
+`yolov8n.pt`, not from the smoke checkpoint. It used the same data,
+environment, and fixed hyperparameters described above, with `--mode full`:
+
+```bash
+env MPLCONFIGDIR=/tmp/mplcache-visdrone9 \
+  YOLO_CONFIG_DIR=/tmp/yolo-config-visdrone9 \
+  .venvs/yolov8-visdrone/bin/python \
+  rk3566/nanotrack_v3/tools/train_visdrone9.py \
+  --mode full \
+  --repo .tools/ultralytics_yolov8 \
+  --weights artifacts/yolov8-visdrone9/source/yolov8n.pt \
+  --data rk3566/nanotrack_v3/training/visdrone9-data.yaml \
+  --dataset-audit artifacts/yolov8-visdrone9/dataset-audit.json \
+  --project artifacts/yolov8-visdrone9/runs
+```
+
+- Run directory: `artifacts/yolov8-visdrone9/runs/visdrone9-full`
+- Wall-clock evidence: 2026-10-15 14:55:14 to 17:07:56 +08:00
+  (approximately 2 hours 13 minutes)
+- Completed epochs: 100/100; early stopping did not trigger. The best epoch
+  was 89, leaving only 11 non-improving epochs, below patience 20.
+- Highest trainer `GPU_mem` value directly observed during monitoring:
+  5.30 GiB. The terminal session was later detached, so this is an observed
+  value rather than a proven whole-run maximum.
+- Run identity SHA-256:
+  `4c022374d5fde26f095b488496ef990370407b9ab3f37a21114e19555ab284f0`
+
+Ultralytics removed four exact duplicate label rows while constructing the
+training cache, one from each of the following images:
+
+```text
+train/0000137_02220_d_0000163.jpg
+train/0000140_00118_d_0000002.jpg
+train/9999945_00000_d_0000114.jpg
+train/9999987_00000_d_0000049.jpg
+```
+
+The converter and independent audit correctly count all 381963 valid source
+rows; the training loss therefore consumed four fewer rows after duplicate
+suppression. This does not alter the source conversion audit, but it prevents
+interpreting that count as the number of unique training objects.
+
+Selected metrics from `results.csv`:
+
+| Epoch | train box | train cls | train DFL | Precision | Recall | mAP50 | mAP50-95 | val box | val cls | val DFL |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 89 (best) | 1.3284 | 0.91438 | 0.90555 | 0.45610 | 0.34616 | 0.34867 | 0.20644 | 1.3218 | 0.92294 | 0.90655 |
+| 100 (last) | 1.2850 | 0.85739 | 0.89782 | 0.45508 | 0.34241 | 0.34672 | 0.20501 | 1.3270 | 0.92434 | 0.90782 |
+
+Artifact identities:
+
+| Artifact | Size (bytes) | SHA-256 |
+| --- | ---: | --- |
+| `runs/visdrone9-full/weights/best.pt` | 6235363 | `6744672ac5e35debba2a647ad570e9fe84a1cabd1c45c9840080d0a4127fe36d` |
+| `runs/visdrone9-full/weights/last.pt` | 6235363 | `014d577db2acb1aefa5ea68d20c0d969f0529f2892fb2be12b4b5fa86008c559` |
+| `runs/visdrone9-full/results.csv` | - | `b2b3798d8bc66f873fe9b46cff35e1c466255d13030f3a2904161564977733f6` |
+| `runs/visdrone9-full/args.yaml` | - | `78bcce30fa02b6b54cceabffaa85c7702f50f18712a55a915d7a74e8aa5648c6` |
+| `export/yolov8n-visdrone9-best.pt` | 6235363 | `6744672ac5e35debba2a647ad570e9fe84a1cabd1c45c9840080d0a4127fe36d` |
+
+The exported PT is a byte-identical copy of `best.pt`. All listed model and
+run artifacts are Git ignored.
+
+#### Independent best-checkpoint validation
+
+The exported best checkpoint was loaded afresh and evaluated on all 548 val
+images with batch 8. This independent pass reported overall precision
+0.45418, recall 0.34786, mAP50 0.34907, and mAP50-95 0.20716. Its small
+difference from the epoch-89 training row is retained rather than hidden;
+release decisions use this independent result.
+
+| Class | Precision | Recall | AP50 | AP50-95 |
+| --- | ---: | ---: | ---: | ---: |
+| person | 0.50770 | 0.37934 | 0.40287 | 0.15937 |
+| bicycle | 0.24293 | 0.10023 | 0.07922 | 0.03147 |
+| car | 0.65119 | 0.74566 | 0.75608 | 0.51914 |
+| van | 0.51130 | 0.37620 | 0.38726 | 0.26576 |
+| truck | 0.46355 | 0.31333 | 0.31353 | 0.20913 |
+| tricycle | 0.40677 | 0.25837 | 0.23856 | 0.12605 |
+| awning-tricycle | 0.26536 | 0.15414 | 0.12232 | 0.07621 |
+| bus | 0.54945 | 0.44223 | 0.47479 | 0.32737 |
+| motor | 0.48934 | 0.36124 | 0.36699 | 0.14994 |
+
+The car class is materially stronger than the other target classes. Bicycle,
+awning-tricycle, and small-person performance remain weak, so downstream
+long-term tracking must not treat a missing detector candidate as proof that
+the tracked object has left the scene.
+
+#### Qualitative failure review
+
+Four deterministic val images were selected directly from their annotation
+statistics and inferred at confidence 0.25. Rendered images are under
+`artifacts/yolov8-visdrone9/failure-review/best` and are Git ignored.
+
+| Stress case | Image stem | Valid GT rows | Predictions | Observation |
+| --- | --- | ---: | ---: | --- |
+| Dense | `0000295_02400_d_0000033` | 317 | 184 | Central and near-field cars/persons are found, while the most crowded and distant region has substantial misses and overlapping display labels. |
+| All small | `0000244_06388_d_0000014` | 46 | 23 | All 46 GT boxes are below 32x32 pixels; roughly half as many predictions remain, mostly cars and some at low confidence. |
+| Heavy occlusion | `0000154_00001_d_0000001` | 51 | 30 | Vehicles and pedestrians partially hidden by trees are frequently absent, although unobstructed road users are localized plausibly. |
+| Truncation | `0000289_00201_d_0000812` | 43 | 37 | Coverage is better, but clipped edge targets and tiny instances are still missed in the bright scene. |
+
+Prediction count minus GT count is not an evaluated false-positive or
+false-negative count: class-aware IoU matching was not run for this visual
+review. The count gap is only a qualitative warning. Quantitative validation
+remains the complete validation-set metrics above.
+
 ### Pending stages
 
-The 100-epoch run, export, RKNN conversion, and board verification will be
-appended only after their respective commands complete.
+RKOPT ONNX export, RKNN conversion, and board verification will be appended
+only after their respective commands complete.
