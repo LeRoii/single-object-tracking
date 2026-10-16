@@ -420,8 +420,7 @@ int main(int argc, char** argv) {
         cv::imshow(kInteractiveWindow,
                    render_interactive(frame, displayed_output, source_frame,
                                       playback.playing()));
-        const int key = cv::waitKeyEx(nanotrack::interactive_wait_delay_ms(
-            playback.playing(), source_fps));
+        const int key = cv::waitKeyEx(playback.playing() ? 1 : 0);
         advance = playback.handle_key(key);
         if (!window_visible(kInteractiveWindow)) break;
         if (playback.take_selection_request()) {

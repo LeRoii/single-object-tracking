@@ -80,12 +80,6 @@ int main() {
   expect_true(!limited_playback.playing(),
               "a decode limit can pause continuous playback on its last frame");
 
-  expect_true(interactive_wait_delay_ms(false, 30.0) == 0,
-              "paused playback blocks for a key");
-  expect_true(interactive_wait_delay_ms(true, 25.0) == 40,
-              "continuous playback uses source frame period");
-  expect_true(interactive_wait_delay_ms(true, 0.0) == 33,
-              "invalid source FPS uses 30 FPS fallback");
   expect_true(interactive_window_visible(1.0),
               "a supported visible window remains active");
   expect_true(!interactive_window_visible(0.0),

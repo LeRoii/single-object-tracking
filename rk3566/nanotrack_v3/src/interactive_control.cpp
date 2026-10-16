@@ -101,14 +101,6 @@ InteractiveCommand decode_interactive_key(int key) {
   }
 }
 
-int interactive_wait_delay_ms(bool playing, double source_fps) {
-  if (!playing) return 0;
-  const double fps = std::isfinite(source_fps) && source_fps > 0.0
-                         ? source_fps
-                         : 30.0;
-  return std::max(1, static_cast<int>(std::lround(1000.0 / fps)));
-}
-
 bool interactive_window_visible(double property_value) {
   return std::isfinite(property_value) && property_value != 0.0;
 }
