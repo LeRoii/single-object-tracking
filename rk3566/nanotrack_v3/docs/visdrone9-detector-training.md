@@ -499,6 +499,27 @@ the build and export still completed successfully. These host-side facts do
 not prove that the board runtime exposes the declared logical NCHW tensors;
 that is a Task 8 acceptance condition.
 
-### Pending stages
+## Board deployment and promotion hold
 
-Board verification will be appended only after its commands complete.
+The exact RKNN, manifest, and labels above were copied to the isolated board
+release
+`/home/cat/Project/SOT/nanotrack_v3_longterm/releases/yolov8n-visdrone9-rk3566-fp16-v1`.
+Board-side hashes matched the conversion host. Actual RK3566 tensor inspection,
+20-image detector inference, person/car controller integration, a
+detector-disabled regression, and a 1001-tracked-frame stability run all passed
+their functional and control-safety checks. The complete evidence and the
+remaining recovery/memory boundary are in
+`visdrone9-detector-board-verification.md`.
+
+The stability run's sampled RSS stayed near 111 MiB, but VmHWM increased at
+every 30-second sample from 120768 to 160556 kB. The approved promotion gate
+does not allow a switch while either RSS or VmHWM shows continuing monotonic
+growth. The repository's canonical `models/detector-manifest.json` and README
+therefore remain on the previous COCO detector. The 3890-byte VisDrone9
+manifest and RKNN remain ignored candidate artifacts in the isolated board
+release; neither is stored in Git.
+
+This is a successful functional candidate deployment, not a formal promotion,
+threshold calibration, or proof of long-term recovery quality. In particular,
+person hypotheses reached NanoTrack verification but did not achieve a
+confirmed reacquisition on the retained video.
