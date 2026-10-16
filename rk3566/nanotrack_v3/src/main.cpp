@@ -329,7 +329,6 @@ int main(int argc, char** argv) {
         options.output_height > 0 ? options.output_height : frame.rows;
     cv::VideoWriter writer;
     std::ofstream boxes;
-    bool outputs_open = false;
 
     nanotrack::NanoTrackV3 tracker(options.model_dir);
     std::unique_ptr<nanotrack::DetectorAdapter> detector;
@@ -376,23 +375,26 @@ int main(int argc, char** argv) {
       initial_output.accepted = true;
       displayed_output = initial_output;
       if (!initialized) {
-        writer.open(options.output_video,
-                    cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), output_fps,
-                    cv::Size(output_width, output_height));
-        if (!writer.isOpened()) {
-          throw std::runtime_error("cannot open output video writer");
+        if (!options.output_video.empty()) {
+          writer.open(options.output_video,
+                      cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), output_fps,
+                      cv::Size(output_width, output_height));
+          if (!writer.isOpened()) {
+            throw std::runtime_error("cannot open output video writer");
+          }
+          writer.write(render_annotated(frame, bbox, initial_output, output_width,
+                                        output_height));
         }
-        boxes.open(options.output_boxes);
-        if (!boxes) throw std::runtime_error("cannot open output CSV");
-        boxes << nanotrack::tracking_csv_header() << '\n';
-        outputs_open = true;
-        boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
-                     source_frame, timestamp_ms, bbox, detector->available(),
-                     detector->available() && detector->can_submit(),
-                     controller_config.detector_target_mode))
-              << '\n';
-        writer.write(render_annotated(frame, bbox, initial_output, output_width,
-                                      output_height));
+        if (!options.output_boxes.empty()) {
+          boxes.open(options.output_boxes);
+          if (!boxes) throw std::runtime_error("cannot open output CSV");
+          boxes << nanotrack::tracking_csv_header() << '\n';
+          boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
+                       source_frame, timestamp_ms, bbox, detector->available(),
+                       detector->available() && detector->can_submit(),
+                       controller_config.detector_target_mode))
+                << '\n';
+        }
       }
       initialized = true;
       ++initialization_count;
@@ -467,8 +469,10 @@ int main(int argc, char** argv) {
           !std::isfinite(result.tracker_ms) || result.tracker_ms <= 0.0F) {
         throw std::runtime_error("measured tracking latency is invalid");
       }
-      writer.write(render_annotated(frame, result.output.bbox, result.output,
-                                    output_width, output_height));
+      if (writer.isOpened()) {
+        writer.write(render_annotated(frame, result.output.bbox, result.output,
+                                      output_width, output_height));
+      }
       displayed_output = result.output;
       const float pipeline_ms = std::chrono::duration<float, std::milli>(
                                     std::chrono::steady_clock::now() -
@@ -484,11 +488,15 @@ int main(int argc, char** argv) {
       nanotrack::TrackingLogRow log_row =
           nanotrack::make_tracking_log_row(result);
       log_row.pipeline_ms = pipeline_ms;
-      boxes << nanotrack::tracking_csv_row(log_row) << '\n';
+      if (boxes.is_open()) {
+        boxes << nanotrack::tracking_csv_row(log_row) << '\n';
+      }
     }
     if (options.interactive) destroy_window(kInteractiveWindow);
-    if (outputs_open) {
+    if (writer.isOpened()) {
       writer.release();
+    }
+    if (boxes.is_open()) {
       boxes.close();
     }
     if (!initialized) {
@@ -532,13 +540,16 @@ int main(int argc, char** argv) {
       detector_metadata.rknn_api_version = yolo_engine->api_version();
       detector_metadata.rknn_driver_version = yolo_engine->driver_version();
     }
-    const std::string metadata_path =
-        options.session_metadata.empty()
-            ? options.output_boxes + ".metadata.json"
-            : options.session_metadata;
-    write_session_metadata(metadata_path, options, controller_config, tracker,
-                           video_clock, source_fps, tracked_count, latency,
-                           detector_metadata);
+    const std::string metadata_path = !options.session_metadata.empty()
+                                          ? options.session_metadata
+                                          : options.output_boxes.empty()
+                                                ? std::string()
+                                                : options.output_boxes + ".metadata.json";
+    if (!metadata_path.empty()) {
+      write_session_metadata(metadata_path, options, controller_config, tracker,
+                             video_clock, source_fps, tracked_count, latency,
+                             detector_metadata);
+    }
     std::cout << std::fixed << std::setprecision(3)
               << "SUMMARY tracked_frames=" << tracked_count
               << " mean_tracker_ms=" << mean_tracker
@@ -552,7 +563,8 @@ int main(int argc, char** argv) {
               << " end_to_end_fps=" << latency.end_to_end_fps
               << " initializations=" << initialization_count
               << " calibrated=" << (controller_config.calibrated ? 1 : 0)
-              << " metadata=" << metadata_path << '\n';
+              << " metadata="
+              << (metadata_path.empty() ? "disabled" : metadata_path) << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "ERROR: " << error.what() << '\n';

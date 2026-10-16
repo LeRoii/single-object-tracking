@@ -64,6 +64,13 @@ int main() {
   expect_true(!interactive_options.has_bbox,
               "interactive mode permits mouse initialization without bbox");
 
+  const Options interactive_without_outputs = parse_options(
+      {"nanotrack_v3", "--video", "/tmp/input.mp4", "--model-dir",
+       "/tmp/models", "--interactive"});
+  expect_true(interactive_without_outputs.output_video.empty() &&
+                  interactive_without_outputs.output_boxes.empty(),
+              "interactive mode defaults to no saved video or CSV");
+
   expect_throws(
       [&] {
         std::vector<std::string> missing_bbox = valid;
@@ -73,6 +80,18 @@ int main() {
         parse_options(missing_bbox);
       },
       "headless mode still requires bbox");
+
+  expect_throws(
+      [&] {
+        std::vector<std::string> missing_outputs = valid;
+        for (const std::string& option : {"--output-video", "--output-boxes"}) {
+          const auto position =
+              std::find(missing_outputs.begin(), missing_outputs.end(), option);
+          missing_outputs.erase(position, position + 2);
+        }
+        parse_options(missing_outputs);
+      },
+      "headless mode still requires output paths");
 
   std::vector<std::string> interactive_with_bbox = valid;
   interactive_with_bbox.push_back("--interactive");

@@ -161,30 +161,29 @@ export DISPLAY=:0
   --interactive \
   --model-dir models \
   --sensor visible \
-  --controller-config config/visible-default.conf \
-  --output-video artifacts/interactive-output.avi \
-  --output-boxes artifacts/interactive-boxes.csv
+  --controller-config config/visible-default.conf
 ```
 
 The controls are:
 
 - `N` or Right Arrow: decode and process exactly one next frame, then remain
   paused;
-- `Space`: toggle continuous playback at the source video frame period (or a
-  30 FPS fallback when the source does not report a valid FPS);
+- `Space`: toggle continuous playback at the fastest processing rate, using a
+  1 ms GUI event wait between frames;
 - `R`: pause and select an ROI on the currently displayed source frame;
 - `Q` or `Esc`: quit. While the ROI selector is active, `Esc` or `C` cancels
   that selection and returns to the paused player; `Enter` or `Space` confirms
   the drawn ROI.
 
-Before the first ROI is accepted, video navigation does not invoke NanoTrack
-and does not write tracking rows. The first accepted ROI initializes the
-tracker and starts the output video/CSV at that source frame. Pressing `R`
-again resets the anchor/recent templates, motion state, recovery state, and
-detector confirmation state at the current frame. A reset is printed as an
-`INITIALIZED` console line; it does not duplicate that already-written source
-frame in the CSV or output video. The following frame is tracked from the new
-ROI.
+Interactive mode does not save video, CSV, or metadata by default, so software
+MJPEG encoding cannot stall the GUI. Add `--output-video`, `--output-boxes`, or
+`--session-metadata` explicitly to save the corresponding artifact. Before the
+first ROI is accepted, video navigation does not invoke NanoTrack. The first
+accepted ROI initializes the tracker. Pressing `R` again resets the
+anchor/recent templates, motion state, recovery state, and detector
+confirmation state at the current frame. A reset is printed as an
+`INITIALIZED` console line; when outputs are enabled, it does not duplicate the
+already-written source frame. The following frame is tracked from the new ROI.
 
 Supplying both `--interactive` and `--bbox X,Y,W,H` initializes immediately at
 `--start-frame`, while retaining pause, step, play, and re-selection controls.

@@ -76,7 +76,7 @@ float parse_open_unit(const std::string& text, const char* option) {
 std::string usage() {
   return
       "Usage: nanotrack_v3 --video VIDEO [--bbox X,Y,W,H] --model-dir DIR "
-      "--output-video OUTPUT.avi --output-boxes OUTPUT.csv [--max-frames N] "
+      "[--output-video OUTPUT.avi] [--output-boxes OUTPUT.csv] [--max-frames N] "
       "[--start-frame N --end-frame N] [--output-size WIDTHxHEIGHT] "
       "[--interactive] "
       "[--sensor visible|infrared] [--controller-config FILE] "
@@ -128,8 +128,7 @@ Options parse_options(const std::vector<std::string>& arguments) {
     index += 2;
   }
 
-  const char* required[] = {"--video", "--model-dir", "--output-video",
-                            "--output-boxes"};
+  const char* required[] = {"--video", "--model-dir"};
   for (const char* option : required) {
     if (values.find(option) == values.end()) {
       throw std::invalid_argument(std::string("missing required option: ") + option);
@@ -138,6 +137,12 @@ Options parse_options(const std::vector<std::string>& arguments) {
   if (!options.interactive && values.find("--bbox") == values.end()) {
     throw std::invalid_argument("missing required option: --bbox");
   }
+  if (!options.interactive && values.find("--output-video") == values.end()) {
+    throw std::invalid_argument("missing required option: --output-video");
+  }
+  if (!options.interactive && values.find("--output-boxes") == values.end()) {
+    throw std::invalid_argument("missing required option: --output-boxes");
+  }
   options.video = values.at("--video");
   const auto bbox = values.find("--bbox");
   if (bbox != values.end()) {
@@ -145,8 +150,14 @@ Options parse_options(const std::vector<std::string>& arguments) {
     options.has_bbox = true;
   }
   options.model_dir = values.at("--model-dir");
-  options.output_video = values.at("--output-video");
-  options.output_boxes = values.at("--output-boxes");
+  const auto output_video = values.find("--output-video");
+  if (output_video != values.end()) {
+    options.output_video = output_video->second;
+  }
+  const auto output_boxes = values.find("--output-boxes");
+  if (output_boxes != values.end()) {
+    options.output_boxes = output_boxes->second;
+  }
   const auto max_frames = values.find("--max-frames");
   if (max_frames != values.end()) {
     options.max_frames = parse_positive_size(max_frames->second);
