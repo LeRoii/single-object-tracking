@@ -5,16 +5,18 @@
 
 - 初始化时间：`2026-10-22T21:05:39+08:00`
 - 初始化基线：`main@352018bd588a999d03f2685dc7b71266f396b39d`
+- 最近汇总：`2026-10-22T22:11:26+08:00`，四个任务回传已集成至
+  `main@062dd5b1c8adfe7e79ca4fe4100f299bf5e8cc9f`
 - 当前集成契约：[`integration-contract.yaml`](integration-contract.yaml)
 
 ## 当前状态
 
 | 任务 | 当前状态 | 当前可交付物 | 主要边界或阻塞 | 详情 |
 | --- | --- | --- | --- | --- |
-| NanoTrack 微调 | `ready_for_downstream_evaluation` | 已冻结 Stage 1 / g5000 候选及桌面评测证据 | 微调候选尚未形成绑定该权重的 RKNN/板端验收证据；V1 窗口协议偏差保留 | [`nanotrack-finetune.md`](nanotrack-finetune.md) |
-| Detector 训练 | `candidate_ready_promotion_held` | VisDrone9 PT、RKOPT ONNX、RK3566 FP16 RKNN 候选及 provenance | 正式切换被集成内存门和重捕效果门阻塞；canonical manifest 仍是 COCO | [`detector-training.md`](detector-training.md) |
-| 开发板验证 | `functional_pass_promotion_held` | 交互式 Debug 版本的板端原生编译、功能与安全证据 | VmHWM 未平台化；没有 detector-confirmed 重捕；阈值/可见光/红外验收未闭环 | [`board-validation.md`](board-validation.md) |
-| 生产交叉编译 | `needs_owner_refresh` | 应消费最新的已通过开发板验证的结果并生成生产产物 | 尚未记录能否取得协调对话锁定的最新结果并编译成功 | [`cross-compile.md`](cross-compile.md) |
+| NanoTrack 微调 | `ready_for_downstream_evaluation` | g5000 候选身份已复核，37 项相关单测通过 | 尚无绑定该权重的 ONNX/RKNN/板端验收；下一轮评分、采样和交叉对照仍待实施 | [`nanotrack-finetune.md`](nanotrack-finetune.md) |
+| Detector 训练 | `candidate_ready_promotion_held` | VisDrone9 PT、ONNX、RKNN 和 manifest/labels 身份已复核，76 项回归通过 | 正式切换被集成内存门和重捕效果门阻塞；canonical manifest 仍是 COCO | [`detector-training.md`](detector-training.md) |
+| 开发板验证 | `functional_pass_promotion_held` | 当前 Debug 工件、13 项板端测试、detector 单图和短程集成功能已复核 | 源码候选尚未集成锁定；VmHWM、detector-confirmed 重捕和阈值门未闭环 | [`board-validation.md`](board-validation.md) |
+| 生产交叉编译 | `blocked_waiting_for_approved_board_handoff` | 已同步协调基线并确认当前没有可消费 handoff | 输入身份尚未批准，因此未执行交叉编译；这不是编译失败 | [`cross-compile.md`](cross-compile.md) |
 
 ## 依赖顺序
 
@@ -38,6 +40,9 @@
 - 由协调对话决定是否将 NanoTrack g5000 候选送入 ONNX/RKNN/板端链路；旧官方 NanoTrack V3 板端结果不能替代微调候选的板端证据。
 - VisDrone9 detector 保持候选状态，直到同协议内存复测和正式 promotion gate 通过。
 - 开发板验证继续保持“功能可运行”与“长时重捕/开发板交付门”两条结论分离，并在交叉编译之前完成。
+- 下一轮开发板候选尚未锁定：交互式 Debug 源码候选 `b98b1335c3d263f542fd52656c7d7c4d58b2bb77`
+  仍需集成审查，并需同时决定 NanoTrack 模型身份和 COCO/VisDrone9 detector 选择。
+- `development_board_validation.latest_handoff.available` 继续保持 `false`；在门槛通过前，交叉编译任务只等待，不消费历史产物。
 - 真实吊舱测试为人工门禁，不属于任何 Codex 自动验证结论。
 
 ## 更新记录
@@ -53,3 +58,14 @@
 - 修正流程顺序为“开发板原生编译/交互调试/测试 → 交叉编译生产产物 → 人工吊舱测试”。
 - 将交叉编译任务缩减为确认取得最新板端验证结果并编译成功。
 - 明确真实吊舱测试只能由人执行和确认。
+
+### 2026-10-22T22:11:26+08:00
+
+- 集成 detector `700da83459b742e0d83ea28493feef6cd3103cca`、NanoTrack 微调
+  `81b95123dc5678b924802482c88fb1ae3e9d5980`、开发板验证
+  `acc595d19b3e270f8adde7cebca5deeb7e8f9328` 和交叉编译
+  `2795a3303921e750a73ef7d1d38482c2b3012a67` 四份任务回传。
+- 采纳交叉编译 owner refresh，将其状态更新为等待批准的开发板 handoff；尚未执行编译。
+- 保持开发板 promotion hold 和 `latest_handoff.available=false`，未把短程烟测升级为开发板交付通过。
+- 合并结果复验：detector/Python `76 passed`，NanoTrack 相关单测 `33 + 4` 项通过，
+  RKNN-independent 主机构建完成且 CTest `12/12` 通过；这些主机结果不替代板端门禁。

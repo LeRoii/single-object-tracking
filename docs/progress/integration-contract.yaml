@@ -1,9 +1,15 @@
 schema_version: 1
-updated_at: "2026-10-22T21:18:30+08:00"
+updated_at: "2026-10-22T22:11:26+08:00"
 coordinator_baseline:
   branch: main
-  commit: "352018bd588a999d03f2685dc7b71266f396b39d"
-  note: "Initialization snapshot; later task results require an integrated commit before consumption."
+  commit: "062dd5b1c8adfe7e79ca4fe4100f299bf5e8cc9f"
+  note: "Four task progress branches are integrated through this commit; the coordinator status update is built on top of it."
+
+integrated_task_updates:
+  detector_training: "700da83459b742e0d83ea28493feef6cd3103cca"
+  nanotrack_finetune: "81b95123dc5678b924802482c88fb1ae3e9d5980"
+  board_validation: "acc595d19b3e270f8adde7cebca5deeb7e8f9328"
+  production_cross_compile: "2795a3303921e750a73ef7d1d38482c2b3012a67"
 
 ownership:
   status_index: coordinating_chat
@@ -31,6 +37,9 @@ nanotrack:
     sha256: "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1"
     selection_record: artifacts/nanotrack_conservative_three_stage/run/selection.json
     selection_sha256: "a4b7a0940911cf1e064d3bdf5a312f0c35d893c71ef63374fa8b41fb6e97cc6c"
+    config:
+      path: configs/nanotrack_v3_three_stage_stage1.yaml
+      sha256: "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
     onnx: null
     rknn: null
     board_validation: null
@@ -72,6 +81,22 @@ development_board_validation:
   position: before_production_cross_compile
   environment: complete_native_build_environment
   implementation: interactive_debug_variant
+  latest_review:
+    status: functional_pass_promotion_held
+    task_update_commit: "acc595d19b3e270f8adde7cebca5deeb7e8f9328"
+    shared_source_candidate: "b98b1335c3d263f542fd52656c7d7c4d58b2bb77"
+    board_source_commit: "d9f200ce26ade0f7664a9c853230f277c28da47b"
+    source_lock_approved: false
+    observed_layers:
+      - model_load
+      - detector_function
+      - integrated_function_short_smoke
+    blocked_gates:
+      - source_and_model_candidate_lock
+      - memory_plateau
+      - detector_confirmed_reacquisition
+      - same_protocol_old_new_resource_comparison
+      - visible_infrared_calibration
   latest_handoff:
     available: false
     source_commit: null
@@ -81,7 +106,8 @@ development_board_validation:
     verdict: null
 
 production_cross_compile:
-  status: needs_owner_refresh
+  status: blocked_waiting_for_approved_board_handoff
+  last_owner_refresh_commit: "2795a3303921e750a73ef7d1d38482c2b3012a67"
   responsibility: obtain_latest_board_validated_handoff_and_compile
   latest_result_access_confirmed: false
   consumed_source_commit: null
