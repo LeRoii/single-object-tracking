@@ -24,6 +24,10 @@ capability.
 
 ## Test-data preparation
 
+Use the per-video annotation contract in
+[`occlusion-video-annotation-requirements.zh-CN.md`](occlusion-video-annotation-requirements.zh-CN.md)
+for occlusion, reappearance, subtarget, deformation, and distractor labels.
+
 - [ ] Create two `girl_dance.mp4` cases: whole-person initialization and
   face/head subtarget initialization.
 - [ ] Assign the tracked person a stable target id.
