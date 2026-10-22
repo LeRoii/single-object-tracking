@@ -1,11 +1,39 @@
 # RK3566 开发板验证任务进度
 
 - 任务状态：`functional_pass_promotion_held`
-- 最近核对：`2026-10-22T21:18:30+08:00`
-- 核对基线：`main@352018bd588a999d03f2685dc7b71266f396b39d`
+- 最近核对：`2026-10-22T21:46:29+08:00`
+- 核对基线：`main@29b083e4e6ced2fd46eb7f9ecf821287b4cc401a`
+- 任务工作树：`/home/u20/single-object-tracking/.worktrees/board-validation-progress-sync`
+- 任务分支：`codex/board-validation-progress-sync`
 - 责任边界：在交叉编译之前，使用具备完整编译环境的真实 RK3566 开发板，对交互式 Debug 版本执行原生编译、调试、加载/推理、集成视频、控制安全、时延、资源和稳定性测试。
 
 本任务是开发阶段的板端验证，不消费交叉编译生产产物。交叉编译只在本任务冻结并移交最新可用结果后进行；真实吊舱测试由人完成。
+
+## 2026-10-22 首次协调复核
+
+- 主工作树 `/home/u20/single-object-tracking` 在 `main` 上，`HEAD` 正好是协调基线
+  `29b083e4e6ced2fd46eb7f9ecf821287b4cc401a`；首次只读检查时没有已暂存、
+  未暂存或未跟踪修改，`HEAD...29b083e` 的左右提交数为 `0/0`，因此没有执行
+  merge、reset、覆盖或文件搬运。
+- 本任务从该基线创建独立工作树和分支。历史控制器源提交
+  `1552b7d14f67006768757dff039327253e3a60cb` 是当前基线祖先；交互式 Debug
+  分支当前停在 `b98b1335c3d263f542fd52656c7d7c4d58b2bb77`，但它不是协调基线祖先，
+  尚不能把两者合称为一份已集成、可移交的源码身份。
+- `integration-contract.yaml` 锁定的 VisDrone9 RKNN/manifest/labels 大文件不在
+  Git 工作树中，符合“大文件不入库”规则；本轮只能核对契约和历史报告中的哈希，
+  不能把路径记录当作当前文件哈希复验。
+- 尝试使用当前约定命令
+  `ssh -p 10022 cat@127.0.0.1 'printf connected'` 连接开发板，实际返回
+  `ssh: connect to host 127.0.0.1 port 10022: Connection refused`。因此本轮没有
+  重新读取板端 Git、二进制、模型、运行时或保留工件，也没有生成新的板端 PASS。
+- 对协调基线执行 RKNN-independent 主机回归：临时目录配置
+  `cmake -S rk3566/nanotrack_v3 -B <tmp> -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF`，
+  随后构建并运行 `ctest --test-dir <tmp> --output-on-failure`，结果为 `12/12`
+  通过。这仅证明当前主线的主机逻辑基线可构建和测试，不是开发板证据。
+
+本轮实际任务状态仍为 `functional_pass_promotion_held`。此前板端功能和控制安全
+证据继续作为历史保留证据，但在反向隧道恢复并重新核对工件身份前，不升级为
+“当前已复验”；`development_board_validation.latest_handoff.available=false` 仍然正确。
 
 ## 已观察证据
 
@@ -26,6 +54,9 @@
 
 ## Blockers
 
+- 当前 `127.0.0.1:10022` 反向隧道未监听，无法进行真实开发板现状复核。
+- 协调基线尚未集成交互式 Debug 分支，也未在公共契约中锁定下一轮板端验证要使用
+  的精确 source commit、NanoTrack 模型身份和 detector 选择。
 - 隔离或修复视频 writer/buffer/allocator 内存路径，并证明 RSS 与 VmHWM 平台化。
 - 用相同输入、时长、采样协议完成 COCO/VisDrone9 资源对比。
 - 使用标注的遮挡/可靠重现数据证明 detector-confirmed recovery，而不是只统计候选或 motion reacquisition。
@@ -33,13 +64,24 @@
 
 ## Next action
 
-只在 `integration-contract.yaml` 的候选组合被协调对话锁定后开始下一轮开发板验收。下一轮至少保留源 commit、板端原生编译二进制、模型/manifest/labels/输入哈希、完整命令、资源采样和 verifier 结果。
+1. 恢复 Mac 到开发板的 `10022` 反向隧道后，先只读核对板端分支、HEAD、未提交
+   修改、可执行文件和模型/manifest/labels 的 SHA-256，不从旧对话推断当前状态。
+2. 请协调对话先锁定下一轮板端验证的 source commit、NanoTrack 模型和 detector
+   组合；在此之前不开始新的 promotion run，也不发布 latest handoff。
+3. 锁定后在开发板完整原生环境中编译交互式 Debug 版本，依次复测模型加载、推理、
+   集成视频、控制安全、运行/端到端时延、同协议资源平台化及标注遮挡重捕。
+4. 下一轮至少保留源 commit、板端原生编译二进制、模型/manifest/labels/输入哈希、
+   完整命令、资源采样、verifier 结果和分层裁决。
 
 ## Handoff
 
 任何 `PASS` 都必须注明层级：`model_load`、`detector_function`、`integrated_function`、`stability`、`recovery_quality` 或 `development_board_acceptance`。低层级通过不得升级表述为高层级通过。
 
 当某一组合达到预定开发板门槛后，本任务应向协调对话移交精确 source commit、模型/manifest/labels 哈希、配置、板端验证证据和裁决。协调对话将其标记为最新 handoff，供交叉编译任务获取。此 handoff 不代表真实吊舱已通过测试。
+
+当前需要协调对话更新公共契约的内容是“下一轮候选锁定”，不是发布通过的 handoff：
+请明确批准的交互式 Debug source commit、NanoTrack 模型身份和 COCO/VisDrone9 detector
+选择。`latest_handoff.available` 在新的真实板端验收达到门槛前必须继续保持 `false`。
 
 ## 后续更新模板
 
