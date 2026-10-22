@@ -1,7 +1,7 @@
 # RK3566 开发板验证任务进度
 
 - 任务状态：`functional_pass_promotion_held`
-- 最近核对：`2026-10-22T21:46:29+08:00`
+- 最近核对：`2026-10-22T21:50:03+08:00`
 - 核对基线：`main@29b083e4e6ced2fd46eb7f9ecf821287b4cc401a`
 - 任务工作树：`/home/u20/single-object-tracking/.worktrees/board-validation-progress-sync`
 - 任务分支：`codex/board-validation-progress-sync`
@@ -24,8 +24,12 @@
   不能把路径记录当作当前文件哈希复验。
 - 尝试使用当前约定命令
   `ssh -p 10022 cat@127.0.0.1 'printf connected'` 连接开发板，实际返回
-  `ssh: connect to host 127.0.0.1 port 10022: Connection refused`。因此本轮没有
-  重新读取板端 Git、二进制、模型、运行时或保留工件，也没有生成新的板端 PASS。
+  `ssh: connect to host 127.0.0.1 port 10022: Connection refused`。用户随后恢复
+  隧道；复测时 TCP 已成功连接到 `127.0.0.1:10022`，但 12 秒内未收到 SSH
+  banner，返回 `Connection timed out during banner exchange`。这证明 Linux 端
+  reverse-forward listener 已存在，但不能证明 Mac 到 `192.168.103.172:22` 的
+  后半段可达。因此本轮仍未重新读取板端 Git、二进制、模型、运行时或保留工件，
+  也没有生成新的板端 PASS。
 - 对协调基线执行 RKNN-independent 主机回归：临时目录配置
   `cmake -S rk3566/nanotrack_v3 -B <tmp> -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF`，
   随后构建并运行 `ctest --test-dir <tmp> --output-on-failure`，结果为 `12/12`
@@ -54,7 +58,9 @@
 
 ## Blockers
 
-- 当前 `127.0.0.1:10022` 反向隧道未监听，无法进行真实开发板现状复核。
+- 当前 `127.0.0.1:10022` listener 已接受 TCP 连接，但 SSH banner 超时；需要先在
+  Mac 上确认 `192.168.103.172:22` 可达以及板端 sshd 正常，之后才能进行真实板端
+  现状复核。
 - 协调基线尚未集成交互式 Debug 分支，也未在公共契约中锁定下一轮板端验证要使用
   的精确 source commit、NanoTrack 模型身份和 detector 选择。
 - 隔离或修复视频 writer/buffer/allocator 内存路径，并证明 RSS 与 VmHWM 平台化。
@@ -64,8 +70,9 @@
 
 ## Next action
 
-1. 恢复 Mac 到开发板的 `10022` 反向隧道后，先只读核对板端分支、HEAD、未提交
-   修改、可执行文件和模型/manifest/labels 的 SHA-256，不从旧对话推断当前状态。
+1. 先在 Mac 上直接验证 `192.168.103.172:22`；后半段恢复后，再通过 `10022`
+   只读核对板端分支、HEAD、未提交修改、可执行文件和模型/manifest/labels 的
+   SHA-256，不从旧对话推断当前状态。
 2. 请协调对话先锁定下一轮板端验证的 source commit、NanoTrack 模型和 detector
    组合；在此之前不开始新的 promotion run，也不发布 latest handoff。
 3. 锁定后在开发板完整原生环境中编译交互式 Debug 版本，依次复测模型加载、推理、
