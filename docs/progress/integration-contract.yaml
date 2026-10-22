@@ -1,0 +1,127 @@
+schema_version: 1
+updated_at: "2026-10-22T21:18:30+08:00"
+coordinator_baseline:
+  branch: main
+  commit: "352018bd588a999d03f2685dc7b71266f396b39d"
+  note: "Initialization snapshot; later task results require an integrated commit before consumption."
+
+ownership:
+  status_index: coordinating_chat
+  integration_contract: coordinating_chat
+  nanotrack_finetune: nanotrack_finetune_chat
+  detector_training: detector_training_chat
+  production_cross_compile: cross_compile_chat
+  board_validation: board_validation_chat
+
+workflow:
+  - freeze_model_and_source_candidates
+  - native_build_debug_and_test_on_development_board
+  - publish_latest_board_validated_handoff
+  - cross_compile_latest_handoff_for_production
+  - human_deploy_and_test_on_real_gimbal_pod
+
+nanotrack:
+  canonical_board_model:
+    status: historical_official_weight_deployment
+    evidence: DEPLOYMENT_STATUS.md
+    note: "This is not evidence for the fine-tuned g5000 checkpoint."
+  fine_tuned_candidate:
+    status: ready_for_downstream_evaluation
+    checkpoint: artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth
+    sha256: "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1"
+    selection_record: artifacts/nanotrack_conservative_three_stage/run/selection.json
+    selection_sha256: "a4b7a0940911cf1e064d3bdf5a312f0c35d893c71ef63374fa8b41fb6e97cc6c"
+    onnx: null
+    rknn: null
+    board_validation: null
+    evidence: artifacts/nanotrack_conservative_three_stage/REPORT.zh-CN.md
+
+detector:
+  canonical:
+    status: retained_coco_baseline
+    manifest: rk3566/nanotrack_v3/models/detector-manifest.json
+    labels: rk3566/nanotrack_v3/models/coco80.txt
+    evidence: rk3566/nanotrack_v3/README.md
+  candidate:
+    name: yolov8n-visdrone9-rk3566-fp16-v1
+    status: candidate_ready_promotion_held
+    training_checkpoint:
+      path: artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-best.pt
+      sha256: "6744672ac5e35debba2a647ad570e9fe84a1cabd1c45c9840080d0a4127fe36d"
+    onnx:
+      path: artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-rkopt.onnx
+      sha256: "b2948072f01da7fe3b686392a47fe742380c98775c4149111527b7ddf26a5cc8"
+    rknn:
+      path: artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-rk3566-fp16.rknn
+      sha256: "3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0"
+      target_platform: rk3566
+      quantized: false
+      toolkit_version: "2.3.2"
+    manifest:
+      path: artifacts/yolov8-visdrone9/export/detector-manifest.json
+      sha256: "05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e"
+    labels:
+      path: artifacts/yolov8-visdrone9/export/visdrone9.txt
+      sha256: "41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992"
+    board_release: /home/cat/Project/SOT/nanotrack_v3_longterm/releases/yolov8n-visdrone9-rk3566-fp16-v1
+    evidence:
+      training: rk3566/nanotrack_v3/docs/visdrone9-detector-training.md
+      board: rk3566/nanotrack_v3/docs/visdrone9-detector-board-verification.md
+
+development_board_validation:
+  position: before_production_cross_compile
+  environment: complete_native_build_environment
+  implementation: interactive_debug_variant
+  latest_handoff:
+    available: false
+    source_commit: null
+    model_artifacts: null
+    configuration: null
+    evidence: null
+    verdict: null
+
+production_cross_compile:
+  status: needs_owner_refresh
+  responsibility: obtain_latest_board_validated_handoff_and_compile
+  latest_result_access_confirmed: false
+  consumed_source_commit: null
+  consumed_artifacts: null
+  compile_command: null
+  compile_succeeded: false
+  production_artifact:
+    path: null
+    sha256: null
+  out_of_scope:
+    - development_board_native_build_and_test
+    - production_pod_deployment
+    - production_pod_acceptance
+
+production_pod_acceptance:
+  execution: human_only
+  status: not_reported
+  report: null
+
+controller_contract:
+  detector_candidate_role: provisional_search_hypothesis
+  direct_detector_control_authorization: false
+  confirmation: nanotrack_anchor_recent_verification_and_same_candidate_2_of_3
+  stale_result_limit_ms: 150
+  max_candidates_per_request: 3
+  safety_invariant: "LOST implies control_valid=false"
+
+promotion_gates:
+  artifact_identity: pass
+  detector_only_board_function: pass
+  integrated_queue_and_control_safety: pass
+  detector_confirmed_reacquisition: fail
+  memory_plateau: fail
+  same_protocol_old_new_resource_comparison: incomplete
+  visible_infrared_calibration: incomplete
+  development_board_release_gate: held
+
+consumption_rule: >-
+  Development-board validation runs before production cross-compilation. The
+  cross-compilation chat may consume only the latest coordinator-approved board
+  handoff and only needs to confirm that it can obtain that exact result and
+  compile it successfully. Deployment to and acceptance on the real gimbal pod
+  are human-only and must never be inferred from compilation success.
