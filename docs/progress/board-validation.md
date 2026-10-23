@@ -282,7 +282,7 @@ cmake -S . -B build-board \
   -DRKNN_INCLUDE_DIR=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/include \
   -DRKNN_LIBRARY=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so
 cmake --build build-board -- -j2
-ctest --test-dir build-board --output-on-failure
+(cd build-board && ctest --output-on-failure)
 ```
 
 观察结果：原生编译成功，CTest `14/14` 通过，其中新增
