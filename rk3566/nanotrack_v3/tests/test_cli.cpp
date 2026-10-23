@@ -53,6 +53,54 @@ int main() {
   expect_true(options.output_width == 1920 && options.output_height == 1080,
               "output-size argument");
 
+  std::vector<std::string> interactive = valid;
+  const auto bbox_position =
+      std::find(interactive.begin(), interactive.end(), "--bbox");
+  interactive.erase(bbox_position, bbox_position + 2);
+  interactive.push_back("--interactive");
+  const Options interactive_options = parse_options(interactive);
+  expect_true(interactive_options.interactive,
+              "interactive flag enables board GUI mode");
+  expect_true(!interactive_options.has_bbox,
+              "interactive mode permits mouse initialization without bbox");
+
+  const Options interactive_without_outputs = parse_options(
+      {"nanotrack_v3", "--video", "/tmp/input.mp4", "--model-dir",
+       "/tmp/models", "--interactive"});
+  expect_true(interactive_without_outputs.output_video.empty() &&
+                  interactive_without_outputs.output_boxes.empty(),
+              "interactive mode defaults to no saved video or CSV");
+
+  expect_throws(
+      [&] {
+        std::vector<std::string> missing_bbox = valid;
+        const auto position =
+            std::find(missing_bbox.begin(), missing_bbox.end(), "--bbox");
+        missing_bbox.erase(position, position + 2);
+        parse_options(missing_bbox);
+      },
+      "headless mode still requires bbox");
+
+  expect_throws(
+      [&] {
+        std::vector<std::string> missing_outputs = valid;
+        for (const std::string& option : {"--output-video", "--output-boxes"}) {
+          const auto position =
+              std::find(missing_outputs.begin(), missing_outputs.end(), option);
+          missing_outputs.erase(position, position + 2);
+        }
+        parse_options(missing_outputs);
+      },
+      "headless mode still requires output paths");
+
+  std::vector<std::string> interactive_with_bbox = valid;
+  interactive_with_bbox.push_back("--interactive");
+  const Options interactive_bbox_options =
+      parse_options(interactive_with_bbox);
+  expect_true(interactive_bbox_options.interactive &&
+                  interactive_bbox_options.has_bbox,
+              "interactive mode may initialize from a supplied bbox");
+
   std::vector<std::string> long_term = valid;
   long_term.insert(long_term.end(),
                    {"--controller-config", "/tmp/controller.conf",
@@ -121,6 +169,8 @@ int main() {
   expect_true(help.help, "--help succeeds without required arguments");
   expect_true(usage().find("--model-dir") != std::string::npos,
               "usage names model-dir");
+  expect_true(usage().find("--interactive") != std::string::npos,
+              "usage documents board GUI mode");
 
   expect_throws(
       [&] {
