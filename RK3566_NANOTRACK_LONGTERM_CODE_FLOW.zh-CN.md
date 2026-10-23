@@ -634,7 +634,7 @@ DEBUG_EVENT event=<事件名> key=value key=value ...
 
 | 事件 | 触发时机 | 字段意义及实际来源 |
 |---|---|---|
-| `startup` | 输入路径与 controller 配置校验完成、打开视频之前 | `video`：`RuntimeOptions::video`；`controller_config`：实际配置路径，未指定时为 `builtin-defaults`；`sensor`、`start_frame`、`end_frame`、`max_frames`：最终 CLI/运行配置值 |
+| `startup` | 输入路径与 controller 配置校验完成、打开视频之前 | `video`：`nanotrack::Options::video`；`controller_config`：实际配置路径，未指定时为 `builtin-defaults`；`sensor`、`start_frame`、`end_frame`、`max_frames`：最终 CLI/运行配置值 |
 | `video_opened` | 视频成功打开并读到起始帧 | `width/height`：首帧 `cv::Mat` 尺寸；`fps`：`VideoCapture::CAP_PROP_FPS`；`output_width/output_height`：显式输出尺寸，否则取输入帧尺寸 |
 | `runtime_ready` | NanoTrack、可选 detector 和 `LongTermRuntime` 构造成功 | `model_dir`：三模型目录；`detector`：是否提供 detector 模型；`detector_model`：模型路径或 `none`；`detector_class_id`：类别过滤值；`detector_target_mode`、`calibrated`：`ControllerConfig` 的实际值 |
 | `outputs` | 运行时构造完成 | `video`：是否配置输出视频；`boxes`：是否配置 CSV；`metadata`：是否配置会话元数据，或因 CSV 输出启用了默认元数据；这里只说明写出开关，不代表文件已经成功写完 |
@@ -689,19 +689,19 @@ DEBUG_EVENT event=<事件名> key=value key=value ...
 示例格式：
 
 ```text
-DEBUG_EVENT event=detector_verify frame=120 candidate_id=3 candidate_region=410.00,180.00,90.00,160.00 probe=1 same_class=1 ambiguous=0 locked=1 confirmation=2/3 quality=RELIABLE template_iou=0.74 accepted=0 control_valid=0
+DEBUG_EVENT event=detector_verify frame=120 candidate_id=3 candidate_region=410.00,180.00,90.00,160.00 probe=1 same_class=1 ambiguous=0 locked=1 confirmation=1/2 quality=RELIABLE template_iou=0.74 accepted=0 control_valid=0
 ```
 
 | 字段 | 含义 | 源码来源 |
 |---|---|---|
 | `frame` | 当前验证帧 | `ControllerOutput::frame_id` |
-| `candidate_id` | 控制器为本批候选分配的进程内递增 ID；`none` 表示没有有效 ID | `ControllerOutput::detector_candidate_id` |
+| `candidate_id` | 控制器在一次初始化会话内递增分配的候选 ID；每次初始化都会重置为 1，因此重新框选后 ID 可以重复；`none` 表示没有有效 ID | `ControllerOutput::detector_candidate_id` |
 | `candidate_region` | detector 给出的原始候选框；`none` 表示计划没有候选区域 | `SearchPlan::detector_candidate_region` |
-| `probe` | 当前候选的子区域探针索引；全目标或局部子目标模式都可能产生多个探针 | `ControllerOutput::detector_probe_index` |
+| `probe` | 当前候选的探针索引；`FULL_OBJECT` 只有 `probe=0`，直接使用完整候选框；`SUBTARGET` 才可能产生多个探针 | `ControllerOutput::detector_probe_index` |
 | `same_class` | 当前合法候选列表中与该候选同类别的数量 | `ControllerOutput::detector_same_class_candidates` |
 | `ambiguous` | `same_class>1` 时为 1；当前策略会阻止未锁定候选直接进入确认 | `ControllerOutput::detector_same_class_ambiguous` |
 | `locked` | 候选是否已经通过本帧之前或本帧内的双模板、质量和几何门而锁定 | `ControllerOutput::detector_candidate_locked`，是 `finish_frame()` 后的值 |
-| `confirmation=h/a` | `h` 是几何一致的可靠确认框数量，`a` 是锁定后的验证尝试数 | `detector_confirmation_hits/attempts`；默认策略要求窗口内达到配置的命中数，例如 2/3，不应只看单帧 |
+| `confirmation=h/a` | `h` 是几何一致的可靠确认框数量，`a` 是锁定后的验证尝试数 | `detector_confirmation_hits/attempts`；当前实现固定为 2/3，即三次尝试窗口内达到两次命中，配置校验会拒绝其他组合；不应只看单帧 |
 | `quality` | 控制器对当前选中 NanoTrack 观测的质量分类 | `ControllerOutput::quality`，由 score、PSR、APCE、peak margin 和几何门共同决定 |
 | `template_iou` | anchor 与 recent 两个 NanoTrack 观测框的 IoU；缺少其中一个模板时保持默认值 0 | `ControllerOutput::template_iou` |
 | `accepted` | 控制器是否接受当前观测并提交最终框；对 detector 路径，只有锁定且满足多帧确认才会为 1 | `ControllerOutput::accepted` |

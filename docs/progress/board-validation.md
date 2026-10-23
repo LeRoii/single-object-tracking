@@ -438,7 +438,9 @@ Handoff：<requested contract change or none>
 - 一致性检查：从 `src/main.cpp` 的 `DEBUG_EVENT event=` 和
   `src/debug_telemetry.cpp` 的 `event_stream()` 提取事件名，与文档反查，观察结果为
   `documented_events=20 required_fields=17`；`git diff --check` 通过；现有主机
-  CTest 回归仍为 `14/14` 通过。
+  CTest 回归仍为 `14/14` 通过。独立审查后又按源码修正了 2/3 确认示例、候选 ID
+  重置范围、`FULL_OBJECT` 探针数量和选项结构类型名；针对这四点的 6 项文档断言
+  由失败转为通过。
 - 证据边界：本轮只更新说明文档，没有修改或重新编译程序，没有执行新的开发板、
   重捕、资源、长稳或吊舱测试；此前板端二进制、模型身份和验收结论均不改变。
 
