@@ -237,6 +237,128 @@ timeout --signal=INT 15s env DISPLAY=:0 \
 任务不得消费本结果。建议协调对话审查并集成
 `eb50d6788c477733697703d6b1e8b9f6e4800cd1` 后，再决定是否将其设为下一轮板端候选。
 
+## 2026-10-23 结构化 Debug 遥测板端验证
+
+- 时间：`2026-10-23T22:39:00+08:00`。
+- 共享分支/工作树：`codex/debug-runtime-config` /
+  `/home/u20/single-object-tracking/.worktrees/debug-runtime-config`。
+- 本功能基线为 `fb15ba310fa13a26741a22120bacf19b3a3d8aea`；纯遥测组件提交为
+  `9289f07f528641ee014f8d1aa94e871acdea0ada`，交互主循环接入提交为
+  `d868636f8332a58f7523ad0b941f258a7b07ffc5`。本进度文件的结果提交以
+  `git log -1 --format=%H -- docs/progress/board-validation.md` 查询，避免在提交前虚构
+  自身 commit ID。
+- 共享源码到板端的 patch SHA-256 为
+  `599fc21942fdef26319eb9d4f7538d62acf00999618b5c25cc73dee1d63b5dfa`。
+  patch 只含 8 个 CMake/C++/测试文件，不含模型、视频、日志或构建产物。
+
+### 板端隔离与源码身份
+
+原板端 checkout `/home/cat/Project/SOT/nanotrack_v3_longterm` 在同步前已有用户状态：
+`config/interactive-debug.conf` 将输入改为
+`/home/cat/Project/SOT/nanotrack_v3_longterm/data/1.mp4`，另有未跟踪
+`cmd.txt`。首次在该 checkout 应用源码并构建后，CTest 为 `13/14`，唯一失败是
+`cli` 的 shipped-config 路径断言；根因就是上述配置修改，不是遥测代码。没有覆盖
+或提交这两个用户文件；已精确反向应用本任务 patch，使原 checkout 恢复为仅这两项
+用户状态。
+
+正式验证改在板端独立工作树
+`/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry`、分支
+`codex/rk3566-debug-telemetry` 中进行，基线为
+`41aa1ffe703416ea442afa4582d5346d9475f254`，板端结果提交为
+`0f155ab7dcde33582534f1d87e61a3453167b825`，tracked 状态干净。该提交只增加
+结构化终端遥测及其测试，不修改 `long_term_controller.cpp`、阈值、搜索计划、
+模板决策或 detector 控制授权逻辑。
+
+### 原生构建、测试和工件
+
+板端系统时间已由 NTP 同步；环境为 LubanCat RK3566/AArch64、Linux
+`4.19.232`、GCC `8.3.0`、CMake `3.13.4`、Git `2.20.1`。干净构建命令为：
+
+```bash
+cd /home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry
+cmake -S . -B build-board \
+  -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON \
+  -DOpenCV_DIR=/home/cat/ThirdParty/OpenCV4100/lib/cmake/opencv4 \
+  -DRKNN_INCLUDE_DIR=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/include \
+  -DRKNN_LIBRARY=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so
+cmake --build build-board -- -j2
+ctest --test-dir build-board --output-on-failure
+```
+
+观察结果：原生编译成功，CTest `14/14` 通过，其中新增
+`debug_telemetry` 测试覆盖首次状态、状态/控制变化、单步强制心跳、连续播放每
+30 帧心跳、detector request/batch/error、候选 ID/区域缺失、同类干扰、锁定和
+2/3 确认、重捕来源、模板动作及重新初始化 reset。有效 AArch64 PIE 为
+`/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/build-board/nanotrack_v3`，
+SHA-256 为
+`11c70e81ac2beb6305c923bee5bbff61f0969d1d82e16548d9f7393b017f04dd`。
+`ldd` 绑定 `/home/cat/ThirdParty/OpenCV4100/lib/libopencv_world.so.410` 与
+`/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so`，没有
+`not found`。
+
+### 交互烟测
+
+使用 canonical `config/interactive-debug.conf`，并通过显式 CLI 覆盖把大工件指向
+原板端 checkout；没有把大文件复制到新工作树。核心启动参数为：
+
+```bash
+cd /home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry
+timeout --signal=INT 35s env DISPLAY=:0 stdbuf -oL -eL \
+  ./build-board/nanotrack_v3 --config config/interactive-debug.conf \
+  --video /home/cat/Project/SOT/nanotrack_v3_longterm/data/girl_dance.mp4 \
+  --bbox 244,161,74,70 \
+  --model-dir /home/cat/Project/SOT/nanotrack_v3_longterm/models \
+  --controller-config /home/cat/Project/SOT/nanotrack_v3_longterm/config/visible-default.conf \
+  --detector-model /home/cat/Project/SOT/nanotrack_v3_longterm/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/yolov8n-visdrone9-rk3566-fp16.rknn \
+  --detector-manifest /home/cat/Project/SOT/nanotrack_v3_longterm/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/detector-manifest.json \
+  --detector-labels /home/cat/Project/SOT/nanotrack_v3_longterm/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/visdrone9.txt \
+  --max-frames 40
+```
+
+板端没有 `xdotool`，因此使用只存在 `/tmp` 的 ctypes/XTest 脚本向现有 X11
+窗口依次发送 `R`、`Esc`、`N`、`Space`、`Space`、`Q`；未安装系统包。
+脚本 SHA-256 为
+`522a09537f16534e94bd44ceec1ae83ccfaccb89250fe05d2ae64eb245e283ec`。
+日志 `/tmp/nanotrack-debug-telemetry-smoke.log` 共 47 行，SHA-256 为
+`a4ced575095a1e4207dedeb22fab17ac09c36e525fc6b15aaa008f363661384d`。
+
+实际观察到：
+
+- 启动时打印视频、分辨率/FPS、模型目录、detector 开关/类别/模式、标定状态和
+  `video=disabled boxes=disabled metadata=disabled`；调试默认仍不保存输出。
+- `R -> Esc` 打印 `select_roi`、`roi_selection_started` 和
+  `roi_selection_cancelled`；`N` 在第 1 帧立即打印完整 `frame_status`。
+- 连续播放在第 30 帧打印周期心跳，并分别在第 30/33 帧打印
+  `STAGE_RECENT`/`COMMIT_RECENT`；第 40 帧达到限制后由 `Q` 正常退出，退出原因为
+  `user_quit`。
+- 日志错误扫描为空；最终摘要为 40 tracked frames，mean runtime
+  `31.909 ms`、mean pipeline `37.131 ms`。这是短程 Debug 烟测时序，不是正式
+  性能基准或长稳资源结论。
+
+本次沿用的 `girl_dance.mp4`、NanoTrack template/search/head/manifest 和
+VisDrone9 detector RKNN/manifest/labels SHA-256 依次为
+`8090fcd5090adb62f21e79e799f0b0871d9c610d8cf8087b9fcdd3c7e9c2e9b9`、
+`38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709`、
+`92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a`、
+`2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600`、
+`441e93f2092afe94bac663f27adb1fe99848357356efd67c7473b0b506f854b2`、
+`3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0`、
+`05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e`、
+`41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992`。
+RKNN API 为 `2.3.2`，driver 为 `0.8.2`，detector 实际加载 9 个输出。
+
+### 裁决与 Handoff
+
+本轮新增层级为 `native_build + interactive_debug_telemetry_smoke` 功能通过，且没有
+改变 detector 候选不能直接产生 `control_valid=true` 的安全约束。稳定跟踪期间
+没有触发 detector request、丢失或重捕，因此本结果不证明 detector 队列、同类
+干扰、2/3 重捕、遮挡恢复、长时稳定、内存平台化或真实吊舱验收。
+
+协调对话需要审查并集成 `codex/debug-runtime-config` 的最新结果提交，并在公共契约
+中决定是否把它锁定为下一轮交互 Debug source candidate；这不是发布板端 latest
+handoff。`development_board_validation.latest_handoff.available` 必须继续为
+`false`，总体裁决仍为 `functional_pass_promotion_held`。
+
 ## 已观察证据
 
 - VisDrone9 detector-only 验收：工件身份、manifest、模型加载、真实 tensor 布局、20 图推理、类别过滤和单进程资源检查为 `PASS`。
