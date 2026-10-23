@@ -40,6 +40,13 @@ target_include_directories(nanotrack_controller_support PUBLIC ${CMAKE_CURRENT_S
 target_link_libraries(nanotrack_controller_support PUBLIC nanotrack_math)
 target_compile_options(nanotrack_controller_support PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(nanotrack_debug_telemetry src/debug_telemetry.cpp)
+target_include_directories(nanotrack_debug_telemetry
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(nanotrack_debug_telemetry PUBLIC nanotrack_controller_support)
+target_compile_options(nanotrack_debug_telemetry PRIVATE -Wall -Wextra -Wpedantic)
+
 add_library(nanotrack_detector_adapter src/yolo_detector_adapter.cpp)
 target_include_directories(nanotrack_detector_adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(nanotrack_detector_adapter PUBLIC nanotrack_controller_support Threads::Threads)
@@ -85,6 +92,10 @@ if(BUILD_TESTING)
   add_executable(test_tracking_log tests/test_tracking_log.cpp)
   target_link_libraries(test_tracking_log PRIVATE nanotrack_controller_support)
   add_test(NAME tracking_log COMMAND test_tracking_log)
+
+  add_executable(test_debug_telemetry tests/test_debug_telemetry.cpp)
+  target_link_libraries(test_debug_telemetry PRIVATE nanotrack_debug_telemetry)
+  add_test(NAME debug_telemetry COMMAND test_debug_telemetry)
 
   add_executable(test_long_term_replay tests/test_long_term_replay.cpp)
   target_link_libraries(test_long_term_replay PRIVATE nanotrack_controller_support)
@@ -147,7 +158,8 @@ if(ENABLE_RKNN_RUNTIME)
   add_executable(nanotrack_v3 src/main.cpp)
   target_link_libraries(nanotrack_v3
     PRIVATE nanotrack_cli nanotrack_runtime nanotrack_yolo_detector
-            nanotrack_detector_adapter nanotrack_interactive_control ${OpenCV_LIBS}
+            nanotrack_detector_adapter nanotrack_interactive_control
+            nanotrack_debug_telemetry ${OpenCV_LIBS}
   )
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
     target_link_libraries(nanotrack_v3 PRIVATE stdc++fs)

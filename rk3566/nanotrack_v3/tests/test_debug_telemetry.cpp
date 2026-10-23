@@ -1,0 +1,186 @@
+#include "debug_telemetry.hpp"
+
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace {
+
+int failures = 0;
+
+void expect_true(bool condition, const std::string& message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+bool contains(const std::vector<std::string>& lines,
+              const std::string& expected) {
+  for (const std::string& line : lines) {
+    if (line.find(expected) != std::string::npos) return true;
+  }
+  return false;
+}
+
+std::size_t event_count(const std::vector<std::string>& lines,
+                        const std::string& event) {
+  std::size_t count = 0;
+  const std::string marker = "event=" + event;
+  for (const std::string& line : lines) {
+    if (line.find(marker) != std::string::npos) ++count;
+  }
+  return count;
+}
+
+nanotrack::RuntimeFrameResult frame_result(std::uint64_t frame_id) {
+  nanotrack::RuntimeFrameResult result;
+  result.plan.frame_id = frame_id;
+  result.plan.timestamp_ms = static_cast<std::int64_t>(frame_id * 33);
+  result.plan.search_scale = 2.0F;
+  result.output.frame_id = frame_id;
+  result.output.timestamp_ms = result.plan.timestamp_ms;
+  result.output.mode = nanotrack::TrackingMode::kTracking;
+  result.output.quality = nanotrack::QualityLevel::kReliable;
+  result.output.bbox = nanotrack::BBox{10.0F, 20.0F, 30.0F, 40.0F};
+  result.output.control_valid = true;
+  result.output.accepted = true;
+  result.output.selected_metrics =
+      nanotrack::ResponseMetrics{0.81F, 9.25F, 31.5F, 0.17F};
+  result.output.search_scale = 2.0F;
+  result.output.hypothesis_source = nanotrack::HypothesisSource::kMotion;
+  result.tracker_ms = 4.5F;
+  result.runtime_ms = 6.25F;
+  return result;
+}
+
+}  // namespace
+
+int main() {
+  using namespace nanotrack;
+
+  DebugTelemetry telemetry(3);
+  RuntimeFrameResult first = frame_result(1);
+  std::vector<std::string> events =
+      telemetry.frame_events(first, 8.75F, false);
+  expect_true(contains(events, "DEBUG_EVENT event=state_change frame=1") &&
+                  contains(events, "from=none to=TRACKING") &&
+                  contains(events, "control_valid=1"),
+              "first frame publishes an explicit state baseline");
+  expect_true(!contains(events, "event=frame_status"),
+              "first frame is not an implicit heartbeat");
+
+  RuntimeFrameResult second = frame_result(2);
+  events = telemetry.frame_events(second, 8.5F, true);
+  expect_true(event_count(events, "frame_status") == 1 &&
+                  contains(events, "frame=2 mode=TRACKING quality=RELIABLE") &&
+                  contains(events, "bbox=10.00,20.00,30.00,40.00") &&
+                  contains(events, "score=0.810") &&
+                  contains(events, "tracker_ms=4.500 runtime_ms=6.250 pipeline_ms=8.500"),
+              "manual step forces one detailed frame heartbeat");
+  expect_true(!contains(events, "event=state_change") &&
+                  !contains(events, "event=control_change"),
+              "unchanged state is not repeated");
+
+  RuntimeFrameResult third = frame_result(3);
+  events = telemetry.frame_events(third, 9.0F, false);
+  expect_true(event_count(events, "frame_status") == 1,
+              "forced heartbeat does not postpone the periodic cadence");
+
+  RuntimeFrameResult lost = frame_result(4);
+  lost.output.mode = TrackingMode::kLost;
+  lost.output.quality = QualityLevel::kRejected;
+  lost.output.control_valid = false;
+  lost.output.accepted = false;
+  events = telemetry.frame_events(lost, 7.0F, false);
+  expect_true(contains(events,
+                       "event=state_change frame=4 from=TRACKING to=LOST") &&
+                  contains(events, "control_valid=0"),
+              "mode changes are emitted immediately with control state");
+
+  RuntimeFrameResult control_change = lost;
+  control_change.output.frame_id = 5;
+  control_change.plan.frame_id = 5;
+  control_change.output.control_valid = true;
+  events = telemetry.frame_events(control_change, 7.0F, false);
+  expect_true(contains(events,
+                       "event=control_change frame=5 mode=LOST from=0 to=1"),
+              "control-only transitions are emitted immediately");
+
+  RuntimeFrameResult detector = frame_result(6);
+  detector.detector.request_submitted = true;
+  detector.detector.request_frame_id = 6;
+  detector.detector.batch_received = true;
+  detector.detector.batch_frame_id = 5;
+  detector.detector.batch_age_ms = 42;
+  detector.detector.raw_candidate_count = 7;
+  detector.detector.filtered_candidate_count = 2;
+  detector.detector.timing = DetectorTiming{1.0F, 5.0F, 2.0F, 8.0F};
+  detector.output.detector_status = DetectorBatchStatus::kAccepted;
+  detector.output.hypothesis_source = HypothesisSource::kDetector;
+  detector.output.detector_candidate_id = 19;
+  detector.output.detector_same_class_candidates = 2;
+  detector.output.detector_same_class_ambiguous = true;
+  detector.output.detector_candidate_locked = true;
+  detector.output.detector_probe_index = 1;
+  detector.output.detector_confirmation_attempts = 3;
+  detector.output.detector_confirmation_hits = 2;
+  detector.output.template_iou = 0.72F;
+  events = telemetry.frame_events(detector, 11.0F, false);
+  expect_true(contains(events,
+                       "event=detector_request frame=6 request_frame=6") &&
+                  contains(events,
+                           "event=detector_batch frame=6 source_frame=5 age_ms=42 raw=7 filtered=2 status=ACCEPTED total_ms=8.000") &&
+                  contains(events,
+                           "event=detector_verify frame=6 candidate_id=19") &&
+                  contains(events,
+                           "candidate_region=none probe=1 same_class=2 ambiguous=1 locked=1 confirmation=2/3") &&
+                  contains(events, "template_iou=0.720"),
+              "detector request, completion, and verification are visible");
+
+  RuntimeFrameResult detector_missing = frame_result(7);
+  detector_missing.output.hypothesis_source = HypothesisSource::kDetector;
+  events = telemetry.frame_events(detector_missing, 9.0F, false);
+  expect_true(contains(events,
+                       "event=detector_verify frame=7 candidate_id=none"),
+              "missing detector candidate identity is explicit");
+
+  RuntimeFrameResult detector_error = frame_result(8);
+  detector_error.detector.error = "inference failed\nretry";
+  events = telemetry.frame_events(detector_error, 9.0F, false);
+  expect_true(contains(events,
+                       "event=detector_error frame=8 message=inference_failed_retry"),
+              "detector errors remain single-line and visible off cadence");
+
+  RuntimeFrameResult reacquired = frame_result(9);
+  reacquired.output.reacquired = true;
+  reacquired.output.hypothesis_source = HypothesisSource::kDetector;
+  reacquired.output.detector_candidate_id = 21;
+  reacquired.output.detector_confirmation_attempts = 3;
+  reacquired.output.detector_confirmation_hits = 2;
+  events = telemetry.frame_events(reacquired, 9.0F, false);
+  expect_true(contains(events,
+                       "event=reacquired frame=9 source=DETECTOR candidate_id=21 confirmation=2/3 control_valid=1"),
+              "reacquisition identifies its source and confirmation evidence");
+
+  RuntimeFrameResult templated = frame_result(10);
+  templated.output.template_action = TemplateAction::kRollbackRecent;
+  events = telemetry.frame_events(templated, 9.0F, false);
+  expect_true(contains(events,
+                       "event=template_action frame=10 action=ROLLBACK_RECENT"),
+              "recent-template lifecycle actions are visible");
+
+  telemetry.reset();
+  RuntimeFrameResult after_reset = frame_result(11);
+  events = telemetry.frame_events(after_reset, 9.0F, false);
+  expect_true(contains(events,
+                       "event=state_change frame=11 from=none to=TRACKING"),
+              "reinitialization reset publishes a new state baseline");
+
+  if (failures != 0) {
+    std::cerr << failures << " test(s) failed\n";
+    return 1;
+  }
+  std::cout << "debug telemetry tests passed\n";
+  return 0;
+}
