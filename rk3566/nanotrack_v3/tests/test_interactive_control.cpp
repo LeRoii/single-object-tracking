@@ -54,6 +54,14 @@ int main() {
   expect_true(decode_interactive_key(-1) == InteractiveCommand::kNone &&
                   decode_interactive_key('x') == InteractiveCommand::kNone,
               "timeout and unrelated keys have no command");
+  expect_true(std::string(to_string(InteractiveCommand::kStep)) == "step" &&
+                  std::string(to_string(InteractiveCommand::kTogglePlayback)) ==
+                      "play_pause" &&
+                  std::string(to_string(InteractiveCommand::kSelectRoi)) ==
+                      "select_roi" &&
+                  std::string(to_string(InteractiveCommand::kQuit)) == "quit" &&
+                  std::string(to_string(InteractiveCommand::kNone)) == "none",
+              "interactive commands expose stable debug labels");
 
   InteractivePlayback playback;
   expect_true(!playback.playing(), "interactive playback starts paused");

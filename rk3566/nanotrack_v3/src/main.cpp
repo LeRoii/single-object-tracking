@@ -1,5 +1,6 @@
 #include "cli.hpp"
 #include "controller_config.hpp"
+#include "debug_telemetry.hpp"
 #include "detector_adapter.hpp"
 #include "interactive_control.hpp"
 #include "long_term_runtime.hpp"
@@ -301,6 +302,17 @@ int main(int argc, char** argv) {
     if (controller_config.sensor != options.sensor) {
       throw std::invalid_argument("--sensor does not match controller config sensor");
     }
+    if (options.interactive) {
+      std::cout << "DEBUG_EVENT event=startup video=" << std::quoted(options.video)
+                << " controller_config="
+                << std::quoted(options.controller_config.empty()
+                                   ? "builtin-defaults"
+                                   : options.controller_config)
+                << " sensor=" << options.sensor
+                << " start_frame=" << options.start_frame
+                << " end_frame=" << options.end_frame
+                << " max_frames=" << options.max_frames << '\n';
+    }
 
     cv::VideoCapture capture(options.video);
     if (!capture.isOpened()) throw std::runtime_error("cannot open input video");
@@ -327,6 +339,13 @@ int main(int argc, char** argv) {
         options.output_width > 0 ? options.output_width : frame.cols;
     const int output_height =
         options.output_height > 0 ? options.output_height : frame.rows;
+    if (options.interactive) {
+      std::cout << std::fixed << std::setprecision(3)
+                << "DEBUG_EVENT event=video_opened width=" << frame.cols
+                << " height=" << frame.rows << " fps=" << source_fps
+                << " output_width=" << output_width
+                << " output_height=" << output_height << '\n';
+    }
     cv::VideoWriter writer;
     std::ofstream boxes;
 
@@ -350,6 +369,31 @@ int main(int argc, char** argv) {
           std::move(engine));
     }
     nanotrack::LongTermRuntime runtime(controller_config, tracker, *detector);
+    if (options.interactive) {
+      std::cout << "DEBUG_EVENT event=runtime_ready model_dir="
+                << std::quoted(options.model_dir)
+                << " detector="
+                << (options.detector_model.empty() ? "disabled" : "enabled")
+                << " detector_model="
+                << std::quoted(options.detector_model.empty()
+                                   ? "none"
+                                   : options.detector_model)
+                << " detector_class_id=" << options.detector_class_id
+                << " detector_target_mode="
+                << nanotrack::to_string(controller_config.detector_target_mode)
+                << " calibrated=" << (controller_config.calibrated ? 1 : 0)
+                << '\n';
+      std::cout << "DEBUG_EVENT event=outputs video="
+                << (options.output_video.empty() ? "disabled" : "enabled")
+                << " boxes="
+                << (options.output_boxes.empty() ? "disabled" : "enabled")
+                << " metadata="
+                << (options.session_metadata.empty() &&
+                            options.output_boxes.empty()
+                        ? "disabled"
+                        : "enabled")
+                << '\n';
+    }
 
     std::vector<float> runtime_latencies;
     std::vector<float> pipeline_latencies;
@@ -363,8 +407,11 @@ int main(int argc, char** argv) {
     std::size_t initialization_count = 0;
     bool initialized = false;
     std::optional<nanotrack::ControllerOutput> displayed_output;
+    nanotrack::DebugTelemetry debug_telemetry(30);
     const auto initialize_target = [&](const nanotrack::BBox& bbox) {
+      const bool reinitializing = initialized;
       runtime.initialize(image_view(frame), bbox, source_frame, timestamp_ms);
+      debug_telemetry.reset();
       nanotrack::ControllerOutput initial_output;
       initial_output.frame_id = source_frame;
       initial_output.timestamp_ms = timestamp_ms;
@@ -401,6 +448,13 @@ int main(int argc, char** argv) {
       std::cout << "INITIALIZED frame=" << source_frame << " bbox=" << bbox.x
                 << ',' << bbox.y << ',' << bbox.width << ',' << bbox.height
                 << " count=" << initialization_count << '\n';
+      if (options.interactive) {
+        std::cout << "DEBUG_EVENT event=target_initialized frame="
+                  << source_frame << " bbox=" << bbox.x << ',' << bbox.y << ','
+                  << bbox.width << ',' << bbox.height
+                  << " reinitialize=" << (reinitializing ? 1 : 0)
+                  << " count=" << initialization_count << '\n';
+      }
     };
 
     if (options.has_bbox) initialize_target(options.bbox);
@@ -411,43 +465,78 @@ int main(int argc, char** argv) {
       cv::namedWindow(kInteractiveWindow, cv::WINDOW_NORMAL);
       std::cout << "INTERACTIVE keys=N/Right(step), Space(play/pause), "
                    "R(select/reset), Q/Esc(quit)\n";
+      std::cout << "DEBUG_EVENT event=interactive_ready playing=0 initialized="
+                << (initialized ? 1 : 0) << '\n';
     }
 
+    std::string shutdown_reason = "completed";
     while (true) {
       const bool frame_limit_reached =
           options.max_frames && tracked_count >= options.max_frames;
       if (!options.interactive && frame_limit_reached) break;
       bool advance = !options.interactive;
+      bool force_heartbeat = false;
       if (options.interactive) {
         cv::imshow(kInteractiveWindow,
                    render_interactive(frame, displayed_output, source_frame,
                                       playback.playing()));
         const int key = cv::waitKeyEx(playback.playing() ? 1 : 0);
+        const nanotrack::InteractiveCommand command =
+            nanotrack::decode_interactive_key(key);
         advance = playback.handle_key(key);
-        if (!window_visible(kInteractiveWindow)) break;
+        force_heartbeat = command == nanotrack::InteractiveCommand::kStep;
+        if (command != nanotrack::InteractiveCommand::kNone) {
+          std::cout << "DEBUG_EVENT event=command action="
+                    << nanotrack::to_string(command)
+                    << " frame=" << source_frame
+                    << " playing=" << (playback.playing() ? 1 : 0) << '\n';
+        }
+        if (!window_visible(kInteractiveWindow)) {
+          shutdown_reason = "window_closed";
+          break;
+        }
         if (playback.take_selection_request()) {
+          std::cout << "DEBUG_EVENT event=roi_selection_started frame="
+                    << source_frame << '\n';
           const RoiSelectionResult selection =
               select_target_roi(kInteractiveWindow, frame);
-          if (selection.window_closed) break;
+          if (selection.window_closed) {
+            shutdown_reason = "selection_window_closed";
+            break;
+          }
           if (selection.bbox) {
             nanotrack::validate_bbox(*selection.bbox, frame.cols, frame.rows);
             initialize_target(*selection.bbox);
           } else {
             std::cout << "ROI_SELECTION_CANCELLED frame=" << source_frame
                       << '\n';
+            std::cout << "DEBUG_EVENT event=roi_selection_cancelled frame="
+                      << source_frame << '\n';
           }
           continue;
         }
-        if (playback.quit_requested()) break;
+        if (playback.quit_requested()) {
+          shutdown_reason = "user_quit";
+          break;
+        }
         if (!advance) continue;
         if (frame_limit_reached) {
           playback.pause();
+          std::cout << "DEBUG_EVENT event=frame_limit_reached frame="
+                    << source_frame << " tracked_frames=" << tracked_count
+                    << '\n';
           continue;
         }
       }
-      if (source_frame >= options.end_frame) break;
+      if (source_frame >= options.end_frame) {
+        shutdown_reason = "end_frame_reached";
+        break;
+      }
       const auto pipeline_start = std::chrono::steady_clock::now();
-      if (!capture.read(frame)) break;
+      if (!capture.read(frame)) {
+        shutdown_reason = "video_exhausted";
+        break;
+      }
       ++source_frame;
       timestamp_ms = video_clock.next(capture.get(cv::CAP_PROP_POS_MSEC));
       if (!initialized) {
@@ -491,8 +580,21 @@ int main(int argc, char** argv) {
       if (boxes.is_open()) {
         boxes << nanotrack::tracking_csv_row(log_row) << '\n';
       }
+      if (options.interactive) {
+        for (const std::string& event :
+             debug_telemetry.frame_events(result, pipeline_ms,
+                                          force_heartbeat)) {
+          std::cout << event << '\n';
+        }
+      }
     }
-    if (options.interactive) destroy_window(kInteractiveWindow);
+    if (options.interactive) {
+      std::cout << "DEBUG_EVENT event=shutdown reason=" << shutdown_reason
+                << " frame=" << source_frame
+                << " tracked_frames=" << tracked_count
+                << " initialized=" << (initialized ? 1 : 0) << '\n';
+      destroy_window(kInteractiveWindow);
+    }
     if (writer.isOpened()) {
       writer.release();
     }

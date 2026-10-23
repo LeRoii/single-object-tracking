@@ -101,6 +101,17 @@ InteractiveCommand decode_interactive_key(int key) {
   }
 }
 
+const char* to_string(InteractiveCommand command) {
+  switch (command) {
+    case InteractiveCommand::kNone: return "none";
+    case InteractiveCommand::kStep: return "step";
+    case InteractiveCommand::kTogglePlayback: return "play_pause";
+    case InteractiveCommand::kSelectRoi: return "select_roi";
+    case InteractiveCommand::kQuit: return "quit";
+  }
+  return "unknown";
+}
+
 bool interactive_window_visible(double property_value) {
   return std::isfinite(property_value) && property_value != 0.0;
 }

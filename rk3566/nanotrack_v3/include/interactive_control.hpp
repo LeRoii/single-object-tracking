@@ -51,6 +51,7 @@ class InteractiveRoiSelection {
 };
 
 InteractiveCommand decode_interactive_key(int key);
+const char* to_string(InteractiveCommand command);
 bool interactive_window_visible(double property_value);
 
 class InteractivePlayback {
