@@ -1,6 +1,6 @@
 # RK3566 NanoTrack V3 长时目标跟踪工程代码流程
 
-本文用于快速理解 `rk3566/nanotrack_v3` 原始算法工程，以及该算法移植到 ViewLink 工程 `ai_alg` 后的实际运行流程。文档基于 2026-10-16 的源码状态编写。
+本文用于快速理解 `rk3566/nanotrack_v3` 原始算法工程，以及该算法移植到 ViewLink 工程 `ai_alg` 后的实际运行流程。文档基于 2026-10-16 的源码状态编写，并于 2026-10-23 补充交互式 Debug 日志说明。
 
 ## 1. 先看结论：整个系统做了什么
 
@@ -596,7 +596,182 @@ A6 交叉工具链
 | 框在边缘异常 | 输入初始框格式、裁剪规则、坐标是否是原始 1920×1080 |
 | 跟踪能显示但云台不应动作 | 区分“接口返回 true”和内部 `control_valid`；当前 ABI 未单独输出后者 |
 
-## 20. 当前实现的已知限制
+## 20. 交互式 Debug 日志说明
+
+### 20.1 适用范围与统一格式
+
+本节只描述 `rk3566/nanotrack_v3` 独立程序在交互模式
+（`interactive=true` 或命令行 `--interactive`）下写到标准输出的结构化日志。
+这些日志由 `src/main.cpp` 和 `src/debug_telemetry.cpp` 产生。ViewLink 生产版
+`ai_alg` 没有编译独立程序的 `main.cpp`、键鼠交互和 `DebugTelemetry`，因此不能根据
+本节推断生产程序已经输出相同日志。
+
+统一格式为一行一个事件：
+
+```text
+DEBUG_EVENT event=<事件名> key=value key=value ...
+```
+
+公共约定如下：
+
+| 表达形式 | 含义和来源 |
+|---|---|
+| `event` | 固定事件名，由日志产生位置写入，不是控制器输出字段 |
+| `frame` | 原视频的 0 基帧号；交互生命周期事件取 `main.cpp` 的 `source_frame`，算法事件取 `ControllerOutput::frame_id`，当前主循环把同一个值传入运行时 |
+| `bbox=x,y,w,h` | 原输入图像坐标中的左上角和宽高，不是输出缩放后坐标；算法事件保留两位小数 |
+| `candidate_region=x,y,w,h` | detector 原始候选框对应的搜索候选区域，不是 NanoTrack 最终接受框 |
+| `0` / `1` | 布尔假/真，不是置信度 |
+| `none` | 可选候选 ID、候选区域或前一状态不存在；不能按数值 0 解释 |
+| `*_ms` | 毫秒；耗时字段使用 `steady_clock`，detector `age_ms` 使用当前视频时间戳减结果源时间戳 |
+
+路径字段由命令行/配置解析结果产生，并使用双引号包裹；错误消息中的空白字符会替换为
+下划线，保证普通错误保持单行。程序还保留 `INITIALIZED`、`INTERACTIVE` 和
+`SUMMARY` 等兼容性输出，它们不属于 `DEBUG_EVENT` 协议。
+
+### 20.2 启动、交互和退出事件
+
+这些事件直接来自 `main.cpp` 的程序生命周期和交互状态，不是长时控制器决策。
+
+| 事件 | 触发时机 | 字段意义及实际来源 |
+|---|---|---|
+| `startup` | 输入路径与 controller 配置校验完成、打开视频之前 | `video`：`RuntimeOptions::video`；`controller_config`：实际配置路径，未指定时为 `builtin-defaults`；`sensor`、`start_frame`、`end_frame`、`max_frames`：最终 CLI/运行配置值 |
+| `video_opened` | 视频成功打开并读到起始帧 | `width/height`：首帧 `cv::Mat` 尺寸；`fps`：`VideoCapture::CAP_PROP_FPS`；`output_width/output_height`：显式输出尺寸，否则取输入帧尺寸 |
+| `runtime_ready` | NanoTrack、可选 detector 和 `LongTermRuntime` 构造成功 | `model_dir`：三模型目录；`detector`：是否提供 detector 模型；`detector_model`：模型路径或 `none`；`detector_class_id`：类别过滤值；`detector_target_mode`、`calibrated`：`ControllerConfig` 的实际值 |
+| `outputs` | 运行时构造完成 | `video`：是否配置输出视频；`boxes`：是否配置 CSV；`metadata`：是否配置会话元数据，或因 CSV 输出启用了默认元数据；这里只说明写出开关，不代表文件已经成功写完 |
+| `target_initialized` | CLI 初始框或鼠标框选成功并调用 `LongTermRuntime::initialize()` | `frame`：初始化所在源帧；`bbox`：实际初始化框；`reinitialize`：此前是否已经初始化；`count`：本次进程内累计初始化次数。重新框选会重置控制器、模板和 Debug 状态历史，但不会把源视频帧号退回 0 |
+| `interactive_ready` | HighGUI 窗口创建完成 | `playing=0`：初始为暂停；`initialized`：此时是否已有 CLI 初始框 |
+| `command` | 收到可识别键盘命令 | `action`：`step`、`play_pause`、`select_roi` 或 `quit`；`frame`：按键发生时当前源帧；`playing`：处理按键后的播放状态。`N/右方向键` 单步，空格切换连续播放，`R` 框选，`Q/Esc` 退出 |
+| `roi_selection_started` | `R` 触发框选且主循环进入 ROI 选择器 | `frame`：被显示并用于框选的当前源帧 |
+| `roi_selection_cancelled` | ROI 选择器退出但没有确认有效框 | `frame`：取消框选时的当前源帧；已有跟踪任务保持原状态，不会重新初始化 |
+| `frame_limit_reached` | 交互模式已处理帧数达到 `max_frames` | `frame`：当前源帧；`tracked_frames`：本进程累计调用 `process_frame()` 的次数。程序暂停等待命令，不立即退出 |
+| `shutdown` | 主循环结束、窗口销毁之前 | `reason`：退出原因；`frame`：最后源帧；`tracked_frames`：累计处理帧数；`initialized`：退出时是否曾有有效目标 |
+
+`shutdown.reason` 的当前取值为：
+
+| 值 | 含义 |
+|---|---|
+| `completed` | 默认值；目前交互主循环通常会被更具体原因覆盖 |
+| `window_closed` | 主窗口被关闭 |
+| `selection_window_closed` | ROI 选择期间窗口被关闭 |
+| `user_quit` | 收到 `Q` 或 `Esc` |
+| `end_frame_reached` | 到达配置的 `end_frame` |
+| `video_exhausted` | 视频解码结束或下一帧读取失败 |
+
+### 20.3 状态、控制和 detector 事件
+
+下列事件由 `DebugTelemetry::frame_events()` 根据本帧 `RuntimeFrameResult` 生成。
+其输入是只读结果，不会反向修改跟踪器、控制器或 detector 决策。
+
+| 事件 | 触发时机 | 字段意义及实际来源 |
+|---|---|---|
+| `state_change` | 初始化后的第一个已处理帧，或 `ControllerOutput::mode` 变化 | `frame`：`output.frame_id`；`from`：上一输出状态，首次为 `none`；`to`：当前状态；`quality`：当前选中观测的质量等级；`control_valid`：控制器是否授权本帧控制输出 |
+| `control_change` | 状态未变，但 `control_valid` 相比上一输出变化 | `frame`、`mode`：当前输出；`from/to`：前后控制有效标志。状态和控制同时变化时只打印 `state_change`，其 `control_valid` 已包含新值 |
+| `detector_request` | `LongTermRuntime` 成功把请求提交给异步 detector | `frame`：当前处理帧；`request_frame`：`DetectorDiagnostics::request_frame_id`，即被复制并送检的源帧。计划请求但 `submit()` 抛错时不会打印此事件，而会打印 `detector_error` |
+| `detector_batch` | `poll()` 得到一个完成批次，不论控制器最终接受还是拒绝 | `frame`：消费结果时的帧；`source_frame`：批次来自哪一帧；`age_ms`：结果年龄；`raw`：通过置信度和有效框检查、但尚未执行 NMS 的候选数；`filtered`：NMS 和最大候选数限制后的候选数；`status`：控制器对批次的新鲜度和合法性判断；`total_ms`：该批次 detector 总耗时 |
+| `detector_error` | detector `submit()` 或 `poll()` 抛出异常 | `frame`：发现异常的当前帧；`message`：`DetectorDiagnostics::error`，其中空白已替换为下划线。它是 detector 链路错误，不自动表示 NanoTrack 主链已经停止 |
+| `detector_verify` | 当前 `SearchPlan::hypothesis_source` 为 `DETECTOR`，即正在用 NanoTrack 验证一个 detector 候选或其已锁定位置 | 字段详见下一小节；事件出现只证明“正在验证”，不证明重捕成功 |
+| `reacquired` | `ControllerOutput::reacquired=true` | `frame`：确认成功帧；`source`：本次恢复来自 `MOTION` 还是 `DETECTOR` 假设；`candidate_id`：detector 恢复时的内部候选 ID，否则可为 `none`；`confirmation`：命中数/尝试数；`control_valid`：恢复后控制授权；`bbox`：最终接受框 |
+| `template_action` | `ControllerOutput::template_action` 不是 `NONE` | `frame`：动作所在帧；`action`：`STAGE_RECENT`、`COMMIT_RECENT` 或 `ROLLBACK_RECENT`。动作由控制器决定，实际模板操作随后由 `LongTermRuntime` 调用短时跟踪器执行 |
+| `frame_status` | 每次人工单步强制打印；连续播放时每处理 30 个跟踪帧打印 | 汇总当前状态、框、响应质量和三段耗时，字段详见 20.5。人工单步不会重置固定 30 帧节拍；重新初始化会重置 Debug 观测计数 |
+
+`detector_batch.status` 来自 `DetectorBatchStatus`：
+
+| 值 | 控制器判定 |
+|---|---|
+| `NONE` | 本帧没有完成批次 |
+| `ACCEPTED` | 批次身份和年龄有效，且至少有一个合法候选进入候选队列 |
+| `STALE` | `age_ms` 为负或超过 `detector_stale_ms` |
+| `FRAME_MISMATCH` | 批次的源帧或源时间戳不是控制器记录的最后请求 |
+| `INVALID` | 批次存在，但没有尺寸、坐标和置信度均合法的候选 |
+
+### 20.4 `detector_verify` 字段与安全判读
+
+示例格式：
+
+```text
+DEBUG_EVENT event=detector_verify frame=120 candidate_id=3 candidate_region=410.00,180.00,90.00,160.00 probe=1 same_class=1 ambiguous=0 locked=1 confirmation=2/3 quality=RELIABLE template_iou=0.74 accepted=0 control_valid=0
+```
+
+| 字段 | 含义 | 源码来源 |
+|---|---|---|
+| `frame` | 当前验证帧 | `ControllerOutput::frame_id` |
+| `candidate_id` | 控制器为本批候选分配的进程内递增 ID；`none` 表示没有有效 ID | `ControllerOutput::detector_candidate_id` |
+| `candidate_region` | detector 给出的原始候选框；`none` 表示计划没有候选区域 | `SearchPlan::detector_candidate_region` |
+| `probe` | 当前候选的子区域探针索引；全目标或局部子目标模式都可能产生多个探针 | `ControllerOutput::detector_probe_index` |
+| `same_class` | 当前合法候选列表中与该候选同类别的数量 | `ControllerOutput::detector_same_class_candidates` |
+| `ambiguous` | `same_class>1` 时为 1；当前策略会阻止未锁定候选直接进入确认 | `ControllerOutput::detector_same_class_ambiguous` |
+| `locked` | 候选是否已经通过本帧之前或本帧内的双模板、质量和几何门而锁定 | `ControllerOutput::detector_candidate_locked`，是 `finish_frame()` 后的值 |
+| `confirmation=h/a` | `h` 是几何一致的可靠确认框数量，`a` 是锁定后的验证尝试数 | `detector_confirmation_hits/attempts`；默认策略要求窗口内达到配置的命中数，例如 2/3，不应只看单帧 |
+| `quality` | 控制器对当前选中 NanoTrack 观测的质量分类 | `ControllerOutput::quality`，由 score、PSR、APCE、peak margin 和几何门共同决定 |
+| `template_iou` | anchor 与 recent 两个 NanoTrack 观测框的 IoU；缺少其中一个模板时保持默认值 0 | `ControllerOutput::template_iou` |
+| `accepted` | 控制器是否接受当前观测并提交最终框；对 detector 路径，只有锁定且满足多帧确认才会为 1 | `ControllerOutput::accepted` |
+| `control_valid` | 本帧结果是否允许交给控制执行链 | `ControllerOutput::control_valid` |
+
+安全约束必须按下面顺序理解：
+
+```text
+收到 detector_batch
+  ≠ detector 候选有效
+  ≠ NanoTrack 验证可靠
+  ≠ 候选已锁定
+  ≠ 已满足多帧确认
+  ≠ control_valid=1
+```
+
+detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1`。即使
+`quality=RELIABLE` 或 `locked=1`，确认数不足、同类歧义或几何不一致时仍应保持
+`accepted=0 control_valid=0`。真正的 detector 辅助恢复应同时看到
+`reacquired source=DETECTOR` 和 `control_valid=1`。
+
+### 20.5 `frame_status` 字段
+
+| 字段 | 含义和来源 |
+|---|---|
+| `frame` | `ControllerOutput::frame_id` |
+| `mode` | 当前长时状态：`TRACKING`、`UNCERTAIN`、`LOCAL_RECOVERY`、`ASSISTED_RECOVERY` 或 `LOST` |
+| `quality` | 当前选中观测的 `RELIABLE`、`WEAK` 或 `REJECTED` 分类 |
+| `control_valid` | 当前控制授权，`LOST` 时必须为 0 |
+| `accepted` | 本帧是否接受 NanoTrack 观测并提交框；它描述算法接受动作，`control_valid` 才是控制安全字段 |
+| `source` | 搜索假设来源：`MOTION` 表示运动预测链，`DETECTOR` 表示 detector 候选验证链 |
+| `bbox` | `ControllerOutput::bbox`；未接受新观测时通常仍是预测框或候选验证框，不能仅凭“有框”判断跟踪有效 |
+| `score` | 选中 `TrackerObservation` 的 `ResponseMetrics::raw_score` |
+| `psr` | 峰旁比，来自 NanoTrack 响应图质量计算 |
+| `apce` | 平均峰值相关能量，来自 NanoTrack 响应图质量计算 |
+| `peak_margin` | 第一峰与次峰的差值，来自 NanoTrack 响应图质量计算 |
+| `tracker_ms` | `ShortTermTracker::infer()` 的耗时，仅包含本帧 NanoTrack 推理段 |
+| `runtime_ms` | `LongTermRuntime::process_frame()` 总耗时，包含计划、detector 非阻塞 submit/poll、NanoTrack、控制器和模板动作，不包含显示与视频写出 |
+| `pipeline_ms` | `main.cpp` 从调用 `capture.read()` 之前开始，到算法和可选视频写出完成的主循环耗时；包含该帧视频读取/解码，不包含等待按键、CSV 写出和 Debug 日志生成 |
+
+如果本帧没有可选中的观测，`selected_metrics` 保持默认零值；因此
+`score=0 psr=0 apce=0 peak_margin=0` 应结合 `quality`、`accepted` 和 `mode` 判断，
+不能独立解释为一次有效的低分观测。
+
+### 20.6 枚举值速查
+
+| 字段 | 可能值 | 说明 |
+|---|---|---|
+| `mode` / `from` / `to` | `TRACKING`、`UNCERTAIN`、`LOCAL_RECOVERY`、`ASSISTED_RECOVERY`、`LOST` | 与第 9 节状态机一致 |
+| `quality` | `RELIABLE`、`WEAK`、`REJECTED` | 可靠、弱、拒绝；不是 detector 置信度 |
+| `source` | `MOTION`、`DETECTOR` | 当前搜索假设来源 |
+| `detector_target_mode` | `FULL_OBJECT`、`SUBTARGET` | detector 框按完整目标使用，或生成局部子目标探针 |
+| `template_action` / `action` | `STAGE_RECENT`、`COMMIT_RECENT`、`ROLLBACK_RECENT` | 暂存 recent、确认 recent、回滚 recent；`NONE` 不打印事件 |
+| `command.action` | `step`、`play_pause`、`select_roi`、`quit` | 键盘命令；未知按键不产生日志 |
+
+### 20.7 推荐排障顺序
+
+1. 先检查 `startup → video_opened → runtime_ready → outputs → interactive_ready`，确认
+   实际输入、模型目录、detector、类别、目标模式和输出开关符合预期。
+2. 检查 `command`、`target_initialized` 和 `frame`，确认单步/连续播放、初始框和重新
+   框选发生在预期原视频帧。
+3. 用 `state_change` 和 `control_change` 找到从可靠跟踪转为不可靠或恢复控制的准确帧。
+4. 发生遮挡后按 `detector_request → detector_batch → detector_verify` 检查请求、结果
+   新鲜度、候选数量、同类歧义、探针、锁定和确认数。
+5. 只有出现 `reacquired` 才把该帧记为控制器确认的恢复；detector 路径还必须核对
+   `source=DETECTOR control_valid=1`。
+6. 最后结合 `frame_status` 的响应质量和耗时判断是模型质量、阈值、异步 detector
+   时延还是显示/写出链路造成问题，并用 `template_action` 排查形变适应过程。
+
+## 21. 当前实现的已知限制
 
 1. 只支持 A6、可见光、固定 `1920×1080 RGB888` 和步长 5760。
 2. 不支持红外和 PIP，模式切换会取消当前任务。
@@ -608,7 +783,7 @@ A6 交叉工具链
 8. 适配层没有把 `control_valid`、状态、质量指标和检测错误完整暴露给宿主。
 9. A6 交叉编译成功不等于板端运行时兼容已通过，尤其需要验证 RKNN 1.5.2 与现有模型的兼容性。
 
-## 21. 一帧处理的伪代码
+## 22. 一帧处理的伪代码
 
 ```cpp
 bool do_tracker_detector(rgb, info, rect_show) {

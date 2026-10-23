@@ -420,3 +420,30 @@ verifier：<command -> observed result>
 裁决/阻塞：<layered pass/fail/risk>
 Handoff：<requested contract change or none>
 ```
+
+## 2026-10-23 Debug 日志字段参考文档
+
+- 时间：`2026-10-23T23:33:06+08:00`。
+- 分支/工作树：`codex/debug-runtime-config` /
+  `/home/u20/single-object-tracking/.worktrees/debug-runtime-config`。
+- 基线：`e91af4c7d4943cd3ed8e4aba7d9d644cf891b4d2`；结果提交可用
+  `git log -1 --format=%H -- RK3566_NANOTRACK_LONGTERM_CODE_FLOW.zh-CN.md`
+  查询，避免在提交前记录不存在的 commit ID。
+- 变更：在 `RK3566_NANOTRACK_LONGTERM_CODE_FLOW.zh-CN.md` 新增交互式 Debug
+  日志章节，覆盖 `main.cpp` 和 `debug_telemetry.cpp` 当前输出的全部 20 种
+  `DEBUG_EVENT`，说明触发条件、字段含义、源结构、枚举、打印节拍和排障顺序。
+- 关键边界：明确这些日志只属于独立交互式 Debug 程序，不属于 ViewLink
+  `ai_alg` 生产 ABI；再次明确 detector batch、候选框、可靠质量或候选锁定均不能
+  直接产生 `control_valid=true`，必须经过 NanoTrack 验证和多帧确认。
+- 一致性检查：从 `src/main.cpp` 的 `DEBUG_EVENT event=` 和
+  `src/debug_telemetry.cpp` 的 `event_stream()` 提取事件名，与文档反查，观察结果为
+  `documented_events=20 required_fields=17`；`git diff --check` 通过；现有主机
+  CTest 回归仍为 `14/14` 通过。
+- 证据边界：本轮只更新说明文档，没有修改或重新编译程序，没有执行新的开发板、
+  重捕、资源、长稳或吊舱测试；此前板端二进制、模型身份和验收结论均不改变。
+
+### Handoff
+
+协调对话只需集成本次文档提交；不需要修改 `integration-contract.yaml`，不改变
+`functional_pass_promotion_held` 和
+`development_board_validation.latest_handoff.available=false`。
