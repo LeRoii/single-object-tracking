@@ -1,10 +1,10 @@
 # RK3566 开发板验证任务进度
 
 - 任务状态：`functional_pass_promotion_held`
-- 最近核对：`2026-10-22T21:53:28+08:00`
-- 核对基线：`main@29b083e4e6ced2fd46eb7f9ecf821287b4cc401a`
-- 任务工作树：`/home/u20/single-object-tracking/.worktrees/board-validation-progress-sync`
-- 任务分支：`codex/board-validation-progress-sync`
+- 最近核对：`2026-10-23T15:13:21+08:00`
+- 核对基线：`main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
+- 任务工作树：`/home/u20/single-object-tracking/.worktrees/debug-runtime-config`
+- 任务分支：`codex/debug-runtime-config`
 - 责任边界：在交叉编译之前，使用具备完整编译环境的真实 RK3566 开发板，对交互式 Debug 版本执行原生编译、调试、加载/推理、集成视频、控制安全、时延、资源和稳定性测试。
 
 本任务是开发阶段的板端验证，不消费交叉编译生产产物。交叉编译只在本任务冻结并移交最新可用结果后进行；真实吊舱测试由人完成。
@@ -128,6 +128,114 @@ ctest --output-on-failure
 当前 live 复核确认了现有 Debug 产物的工件身份、模型加载、detector 单图功能、
 短程集成功能和 13 项测试；没有改变 `functional_pass_promotion_held` 裁决，也没有
 产生可供交叉编译消费的 latest handoff。
+
+## 2026-10-23 Debug 运行配置板端验证
+
+本轮只改造交互式 Debug 的启动参数入口，不修改跟踪、重捕、模板更新或控制授权
+逻辑。经用户确认，采用独立的严格 `key=value` 运行配置和
+`nanotrack_v3 --config FILE`，没有引入 YAML 依赖；原命令行继续兼容，显式 CLI
+值覆盖配置值，配置中的相对路径以配置文件目录为基准。detector 仍只是候选来源，
+不能直接产生 `control_valid=true`。
+
+### 源码与板端身份
+
+- 当前协调基线为
+  `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`。独立分支
+  `codex/debug-runtime-config` 在该基线上显式合并既有交互 Debug 候选
+  `b98b1335c3d263f542fd52656c7d7c4d58b2bb77`；设计/计划提交为
+  `f5cedeb2414473bb6bbf736b8026308688bcec24`，实现提交为
+  `eb50d6788c477733697703d6b1e8b9f6e4800cd1`。
+- 板端仓库使用独立历史。实现 patch SHA-256 为
+  `863e2cd0fd37fd956d928faebea0ffbd3a8877b71f64f70b7951832560d7d4f4`；首次
+  `git am --3way` 形成 `a45d563e7e18134400b66313b2db8d7c8f9f5f41` 时，三个新增文件因共享
+  仓库子目录前缀被放入嵌套路径。未使用 reset；随后以可追溯提交
+  `41aa1ffe703416ea442afa4582d5346d9475f254` 将它们移动到板端仓库根目录。
+  最终 tracked 状态干净，仍只有既有用户文件 `cmd.txt` 未跟踪，本轮未修改。
+- 共享提交子树与板端 `HEAD` 的 55 个构建相关条目（`CMakeLists.txt`、
+  `config/`、`include/`、`src/`、C++ 测试、board schema 测试和 verifier）
+  `git ls-tree` 指纹均为
+  `9dc0ccb607672b0863f7805c1790db153c880ad2c68d95125cdfeb6ed8e840eb`。
+  两个仓库的完整 tracked tree 不相同：板端独立历史不包含主线后增的训练文档、
+  Python 训练工具和相应测试；因此这里只声明板端构建/测试输入等价，不声明完整
+  仓库树等价。
+
+### 配置、工件和运行环境
+
+- 板端配置为
+  `/home/cat/Project/SOT/nanotrack_v3_longterm/config/interactive-debug.conf`，
+  SHA-256
+  `9e57e3a7e8a13212b46a8b21daba08836c0ed41287f3cb76a73562b57e7551f1`。
+  它启用交互模式、可见光 controller 和 VisDrone9 person candidate，不设置
+  `bbox`，也不设置 video/CSV/metadata 输出路径；因此启动后暂停等待鼠标框选，
+  调试输出默认不保存。
+- 输入 `data/girl_dance.mp4` SHA-256 为
+  `8090fcd5090adb62f21e79e799f0b0871d9c610d8cf8087b9fcdd3c7e9c2e9b9`。
+  NanoTrack template/search/head/manifest SHA-256 依次为
+  `38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709`、
+  `92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a`、
+  `2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600`、
+  `441e93f2092afe94bac663f27adb1fe99848357356efd67c7473b0b506f854b2`。
+- VisDrone9 RKNN/manifest/labels SHA-256 依次为
+  `3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0`、
+  `05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e`、
+  `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992`，
+  与公共契约一致；本配置使用候选不等于 canonical promotion。
+- 本轮板端系统时间为 `2026-10-23T15:13:21+08:00` 且 NTP 同步为 yes；环境仍为
+  LubanCat RK3566/AArch64、Linux `4.19.232`、GCC `8.3.0`、CMake `3.13.4`、
+  Git `2.20.1`。后续重启后仍需重新检查 RTC/NTP。
+
+### 原生编译与实测结果
+
+首次新建的 `build-interactive-debug-config` 未显式设置 `OpenCV_DIR`，CMake 自动
+选择系统 OpenCV 3.2；虽然编译和 13 项测试可通过，实际启动在 OpenCV 3.2 解析
+detector JSON manifest 时失败。该目录是无效诊断产物，不能作为本轮结果。根因经
+cache、`ldd` 和 manifest 首字节对照确认；manifest 本身以合法 JSON `{` 开头。
+
+有效 clean build 使用另一个全新目录并显式绑定既有 OpenCV 4.10：
+
+```bash
+cmake -S /home/cat/Project/SOT/nanotrack_v3_longterm \
+  -B /home/cat/Project/SOT/nanotrack_v3_longterm/build-interactive-debug-config-opencv4100 \
+  -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON \
+  -DOpenCV_DIR=/home/cat/ThirdParty/OpenCV4100/lib/cmake/opencv4 \
+  -DRKNN_INCLUDE_DIR=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/include \
+  -DRKNN_LIBRARY=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so
+cmake --build /home/cat/Project/SOT/nanotrack_v3_longterm/build-interactive-debug-config-opencv4100 -- -j2
+cd /home/cat/Project/SOT/nanotrack_v3_longterm/build-interactive-debug-config-opencv4100
+ctest --output-on-failure
+```
+
+观察结果：原生编译成功，CTest `13/13` 通过；有效 AArch64 PIE 为
+`/home/cat/Project/SOT/nanotrack_v3_longterm/build-interactive-debug-config-opencv4100/nanotrack_v3`，
+SHA-256
+`e469aa57a209c415f083a1149824d95b6dcd62c3381df1901f4c5a31acf7f33a`。
+`ldd` 确认链接
+`/home/cat/ThirdParty/OpenCV4100/lib/libopencv_world.so.410` 和 RKNN 2.3.2
+`librknnrt.so`，未观察到缺失依赖。
+
+实际简化启动烟测为：
+
+```bash
+cd /home/cat/Project/SOT/nanotrack_v3_longterm
+timeout --signal=INT 15s env DISPLAY=:0 \
+  ./build-interactive-debug-config-opencv4100/nanotrack_v3 \
+  --config config/interactive-debug.conf
+```
+
+程序 15 秒内没有配置、路径、模型、manifest 或 GUI 启动错误，最终由 `timeout`
+按预期结束并报告 `CONFIG_SMOKE_EXIT=124`。这证明实际板端二进制能够消费单一配置
+参数并保持在交互运行状态；结合板端 `test_cli`，确认 shipped config 从任意 cwd
+解析、默认无输出且等待鼠标 ROI。该有界启动没有人工框选、没有执行跟踪帧，也没有
+证明 detector 推理、遮挡重捕、长时稳定性或跟踪质量。
+
+### 本轮裁决与 Handoff
+
+本轮层级为 `native_build + config_parse + interactive_startup` 功能通过，不改变总体
+`functional_pass_promotion_held`。共享实现提交尚未合入 `main`，公共契约也尚未把
+它锁定为下一轮 source candidate；因此
+`development_board_validation.latest_handoff.available` 必须继续为 `false`，交叉编译
+任务不得消费本结果。建议协调对话审查并集成
+`eb50d6788c477733697703d6b1e8b9f6e4800cd1` 后，再决定是否将其设为下一轮板端候选。
 
 ## 已观察证据
 
