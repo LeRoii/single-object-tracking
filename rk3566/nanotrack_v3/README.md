@@ -152,17 +152,36 @@ display, keyboard, and mouse. It requires an OpenCV build with the `highgui`
 component and a valid GUI environment such as `DISPLAY=:0`. The headless mode
 above is unchanged.
 
-Start without `--bbox` to pause on `--start-frame` and choose the target later:
+The shipped profile contains the video, NanoTrack model, controller and
+detector candidate paths. Start it with one program argument:
 
 ```bash
 export DISPLAY=:0
-./build/nanotrack_v3 \
-  --video "$TRACKER_TEST_VIDEO" \
-  --interactive \
-  --model-dir models \
-  --sensor visible \
-  --controller-config config/visible-default.conf
+./build/nanotrack_v3 --config config/interactive-debug.conf
 ```
+
+Runtime config files use strict `key=value` syntax. Blank lines and comments
+beginning with `#` are ignored. The supported keys correspond to the CLI
+options, using underscores instead of hyphens: `video`, `bbox`, `model_dir`,
+`output_video`, `output_boxes`, `max_frames`, `start_frame`, `end_frame`,
+`output_size`, `interactive`, `sensor`, `controller_config`,
+`session_metadata`, `detector_model`, `detector_manifest`, `detector_labels`,
+`detector_class_id`, `detector_conf`, and `detector_nms`. `interactive` accepts
+only `true` or `false`.
+
+Paths in a config file are resolved relative to that file, so the command does
+not depend on the shell's working directory. Explicit CLI values override the
+file for one-off experiments, for example:
+
+```bash
+./build/nanotrack_v3 --config config/interactive-debug.conf \
+  --video /tmp/another-test.mp4 --start-frame 300
+```
+
+Unknown or duplicate config keys, malformed values, and partial detector file
+sets fail before model startup. Existing CLI-only commands remain supported.
+The shipped profile omits `bbox`, pauses on its first frame, and waits for a
+mouse selection.
 
 The controls are:
 

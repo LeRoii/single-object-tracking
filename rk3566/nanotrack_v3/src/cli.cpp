@@ -1,4 +1,5 @@
 #include "cli.hpp"
+#include "runtime_config.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -75,7 +76,8 @@ float parse_open_unit(const std::string& text, const char* option) {
 
 std::string usage() {
   return
-      "Usage: nanotrack_v3 --video VIDEO [--bbox X,Y,W,H] --model-dir DIR "
+      "Usage: nanotrack_v3 [--config FILE] [--video VIDEO] "
+      "[--bbox X,Y,W,H] [--model-dir DIR] "
       "[--output-video OUTPUT.avi] [--output-boxes OUTPUT.csv] [--max-frames N] "
       "[--start-frame N --end-frame N] [--output-size WIDTHxHEIGHT] "
       "[--interactive] "
@@ -92,8 +94,9 @@ Options parse_options(const std::vector<std::string>& arguments) {
     options.help = true;
     return options;
   }
-  std::unordered_map<std::string, std::string> values;
+  std::unordered_map<std::string, std::string> cli_values;
   bool interactive_seen = false;
+  std::string runtime_config_path;
   for (std::size_t index = 1; index < arguments.size();) {
     const std::string& option = arguments[index];
     if (option == "--help") {
@@ -108,7 +111,8 @@ Options parse_options(const std::vector<std::string>& arguments) {
       ++index;
       continue;
     }
-    if (option != "--video" && option != "--bbox" && option != "--model-dir" &&
+    if (option != "--config" && option != "--video" &&
+        option != "--bbox" && option != "--model-dir" &&
         option != "--output-video" && option != "--output-boxes" &&
         option != "--max-frames" && option != "--start-frame" &&
         option != "--end-frame" && option != "--output-size" &&
@@ -122,11 +126,28 @@ Options parse_options(const std::vector<std::string>& arguments) {
     if (index + 1 >= arguments.size()) {
       throw std::invalid_argument("missing value for option: " + option);
     }
-    if (!values.emplace(option, arguments[index + 1]).second) {
+    if (option == "--config") {
+      if (!runtime_config_path.empty()) {
+        throw std::invalid_argument("duplicate option: --config");
+      }
+      runtime_config_path = arguments[index + 1];
+      index += 2;
+      continue;
+    }
+    if (!cli_values.emplace(option, arguments[index + 1]).second) {
       throw std::invalid_argument("duplicate option: " + option);
     }
     index += 2;
   }
+
+  std::unordered_map<std::string, std::string> values;
+  if (!runtime_config_path.empty()) {
+    const RuntimeConfig config = load_runtime_config(runtime_config_path);
+    values = config.option_values;
+    if (config.has_interactive) options.interactive = config.interactive;
+  }
+  for (const auto& value : cli_values) values[value.first] = value.second;
+  if (interactive_seen) options.interactive = true;
 
   const char* required[] = {"--video", "--model-dir"};
   for (const char* option : required) {

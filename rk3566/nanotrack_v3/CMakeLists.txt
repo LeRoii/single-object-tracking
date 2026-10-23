@@ -14,7 +14,7 @@ add_library(nanotrack_math src/tracker_math.cpp)
 target_include_directories(nanotrack_math PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(nanotrack_math PRIVATE -Wall -Wextra -Wpedantic)
 
-add_library(nanotrack_cli src/cli.cpp)
+add_library(nanotrack_cli src/cli.cpp src/runtime_config.cpp)
 target_include_directories(nanotrack_cli PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(nanotrack_cli PUBLIC nanotrack_math)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
@@ -61,6 +61,9 @@ if(BUILD_TESTING)
 
   add_executable(test_cli tests/test_cli.cpp)
   target_link_libraries(test_cli PRIVATE nanotrack_cli)
+  target_compile_definitions(test_cli
+    PRIVATE NANOTRACK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  )
   add_test(NAME cli COMMAND test_cli)
 
   add_executable(test_interactive_control tests/test_interactive_control.cpp)
