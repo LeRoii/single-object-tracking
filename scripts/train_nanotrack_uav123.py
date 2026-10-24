@@ -2,6 +2,7 @@
 """Single-GPU NanoTrack fine-tuning entry point for prepared SOT datasets."""
 
 import argparse
+from contextlib import ExitStack
 import json
 import math
 import os
@@ -22,11 +23,11 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 
 try:
     from scripts.nanotrack_pair_sampling import (
-        install_pair_policy, load_pair_policy, validate_resume_pair_policy,
+        install_pair_policy, load_pair_policy, restore_pair_policy, validate_resume_pair_policy,
     )
 except ModuleNotFoundError:
     from nanotrack_pair_sampling import (
-        install_pair_policy, load_pair_policy, validate_resume_pair_policy,
+        install_pair_policy, load_pair_policy, restore_pair_policy, validate_resume_pair_policy,
     )
 
 POLICIES = ("head_only", "tail2")
@@ -788,6 +789,11 @@ def _append_jsonl(path: Path, value: Dict[str, object]) -> None:
 
 
 def main() -> None:
+    with ExitStack() as pair_policy_cleanup:
+        _main(pair_policy_cleanup)
+
+
+def _main(pair_policy_cleanup: ExitStack) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--nanotrack-root", type=Path, required=True)
@@ -851,6 +857,7 @@ def main() -> None:
     if pair_policy is not None:
         from nanotrack.datasets.dataset import SubDataset
         install_pair_policy(SubDataset, pair_policy["policy"])
+        pair_policy_cleanup.callback(restore_pair_policy, SubDataset)
         (output_dir / "pair-policy-provenance.json").write_text(
             json.dumps({"pair_policy": pair_policy}, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",

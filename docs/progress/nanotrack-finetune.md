@@ -1,7 +1,7 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-25T00:44:15+08:00`。
+- 最近核对：`2026-10-25T00:51:02+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
@@ -56,6 +56,51 @@
    验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。计划阶段没有启动训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-25 任务 2 评审修复回合 1：采样补丁生命周期
+
+- 时间：`2026-10-25T00:51:02+08:00`。
+- 分支/工作树：`codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+- 评审基线：`bcb9e1cc22d4209c19952a11210d8f7ea3959358`；开始时工作树干净，
+  结果提交在提交后回报协调者，可用 `git log -1 --format=%H` 查询。
+- 评审发现已复现：带策略调用 `main()` 后，共享 `SubDataset` 类的补丁没有恢复，
+  同进程第二次无策略运行仍按原始帧号采样，但 checkpoint 策略身份为空。
+- 最小修正：新增幂等 `restore_pair_policy(subdataset_class)`，恢复保存的上游方法并
+  删除补丁备份；训练入口用 `ExitStack` 管理每次 `main()` 的生命周期，安装成功后
+  立即注册恢复回调，正常返回（含内部提前返回）及异常传播均执行恢复。
+  原训练正文移到内部 `_main`，逻辑与采样随机流未变。
+- RED：先新增两项集成回归，真实连续调用两次 `main()`（首次带策略，第二次无策略），
+  分别覆盖第一次正常返回与构造数据集时报错；均实测第二次仍返回补丁配对结果，
+  `Ran 2 tests in 0.021s` / `FAILED (failures=2)` / exit 1。
+  再新增恢复 API 测试，观察 `Ran 1 test` / `FAILED (failures=1)` / exit 1，
+  原因为缺少明确恢复接口。测试没有以模拟的恢复结果代替真实行为。
+- 精确测试命令（均在上述工作树执行）：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_pair_sampling.TrainerPairPolicyTest.test_normal_main_exit_restores_policy_before_same_process_legacy_run tests.test_nanotrack_pair_sampling.TrainerPairPolicyTest.test_exceptional_main_exit_restores_policy_before_same_process_legacy_run -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_pair_sampling.PairSamplingTest.test_explicit_restore_is_idempotent_and_allows_fresh_reinstallation -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_pair_sampling tests.test_nanotrack_training tests.test_nanotrack_got_replay_training -v
+```
+
+- GREEN：第三条实测 `Ran 54 tests in 2.175s` / `OK` / exit 0。
+  覆盖正常/异常退出后的恢复、同进程下一次无策略调用、航拍路径、策略重装、重复恢复、
+  恢复后重新安装，以及历史训练/resume。构造测试使用空训练阶段正常退出，未运行 GPU 训练。
+- 本修复没有重复完整 discover；上一轮 `206 tests / failures=4` 的历史路径失败记录保留，
+  本轮聚焦通过不表示完整套件全绿。`git diff --check` 通过。
+- 本工作树的最新输出 SHA-256：
+  `scripts/nanotrack_pair_sampling.py`：`a1cd1711321261a8b89becbf9c7dbd145a653450f6f2ab1706c2b52191a05dd5`；
+  `scripts/train_nanotrack_uav123.py`：`6a011f13860a3572f8b873f8c4cff1972f7443d016c249b5302e55d0919eef57`；
+  `tests/test_nanotrack_pair_sampling.py`：`c223c86513c0217d8bcedd26542b0bf3ed9e54cfa1742325c1eb6ba553674a5b`。
+- 外部输入 `/home/u20/single-object-tracking/repos/siamtrackers/NanoTrack/nanotrack/datasets/dataset.py`
+  在实现前后均为 `cd6b925b12f2879d5979c2c1ee8229317ea4bcdc7ce6e8fface4f9d0f2d39373`，未修改。
+  既有 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/audit.json`
+  仍为 `69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2`，同目录
+  `pair-policy.json` 仍为 `e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024`。
+- 边界：只保证训练入口本轮调用的补丁退出恢复；未开展 GPU 训练、隐藏集、板端或吊舱验证，
+  未改审计口径、模型、策略文件身份、公共契约或其他任务文件。
+- 下一步/Handoff：协调者复核此修复提交后再继续任务 3/4；直接调用底层安装 API 的调用者
+  也须在退出时调用恢复 API，训练入口已统一处理，不再依赖进程退出。
 
 ## 2026-10-25 任务 2：GOT 原始帧号配对策略与只读审计
 

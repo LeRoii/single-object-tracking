@@ -107,6 +107,25 @@ class PairSamplingTest(unittest.TestCase):
         self.assertEqual(cls("GOT_PERSON_NORMAL").get_positive_pair(0),
                          ("historical", "GOT_PERSON_NORMAL", 0))
 
+    def test_explicit_restore_is_idempotent_and_allows_fresh_reinstallation(self):
+        api = pair_api(self)
+        self.assertTrue(hasattr(api, "restore_pair_policy"), "missing explicit pair-policy restore API")
+        cls = self.fake_class()
+        api.install_pair_policy(cls, {"GOT_": "original_frame_id"})
+        api.install_pair_policy(cls, {"GOT_PERSON_": "original_frame_id"})
+        api.restore_pair_policy(cls)
+        api.restore_pair_policy(cls)
+        self.assertEqual(cls("GOT_PERSON_NORMAL").get_positive_pair(0),
+                         ("historical", "GOT_PERSON_NORMAL", 0))
+        api.install_pair_policy(cls, {"GOT_VEHICLE_": "original_frame_id"})
+        self.assertEqual(cls("GOT_PERSON_NORMAL").get_positive_pair(0),
+                         ("historical", "GOT_PERSON_NORMAL", 0))
+        self.assertNotEqual(cls("GOT_VEHICLE_NORMAL").get_positive_pair(0),
+                            ("historical", "GOT_VEHICLE_NORMAL", 0))
+        api.restore_pair_policy(cls)
+        self.assertEqual(cls("GOT_VEHICLE_NORMAL").get_positive_pair(0),
+                         ("historical", "GOT_VEHICLE_NORMAL", 0))
+
     def test_unknown_and_aerial_policy_fail_before_installation(self):
         api = pair_api(self)
         cls = self.fake_class()
@@ -133,6 +152,69 @@ class PairSamplingTest(unittest.TestCase):
 
 
 class TrainerPairPolicyTest(unittest.TestCase):
+    def _assert_main_restores_policy_before_next_legacy_run(self, fail_first_run):
+        from tests.test_nanotrack_training import FakePolicyModel
+        cls = PairSamplingTest.fake_class()
+        observed = []
+        class DatasetFailure(Exception):
+            pass
+        def construct_dataset():
+            observed.append(cls("GOT_PERSON_NORMAL").get_positive_pair(0))
+            # An aerial pool must use its upstream method during either run.
+            self.assertEqual(cls("UAV123_PERSON_NORMAL").get_positive_pair(0),
+                             ("historical", "UAV123_PERSON_NORMAL", 0))
+            if fail_first_run and len(observed) == 1:
+                raise DatasetFailure("controlled dataset failure")
+            return []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            policy = root / "policy.json"
+            policy.write_text('{"GOT_":"original_frame_id"}')
+            cfg = SimpleNamespace(
+                merge_from_file=lambda path: None, dump=lambda: "test-config",
+                TRAIN=SimpleNamespace(BASE_LR=.01, MOMENTUM=.9, WEIGHT_DECAY=0.,
+                                      BATCH_SIZE=1, START_EPOCH=0, NUM_WORKERS=0, EPOCH=0),
+                DATASET=SimpleNamespace(VIDEOS_PER_EPOCH=1),
+                BACKBONE=SimpleNamespace(LAYERS_LR=.1))
+            modules = {
+                "nanotrack.core.config": SimpleNamespace(cfg=cfg),
+                "nanotrack.datasets.dataset": SimpleNamespace(BANDataset=construct_dataset, SubDataset=cls),
+                "nanotrack.models.model_builder": SimpleNamespace(ModelBuilder=FakePolicyModel),
+                "nanotrack.utils.model_load": SimpleNamespace(load_pretrain=lambda model, path: None),
+            }
+            common = ["train", "--config", str(root / "config"), "--nanotrack-root", str(root),
+                      "--pretrained", str(root / "weights"), "--policy", "head_only"]
+            original_path, original_cwd = list(sys.path), Path.cwd()
+            try:
+                with patch.dict(sys.modules, modules), \
+                        patch.object(torch.cuda, "is_available", return_value=True), \
+                        patch.object(torch.cuda, "reset_peak_memory_stats"), \
+                        patch.object(torch.nn.Module, "cuda", lambda self: self), \
+                        patch.object(training, "_seed_everything"):
+                    with patch.object(sys, "argv", common + ["--output-dir", str(root / "first"),
+                                                            "--pair-policy", str(policy)]):
+                        if fail_first_run:
+                            with self.assertRaisesRegex(DatasetFailure, "controlled dataset failure"):
+                                training.main()
+                        else:
+                            training.main()
+                    # Reuse the exact same class and process, omitting --pair-policy.
+                    with patch.object(sys, "argv", common + ["--output-dir", str(root / "second")]):
+                        training.main()
+                    self.assertNotEqual(observed[0], ("historical", "GOT_PERSON_NORMAL", 0))
+                    self.assertEqual(observed[1], ("historical", "GOT_PERSON_NORMAL", 0))
+                    self.assertFalse((root / "second/pair-policy-provenance.json").exists())
+            finally:
+                sys.path[:] = original_path
+                import os
+                os.chdir(str(original_cwd))
+
+    def test_normal_main_exit_restores_policy_before_same_process_legacy_run(self):
+        self._assert_main_restores_policy_before_next_legacy_run(fail_first_run=False)
+
+    def test_exceptional_main_exit_restores_policy_before_same_process_legacy_run(self):
+        self._assert_main_restores_policy_before_next_legacy_run(fail_first_run=True)
+
     def test_main_installs_policy_and_records_provenance_before_dataset_construction(self):
         pair_api(self)
         from tests.test_nanotrack_training import FakePolicyModel

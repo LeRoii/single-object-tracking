@@ -85,6 +85,13 @@ def install_pair_policy(subdataset_class, policy):
     subdataset_class.get_positive_pair = get_positive_pair
 
 
+def restore_pair_policy(subdataset_class):
+    """Idempotently remove this adapter and restore the upstream class method."""
+    if "_nanotrack_pair_original" in subdataset_class.__dict__:
+        subdataset_class.get_positive_pair = subdataset_class.__dict__["_nanotrack_pair_original"]
+        del subdataset_class._nanotrack_pair_original
+
+
 def validate_resume_pair_policy(checkpoint, pair_policy_sha256):
     """Fail before loading mutable state when either side changes sampling semantics."""
     recorded = checkpoint.get("pair_policy_sha256")
