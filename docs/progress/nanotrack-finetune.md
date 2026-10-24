@@ -1,10 +1,10 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-22T21:39:23+08:00`
-- 核对基线：`29b083e4e6ced2fd46eb7f9ecf821287b4cc401a`（协调规则提交）。
-- 当前任务分支：`codex/nanotrack-progress-sync`。
-- 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-progress-sync`。
+- 最近核对：`2026-10-24T23:56:01+08:00`。
+- 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
+- 当前任务分支：`codex/nanotrack-factorial-v3`。
+- 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
 - 状态说明：既有 g5000 可交付下游评估；评分优化、batch/GOT 交叉对照、原始帧号采样及困难样本强化尚未形成实施完成证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
@@ -48,9 +48,45 @@
 
 ## Next action
 
-1. 协调对话先集成本次进度核对提交；保持 g5000 工件只读和当前板端模型不变。
-2. 本任务下一研发步骤为冻结新版评分/采样协议及实验预算，再实施受控交叉对照；本次同步未启动训练、隐藏集评测或 `sot-v1.mp4` 回归。
-3. 下游转换为另一条需协调确认的候选链路：由协调对话决定是否送 g5000 进入 ONNX/RKNN 和开发板原生 Debug 验证，不因本次文档核对自动启动。
+1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
+   编写下一轮规格与实施计划：
+   `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
+   `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；等待用户按计划审阅门确认后实施。
+2. 实施顺序为 T 主评分策略、GOT 原始帧号配对与审计、九单元格配置、可恢复控制器、
+   验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。计划阶段没有启动训练、
+   隐藏集评测或 `sot-v1.mp4` 回归。
+3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-24 交叉对照规格与计划
+
+- 初始检查：主工作树为干净的 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`，
+  与 `origin/main` 一致；此前 NanoTrack 进度提交 `81b95123dc5678b924802482c88fb1ae3e9d5980`
+  已通过 `707113b` 集成。没有在 `main` 上实施代码修改。
+- 新工作树创建命令：
+
+```bash
+git worktree add .worktrees/nanotrack-factorial-v3 \
+  -b codex/nanotrack-factorial-v3 bb297504070b3dfcf2fd4b4da05ebb1503e309db
+```
+
+- 已形成并自检的新规格与计划：
+  `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
+  `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`。
+- 计划阶段没有修改评分/训练代码，没有启动 GPU 训练、评测、隐藏集或视频回归。
+- 工作树基线全套测试命令：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B \
+  -m unittest discover -s tests -v
+```
+
+  实测 `Ran 166 tests in 176.221s`，结果为 `FAILED (failures=5, errors=1)`。
+  其余 160 项通过。五项失败来自 `test_nanotrack_three_stage_configs` 将已提交配置中
+  `/home/u20/single-object-tracking/...` 的历史绝对路径与当前 worktree 根路径比较；一项报错
+  来自同一测试直接调用 worktree 下不存在的 `.venvs/nanotrack/bin/python`。另一项同时要求
+  worktree 中存在 Git 忽略的历史 smoke report。该组失败发生在任何 v3 实现之前，属于已知
+  工作树基线兼容问题；不能把后续局部测试通过描述成“全套测试通过”。依照工作树流程，
+  需要用户决定继续实施并保留该基线边界，或先单独修复工作树兼容性。
 
 ## Handoff
 
