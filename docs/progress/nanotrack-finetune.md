@@ -1,7 +1,7 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-25T00:23:04+08:00`。
+- 最近核对：`2026-10-25T00:32:16+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
@@ -56,6 +56,36 @@
    验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。计划阶段没有启动训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-25 文档语言格式修正
+
+- 时间：`2026-10-25T00:32:16+08:00`。
+- 分支/工作树：`codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+- 开始基线：`916cb101c48ff50678bd8c42be04cbb92da50b95`（任务 1 已完成的评分策略提交）；
+  初始 `git status --short` 无输出。结果提交在提交后回报协调者，可用
+  `git log -1 --format=%H -- docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md` 查询。
+- 用户格式修正：本任务后续新增或修订的 specs/plans 正文使用英文；最终实验报告只生成
+  中文 `REPORT.zh-CN.md`。历史英文/中文报告均保留且不覆盖，本轮不新建或覆盖 `REPORT.md`。
+- 实际修改：完整翻译
+  `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md` 和
+  `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md` 的自然语言正文，包括全部任务、
+  文件操作、接口说明、步骤和预期结果；同步修正规格、计划及本任务记录中的旧语言要求。
+- 技术核对：相对开始基线，规格的 50 个行内代码项和 147 个数值项、计划的 108 个行内
+  代码项和 173 个数值项的多重集合分别完全一致；因此命令、路径、接口、哈希、种子、
+  公式及数值均保留。任务仍为 1–7，步骤数依次为 5/6/6/6/6/7/7，共 43 步。
+- 已实际运行 `git diff --check`；两份规格/计划未残留中文自然语言。通过只读 Node.js
+  文本比较核对上述条目，并搜索排除会误导后续执行的中文 specs/plans 要求。
+- 代码身份复核：`sha256sum` 实测评分策略、策略测试、旧 replay 源码仍分别为
+  `eb1360c4a6bca3d9ec0e9aec96fd5c26a16224da9db01774445527459e7acb16`、
+  `6b0b9d14ea1d3ba2f3676b81ab279d4b780735ce5d337f7de70f0f60d5303c14`、
+  `d91c681a0af0fa6f2a19d78581f0b0a99da09127208aa52abe7de76f242ceb4b`。
+- 证据边界：只修订上述两份文档和本任务进度文件，没有消费或生成模型/二进制，没有运行
+  Python 测试、训练、桌面推理、隐藏集、视频回归、转换、板端或吊舱验证。既有测试失败
+  记录与 g5000 身份保持不变；文档语言核对不构成新增技术验收证据。
+- 下一步：从任务 2 实施 GOT 原始帧号配对与审计，后续 specs/plans 持续使用英文。
+- Handoff：无需修改公共 STATUS、集成契约或其他任务文件；协调者集成本提交时采纳
+  英文 specs/plans、仅中文最终实验报告的格式约定，技术方案与任务顺序不变。
 
 ## 2026-10-25 任务 1：版本化类别优先评分策略
 
@@ -179,7 +209,7 @@
   分组 bootstrap 95% 区间，并增加 UAVDT、VisDrone-MOT、VisDrone-SOT 逐域退化门；
   不能仅凭单个点估计宣布 person 改善。
 - 已同步修订规格与实施计划。新实验只生成中文报告 `REPORT.zh-CN.md`，不新建/覆盖本轮
-  `REPORT.md`；历史英文报告保留。本任务后续规格和计划正文统一使用中文。
+  `REPORT.md`；历史英文/中文报告均保留且不覆盖。本任务后续新增或修订的规格和计划正文统一使用英文。
 
 ### 证据边界和下一步
 

@@ -1,41 +1,48 @@
-# NanoTrack V3 batch × GOT 交叉对照与困难样本微调规格
+# NanoTrack V3 Batch × GOT Factorial Comparison and Hard-Sample Fine-Tuning Specification
 
-## 目标与证据边界
+## Goals and Evidence Boundaries
 
-以已冻结的 Stage 1 / g5000 checkpoint 为唯一初始化权重，在不访问历史隐藏集、
-不使用验证序列训练、不运行 `sot-v1.mp4` 回归的前提下：
+Use the frozen Stage 1 / g5000 checkpoint as the only initialization, without accessing the
+historical hidden sets, training on validation sequences, or running `sot-v1.mp4` regression:
 
-1. 修正下一轮实验的选模规则，去除 UAV123 在综合分中的重复加权；
-2. 用受控交叉对照选择当前任务下更合适的 batch size 和 GOT-10K 占比；
-3. 审计并修正 GOT 稀疏帧清单的正样本配对语义；
-4. 分析已有验证轨迹的失败类型，只从训练集构造对应困难样本；
-5. 只有新候选满足冻结的最终门槛后，才允许冻结新模型身份并进入一次性最终评测。
+1. Correct model selection for the next experiment by removing the duplicate UAV123 weight
+   from the composite score;
+2. Use a controlled factorial comparison to select a more suitable batch size and GOT-10K
+   proportion for the current task;
+3. Audit and correct positive-pair semantics for the sparse GOT frame manifests;
+4. Analyze failure types in existing validation trajectories and construct matching hard
+   samples exclusively from the training split;
+5. Freeze a new model identity and enter one-time final evaluation only after the new
+   candidate passes the frozen final gates.
 
-本规格只形成桌面 CUDA 训练和评测证据。它不证明 ONNX、RKNN、RK3566 或真实吊舱
-通过。历史 GOT v1/v2 的代码语义、工件、报告和结论保持不变。
+This specification produces evidence only for desktop CUDA training and evaluation. It
+does not establish ONNX, RKNN, RK3566, or real gimbal-pod acceptance. Historical GOT v1/v2
+code semantics, artifacts, reports, and conclusions remain unchanged.
 
-## 固定输入、输出与身份
+## Fixed Inputs, Outputs, and Identities
 
-- 协调基线：`main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`。
-- 初始化权重：
-  `artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth`，
-  SHA-256 `40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1`。
-- 推理配置：`configs/nanotrack_v3_three_stage_stage1.yaml`，SHA-256
-  `cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e`。
-- 数据沿用已准备并审计的 GOT train、GOT val、UAV123、UAVDT、VisDrone-MOT、
-  VisDrone-SOT；不把验证或历史隐藏序列加入训练。
-- 新配置目录：`configs/nanotrack_factorial_v3/`。
-- 新生成工件目录：`artifacts/nanotrack_factorial_v3/`，不提交 Git；Git 只保存代码、
-  规格、计划、报告正文、哈希、命令和验证摘要。
-- 随机种子：筛选阶段 `123456`、`20261011`；确认阶段增加 `20261024`。
+- Coordinator baseline: `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`.
+- Initialization checkpoint:
+  `artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth`,
+  SHA-256 `40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1`.
+- Inference configuration: `configs/nanotrack_v3_three_stage_stage1.yaml`, SHA-256
+  `cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e`.
+- Reuse the prepared and audited GOT train, GOT val, UAV123, UAVDT, VisDrone-MOT, and
+  VisDrone-SOT data; exclude validation and historical hidden sequences from training.
+- New configuration directory: `configs/nanotrack_factorial_v3/`.
+- New generated artifact directory: `artifacts/nanotrack_factorial_v3/`, outside Git;
+  Git tracks only code, specifications, plans, report text, hashes, commands, and
+  verification summaries.
+- Random seeds: `123456` and `20261011` for screening; add `20261024` for confirmation.
 
-## 评分和门槛
+## Scoring and Gates
 
-### 类别数量核对
+### Category Count Audit
 
-按当前四个航拍训练清单的可识别类别统计，normal 清单共有 240,622 个有效帧引用：
+Identifiable categories in the current four aerial training manifests account for
+240,622 valid frame references in the normal manifests:
 
-| 类别 | 轨迹数 | 有效帧引用数 |
+| Category | Tracks | Valid frame references |
 | --- | ---: | ---: |
 | person | 1,718 | 52,198 |
 | vehicle | 3,959 | 102,046 |
@@ -43,118 +50,156 @@
 | other | 25 | 5,141 |
 | unknown | 70 | 60,359 |
 
-其中 person 只出现在 UAV123 和 VisDrone-MOT 的已识别类别中；UAVDT 当前清单全为
-vehicle，VisDrone-SOT 当前清单全部标为 unknown。因而只能确认“可识别标签中的行人少于
-车辆”，不能据此断言 VisDrone-SOT 原始画面没有行人。
+Among identifiable labels, person appears only in UAV123 and VisDrone-MOT. All entries
+in the current UAVDT manifest are vehicle, and all entries in the current VisDrone-SOT
+manifest are unknown. This establishes only that identifiable person labels are fewer
+than vehicle labels; it does not establish that the original VisDrone-SOT imagery lacks people.
 
-当前固定验证证据中，person 为 35 条序列、6,045 个计分帧、约 5 个独立源视频组；
-vehicle 为 57 条序列、9,086 个计分帧、约 7 个独立源视频组。连续帧高度相关，评分和
-置信区间不得把帧数当成独立样本量。
+The current fixed validation evidence contains 35 person sequences, 6,045 scored frames,
+and approximately 5 independent source-video groups; vehicle has 57 sequences, 9,086
+scored frames, and approximately 7 independent source-video groups. Consecutive frames
+are highly correlated; scoring and confidence intervals must not treat frame counts as
+independent sample sizes.
 
-### 新实验的 T
+### T for the New Experiment
 
-训练样本频次反映数据可得性，不代表业务重要性。无人机地面车辆与行人均为正式目标时，
-不按训练数量降低 person 权重。旧的域优先 T 虽然在单个域内写作 person 0.4、vehicle 0.4、
-overall 0.2，但缺失项重归一化后，四域平均中的直接名义权重约为 person 0.20、vehicle
-0.3667、overall 0.4333，并非全局类别等权。
+Training-sample frequency reflects data availability rather than business importance.
+When ground vehicles and people are both formal drone-tracking targets, do not reduce
+the person weight based on training counts. The old domain-first T uses person 0.4,
+vehicle 0.4, and overall 0.2 within each domain, but renormalization of missing terms
+gives approximate direct nominal weights of person 0.20, vehicle 0.3667, and overall
+0.4333 in the four-domain average. It therefore does not give categories equal global weight.
 
-新实验新增版本化的类别优先评分，不修改历史评分函数：
+Add a versioned category-first score for the new experiment without changing historical
+scoring functions:
 
-- `P`：所有具有 person 指标的航拍域之间做宏平均；
-- `V`：所有具有 vehicle 指标的航拍域之间做宏平均；
-- `D`：UAV123、UAVDT、VisDrone-MOT、VisDrone-SOT 的 overall AUC 做四域宏平均；
-- `T_v3 = 0.4 * P + 0.4 * V + 0.2 * D`。
+- `P`: macro-average across aerial domains with a person metric;
+- `V`: macro-average across aerial domains with a vehicle metric;
+- `D`: four-domain macro-average of overall AUC for UAV123, UAVDT, VisDrone-MOT, and VisDrone-SOT;
+- `T_v3 = 0.4 * P + 0.4 * V + 0.2 * D`.
 
-`P`、`V`、`D` 都先在序列层计算，再跨域宏平均；不得按帧数、轨迹数或训练清单频次加权。
-UAV123 不再作为额外加权项。GOT 和 UAV123 作为固定初始化基线约束，而不是再次进入排序
-分数。报告必须同时列出 `P`、`V`、`D`、`T_v3` 和按源视频分组 bootstrap 的 95% 区间；
-区间只表示当前小样本验证面板的不确定性，不把相关帧伪装成独立观测。
+Compute `P`, `V`, and `D` at the sequence level first, then macro-average across domains;
+never weight by frame counts, track counts, or training-manifest frequency. UAV123 is no
+longer an additional weighted term. GOT and UAV123 constrain degradation against the fixed
+initialization baseline rather than contributing again to the ranking score. Reports must
+include `P`, `V`, `D`, `T_v3`, and 95% bootstrap intervals grouped by source video. These
+intervals express uncertainty in the current small validation panel; correlated frames
+must not be presented as independent observations.
 
-候选满足以下全部条件才是约束合格：
+A candidate is guardrail-qualified only when all of the following hold:
 
-- GOT-val AO 相对固定初始化基线下降不超过 0.01；
-- UAV123-val AUC 相对固定初始化基线下降不超过 0.01；
-- person 和 vehicle 跨域宏平均分别下降不超过 0.015。
-- UAVDT、VisDrone-MOT、VisDrone-SOT 的 overall AUC 分别下降不超过 0.015；UAV123 继续
-  使用上一条更严格的 0.01 门槛。
+- GOT-val AO degrades by no more than 0.01 relative to the fixed initialization baseline;
+- UAV123-val AUC degrades by no more than 0.01 relative to the fixed initialization baseline;
+- Cross-domain person and vehicle macro-averages each degrade by no more than 0.015;
+- Overall AUC for UAVDT, VisDrone-MOT, and VisDrone-SOT each degrades by no more than
+  0.015; UAV123 retains the stricter 0.01 gate above.
 
-阶段排序先过滤约束，再按 `T_v3` 降序。最终替换 g5000 还要求三种子聚合后的 `T_v3`
-至少提高 0.005；单种子结果、训练 loss 或显存占用不能单独触发替换。旧字段
-`composite_score` 和旧域优先 `target_score` 只可保留在历史兼容读取中，新实验状态使用
-`target_score_v3`、评分版本和明确的 guardrail 结果。
+For stage ranking, filter by guardrails first, then sort by descending `T_v3`. Replacing
+g5000 additionally requires an improvement of at least 0.005 in `T_v3` aggregated over
+three seeds. A single-seed result, training loss, or memory usage cannot trigger replacement
+alone. Retain the old `composite_score` field and domain-first `target_score` only for
+historical compatibility reads; new experiment state uses `target_score_v3`, the scoring
+version, and explicit guardrail results.
 
-## GOT 帧对语义与审计
+## GOT Frame-Pair Semantics and Audit
 
-先用现有清单产生只读审计，量化旧实现按筛选列表下标截取 `FRAME_RANGE` 时的真实原始
-帧号间隔。新实验仅对名称以 `GOT_` 开头的子池启用原始帧号策略：
+First produce a read-only audit from existing manifests to quantify actual original-frame
+gaps when the old implementation applies `FRAME_RANGE` to filtered-list indices. Enable
+the original-frame-ID policy only for subpools whose names start with `GOT_`:
 
-- 在已过滤、升序的原始帧 ID 列表中均匀选择 template；
-- search 候选满足 `abs(search_id - template_id) <= FRAME_RANGE`；
-- template 自身始终是合法候选；
-- 使用训练器已经冻结的 NumPy 随机状态选择 search，保持按样本索引可复现；
-- 航拍子池继续使用历史列表位置策略，避免同时改变其训练分布。
+- Select the template uniformly from the filtered, ascending list of original frame IDs;
+- Search candidates must satisfy `abs(search_id - template_id) <= FRAME_RANGE`;
+- The template frame itself is always eligible;
+- Select the search frame using the NumPy random state already frozen by the trainer,
+  preserving reproducibility by sample index;
+- Aerial subpools retain the historical list-position policy to avoid changing their
+  training distribution at the same time.
 
-实现保存在主仓库的受控代码中，不直接提交或依赖外部 NanoTrack checkout 的未提交修改。
-训练入口在构造数据集前安装显式 pair-policy；checkpoint 和运行来源必须记录 policy 文件哈希。
-审计至少报告 eligible candidate 数量、实际帧间隔的 P50/P90/P95/max、同帧比例和被新策略
-排除的旧候选比例。
+Keep the implementation in controlled code in the main repository; do not directly commit
+or depend on uncommitted changes in the external NanoTrack checkout. The training entry
+point installs an explicit pair-policy before dataset construction. Checkpoints and run
+provenance must record the policy-file hash. The audit reports at least eligible candidate
+counts, P50/P90/P95/max of actual frame gaps, same-frame proportion, and the proportion
+of old candidates excluded by the new policy.
 
-## 3 × 3 等样本交叉对照
+## 3 × 3 Equal-Sample Factorial Comparison
 
-两个因素及水平为：
+The two factors and their levels are:
 
-- batch size：`8`、`32`、`64`；
-- GOT 占比：`0%`、`10%`、`30%`。
+- Batch size: `8`, `32`, `64`;
+- GOT proportion: `0%`, `10%`, `30%`.
 
-每个组合从同一个 g5000 权重和新优化器开始。除 batch 和 GOT 配比外，冻结层、BN、
-损失、增强、种子、样本顺序、评测面板和推理配置相同。GOT 为 0% 时不构造 GOT 子池；
-GOT 非零时 person、vehicle、other 等分 GOT 配额。剩余航拍配额按照上一轮 Stage 1 的
-四域比例 `16.25:22.5:22.5:8.75` 重新归一化，并使用最大余数法闭合整数总数。
+Each cell starts from the same g5000 checkpoint and a new optimizer. Apart from batch
+size and GOT proportion, keep frozen layers, BN, loss, augmentation, seeds, sample order,
+evaluation panels, and inference configuration identical. Do not construct GOT subpools
+at 0% GOT. At a nonzero GOT proportion, divide the GOT quota equally among person,
+vehicle, and other. Renormalize the remaining aerial quota using the previous Stage 1
+four-domain ratio `16.25:22.5:22.5:8.75`, and use the largest-remainder method to close
+the integer total exactly.
 
-主比较采用等样本预算，不把“相同样本数”和“相同更新数”混写：
+The primary comparison uses an equal-sample budget; distinguish equal sample counts
+from equal update counts:
 
-- 配置总预算为每种子 40,960 对样本，LR 固定从 `2e-5` 按已见样本比例对数衰减到
-  `8e-6`，不随 batch 放大；
-- 初筛只运行到 10,240 对样本，每 2,560 对保存并评估一次；batch 8/32/64 对应候选
-  间隔 320/80/40 optimizer steps；
-- 同一 seed/GOT 配比下，各 batch 消费相同顺序的 10,240 个样本和相同逐样本增强种子；
-- 每个训练段记录实际 batch、样本数、更新数、LR 首末值、loss 有限性、墙钟时间和 CUDA
-  峰值；任意 OOM/NaN/Inf 记为失败，不在段中静默改变 batch。
+- Configure a total budget of 40,960 sample pairs per seed. Decay LR logarithmically
+  from `2e-5` to `8e-6` by the fraction of samples seen, without scaling LR by batch size;
+- Screen only through 10,240 sample pairs, saving and evaluating every 2,560 pairs;
+  batch 8/32/64 gives candidate intervals of 320/80/40 optimizer steps;
+- For the same seed/GOT proportion, every batch size consumes the same ordered 10,240
+  samples and the same per-sample augmentation seeds;
+- Each training segment records actual batch size, sample count, update count, initial
+  and final LR, loss finiteness, wall-clock time, and peak CUDA memory. Record any
+  OOM/NaN/Inf as a failure; do not silently change batch size within a segment.
 
-初筛以两个种子的 10,240 样本节点比较单元格。只有两个种子均通过 guardrail 的单元格
-可进入正常候选集；若全部失败，只报告“没有安全组合”，允许选择退化最小的组合继续诊断，
-但不得称为晋级。取平均 T 最好的单元格及与其相差不超过 0.002 的单元格，最多三个，
-继续到 40,960 样本并增加第三种子。确认阶段在预先存在的四个样本节点中，按三种子平均
-`T_v3` 选择节点，禁止按单个种子挑不同训练时长。
+Screen cells at the 10,240-sample node for both seeds. Only cells whose two seeds both
+pass guardrails enter the normal candidate set. If all fail, report that no safe
+combination exists. The least-degraded cell may continue for diagnosis, but this is not
+promotion. Extend the cell with the best mean T and cells within 0.002 of it, at most
+three cells, to 40,960 samples and add the third seed. During confirmation, choose among
+the four pre-existing sample nodes by three-seed mean `T_v3`; do not choose different
+training durations for individual seeds.
 
-若两个单元格三种子平均 `T_v3` 差异小于 0.002 且按独立视频分组 bootstrap 的 95% 区间高度
-重叠，则结论为精度不可区分；同时比较 `P`、`V` 的分组区间，不能用总体区间掩盖单类
-明显退化。在满足显存门和复现性的前提下，选择实测训练墙钟时间更短的 batch。只有需要
-解释“更新次数是否造成 batch 效应”时，才增加同 GOT 比例的等更新数诊断，并明确其样本量
-不同，不与主实验混合排名。
+If two cells differ by less than 0.002 in three-seed mean `T_v3` and their 95% bootstrap
+intervals grouped by independent video overlap heavily, conclude that accuracy is
+indistinguishable. Also compare grouped intervals for `P` and `V`; overall intervals must
+not hide clear degradation in a single category. Subject to the memory gate and
+reproducibility, choose the batch with shorter measured training wall-clock time. Add
+an equal-update diagnostic at the same GOT proportion only when needed to explain
+whether update count causes a batch effect. Label its different sample count explicitly
+and exclude it from the primary ranking.
 
-## 验证失败分析与困难样本
+## Validation Failure Analysis and Hard Samples
 
-已有验证预测仅用于诊断。工具按序列输出逐帧 IoU、首次持续漂移区间、零 IoU 连续段、
-尺度比、归一化位移和边界截断线索，并为优先序列生成小型联系图。自动分类只使用可证明的
-几何/标注证据；遮挡、相似目标干扰或身份切换若无法从现有标注确定，标记为
-`ambiguous_requires_human_review`，不强行归类。
+Use existing validation predictions only for diagnosis. For each sequence, the tools
+output per-frame IoU, the first sustained-drift interval, zero-IoU runs, scale ratios,
+normalized displacement, and boundary-truncation clues, and generate small contact sheets
+for priority sequences. Automatic classification uses only demonstrable geometric or
+annotation evidence. If existing annotations cannot establish occlusion, similar-target
+interference, or identity switching, label the case `ambiguous_requires_human_review`
+instead of forcing a classification.
 
-困难样本只能从训练 split 重新筛选。筛选器复用现有 small/scale/motion/occlusion/distractor
-来源标注与几何规则，输出独立 manifest 和 provenance，验证其与所有 validation/hidden
-视频 ID 不相交。确定交叉对照优胜配方后，比较“无额外困难样本”和“加入对应困难样本”
-两个分支，使用相同起点、样本预算、种子和评测门槛。只有受控对照证实 `T_v3` 改善且
-guardrail 通过，困难样本分支才可进入最终候选。
+Select hard samples afresh only from the training split. Reuse existing
+small/scale/motion/occlusion/distractor source annotations and geometric rules; output an
+independent manifest and provenance, and verify disjoint video IDs against all
+validation/hidden data. After determining the winning factorial recipe, compare branches
+without extra hard samples and with matching hard samples using the same starting
+point, sample budget, seeds, and evaluation gates. The hard-sample branch may enter the
+final candidate set only if the controlled comparison demonstrates improved `T_v3` and
+all guardrails pass.
 
-## 隐藏集、报告和停止条件
+## Hidden Sets, Reports, and Stop Conditions
 
-- GOT train-hidden 在最终模型身份冻结且最终替换门槛通过前禁止访问；若没有模型通过，
-  保持 g5000，不运行隐藏集。
-- 已查看的历史航拍隐藏面板不再称为未触碰测试集；最终航拍泛化结论需要另行确认独立留出集。
-- 新实验只生成中文报告 `REPORT.zh-CN.md`；历史英文/中文报告均保留且不覆盖，不为本轮新建
-  `REPORT.md`。
-- 本任务后续新增或修订的规格和实施计划正文统一使用中文；命令、路径、代码标识符和既有
-  接口名称保留原文。
-- 报告必须区分训练完成、桌面评测、模型晋级、转换、板端和吊舱证据。
-- 每个实质里程碑把代码/文档与 `docs/progress/nanotrack-finetune.md` 放在同一提交中，
-  并向协调对话回传提交 ID；不得修改 `STATUS.md`、`integration-contract.yaml` 或其他任务文件。
+- Access to GOT train-hidden is prohibited until the final model identity is frozen
+  and the final replacement gate passes. If no model passes, retain g5000 and do not
+  run hidden-set evaluation.
+- The previously viewed historical aerial hidden panel is no longer an untouched test
+  set; final aerial generalization claims require a separately confirmed independent holdout.
+- Generate only the Chinese final report `REPORT.zh-CN.md` for this experiment. Preserve
+  all historical English and Chinese reports without overwriting them; do not create or
+  overwrite `REPORT.md` for this experiment.
+- Write all subsequently added or revised specifications and implementation plans for
+  this task in English; preserve commands, paths, code identifiers, and existing interface names.
+- Reports must distinguish completed training, desktop evaluation, model promotion,
+  conversion, development-board evidence, and gimbal-pod evidence.
+- At each material milestone, commit code/documentation together with
+  `docs/progress/nanotrack-finetune.md` and return the commit ID to the coordinating chat.
+  Do not modify `STATUS.md`, `integration-contract.yaml`, or another task's progress file.
