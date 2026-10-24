@@ -1,176 +1,255 @@
-# NanoTrack V3 Factorial Experiment Implementation Plan
+# NanoTrack V3 交叉对照实验实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供执行代理使用：** 必须使用 `superpowers:subagent-driven-development`（推荐）或
+> `superpowers:executing-plans`，逐项实施本计划。步骤使用复选框（`- [ ]`）跟踪。
 
-**Goal:** Implement and execute a reproducible batch `{8,32,64}` × GOT `{0%,10%,30%}` NanoTrack fine-tuning experiment, correct GOT frame-pair semantics, diagnose validation failures, and test training-only hard-sample remediation without contaminating validation or hidden sets.
+**目标：** 实现并执行可复现的 batch `{8,32,64}` × GOT `{0%,10%,30%}` NanoTrack
+微调实验，修正 GOT 帧对语义，诊断验证失败，并在不污染验证集或隐藏集的前提下测试仅来自
+训练集的困难样本强化。
 
-**Architecture:** Preserve historical v1/v2 behavior and add versioned v3 policy, configuration, orchestration, diagnostics, verification, and reporting modules. Training continues to use the official NanoTrack checkout, but a tracked runtime pair-policy adapter supplies original-frame-ID pairing for GOT only, so no uncommitted external-repository edit becomes part of the result.
+**架构：** 保留历史 v1/v2 行为，新增带版本的 v3 策略、配置、控制、诊断、验证和报告模块。
+训练继续使用官方 NanoTrack checkout，但由主仓库跟踪的运行时帧对策略适配器仅为 GOT 提供
+原始帧 ID 配对，避免把外部仓库的未提交修改纳入结果。
 
-**Tech Stack:** Python 3.7, PyTorch 1.7.1/CUDA 10.2, NumPy, OpenCV, YAML, `unittest`, official NanoTrack V3 checkout.
+**技术栈：** Python 3.7、PyTorch 1.7.1/CUDA 10.2、NumPy、OpenCV、YAML、
+`unittest`、官方 NanoTrack V3 checkout。
 
-**Spec:** `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`
+**规格：** `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`
 
-## Global Constraints
+## 全局约束
 
-- Work on `codex/nanotrack-factorial-v3` from `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`; never implement on `main`.
-- Do not modify historical GOT v1/v2 artifacts or reinterpret their selection rule.
-- Do not train on validation/hidden sequences, access GOT train-hidden before a final qualified selection, or run `sot-v1.mp4`.
-- Generated models, logs, images, videos, and experiment JSON remain outside Git; commit paths, hashes, commands, reports, and verification summaries only.
-- Modify only NanoTrack fine-tuning code/docs and `docs/progress/nanotrack-finetune.md`; do not edit public coordination files or other task files.
-- Every behavioral change follows RED → GREEN; every material milestone commits code/docs and the task progress file together.
-- The full factorial comparison is equal-sample primary evidence. Any equal-update diagnostic is separately labeled and never mixed into the ranking.
+- 在从 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db` 创建的
+  `codex/nanotrack-factorial-v3` 上工作，禁止在 `main` 实施。
+- 不修改历史 GOT v1/v2 工件，也不重新解释其选模规则。
+- 不使用验证/隐藏序列训练；最终合格模型冻结前不访问 GOT train-hidden；不运行
+  `sot-v1.mp4`。
+- 生成的模型、日志、图片、视频和实验 JSON 均留在 Git 外；Git 只提交路径、哈希、命令、
+  报告和验证摘要。
+- 只修改 NanoTrack 微调代码/文档和 `docs/progress/nanotrack-finetune.md`；不修改公共协调
+  文件或其他任务文件。
+- 每项行为修改遵循 RED → GREEN；每个实质里程碑把代码/文档和任务进度文件一同提交。
+- 完整交叉对照以等样本实验为主要证据。等更新数诊断必须单独标注，绝不混入主排名。
+- 本计划以及本任务后续新增或修订的规格、计划正文统一使用中文；命令、路径和代码标识符
+  保留原文。
+- 本轮只生成中文报告 `REPORT.zh-CN.md`；保留历史英文报告，但不新建或覆盖
+  `REPORT.md`。
 
-## Review Focus
+## 审查重点
 
-- A historical v2 verification or replay must retain its old `0.70/0.15/0.15` semantics after v3 is added; Task 1 adds an explicit compatibility test.
-- Sparse, non-consecutive frame IDs such as `[1, 50, 200]` must be filtered by original ID gap for GOT while legacy aerial pairing remains positional; Task 2 tests both paths.
-- GOT 0% must contain no GOT dataset entry, and every batch/ratio config must close exactly to 40,960 samples; Task 3 tests all nine cells.
-- A resumed run must not repeat completed training/evaluation and must reject mismatched checkpoint/config/pair-policy hashes; Task 4 tests interruption and identity mismatch.
-- Validation sequence IDs must never enter the generated hard-training manifest, including aliases/segments of the same source video; Task 5 tests source-group disjointness.
+- 新增 v3 后，历史 v2 验证或回放必须保留原 `0.70/0.15/0.15` 语义；任务 1 增加明确
+  的兼容性测试。
+- 新 `T_v3` 必须在类别层真正保持 person/vehicle 各 0.4，不按帧数或训练数量加权；旧的
+  域优先 `target_score` 保持不变，任务 1 同时测试两种语义。
+- 对 `[1, 50, 200]` 这类稀疏、不连续帧 ID，GOT 必须按原始 ID 间隔过滤，而历史航拍配对
+  仍按列表位置；任务 2 测试两条路径。
+- GOT 0% 不得包含 GOT 数据项，每个 batch/比例配置必须精确闭合到 40,960 个样本；任务 3
+  测试全部九个单元格。
+- 恢复运行不得重复已完成训练/评测，且必须拒绝 checkpoint/config/pair-policy 哈希不匹配；
+  任务 4 测试中断恢复和身份不匹配。
+- 验证序列 ID 及同一源视频的别名/分段不得进入困难训练清单；任务 5 测试源组隔离。
 
 ---
 
-## Execution preflight
+## 执行前检查
 
-- The versioned code root is `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`.
-- The large-asset root remains `/home/u20/single-object-tracking`. Before Task 1, create only missing,
-  Git-ignored worktree symlinks for `.venvs`, `data`, `artifacts`, and `repos`; validate every link with
-  `readlink -f` before use. Never copy generated artifacts between worktrees.
-- Record the observed baseline suite result (`166` tests, `5` failures and `1` error caused by historical
-  absolute-path/worktree assumptions) in the ledger. The user must choose whether to proceed with this
-  known boundary or first repair it; no executor may silently relabel the baseline as green.
-- Recheck the frozen checkpoint and config hashes from the Spec before any training command.
+- 版本化代码根目录为
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+- 大工件根目录仍为 `/home/u20/single-object-tracking`。任务 1 前仅为缺失的 `.venvs`、
+  `data`、`artifacts`、`repos` 创建被 Git 忽略的工作树符号链接；使用前逐一用
+  `readlink -f` 验证。禁止在工作树之间复制生成工件。
+- 在台账记录已观察的基线测试结果：共 `166` 项，因历史绝对路径/工作树假设出现 `5` 项
+  失败和 `1` 项错误。用户必须选择接受此已知边界继续，或先修复兼容性；执行者不得把该
+  基线静默标成全绿。
+- 任何训练命令前重新核对规格中的冻结 checkpoint 和配置哈希。
 
 ---
 
-### Task 1: Versioned target-first scoring policy
+### 任务 1：版本化的类别优先评分策略
 
-**Files:**
-- Create: `scripts/nanotrack_factorial_policy.py`
-- Create: `tests/test_nanotrack_factorial_policy.py`
-- Modify: `docs/progress/nanotrack-finetune.md`
+**文件：**
+- 新建：`scripts/nanotrack_factorial_policy.py`
+- 新建：`tests/test_nanotrack_factorial_policy.py`
+- 修改：`docs/progress/nanotrack-finetune.md`
 
-**Interfaces:**
-- Consumes: metric mappings produced by `scripts.run_nanotrack_got_replay.build_metrics`.
-- Produces: `guardrail_decision(candidate, baseline) -> dict`, `rank_key(metrics, baseline) -> tuple`, `final_promotion(candidate_by_seed, baseline) -> dict`, and a version string recorded by later state files.
+**接口：**
+- 输入：`scripts.run_nanotrack_got_replay.build_metrics` 产生的指标映射。
+- 输出：`target_score_v3(metrics) -> float`、`guardrail_decision(candidate, baseline) -> dict`、
+  `rank_key(metrics, baseline) -> tuple`、`final_promotion(candidate_by_seed, baseline) -> dict`，
+  以及后续状态文件记录的评分版本字符串。
 
-- [ ] **Step 1: Write failing policy tests.** Cover T-only ordering when UAV123/GOT disagree, each fixed-baseline guardrail boundary, three-seed `T >= baseline + 0.005`, non-finite inputs, and a compatibility assertion showing the old `composite_score` still returns `0.70*T + 0.15*G + 0.15*U`.
-- [ ] **Step 2: Run** `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_factorial_policy -v`. **Expected:** import failure because the v3 policy module does not exist.
-- [ ] **Step 3: Implement the minimal policy module.** Use the existing domain-first `target_score` and `category_macro`; do not edit old scoring functions.
-- [ ] **Step 4: Run the new test and the historical controller/reporting tests.** **Expected:** all pass and old v2 values remain byte-semantically reproducible.
-- [ ] **Step 5: Update the owned progress file with policy status/evidence and commit** `feat: add target-first NanoTrack selection policy`.
+- [ ] **步骤 1：编写失败的策略测试。** 覆盖 `P`/`V` 各 0.4、`D` 为四域总体宏平均、
+  缺失类别只在有该指标的域间宏平均、禁止按帧数加权、UAV123/GOT 方向冲突时只按
+  `T_v3` 排序、每个固定基线门槛、三种子 `T_v3 >= baseline + 0.005`、非有限输入；并断言
+  旧 `target_score` 与 `composite_score` 仍保留历史语义。
+- [ ] **步骤 2：运行** `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_factorial_policy -v`。
+  **预期：** v3 策略模块尚不存在，导入失败。
+- [ ] **步骤 3：实现最小策略模块。** 新增类别优先 `target_score_v3`，复用指标读取但不修改
+  旧评分函数；加入 person、vehicle、GOT、UAV123 及逐航拍域退化门。
+- [ ] **步骤 4：运行新测试和历史控制器/报告测试。** **预期：** 全部通过，旧 v2 数值仍可
+  按原语义复现。
+- [ ] **步骤 5：在本任务进度文件记录策略状态/证据并提交**
+  `feat: add category-first NanoTrack selection policy`。
 
-### Task 2: Original-frame-ID pair policy and audit
+### 任务 2：原始帧 ID 配对策略与审计
 
-**Files:**
-- Create: `scripts/nanotrack_pair_sampling.py`
-- Create: `scripts/audit_nanotrack_frame_pairs.py`
-- Create: `tests/test_nanotrack_pair_sampling.py`
-- Modify: `scripts/train_nanotrack_uav123.py`
-- Modify: `docs/progress/nanotrack-finetune.md`
+**文件：**
+- 新建：`scripts/nanotrack_pair_sampling.py`
+- 新建：`scripts/audit_nanotrack_frame_pairs.py`
+- 新建：`tests/test_nanotrack_pair_sampling.py`
+- 修改：`scripts/train_nanotrack_uav123.py`
+- 修改：`docs/progress/nanotrack-finetune.md`
 
-**Interfaces:**
-- Consumes: `SubDataset` instances with `name`, `frame_range`, `labels`, `videos`, and `get_image_anno`; a JSON pair-policy mapping dataset prefixes to `original_frame_id`.
-- Produces: `eligible_search_frames(frames, template_id, frame_range, mode) -> list`, `install_pair_policy(subdataset_class, policy) -> None`, CLI `--pair-policy`, and an audit JSON used by Task 4 provenance.
+**接口：**
+- 输入：具有 `name`、`frame_range`、`labels`、`videos`、`get_image_anno` 的
+  `SubDataset` 实例，以及把数据集前缀映射到 `original_frame_id` 的 JSON 配对策略。
+- 输出：`eligible_search_frames(frames, template_id, frame_range, mode) -> list`、
+  `install_pair_policy(subdataset_class, policy) -> None`、命令行参数 `--pair-policy`，以及
+  任务 4 溯源使用的审计 JSON。
 
-- [ ] **Step 1: Write failing unit/integration tests.** Assert `[1,50,200]`, range 60, template 50 yields `[1,50]` in original-ID mode but all three in legacy positional mode; GOT-only installation leaves an aerial fake dataset on its original method; malformed/unknown policies fail before training.
-- [ ] **Step 2: Run the focused tests.** **Expected:** import/CLI failures for missing functionality.
-- [ ] **Step 3: Implement pair selection and the runtime adapter; extend the trainer CLI.** Record pair-policy SHA-256 in checkpoints and reject resume with a different hash.
-- [ ] **Step 4: Add and run the audit CLI** against the existing GOT manifests, writing `artifacts/nanotrack_factorial_v3/pair-audit/`; verify P50/P90/P95/max, same-frame ratio, excluded-candidate ratio, manifest hashes, and sequence/frame counts.
-- [ ] **Step 5: Run trainer resume tests plus all pair tests.** **Expected:** all pass; no file under `repos/siamtrackers/NanoTrack` is modified.
-- [ ] **Step 6: Update the owned progress file with audit path/hash and commit** `feat: use original frame ids for GOT pair sampling`.
+- [ ] **步骤 1：编写失败的单元/集成测试。** 断言帧 `[1,50,200]`、范围 60、模板 50
+  在原始 ID 模式得到 `[1,50]`，在历史位置模式得到全部三帧；只为 GOT 安装策略后，伪造
+  航拍数据集仍使用原方法；非法/未知策略必须在训练前失败。
+- [ ] **步骤 2：运行聚焦测试。** **预期：** 缺少功能导致导入/命令行失败。
+- [ ] **步骤 3：实现帧对选择和运行时适配器，并扩展训练器命令行。** checkpoint 记录
+  pair-policy SHA-256；恢复时哈希不同则拒绝。
+- [ ] **步骤 4：新增并运行审计命令**，读取既有 GOT 清单，写入
+  `artifacts/nanotrack_factorial_v3/pair-audit/`；验证 P50/P90/P95/max、同帧比例、旧候选
+  被排除比例、清单哈希、序列/帧数。
+- [ ] **步骤 5：运行训练恢复测试和全部帧对测试。** **预期：** 全部通过，且
+  `repos/siamtrackers/NanoTrack` 下无文件被修改。
+- [ ] **步骤 6：在本任务进度文件记录审计路径/哈希并提交**
+  `feat: use original frame ids for GOT pair sampling`。
 
-### Task 3: Nine-cell sample-exact configuration generator
+### 任务 3：九单元格精确样本配置生成器
 
-**Files:**
-- Create: `scripts/generate_nanotrack_factorial_configs.py`
-- Create: `tests/test_nanotrack_factorial_configs.py`
-- Create generated configs under: `configs/nanotrack_factorial_v3/`
-- Modify: `docs/progress/nanotrack-finetune.md`
+**文件：**
+- 新建：`scripts/generate_nanotrack_factorial_configs.py`
+- 新建：`tests/test_nanotrack_factorial_configs.py`
+- 在 `configs/nanotrack_factorial_v3/` 下生成配置
+- 修改：`docs/progress/nanotrack-finetune.md`
 
-**Interfaces:**
-- Consumes: batch levels `(8,32,64)`, GOT ratios `(0.0,0.1,0.3)`, total 40,960, interval 2,560, LR `2e-5 -> 8e-6`, and the Task 2 pair-policy path/hash.
-- Produces: nine immutable YAML configs plus `experiment-manifest.json` containing exact quotas, steps, samples, seeds, input hashes, and output roots.
+**接口：**
+- 输入：batch 水平 `(8,32,64)`、GOT 比例 `(0.0,0.1,0.3)`、总样本 40,960、间隔
+  2,560、学习率 `2e-5 -> 8e-6`，以及任务 2 的 pair-policy 路径/哈希。
+- 输出：九份不可变 YAML 配置和 `experiment-manifest.json`，其中包含精确配额、更新数、
+  样本数、种子、输入哈希和输出根目录。
 
-- [ ] **Step 1: Write failing table-driven tests for all nine cells.** Hand-check totals, no GOT entries at 0%, equal GOT category allocation within integer rounding, normalized aerial ratios, interval divisibility, LR equality across batches, and absolute paths rooted at the experiment asset root.
-- [ ] **Step 2: Run the focused tests.** **Expected:** generator import failure.
-- [ ] **Step 3: Implement quota/config/manifest generation.** Keep full schedule length 40,960 while the controller may stop first at 10,240.
-- [ ] **Step 4: Generate configs and run a real `BANDataset` construction/sample smoke for every config without optimization.** **Expected:** all nine load; each decoded sample has finite tensors and expected shapes.
-- [ ] **Step 5: Run config, data-loader, and historical GOT config tests.** **Expected:** all pass and v1/v2 generators remain unchanged.
-- [ ] **Step 6: Update the owned progress file with manifest/config hashes and commit** `feat: generate NanoTrack batch GOT factorial configs`.
+- [ ] **步骤 1：为九个单元格编写失败的表驱动测试。** 人工核对总量、GOT 0% 无 GOT
+  条目、GOT 类别配额在整数舍入内等分、航拍比例归一化、评测间隔可整除、不同 batch 的
+  学习率一致，以及绝对路径均以实验工件根目录为根。
+- [ ] **步骤 2：运行聚焦测试。** **预期：** 生成器导入失败。
+- [ ] **步骤 3：实现配额/配置/清单生成。** 完整计划保持 40,960 样本，控制器可先在
+  10,240 样本处停止。
+- [ ] **步骤 4：生成配置，并为每份配置真实构造 `BANDataset`、抽取样本，不执行优化。**
+  **预期：** 九份均可加载；每个解码样本张量有限且形状正确。
+- [ ] **步骤 5：运行配置、数据加载器和历史 GOT 配置测试。** **预期：** 全部通过，v1/v2
+  生成器不变。
+- [ ] **步骤 6：在本任务进度文件记录清单/配置哈希并提交**
+  `feat: generate NanoTrack batch GOT factorial configs`。
 
-### Task 4: Resumable factorial controller and verifier
+### 任务 4：可恢复的交叉实验控制器与验证器
 
-**Files:**
-- Create: `scripts/run_nanotrack_factorial.py`
-- Create: `scripts/verify_nanotrack_factorial.py`
-- Create: `tests/test_nanotrack_factorial_controller.py`
-- Modify: `docs/progress/nanotrack-finetune.md`
+**文件：**
+- 新建：`scripts/run_nanotrack_factorial.py`
+- 新建：`scripts/verify_nanotrack_factorial.py`
+- 新建：`tests/test_nanotrack_factorial_controller.py`
+- 修改：`docs/progress/nanotrack-finetune.md`
 
-**Interfaces:**
-- Consumes: Task 1 policy, Task 2 pair-policy/audit, Task 3 manifest/configs, existing trainer and three desktop evaluators.
-- Produces: transactional `candidate_table.json`, `cell_summary.json`, selection/expansion decision, exact commands/logs, checkpoint/evaluation hashes, and a read-only verifier result.
+**接口：**
+- 输入：任务 1 策略、任务 2 pair-policy/审计、任务 3 清单/配置、既有训练器和三个桌面
+  评测器。
+- 输出：事务式 `candidate_table.json`、`cell_summary.json`、筛选/扩展决定、精确命令/日志、
+  checkpoint/评测哈希和只读验证结果。
 
-- [ ] **Step 1: Write failing fake end-to-end tests.** Cover nine cells × two seeds × four nodes, exact sample-to-step boundaries, interruption reuse, identity mismatch rejection, no hidden/video commands, guardrail filtering, at-most-three expansion cells, and fallback diagnostic status when none are safe.
-- [ ] **Step 2: Run focused tests.** **Expected:** controller import failure.
-- [ ] **Step 3: Implement the controller using existing evaluator primitives but new state/schema.** Every persisted result binds code/config/checkpoint/pair-policy hashes; completed nodes are idempotently reused.
-- [ ] **Step 4: Implement the verifier.** It must validate the full expected matrix, exact quotas/sample counts, two seed coverage, finite metrics, artifact hashes, and hidden/video absence without rewriting evidence.
-- [ ] **Step 5: Run fake controller tests, historical controller tests, and verifier CLI help/tests.** **Expected:** all pass.
-- [ ] **Step 6: Update the owned progress file and commit** `feat: add resumable NanoTrack factorial controller`.
+- [ ] **步骤 1：编写失败的伪端到端测试。** 覆盖九单元格 × 两种子 × 四节点、样本到更新
+  边界、中断复用、身份不匹配拒绝、无隐藏集/视频命令、约束过滤、最多三个扩展单元格、无
+  安全组合时的诊断状态，以及 `T_v3` 评分版本绑定。
+- [ ] **步骤 2：运行聚焦测试。** **预期：** 控制器导入失败。
+- [ ] **步骤 3：复用现有评测器原语、采用新状态/模式实现控制器。** 每项持久化结果绑定
+  代码/config/checkpoint/pair-policy/评分策略哈希；已完成节点幂等复用。
+- [ ] **步骤 4：实现验证器。** 在不重写证据的前提下，验证完整预期矩阵、精确配额/样本数、
+  两种子覆盖、有限指标、工件哈希、评分版本以及未访问隐藏集/视频。
+- [ ] **步骤 5：运行伪控制器测试、历史控制器测试和验证器命令行帮助/测试。** **预期：**
+  全部通过。
+- [ ] **步骤 6：更新本任务进度文件并提交**
+  `feat: add resumable NanoTrack factorial controller`。
 
-### Task 5: Validation-failure diagnostics and training-only hard pool
+### 任务 5：验证失败诊断与仅训练集困难样本池
 
-**Files:**
-- Create: `scripts/analyze_nanotrack_failures.py`
-- Create: `scripts/build_nanotrack_failure_matched_pool.py`
-- Create: `tests/test_nanotrack_failure_analysis.py`
-- Modify: `docs/progress/nanotrack-finetune.md`
+**文件：**
+- 新建：`scripts/analyze_nanotrack_failures.py`
+- 新建：`scripts/build_nanotrack_failure_matched_pool.py`
+- 新建：`tests/test_nanotrack_failure_analysis.py`
+- 修改：`docs/progress/nanotrack-finetune.md`
 
-**Interfaces:**
-- Consumes: existing baseline/candidate per-sequence predictions, validation GT, prepared training split/group metadata, and existing hard-reason annotations.
-- Produces: per-sequence diagnostic JSON, bounded contact sheets, ambiguity queue, and a training-only matched hard manifest with source-group disjointness provenance.
+**接口：**
+- 输入：现有基线/候选逐序列预测、验证 GT、已准备的训练 split/分组元数据和既有困难原因
+  标注。
+- 输出：逐序列诊断 JSON、数量受限的联系图、歧义队列，以及带源组不相交溯源的仅训练集
+  匹配困难样本清单。
 
-- [ ] **Step 1: Write failing synthetic tests.** Cover sustained drift, zero-IoU runs, scale/motion geometry, boundary truncation, evidence-insufficient occlusion/distractor classification, and validation/source alias rejection in the training manifest.
-- [ ] **Step 2: Run focused tests.** **Expected:** analysis modules are missing.
-- [ ] **Step 3: Implement geometry diagnostics and contact-sheet generation.** Do not infer occlusion or identity switch without evidence; output `ambiguous_requires_human_review`.
-- [ ] **Step 4: Implement training-only pool construction** from existing training annotations/reasons with exact source-video disjointness checks against validation and hidden panels.
-- [ ] **Step 5: Run the tools on existing g5000/v2 results.** Inspect generated contact sheets; request human assistance only for queued identity/occlusion ambiguities, while continuing all unambiguous work.
-- [ ] **Step 6: Run focused tests and provenance verifier, update the owned progress file with paths/hashes, and commit** `feat: diagnose NanoTrack failures without validation leakage`.
+- [ ] **步骤 1：编写失败的合成测试。** 覆盖持续漂移、零 IoU 连续段、尺度/运动几何、边界
+  截断、证据不足的遮挡/干扰物分类，以及训练清单拒绝验证源别名。
+- [ ] **步骤 2：运行聚焦测试。** **预期：** 分析模块缺失。
+- [ ] **步骤 3：实现几何诊断和联系图生成。** 没有证据时不推断遮挡或身份切换，输出
+  `ambiguous_requires_human_review`。
+- [ ] **步骤 4：根据现有训练标注/原因构造仅训练集样本池**，并与验证/隐藏面板做精确的
+  源视频不相交检查。
+- [ ] **步骤 5：在现有 g5000/v2 结果上运行工具。** 检查生成的联系图；只有进入队列的
+  身份/遮挡歧义需要人工协助，其余明确工作继续自动执行。
+- [ ] **步骤 6：运行聚焦测试和溯源验证器，在本任务进度文件记录路径/哈希并提交**
+  `feat: diagnose NanoTrack failures without validation leakage`。
 
-### Task 6: Execute screening and confirmation experiment
+### 任务 6：执行初筛与确认实验
 
-**Files:**
-- Generated only: `artifacts/nanotrack_factorial_v3/`
-- Modify: `docs/progress/nanotrack-finetune.md`
+**文件：**
+- 仅生成：`artifacts/nanotrack_factorial_v3/`
+- 修改：`docs/progress/nanotrack-finetune.md`
 
-**Interfaces:**
-- Consumes: Tasks 1–4 and frozen g5000 identity.
-- Produces: observed nine-cell/two-seed screening results, up-to-three-cell/full-budget/third-seed confirmation results, and a batch/GOT decision with uncertainty and timing evidence.
+**接口：**
+- 输入：任务 1–4 和冻结的 g5000 身份。
+- 输出：实测九单元格/两种子初筛结果、最多三个单元格/完整预算/第三种子确认结果，以及包含
+  不确定性和计时证据的 batch/GOT 决定。
 
-- [ ] **Step 1: Recheck `nvidia-smi`, CUDA/PyTorch availability, checkpoint/config/data hashes, free disk, and absence of another training process.** Record exact output; stop on identity mismatch.
-- [ ] **Step 2: Run a real forward/backward probe for batch 8, 32, and 64** using the corrected pair policy. **Expected:** 50 finite steps each or an explicit failed cell; no silent fallback.
-- [ ] **Step 3: Run the 18 screening trajectories** to 10,240 samples and evaluate all four fixed nodes. Resume rather than restart after interruption.
-- [ ] **Step 4: Verify the complete screening matrix** and freeze the expansion decision before further training.
-- [ ] **Step 5: Continue selected cells to 40,960 samples and run seed `20261024`; evaluate fixed nodes and grouped-video bootstrap.** If no cell is safe, run only the declared diagnostic continuation and retain g5000.
-- [ ] **Step 6: If the batch conclusion is causally ambiguous and the spec condition is met, run the separately labeled equal-update diagnostic.** Never add its metrics to primary ranking.
-- [ ] **Step 7: Update the owned progress file with commands, interruptions, metrics, hashes, blockers, and chosen batch/GOT status; commit** `docs: record NanoTrack factorial experiment evidence`.
+- [ ] **步骤 1：重新检查 `nvidia-smi`、CUDA/PyTorch 可用性、checkpoint/config/data 哈希、
+  剩余磁盘和是否存在其他训练进程。** 记录精确输出；身份不匹配立即停止。
+- [ ] **步骤 2：用修正后的帧对策略，对 batch 8、32、64 分别执行真实前向/反向探针。**
+  **预期：** 各完成 50 个有限值步骤，或明确记录失败单元格；禁止静默降级。
+- [ ] **步骤 3：运行 18 条初筛轨迹**到 10,240 样本，并评测四个固定节点。中断后恢复，
+  不从头重跑。
+- [ ] **步骤 4：验证完整初筛矩阵**，在继续训练前冻结扩展决定。
+- [ ] **步骤 5：把选中单元格继续到 40,960 样本并运行种子 `20261024`；评测固定节点，
+  对 `P`、`V`、`D`、`T_v3` 做按源视频分组 bootstrap。** 若无安全单元格，只运行已声明
+  的诊断续跑并保留 g5000。
+- [ ] **步骤 6：若 batch 结论仍有因果歧义且满足规格条件，运行单独标注的等更新数诊断。**
+  其指标绝不加入主排名。
+- [ ] **步骤 7：在本任务进度文件记录命令、中断、指标、哈希、阻塞和选定 batch/GOT 状态；
+  提交** `docs: record NanoTrack factorial experiment evidence`。
 
-### Task 7: Controlled hard-sample follow-up, reporting, and final verification
+### 任务 7：困难样本受控跟进、中文报告与最终验证
 
-**Files:**
-- Create: `scripts/report_nanotrack_factorial.py`
-- Create: `tests/test_nanotrack_factorial_reporting.py`
-- Generate outside Git: `artifacts/nanotrack_factorial_v3/REPORT.md`, `REPORT.zh-CN.md`, verification JSON and candidate artifacts
-- Modify: `docs/progress/nanotrack-finetune.md`
+**文件：**
+- 新建：`scripts/report_nanotrack_factorial.py`
+- 新建：`tests/test_nanotrack_factorial_reporting.py`
+- 在 Git 外生成：`artifacts/nanotrack_factorial_v3/REPORT.zh-CN.md`、验证 JSON 和候选工件
+- 修改：`docs/progress/nanotrack-finetune.md`
 
-**Interfaces:**
-- Consumes: confirmed factorial recipe, Task 5 matched hard pool, Task 1 final gate, and all Task 6 evidence.
-- Produces: no-hard vs hard-sample controlled result, final candidate or explicit no-promotion result, bilingual reports, and a complete evidence verifier.
+**接口：**
+- 输入：确认后的交叉实验配方、任务 5 匹配困难样本池、任务 1 最终门槛和任务 6 全部证据。
+- 输出：无困难强化与困难强化的受控对照结果、最终候选或明确不晋级结论、中文报告和完整
+  证据验证结果。
 
-- [ ] **Step 1: Write failing report/verifier tests.** Assert English/Chinese metric parity, frozen identities, separation of primary/equal-update evidence, no hidden result without qualified final selection, and explicit desktop/RKNN/board boundaries.
-- [ ] **Step 2: Run focused tests.** **Expected:** reporting module missing.
-- [ ] **Step 3: Implement report and final verification generation.** Reports must preserve failed/interrupted attempts and all protocol deviations.
-- [ ] **Step 4: Run the selected recipe with and without matched hard sampling** using identical start, budget, seeds, nodes, and evaluators; freeze the better safe result by predeclared T rule.
-- [ ] **Step 5: Apply the final promotion gate.** Only if it passes, freeze checkpoint identity and invoke GOT train-hidden exactly once; otherwise retain g5000 and leave hidden untouched.
-- [ ] **Step 6: Run the full repository Python suite and the experiment verifier.** Record every failure by name; no partial suite may be called a full pass.
-- [ ] **Step 7: Generate both reports, hash all retained artifacts, update the owned progress file in the same commit, and commit** `docs: finalize NanoTrack factorial fine-tuning evidence`.
+- [ ] **步骤 1：编写失败的报告/验证器测试。** 断言只生成中文报告、不新建或覆盖本轮
+  `REPORT.md`、冻结身份、主要证据与等更新数证据分离、无合格最终选择时不存在隐藏集结果，
+  以及桌面/RKNN/开发板边界明确。
+- [ ] **步骤 2：运行聚焦测试。** **预期：** 报告模块缺失。
+- [ ] **步骤 3：实现中文报告和最终验证生成。** 报告必须保留失败/中断尝试和全部协议偏差，
+  并列出类别数量、独立源视频组数及 `P`/`V` 置信区间。
+- [ ] **步骤 4：用相同起点、预算、种子、节点和评测器，分别运行无困难强化与匹配困难
+  强化配方；按预先声明的 `T_v3` 规则冻结更好的安全结果。**
+- [ ] **步骤 5：应用最终晋级门。** 只有通过后才冻结 checkpoint 身份并恰好一次调用 GOT
+  train-hidden；否则保留 g5000，隐藏集保持未访问。
+- [ ] **步骤 6：运行完整仓库 Python 测试套件和实验验证器。** 按名称记录每项失败；局部
+  测试不得称为完整通过。
+- [ ] **步骤 7：生成中文报告，对全部保留工件计算哈希，在同一提交更新本任务进度文件并
+  提交** `docs: finalize NanoTrack factorial fine-tuning evidence`。

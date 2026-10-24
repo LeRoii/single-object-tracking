@@ -1,7 +1,7 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-24T23:56:01+08:00`。
+- 最近核对：`2026-10-25T00:08:06+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
@@ -56,6 +56,63 @@
    验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。计划阶段没有启动训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-25 航拍类别数量与评分方案复核
+
+### 实测数据分布
+
+在工件根目录 `/home/u20/single-object-tracking` 使用
+`./.venvs/nanotrack/bin/python -B -` 只读解析四域 `normal/*.json`，只计数字帧键；
+`hard/*.json` 与 normal 高度重叠，未相加形成虚假总量。观察结果如下：
+
+| 类别 | 训练轨迹数 | normal 有效帧引用数 |
+| --- | ---: | ---: |
+| person | 1,718 | 52,198 |
+| vehicle | 3,959 | 102,046 |
+| bike | 823 | 20,878 |
+| other | 25 | 5,141 |
+| unknown | 70 | 60,359 |
+
+- 四域 normal 总计 240,622 个帧引用，与历史准备摘要一致。
+- person 由 UAV123 的 35 条/11,806 帧和 VisDrone-MOT 的 1,683 条/40,392 帧组成；
+  UAVDT 的 1,037 条/24,888 帧均为 vehicle，VisDrone-SOT 的 70 条/60,359 帧均标为
+  unknown。因此可确认“已识别类别中的行人较少”，但不能把 VisDrone-SOT 的 unknown
+  推断成没有行人。
+- 固定验证证据合并后，person 为 35 条序列、6,045 个计分帧、约 5 个独立源视频组；
+  vehicle 为 57 条序列、9,086 个计分帧、约 7 个独立源视频组。连续帧不视为独立样本。
+- 验证输入/结果身份：`data/nanotrack_conservative_three_stage/val-aerial.json`
+  SHA-256 `8af84a37cc29bf1efc72a37adeae30b3ebf364c9c928e51b120077414f12b77f`；
+  `data/uav123_nanotrack/annotations/val.json` SHA-256
+  `116ea69d78c36f4a2422ea1ccbb034c81fba280522094e5e4c461bac0576f443`；
+  基线 aerial 结果 SHA-256
+  `d045f2c507a2c2f29411fc314dda9cc812d5c5c9899520ce5ca8feca0560d6c5`；
+  基线 UAV123 summary SHA-256
+  `6a36faec2bcca6e15655e2fcea0c242efbdb459123afa7ec43c1d03238fc8e15`。
+
+### 评分结论与规格修订
+
+- 数据频次不等于业务重要性。车辆和行人均为正式目标时，不应因 person 样本较少而按
+  训练数量降低其评分权重；否则会进一步掩盖少数类别退化。
+- 旧域优先 T 在每个域内使用 person 0.4、vehicle 0.4、overall 0.2，但缺失项重归一化后，
+  四域平均中的直接名义权重约为 person 0.20、vehicle 0.3667、overall 0.4333；所以它并非
+  全局 person/vehicle 等权。
+- 新实验改用版本化的类别优先 `T_v3 = 0.4*P + 0.4*V + 0.2*D`：`P`、`V` 分别为
+  可用域的 person/vehicle 宏平均，`D` 为四域 overall 宏平均。旧 `target_score` 和历史
+  `composite_score` 保持不变，不重算、不改写 v1/v2 结论。
+- 为控制较少独立源视频造成的方差，新实验同时报告 `P`、`V`、`D`、`T_v3` 的按源视频
+  分组 bootstrap 95% 区间，并增加 UAVDT、VisDrone-MOT、VisDrone-SOT 逐域退化门；
+  不能仅凭单个点估计宣布 person 改善。
+- 已同步修订规格与实施计划。新实验只生成中文报告 `REPORT.zh-CN.md`，不新建/覆盖本轮
+  `REPORT.md`；历史英文报告保留。本任务后续规格和计划正文统一使用中文。
+
+### 证据边界和下一步
+
+- 本次只读统计和文档修订没有启动训练、桌面推理、隐藏集、ONNX/RKNN、开发板或吊舱
+  验证，也没有改变 g5000 模型身份。
+- 下一步仍从实施计划任务 1 开始，先用测试锁定 `T_v3`、旧评分兼容性和逐域门槛；随后
+  才实施 GOT 原始帧号配对与九单元格实验。
+- 公共契约当前无需切换模型或状态；协调对话只需在集成本提交时知悉新实验评分版本和
+  中文报告约束，待真实实验结果形成后再决定是否更新公共候选身份。
 
 ## 2026-10-24 交叉对照规格与计划
 
