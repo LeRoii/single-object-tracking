@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-25T00:08:06+08:00`。
+- 最近核对：`2026-10-25T00:23:04+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；评分优化、batch/GOT 交叉对照、原始帧号采样及困难样本强化尚未形成实施完成证据。
+- 状态说明：既有 g5000 可交付下游评估；新实验类别优先评分策略已完成单元验证，尚未接入新控制器；batch/GOT 交叉对照、原始帧号采样及困难样本强化尚未形成实施完成证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -41,7 +41,7 @@
 
 - 尚未在集成契约中批准 g5000 取代当前板端 NanoTrack 模型。
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
-- 当前评分代码仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；不能把拟议的 T 主评分写成已上线。
+- 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新实验独立模块已实现 `T_v3`，尚未接入控制器，不能宣称新实验已运行。
 - 当前外部 NanoTrack 数据加载器仍按筛选后的帧列表索引计算 `FRAME_RANGE`；原始帧号采样尚未落实。
 - batch `{8,32,64}` × GOT `{0%,10%,30%}` 的新实验、困难样本归因与强化对照没有可交付的运行记录；不能声明 batch 64 或任何配比最优。
 - 后续独立目标域留出集的可用性与隔离性尚需核查；已查看的历史隐藏集不能重新称为未触碰测试集。
@@ -51,11 +51,87 @@
 1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
-   `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；等待用户按计划审阅门确认后实施。
-2. 实施顺序为 T 主评分策略、GOT 原始帧号配对与审计、九单元格配置、可恢复控制器、
+   `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略已完成。
+2. 下一步为 GOT 原始帧号配对与审计，再实施九单元格配置、可恢复控制器、
    验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。计划阶段没有启动训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-25 任务 1：版本化类别优先评分策略
+
+- 时间：`2026-10-25T00:23:04+08:00`。
+- 分支/工作树：`codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+- 开始基线：`40c6b110d80a2aa5a1e2eb9e4e0191012773d2d3`；结果提交由
+  `git log -1 --format=%H -- scripts/nanotrack_factorial_policy.py` 查询，提交后回报协调者。
+- 输入契约：`scripts.run_nanotrack_got_replay.build_metrics` 的指标映射。本任务没有消费
+  或生成模型/二进制；旧 replay 源码 SHA-256 仍为
+  `d91c681a0af0fa6f2a19d78581f0b0a99da09127208aa52abe7de76f242ceb4b`。
+- 新增输出均位于上述工作树：`scripts/nanotrack_factorial_policy.py`，SHA-256
+  `eb1360c4a6bca3d9ec0e9aec96fd5c26a16224da9db01774445527459e7acb16`；
+  `tests/test_nanotrack_factorial_policy.py`，SHA-256
+  `6b0b9d14ea1d3ba2f3676b81ab279d4b780735ce5d337f7de70f0f60d5303c14`。
+- 保留协调者预先完成的 `.gitignore` 四行修正，使 `.venvs`、`data`、`artifacts`、`repos`
+  符号链接被忽略；没有提交符号链接或改写其指向的历史工件。
+
+### 接口及行为
+
+- 评分版本：`SCORING_VERSION = "nanotrack-category-first-v3"`。
+- `target_score_v3(metrics)` 先分别跨有指标域计算 person/vehicle 宏平均，再计算四个
+  必需域 UAV123/UAVDT/VisDrone-MOT/VisDrone-SOT 的 overall 宏平均；使用
+  `0.4*P + 0.4*V + 0.2*D`，不读取缓存旧评分或帧数/轨迹数/训练频次。
+- `guardrail_decision(candidate, baseline)` 返回 `qualified`、`reasons`、`checks`、
+  `scoring_version` 和双方 `T_v3`；七个门分别约束 GOT/UAV123 下降不超过 0.01、
+  person/vehicle 宏平均与其余三域 overall 下降不超过 0.015。边界允许 `1e-12` 浮点误差。
+- `rank_key(metrics, baseline)` 供 `max` 或降序排序使用，合格返回 `(True, T_v3)`，
+  不合格返回 `(False, -inf)`；调用者仍必须过滤不合格项，全部不合格时不得取其 max
+  作为候选。GOT/UAV123 不再次进入排序分数。
+- `final_promotion(candidate_by_seed, baseline)` 要求恰好三个种子的映射，三者逐一过门，
+  并且三种子 `T_v3` 算术平均相对固定基线至少提高 0.005；结果包含
+  `promoted`/`qualified`、原因、平均分、提升量及 `seed_decisions`。
+- 必需域缺失、person/vehicle 任一宏平均完全缺失、非法/非有限评分输入、非法种子数量
+  抛出 `ValueError`。旧域优先 `target_score`、`category_macro` 与
+  `composite_score=0.70*T+0.15*GOT+0.15*UAV123` 未改动。
+
+### 实际测试记录
+
+以下命令均在任务工作树运行，解释器统一为
+`/home/u20/single-object-tracking/.venvs/nanotrack/bin/python`：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_factorial_policy -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_got_replay_controller tests.test_nanotrack_got_replay_reporting -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest discover -s tests -v
+```
+
+- RED：先新增测试、尚未编写策略模块时，第一条命令实测 `Ran 24 tests`、
+  `FAILED (failures=22)`、exit 1。22 项均明确失败于
+  `No module named 'scripts.nanotrack_factorial_policy'`；2 项旧评分兼容测试通过。
+- GREEN：实现最小独立策略后重跑第一条，`Ran 24 tests in 0.015s`、`OK`、exit 0。
+  覆盖类别权重、四域平均、缺失类别、频次无关、GOT/UAV 方向冲突、七门边界、
+  三种子聚合门、非法/非有限输入与历史兼容。
+- 历史控制器/报告：第二条实测 `Ran 11 tests in 0.072s`、`OK`、exit 0。
+- 完整套件仅运行一次：第三条实测 `Ran 190 tests in 159.280s`、
+  `FAILED (failures=4)`、exit 1、无 error。按顶层测试方法计，188 项通过、2 项失败；
+  4 个失败记录含同一方法内的 3 个 stage 子测试，完整名称如下：
+  - `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest.test_formal_configs_match_quota_paths_and_training_contract (stage='stage1')`
+  - `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest.test_formal_configs_match_quota_paths_and_training_contract (stage='stage2')`
+  - `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest.test_formal_configs_match_quota_paths_and_training_contract (stage='stage3')`
+  - `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest.test_smoke_configs_are_bounded_and_keep_policy_representative_pools`
+- 四项均比较历史 `/home/u20/single-object-tracking/artifacts/...` 与当前
+  `.worktrees/nanotrack-factorial-v3/artifacts/...` 的配置路径，属于已报告的基线问题。
+  已有符号链接使历史 smoke CLI/report 测试本轮通过，故没有照抄起始 5 失败/1 错误。
+  **完整套件不是全绿**；本任务没有修改这些历史配置或测试。
+- `git diff --check` 通过；旧 replay 文件无 Git diff，SHA-256 与基线一致。
+
+### 边界、下一步和 Handoff
+
+- 仅证明评分/排名/晋级策略及历史兼容的单元行为；未运行真实 GPU 训练、桌面数据集
+  评测、隐藏集、`sot-v1.mp4`、ONNX/RKNN、开发板或吊舱验证，没有改变 g5000 身份。
+- 下一步：任务 2 按原始帧号实施 GOT 配对策略；后续控制器消费本评分版本、逐种子
+  `guardrail_decision` 和最终三种子聚合结果。
+- Handoff：协调者集成本提交后可锁定新实验评分接口；历史 v1/v2 保持原语义，公共模型
+  身份和板端 promotion gate 无需变更。不得把本单元里程碑视为交叉实验完成。
 
 ## 2026-10-25 航拍类别数量与评分方案复核
 
