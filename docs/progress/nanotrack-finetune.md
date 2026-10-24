@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-25T00:32:16+08:00`。
+- 最近核对：`2026-10-25T00:44:15+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；新实验类别优先评分策略已完成单元验证，尚未接入新控制器；batch/GOT 交叉对照、原始帧号采样及困难样本强化尚未形成实施完成证据。
+- 状态说明：既有 g5000 可交付下游评估；新实验类别优先评分、GOT 原始帧号配对与清单审计已完成局部验证，尚未接入新控制器；batch/GOT 交叉对照及困难样本强化尚无真实训练证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -42,7 +42,7 @@
 - 尚未在集成契约中批准 g5000 取代当前板端 NanoTrack 模型。
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
 - 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新实验独立模块已实现 `T_v3`，尚未接入控制器，不能宣称新实验已运行。
-- 当前外部 NanoTrack 数据加载器仍按筛选后的帧列表索引计算 `FRAME_RANGE`；原始帧号采样尚未落实。
+- 外部 NanoTrack 数据加载器保留历史列表索引语义；受控训练入口已可用显式 `--pair-policy` 在构造数据集前仅为匹配的 GOT 子池安装原始帧号策略，尚未用于真实新训练。
 - batch `{8,32,64}` × GOT `{0%,10%,30%}` 的新实验、困难样本归因与强化对照没有可交付的运行记录；不能声明 batch 64 或任何配比最优。
 - 后续独立目标域留出集的可用性与隔离性尚需核查；已查看的历史隐藏集不能重新称为未触碰测试集。
 
@@ -51,11 +51,133 @@
 1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
-   `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略已完成。
-2. 下一步为 GOT 原始帧号配对与审计，再实施九单元格配置、可恢复控制器、
+   `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略和任务 2 配对策略及审计已完成局部验证。
+2. 下一步为九单元格精确样本配置、可恢复控制器、
    验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。计划阶段没有启动训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-25 任务 2：GOT 原始帧号配对策略与只读审计
+
+- 时间：`2026-10-25T00:44:15+08:00`。
+- 分支/工作树：`codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+- 开始基线：`5713e3eb9875f78a0410012d3ed322f7bf9e7c4f`，初始工作树干净。
+  结果提交在提交后回报协调者，可用
+  `git log -1 --format=%H -- scripts/nanotrack_pair_sampling.py` 查询；本正文不虚构自身提交。
+- 已读 STATUS、任务进度、集成契约及任务 2 简报；不消费其他任务的新模型或板端结果。
+  公共契约中 g5000 身份不变，本任务没有读取或生成模型/二进制。
+- 开始及实现后均核对外部
+  `/home/u20/single-object-tracking/repos/siamtrackers/NanoTrack/nanotrack/datasets/dataset.py`，
+  SHA-256 均为 `cd6b925b12f2879d5979c2c1ee8229317ea4bcdc7ce6e8fface4f9d0f2d39373`。
+  没有编辑外部 checkout 的任何文件；运行 Python 时使用 `-B`。
+
+### 接口、身份及历史兼容
+
+- 新增 `scripts/nanotrack_pair_sampling.py`：`eligible_search_frames` 支持
+  `original_frame_id` 和 `list_position`，前者按原始帧差（含边界）选择，range 0
+  仍保留模板本帧；无序、重复、空帧列表及非法范围/模式直接失败。
+- 策略文件是非空 JSON 前缀映射，只允许 `GOT_` 开头的前缀和
+  `original_frame_id` 模式，重复键、未知模式及航拍前缀直接失败。
+  `install_pair_policy` 只替换当前进程的方法；匹配 GOT 时复用 NumPy 全局随机流，
+  保留 track/template/search 的选择顺序。航拍与未匹配 GOT 直接调用原方法。
+- `scripts/train_nanotrack_uav123.py --pair-policy <JSON>` 在数据集构造前安装策略。
+  `pair-policy-provenance.json` 保存策略版本、绝对路径、映射和精确文件字节 SHA-256；
+  periodic/candidate/epoch/last/resume checkpoint 均传递 `pair_policy_sha256`。
+  CLI 在外部导入前检查 resume 身份，restore 在加载 model/optimizer/RNG 或截断指标前
+  再检查；不同哈希、丢弃策略、由无策略旧 checkpoint 直接 resume 到新策略均失败。
+  新 stage 权重初始化仍可沿用旧权重；无 `--pair-policy` 时保持旧采样和元数据形状。
+- 策略版本：`nanotrack-got-original-frame-id-v1`。
+  策略路径 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json`，
+  内容为 `{"GOT_": "original_frame_id"}`（格式化文件含换行），SHA-256
+  `e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024`。
+
+### 审计输入、命令及输出
+
+审计只读现有 GOT train normal 清单，不读取图片、GOT train-hidden 或验证集。
+隐藏路径在打开前拒绝；数字帧键按上游非正 bbox 过滤规则处理。三个输入的绝对根为
+`/home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/`：
+
+| 文件 | SHA-256 | 序列/轨迹数 | 有效帧引用数 |
+| --- | --- | ---: | ---: |
+| `other.json` | `975f0b915347503d48d5e524a238e53eec8a5ec07e09feb73f33715be6e03a9d` | 4579 | 219783 |
+| `person.json` | `022f8e05c1dcffa59f8202efeba8f36c33d6a9bc8c3efd2e6a57650eb56ce54c` | 2156 | 103488 |
+| `vehicle.json` | `3c53c70e05d22bffe76b2df11a77767a44d9ae63fcb5ee4b6ea8f4d89c5df7a3` | 2117 | 101519 |
+
+在本任务工作树实际运行：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B scripts/audit_nanotrack_frame_pairs.py --manifest GOT_OTHER_NORMAL=/home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/other.json --manifest GOT_PERSON_NORMAL=/home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/person.json --manifest GOT_VEHICLE_NORMAL=/home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/vehicle.json --frame-range 100 --pair-policy /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json --output-dir /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit
+```
+
+- 输出 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/audit.json`，
+  SHA-256 `69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2`，exit 0。
+  策略副本、审计 JSON 均在 Git 忽略的 artifacts 根，不提交。
+- 统计口径为穷举有序候选对，每个候选对等权；P50/P90/P95 使用线性分位数。
+  `same_frame_proportion` 是同帧候选对占比；额外给出均匀选择模板、再均匀选择候选时的
+  `uniform_template_same_frame_probability`，不混称为真实 quota 加权训练频率。
+
+| 子池 | 旧→新候选对 | 旧 gap P50/P90/P95/max | 新 gap P50/P90/P95/max | 排除旧候选比例 |
+| --- | ---: | --- | --- | ---: |
+| OTHER | 10549233→9961595 | 30/80/107/920 | 28/68/79/100 | 0.0557043341 |
+| PERSON | 4967424→4042234 | 43/147/214/1200 | 34/79/88/100 | 0.1862514655 |
+| VEHICLE | 4869755→4217105 | 34/120/170/1480 | 29/72/84/100 | 0.1340211161 |
+
+JSON 同时保存候选数 min/max/mean、同帧比例、清单路径/哈希、序列/轨迹/帧数和策略身份。
+新策略同帧候选占比分别为 0.0220630331/0.0256016846/0.0240731497，均匀模板同帧概率
+分别为 0.0233608871/0.0301259462/0.0271098800。
+
+### 测试与源码身份
+
+所有命令均在本任务工作树执行，解释器为 `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python`：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_pair_sampling -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_pair_sampling.TrainerPairPolicyTest.test_main_installs_policy_and_records_provenance_before_dataset_construction -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_training tests.test_nanotrack_got_replay_training -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_pair_sampling.TrainerPairPolicyTest.test_no_policy_preserves_historical_metadata_shape -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_pair_sampling tests.test_nanotrack_training tests.test_nanotrack_got_replay_training -v
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest discover -s tests -v > /tmp/nanotrack-task2-discover.log 2>&1
+```
+
+- RED：最初 14 tests / 14 failures / exit 1，缺少两个新模块及命令行参数；随后新增
+  构造顺序/溯源测试，单独 1 test / 1 failure / exit 1，原因同为缺失模块。
+- 首次 GREEN：15 tests / OK / exit 0。
+- 历史训练回归首轮 35 tests / 1 failure，具体为
+  `test_nanotrack_training.NanoTrackTrainingPolicyTest.test_resume_checkpoint_metadata_and_python_numpy_torch_rng_restore`：
+  无策略返回多出空哈希字段。本任务新增历史形状测试，亲见 1 test / 1 failure / exit 1，
+  然后最小修正为只在有显式策略时新增身份字段；没有改历史测试期望。
+- 最终聚焦配对与历史训练/resume 回归：51 tests in 2.114s / OK / exit 0。
+  新增测试共 16 项，手算 `[1,50,200]`、range 60 的旧候选对 9、新候选对 5、排除 4/9。
+- 实际导入外部 `SubDataset`，以 `__new__` 和内存 bbox 清单构造最小实例，seed 23 后调用
+  100 次真实 `get_positive_pair`，逐对断言原始帧差不超过 60；观察
+  `REAL_EXTERNAL_SUBDATASET_ADAPTER: 100 pairs passed; no images loaded`。
+- 完整 discover 只运行一次：206 tests in 158.673s / FAILED (failures=4) / exit 1，
+  没有 error。按顶层方法计 204 项通过、2 项失败；四条失败记录中含同一方法的三次
+  stage 子测试，名称为：
+  - `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest.test_formal_configs_match_quota_paths_and_training_contract (stage='stage1')`
+  - `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest.test_formal_configs_match_quota_paths_and_training_contract (stage='stage2')`
+  - `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest.test_formal_configs_match_quota_paths_and_training_contract (stage='stage3')`
+  - `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest.test_smoke_configs_are_bounded_and_keep_policy_representative_pools`
+  四条均为历史 `/home/u20/single-object-tracking/artifacts/...` 与当前工作树
+  `.worktrees/nanotrack-factorial-v3/artifacts/...` 的路径比较，与任务 1 完整套件的
+  四条历史失败相同，本任务未改这些配置或测试。**完整套件不是全绿**。
+  完整日志在 `/tmp/nanotrack-task2-discover.log`；提交前 `git diff --check` 通过。
+- 本任务输出源码绝对根为本工作树，SHA-256：
+  `scripts/nanotrack_pair_sampling.py`：`8473a4c3add5877167388919ab90efdc88c8068c9e2e575db5ca941302c5d053`；
+  `scripts/audit_nanotrack_frame_pairs.py`：`f73bdc52402a4484a15b983bf79f6c4b2ab23e16d3873aec0de96c2b8134d42e`；
+  `scripts/train_nanotrack_uav123.py`：`e42750b6047c9a15e93ca12710f49c74ba15cab9e31dabbd8613ffeabee841ee`；
+  `tests/test_nanotrack_pair_sampling.py`：`99289ceb55450c8948974be6aaee062960c88d6e452da7b3baba2c6513b5b331`。
+
+### 边界、下一步和 Handoff
+
+- 证明的是受控配对/审计、checkpoint 身份与历史 resume 兼容；没有新 GPU 训练、桌面推理、
+  GOT train-hidden 评测、`sot-v1.mp4`、ONNX/RKNN、开发板或吊舱验证，不修改 g5000 身份。
+- 下一步：任务 3 生成九单元格精确样本配置，显式传入本策略绝对路径和文件哈希；任务 4
+  控制器在状态中锁定 `audit.json` 与策略身份，恢复时同样校验。旧策略 checkpoint 若需
+  用作新实验起点，应走权重初始化而非 exact resume。
+- Handoff：仅请求协调者集成本任务提交并消费上述受控接口/策略身份，不请求修改公共
+  STATUS、集成契约或其他任务文件；规格与计划保持英文且本任务未改动。
 
 ## 2026-10-25 文档语言格式修正
 
