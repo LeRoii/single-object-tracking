@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-25T15:32:12+08:00`。
+- 最近核对：`2026-10-25T16:00:05+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；新实验类别优先评分、GOT 原始帧号配对与清单审计已完成局部验证，九格精确样本配置已生成并通过真实数据集单样本烟测，尚未接入新控制器；batch/GOT 交叉对照及困难样本强化尚无真实训练证据。
+- 状态说明：既有 g5000 可交付下游评估；新实验评分、配对策略、九格配置、可恢复控制器及只读验证器已完成局部验证，控制器伪端到端覆盖 72 个节点，并加入跨 batch 精确的样本比例 LR 和段遥测；batch/GOT 交叉对照及困难样本强化尚无真实训练证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -41,7 +41,7 @@
 
 - 尚未在集成契约中批准 g5000 取代当前板端 NanoTrack 模型。
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
-- 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新实验独立模块已实现 `T_v3`，尚未接入控制器，不能宣称新实验已运行。
+- 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新控制器已接入 `T_v3`，目前只有伪端到端结果，不能宣称新实验已实际训练或产生性能提升。
 - 外部 NanoTrack 数据加载器保留历史列表索引语义；受控训练入口已可用显式 `--pair-policy` 在构造数据集前仅为匹配的 GOT 子池安装原始帧号策略，尚未用于真实新训练。
 - batch `{8,32,64}` × GOT `{0%,10%,30%}` 的新实验、困难样本归因与强化对照没有可交付的运行记录；不能声明 batch 64 或任何配比最优。
 - 后续独立目标域留出集的可用性与隔离性尚需核查；已查看的历史隐藏集不能重新称为未触碰测试集。
@@ -52,10 +52,73 @@
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
    `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略和任务 2 配对策略及审计已完成局部验证。
-2. 九单元格精确样本配置已生成；下一步为可恢复控制器、
-   验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。计划阶段没有启动训练、
+2. 九单元格精确样本配置和可恢复控制器已实现；下一步为
+   验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。当前没有启动真实训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-25 任务 4：可恢复控制器、精确样本 LR 和只读验证器
+
+- 时间：`2026-10-25T16:00:05+08:00`；分支 `codex/nanotrack-factorial-v3`，工作树
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`，开始基线
+  `97825eefbd269d8fb5fa9391e3e4a0e312b7587a`，开始时工作树干净；结果提交在提交后回报，
+  可用 `git log -1 --format=%H -- scripts/run_nanotrack_factorial.py` 查询。
+- 新增 `scripts/run_nanotrack_factorial.py` 和 `scripts/verify_nanotrack_factorial.py`；
+  初筛严格为九格 × 两种子 × `2560/5120/7680/10240` 样本节点。batch 8/32/64
+  对应间隔 `320/80/40` 次更新；首次从冻结 g5000 初始化并新建优化器，后续从已验证的
+  前一 checkpoint 精确恢复。原子 JSON 状态绑定配置、源码、初始化/输出 checkpoint、
+  pair-policy/audit、评分策略、命令、日志、评测输出和段遥测的哈希。
+  有效节点重复调用不重跑；损坏节点及同种子后续节点使用新 attempt 目录重跑，保留旧工件及
+  invalidated 记录。输入或已持久化身份漂移在修改状态前失败。
+- 两个种子在 10240 样本都过 guardrail 后才计算格子的平均 `T_v3`；扩展集合取最佳格及
+  距最佳不超过 `0.002` 的安全格，最多三个，并列按格名。无安全格写 `no_safe_cell`；
+  初筛结果始终 `promotion_authorized=false`。只读验证器复核完整矩阵、配额、样本/更新、
+  两种子、有限指标、全部有效工件哈希、评分版本和确定性选择；拒绝隐藏集/视频参数。
+- 实现时发现历史 `step` LR 使用 `step/(total_steps-1)`，会使不同 batch 在相同样本边界
+  的 LR 有细小差别。按本轮接口裁定新增兼容选项 `--lr-schedule sample`：更新前已见样本
+  `s=stage_step*batch_size`，预算 `N=40960`，使用
+  `exp(log(start)*(1-s/N)+log(end)*s/N)`。相同更新前样本边界获得完全相同的浮点 LR；
+  `s=N` 是末端值，不额外执行更新。旧 `epoch/step` 语义不变；checkpoint 与节点身份
+  显式绑定 `sample` 及该约定。
+- 新训练入口在每个 sample 段边界原子写 `segment-telemetry.json`：实际 batch、段起止
+  样本/更新、首/末/下一边界 LR、loss 有限性/数量、训练循环墙钟时间、CUDA 峰值
+  allocated/reserved bytes，以及配置、pair-policy、输入 checkpoint 哈希。
+  batch64 的 40-update 段也生成该文件。真实执行必须有实测 CUDA 内存；测试明确标记
+  `execution_backend=fake_cpu_fixture`，内存为带原因的 unavailable，不能当作真实训练证据。
+- 冻结输入仍为任务 3 manifest
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/experiment-manifest.json`
+  SHA-256 `d8385c25de4fce516545ee7e7b45c30f9aa7d76af8256a0afa965d93abee99cd`；
+  初始模型 SHA-256 `40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1`，
+  pair-policy SHA-256 `e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024`，
+  audit SHA-256 `69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2`。
+  只读真实输入 preflight 已成功读取九格和 143 个绑定文件，确认 GOT 官方验证输入实际位于
+  `/home/u20/dataset/GOT-10K/val_data/val/list.txt`。
+- 本轮输出源码 SHA-256：`run_nanotrack_factorial.py`
+  `61e1159ed0e10c71a890cff539b8445b08038e9a5e763855dacb8e95b9e96296`；
+  `verify_nanotrack_factorial.py`
+  `47017a2d2c125c91c1b3a115fc82279b1e4685cf14ddd20618c5afda1b739b16`；
+  `train_nanotrack_uav123.py`
+  `7ea57630ad8e33bdfc71d7a7640dca71a91f1b225b70c115511f32eae40b48f2`。
+- TDD 先观察 8 项因控制器缺失而失败；样本 LR 新接口/CLI 先观察 2 项失败，遥测接口与
+  节点缺遥测再观察 2 项失败后实现。最终命令：
+  `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_factorial_controller -v > /tmp/nanotrack-task4-controller.log 2>&1`，
+  实测 `15 tests / OK`（166.843 s）；覆盖 72 节点、更新边界、中断恢复、损坏后缀恢复、
+  同输入重复调用字节/mtime 不变、验证器只读、版本/指标/身份篡改、样本 LR 与
+  batch64 段遥测等。相关历史测试共 `87 tests / OK`（3.114 s），日志
+  `/tmp/nanotrack-task4-historical.log`；其中历史 CLI 帮助断言随新增合法选项更新。
+- 完整 discover 本轮仅运行一次：
+  `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest discover -s tests -v > /tmp/nanotrack-task4-discover.log 2>&1`，
+  实测 `226 tests / failures=4 / exit 1`（355.675 s），无 errors。四条均为已知历史
+  `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest` 中正式配置的
+  `stage1/stage2/stage3` 路径断言和 smoke 配置路径断言，均比较主资产根与 linked worktree
+  绝对路径；没有新增失败，完整套件并非全绿。该日志 SHA-256
+  `9a37271c01f2d8737fedb0725f6a185585e25635f1563692391479895eb467a3`。
+- 边界：本轮没有启动真实 GPU 训练/评测，没有隐藏集、视频回归、ONNX/RKNN、板端或吊舱
+  验证；没有新模型结果。仅实现初筛控制器和扩展决策，40,960 样本/第三种子确认及性能
+  bootstrap 仍属于任务 6。原始图像内容没有逐文件新增哈希；当前身份边界为已有训练清单、
+  验证 panel/split/list、模型/配置和源码哈希。下一步为任务 4 独立评审，再进入任务 5/6。
+  Handoff：集成本任务提交后消费新控制器和 sample 遥测接口；不请求切换 g5000、不请求
+  修改公共契约，也不修改其他 owner 的任务文件。
 
 ## 2026-10-25 任务 3：九格精确样本配置生成
 
