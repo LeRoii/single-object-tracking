@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-25T00:51:02+08:00`。
+- 最近核对：`2026-10-25T15:32:12+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；新实验类别优先评分、GOT 原始帧号配对与清单审计已完成局部验证，尚未接入新控制器；batch/GOT 交叉对照及困难样本强化尚无真实训练证据。
+- 状态说明：既有 g5000 可交付下游评估；新实验类别优先评分、GOT 原始帧号配对与清单审计已完成局部验证，九格精确样本配置已生成并通过真实数据集单样本烟测，尚未接入新控制器；batch/GOT 交叉对照及困难样本强化尚无真实训练证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -52,10 +52,64 @@
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
    `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略和任务 2 配对策略及审计已完成局部验证。
-2. 下一步为九单元格精确样本配置、可恢复控制器、
+2. 九单元格精确样本配置已生成；下一步为可恢复控制器、
    验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。计划阶段没有启动训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-25 任务 3：九格精确样本配置生成
+
+- 时间：`2026-10-25T15:32:12+08:00`；分支 `codex/nanotrack-factorial-v3`，工作树
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`，开始基线
+  `b831713865d118b4e17856465da1f9251447233a`，开始时 `git status --short` 无输出。
+  结果提交可在提交后用 `git log -1 --format=%H` 查询，本正文不预写提交哈希。
+- 已核对公共 `STATUS.md`、集成契约和本任务进度；输入资产根固定为
+  `/home/u20/single-object-tracking`。冻结初始化 checkpoint SHA-256
+  `40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1`，
+  来源 Stage 1 配置 SHA-256 `cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e`，
+  配对策略 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json`
+  SHA-256 `e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024`，
+  审计 `audit.json` SHA-256 `69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2`。
+- 新增 `scripts/generate_nanotrack_factorial_configs.py`（SHA-256
+  `bf5484eb387059c7ba60de869d0adc20dd393be657110164d0061012eab91b44`）和
+  `tests/test_nanotrack_factorial_configs.py`（SHA-256
+  `6983e589bd735ea146e92bd17324743c6a4a21185d1bb4ba037cf1ef4252fe95`）。
+  先写九格手算字面配额测试，实测 RED 为 `ModuleNotFoundError` / exit 1；实现后
+  `2 tests / OK`。最大余数使用精确分数，并列按数据项名称升序。每格共 40960 样本，
+  初筛 10240，每 2560 样本评测；batch 8/32/64 对应完整更新 5120/1280/640，
+  评测间隔 320/80/40，LR 均为 `2e-5 -> 8e-6`。GOT 0% 配置无 GOT 条目；
+  10% 为 OTHER/PERSON/VEHICLE `1366/1365/1365`，30% 各 4096。
+- 输出目录 `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/`：
+  `b8_g0.yaml` `493c4e8896b6c4113cf9a5637ea793c999019206f66e614d38935193642be128`；
+  `b8_g10.yaml` `f26e4491f18444246cca95d9a8cf33146c4c099048564f880da2f38b873de189`；
+  `b8_g30.yaml` `9fecd21c0a0879307c02dbb44679ad06dd134bb9d865b1e3864a3d8aab60dd5c`；
+  `b32_g0.yaml` `8787819602a6938f33225b0aae4e3da7eae563e8189a6b2d76b10ab1d8f85b8a`；
+  `b32_g10.yaml` `c0bcf47f87e94c3e73656f378c8bb4d47f697655dec2fe7c959308fbff0bf797`；
+  `b32_g30.yaml` `d2059cdb1d434328c9507d275ec6fbb3bdd617131b91c197f49fab8fcd62e9f3`；
+  `b64_g0.yaml` `3ddae5568c65e4a5b727dcb74cc735c95c05d8edd680b0cf1b92980f00fa5926`；
+  `b64_g10.yaml` `a305402d974c8e09199bb1732bb446f235c96afa678691c2cc1c3d864f610a8e`；
+  `b64_g30.yaml` `b61666e811640347ec89c0294144601c710747862abf9368f947ee0ec24ab2ba`；
+  `experiment-manifest.json` `d8385c25de4fce516545ee7e7b45c30f9aa7d76af8256a0afa965d93abee99cd`。
+  清单记录逐格整数配额、样本/更新、LR、种子、配置哈希及输入路径/哈希，并绑定来源配置；
+  产物运行根是 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3`。
+- 实际命令：`/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_factorial_configs -v`
+  （RED 后 GREEN）；`/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B scripts/generate_nanotrack_factorial_configs.py`
+  （生成九格）；以同一解释器 `-B -c` 逐份加载上述 YAML，安装任务 2 策略后真实构造
+  `BANDataset`，每格取 `dataset[0]`。九格均 `len=40960`，模板 `[3,127,127]`、
+  搜索图 `[3,255,255]`、分类 `[15,15]`、回归 `[4,15,15]`、框 `[4]`，所有数组有限；
+  退出时恢复配对补丁。外部 `dataset.py` 前后 SHA-256 均为
+  `cd6b925b12f2879d5979c2c1ee8229317ea4bcdc7ce6e8fface4f9d0f2d39373`。
+- 相关 data-loader、历史 GOT 配置与训练测试命令：
+  `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_factorial_configs tests.test_nanotrack_three_stage_data tests.test_nanotrack_got_replay_data tests.test_nanotrack_got_replay_configs tests.test_nanotrack_training -v`，
+  实测 `71 tests / OK`。历史三阶段配置单测单独运行 `6 tests / failures=4`，失败为工作树
+  绝对路径比较。提交前完整 discover **仅运行一次**：
+  `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest discover -s tests -v > /tmp/nanotrack-task3-discover.log 2>&1`，
+  实测 `211 tests / failures=4 / exit 1`，无错误；四条均是前述历史三阶段
+  `stage1/stage2/stage3` 及 smoke 路径断言，与任务 2 历史失败相同；完整套件并非全绿。
+- 边界与下一步：本轮只完成配置生成和真实数据加载单样本烟测，没有优化/反传、桌面评测、
+  GOT train-hidden、`sot-v1.mp4`、ONNX/RKNN、板端或吊舱验证。任务 4 控制器需消费并锁定
+  本清单及配对审计身份，在同种子/GOT 比例下保证跨 batch 样本顺序和逐样本增强种子一致。
+  Handoff：协调者只需集成本任务提交；不请求修改公共契约或其他任务进度文件。
 
 ## 2026-10-25 任务 2 评审修复回合 1：采样补丁生命周期
 
