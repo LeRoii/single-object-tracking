@@ -42,6 +42,14 @@ class FakeGPU:
 
     def __call__(self, command, log):
         self.commands.append(command)
+        table = next((p / "candidate_table.json" for p in log.parents
+                      if (p / "candidate_table.json").is_file()), None)
+        if table is None:
+            raise AssertionError("command launched before durable attempt journal")
+        persisted = json.loads(table.read_text())
+        if not any(a["status"] == "running" and e["status"] == "running" and e["command"] == command
+                   for a in persisted["attempts"] for e in a["executions"]):
+            raise AssertionError("command launched before durable running-stage record")
         if len(self.commands) == self.fail_at:
             raise RuntimeError("simulated interruption")
         flags = dict(zip(command[2::2], command[3::2]))
@@ -50,16 +58,17 @@ class FakeGPU:
         script = Path(command[1]).name
         if script == "train_nanotrack_uav123.py":
             step = int(flags["--stop-after-global-step"])
+            stage_step = step - 5000
             destination = Path(flags["--output-dir"])
             destination.mkdir(parents=True, exist_ok=True)
-            torch.save({"global_step": step, "stage_step": step,
+            torch.save({"global_step": step, "stage_step": stage_step,
                         "seed": int(flags["--seed"]), "stage": "factorial",
                         "policy": "head_only", "lr_schedule": flags["--lr-schedule"],
                         "pair_policy_sha256": sha(flags["--pair-policy"]),
                         "optimizer": {}, "model": {}},
-                       destination / ("candidate_factorial_g%08d_e000_s%05d.pth" % (step, step)))
+                       destination / ("candidate_factorial_g%08d_e000_s%05d.pth" % (step, stage_step)))
             batch = yaml.safe_load(Path(flags["--config"]).read_text())["TRAIN"]["BATCH_SIZE"]
-            start = step - 2560 // batch
+            start = stage_step - 2560 // batch
             predecessor = flags.get("--resume", flags.get("--initialize-from"))
             def lr(position):
                 return math.exp(math.log(2e-5) * (1 - position * batch / 40960.0)
@@ -67,11 +76,11 @@ class FakeGPU:
             write_json(destination / "segment-telemetry.json", {
                 "schema_version": 1, "stage": "factorial", "seed": int(flags["--seed"]),
                 "batch_size": batch, "lr_schedule": "sample", "full_sample_budget": 40960,
-                "start_update": start, "end_update": step, "segment_updates": step - start,
-                "start_global_step": start, "end_global_step": step,
-                "start_seen_samples": start * batch, "end_seen_samples": step * batch,
-                "segment_samples": 2560, "initial_lr": lr(start), "final_lr": lr(step - 1),
-                "terminal_next_lr": lr(step), "loss_finite": True, "loss_count": step - start,
+                "start_update": start, "end_update": stage_step, "segment_updates": stage_step - start,
+                "start_global_step": 5000 + start, "end_global_step": step,
+                "start_seen_samples": start * batch, "end_seen_samples": stage_step * batch,
+                "segment_samples": 2560, "initial_lr": lr(start), "final_lr": lr(stage_step - 1),
+                "terminal_next_lr": lr(stage_step), "loss_finite": True, "loss_count": stage_step - start,
                 "wall_seconds": 0.01, "wall_boundary": "training_loop", "config_sha256": sha(flags["--config"]),
                 "pair_policy_sha256": sha(flags["--pair-policy"]),
                 "input_checkpoint_sha256": sha(predecessor),
@@ -111,6 +120,10 @@ class FactorialControllerTest(unittest.TestCase):
         for name in manifest["input_paths"]:
             path = self.root / ("initial.pth" if name == "initial_checkpoint" else name + ".json")
             path.write_text(name)
+            if name == "initial_checkpoint":
+                torch.save({"global_step": 5000, "stage_step": 5000, "model": {}}, path)
+            if name == "pair_policy":
+                path.write_text('{"GOT_":"original_frame_id"}')
             manifest["input_paths"][name] = str(path)
             manifest["input_hashes"][name] = sha(path)
         manifest["dataset_manifests"] = {}
@@ -143,6 +156,11 @@ class FactorialControllerTest(unittest.TestCase):
         return run_screening(self.manifest_path, self.output, runner=gpu or FakeGPU(),
                              evaluation_inputs=self.inputs)
 
+    def partial_state(self):
+        with self.assertRaisesRegex(RuntimeError, "interruption"):
+            self.run_fake(FakeGPU(fail_at=8))
+        return json.loads((self.output / "candidate_table.json").read_text())
+
     def test_full_matrix_boundaries_commands_and_read_only_verification(self):
         gpu = FakeGPU()
         state = self.run_fake(gpu)
@@ -151,7 +169,8 @@ class FactorialControllerTest(unittest.TestCase):
         for batch, steps in ((8, [320, 640, 960, 1280]), (32, [80, 160, 240, 320]),
                              (64, [40, 80, 120, 160])):
             records = [r for r in state["candidates"] if r["cell"] == "b%d_g0" % batch and r["seed"] == 123456]
-            self.assertEqual([r["global_step"] for r in records], steps)
+            self.assertEqual([r["global_step"] for r in records], [5000 + s for s in steps])
+            self.assertEqual([r["identity"]["stage_step"] for r in records], steps)
             self.assertEqual([r["seen_samples"] for r in records], [2560, 5120, 7680, 10240])
             first = records[0]["training"]["command"]
             self.assertIn("--initialize-from", first)
@@ -173,7 +192,7 @@ class FactorialControllerTest(unittest.TestCase):
             self.run_fake(FakeGPU(fail_at=10))
         partial = json.loads((self.output / "candidate_table.json").read_text())
         self.assertEqual(len(partial["candidates"]), 1)
-        checkpoint = partial["candidates"][0]["checkpoint"]
+        checkpoint = partial["attempts"][-1]["checkpoint"]["path"]
         retry = FakeGPU()
         state = self.run_fake(retry)
         self.assertEqual(len(state["candidates"]), 72)
@@ -181,7 +200,7 @@ class FactorialControllerTest(unittest.TestCase):
         self.assertEqual(first_train[first_train.index("--resume") + 1], checkpoint)
 
     def test_frozen_input_or_persisted_identity_drift_is_rejected_without_writes(self):
-        self.run_fake()
+        self.partial_state()
         table = self.output / "candidate_table.json"
         before = table.read_bytes()
         self.inputs["panel"].write_text('{"split":"val","revision":2}')
@@ -247,7 +266,7 @@ class FactorialControllerTest(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_new_schedule_identity_cannot_be_omitted_from_nodes(self):
-        state = self.run_fake()
+        state = self.partial_state()
         self.assertEqual(state["candidates"][0]["identity"]["lr_schedule"],
                          {"mode": "sample", "position": "pre_update_seen_samples",
                           "denominator_samples": 40960, "start_lr": 2e-5, "terminal_lr": 8e-6})
@@ -264,7 +283,7 @@ class FactorialControllerTest(unittest.TestCase):
 
     def test_archived_attempt_cannot_conceal_forbidden_access(self):
         # An archived invalid attempt still belongs to the retained evidence trail.
-        state = self.run_fake()
+        state = self.partial_state()
         record = copy.deepcopy(state["candidates"][0])
         record["training"]["command"].extend(["--video", "sot-v1.mp4"])
         state["invalidated"].append(record)
@@ -273,12 +292,12 @@ class FactorialControllerTest(unittest.TestCase):
             self.run_fake()
 
     def test_telemetry_is_required_finite_and_bound_to_exact_samples(self):
-        state = self.run_fake()
-        record = next(r for r in state["candidates"] if r["cell"] == "b64_g0")
+        state = self.partial_state()
+        record = state["candidates"][0]
         self.assertIn("telemetry", record["training"])
         telemetry = record["training"]["telemetry"]
         original = read = json.loads(Path(telemetry["path"]).read_text())
-        self.assertEqual(read["segment_updates"], 40)
+        self.assertEqual(read["segment_updates"], 80)
         self.assertEqual(read["segment_samples"], 2560)
         for key, value in (("wall_seconds", float("nan")), ("end_seen_samples", 2561),
                            ("loss_finite", False), ("input_checkpoint_sha256", "wrong")):
@@ -286,6 +305,8 @@ class FactorialControllerTest(unittest.TestCase):
             modified[key] = value
             write_json(Path(telemetry["path"]), modified)
             telemetry["sha256"] = sha(telemetry["path"])
+            attempt = next(a for a in state["attempts"] if a["id"] == record["attempt_id"])
+            next(e for e in attempt["executions"] if e["role"] == "train")["evidence"]["telemetry"]["sha256"] = telemetry["sha256"]
             write_json(self.output / "candidate_table.json", state)
             with self.assertRaisesRegex(ValueError, "telemetry"):
                 verify_experiment(self.manifest_path, self.output)
@@ -293,8 +314,134 @@ class FactorialControllerTest(unittest.TestCase):
         with self.assertRaises((OSError, ValueError)):
             verify_experiment(self.manifest_path, self.output)
 
+    def test_generated_commands_pass_real_trainer_preflight_for_all_batches(self):
+        from scripts.run_nanotrack_factorial import training_command
+        manifest, context = load_context(self.manifest_path, self.inputs)
+        for batch in (8, 32, 64):
+            cell = manifest["cells"]["b%d_g0" % batch]
+            command = training_command(cell, 123456, 2560, self.root / "never-created", context, None)
+            result = subprocess.run(command + ["--validate-only"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, universal_newlines=True)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn('"start_global_step": 5000', result.stdout)
+            self.assertFalse((self.root / "never-created").exists())
+
+    def test_evaluation_interruptions_reuse_every_completed_stage(self):
+        # Calls 8/9/10: node 2 trained, then zero/one/two evaluator successes.
+        for fail_at in (9, 10, 11):
+            self.output = self.root / ("interrupt%d" % fail_at)
+            gpu = FakeGPU(fail_at=fail_at)
+            with self.assertRaisesRegex(RuntimeError, "interruption"):
+                self.run_fake(gpu)
+            partial = json.loads((self.output / "candidate_table.json").read_text())
+            self.assertIn("attempts", partial)
+            self.assertEqual(len(partial["attempts"]), 3)
+            succeeded = [c for c in gpu.commands[:-1]]
+            retry = FakeGPU(fail_at=13 - fail_at)
+            with self.assertRaisesRegex(RuntimeError, "interruption"):
+                self.run_fake(retry)
+            state = json.loads((self.output / "candidate_table.json").read_text())
+            self.assertEqual(len(state["candidates"]), 2)
+            self.assertEqual(len([c for c in retry.commands if "train_nanotrack" in c[1]]), 1)
+            self.assertFalse(any(c in succeeded for c in retry.commands))
+            with self.assertRaisesRegex(ValueError, "pending"):
+                verify_experiment(self.manifest_path, self.output)
+
+    def test_orphan_and_interrupted_attempts_are_audited_and_all_commands_checked(self):
+        with self.assertRaises(RuntimeError):
+            self.run_fake(FakeGPU(fail_at=9))
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        self.assertIn("attempts", state)
+        self.assertEqual(state["attempts"][-1]["status"], "running")
+        checkpoint = Path(state["attempts"][-1]["checkpoint"]["path"])
+        checkpoint.write_text("corrupt interrupted checkpoint")
+        self.run_fake()
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        self.assertTrue(any(a["status"] == "invalidated" for a in state["attempts"]))
+        orphan = self.output / "nodes/orphan/attempt0001"
+        orphan.mkdir(parents=True)
+        (orphan / "partial.pth").write_text("unowned partial")
+        with self.assertRaises(ValueError):
+            verify_experiment(self.manifest_path, self.output)
+        self.run_fake()
+        self.assertTrue(verify_experiment(self.manifest_path, self.output)["valid"])
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        orphan_record = next(a for a in state["attempts"] if a["destination"] == str(orphan))
+        self.assertEqual(orphan_record["status"], "invalidated")
+        orphan_record["executions"].append({"role": "got", "command": ["python", str(ROOT / "scripts/evaluate_got10k_nanotrack.py"), "--subset", "train-hidden"], "status": "planned"})
+        write_json(self.output / "candidate_table.json", state)
+        with self.assertRaises(ValueError):
+            verify_experiment(self.manifest_path, self.output)
+
+    def test_schema_one_state_is_rejected_without_automatic_relabeling(self):
+        self.output.mkdir()
+        path = self.output / "candidate_table.json"
+        write_json(path, {"schema_version": 1, "candidates": []})
+        before = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "schema.*1|schema.*2"):
+            self.run_fake()
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_completed_training_is_recovered_after_success_before_state_commit(self):
+        class ExitAfterTrainingSuccess(FakeGPU):
+            def __call__(self, command, log):
+                super().__call__(command, log)
+                if len(self.commands) == 8:
+                    raise RuntimeError("interruption after observed training success")
+        with self.assertRaisesRegex(RuntimeError, "after observed"):
+            self.run_fake(ExitAfterTrainingSuccess())
+        retry = FakeGPU(fail_at=4)
+        with self.assertRaisesRegex(RuntimeError, "interruption"):
+            self.run_fake(retry)
+        self.assertTrue(all("evaluate_" in c[1] for c in retry.commands[:3]))
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        self.assertEqual(len(state["candidates"]), 2)
+        attempt = state["attempts"][2]
+        training = next(e for e in attempt["executions"] if e["role"] == "train")
+        self.assertEqual(training["recovery"], "observed_success_after_interruption")
+
+    def test_retry_allocates_unique_attempt_after_training_interrupted_before_any_output(self):
+        partial = self.partial_state()
+        abandoned = partial["attempts"][-1]["destination"]
+        self.assertFalse(Path(abandoned).exists())
+        retry = FakeGPU(fail_at=5)
+        with self.assertRaisesRegex(RuntimeError, "interruption"):
+            self.run_fake(retry)
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        ids = [a["id"] for a in state["attempts"]]
+        self.assertEqual(len(ids), len(set(ids)), "allocated-but-uncreated attempts must reserve their identity")
+        self.assertEqual(state["attempts"][2]["status"], "invalidated")
+
 
 class SampleLearningRateTest(unittest.TestCase):
+    def test_frozen_g5000_initialization_preserves_source_offset_on_cpu(self):
+        code = '''
+import sys
+from pathlib import Path
+sys.path.insert(0, "/home/u20/single-object-tracking/repos/siamtrackers/NanoTrack")
+from nanotrack.core.config import cfg
+cfg.merge_from_file("configs/nanotrack_factorial_v3/b8_g0.yaml")
+from nanotrack.models.model_builder import ModelBuilder
+from scripts.train_nanotrack_uav123 import initialize_training_stage
+import torch
+model = ModelBuilder()
+optimizer = torch.optim.SGD(model.parameters(), lr=2e-5)
+path = Path("/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth")
+try:
+    initialize_training_stage(model, optimizer, path, "factorial", 0)
+except ValueError:
+    pass
+else:
+    raise AssertionError("backwards initializer was accepted")
+progress = initialize_training_stage(model, optimizer, path, "factorial", 5000)
+assert progress["global_step"] == 5000 and progress["stage_step"] == 0
+assert not optimizer.state
+print("CPU frozen g5000 initialization: global=5000 stage=0 fresh_optimizer=true")
+'''
+        result = subprocess.run([sys.executable, "-B", "-c", code], cwd=str(ROOT),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("global=5000 stage=0 fresh_optimizer=true", result.stdout)
     def test_trainer_writes_atomic_telemetry_for_forty_update_segment(self):
         from scripts import train_nanotrack_uav123 as training
         self.assertTrue(hasattr(training, "save_sample_segment_telemetry"), "segment telemetry API missing")

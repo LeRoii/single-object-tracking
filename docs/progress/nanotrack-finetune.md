@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-25T16:00:05+08:00`。
+- 最近核对：`2026-10-25T16:33:50+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；新实验评分、配对策略、九格配置、可恢复控制器及只读验证器已完成局部验证，控制器伪端到端覆盖 72 个节点，并加入跨 batch 精确的样本比例 LR 和段遥测；batch/GOT 交叉对照及困难样本强化尚无真实训练证据。
+- 状态说明：既有 g5000 可交付下游评估；新实验控制器首轮评审的三项 Major 已修正：恢复 cadence 固定 250，保留来源 global=5000 与独立 stage 计数，schema 2 逐阶段持久化 attempt。22 项局部测试及真实权重 CPU 初始化/实际训练器预检通过，仍待独立复审；batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -56,6 +56,73 @@
    验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。当前没有启动真实训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-25 任务 4 评审修复回合 1：生产命令契约与逐阶段恢复
+
+- 时间：`2026-10-25T16:33:50+08:00`；分支/工作树仍为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+  开始基线 `3cc2cf4eadafb8afd1ad5548421b0f5ddf96db1c`，初始工作树干净。
+  首轮实现只有伪命令成功，未穿过真实 trainer 的 cadence/初始化检查；评审指出的三项
+  Major 均成立。下面是修正后的新证据，不将前一轮伪通过解释为生产训练已经可运行。
+- 修正 1：恢复 checkpoint cadence 固定为 trainer 支持的 `250`；候选 cadence 仍为
+  batch 8/32/64 的 `320/80/40`。新增 trainer `--validate-only`，经过真实参数解析、
+  pair-policy、checkpoint/candidate 边界及来源 checkpoint 检查后退出，不创建输出目录，
+  不导入 NanoTrack 模型或调用 CUDA。实际九格来源配置中三种 batch 的首段预检均 exit 0。
+- 修正 2：context 绑定实际 g5000 header（`global_step=5000`、`stage_step=5000`、
+  `stage=stage1`、`epoch=1`、`policy=head_only`、`seed=123456`）。新训练阶段起点是
+  global=5000、stage=0；节点 global 为 `5000+stage_updates`，seen samples 只由
+  stage updates × batch 推出。首节点 stop 分别为 `5320/5080/5040`；LR 和遥测的样本
+  比例不计入来源的 5000 次更新。实际冻结权重在真实 NanoTrack CPU 模型上严格加载成功，
+  新优化器为空；同一来源以 initial-global-step=0 初始化确实被拒绝。
+- 修正 3：`candidate_table.json` 升为 schema 2。baseline/node attempt 及全部计划命令
+  在发起命令前持久化；训练 checkpoint/遥测及每个评测器成功后分别原子提交阶段状态。
+  评测中断后仅重跑缺失/失败的评测，使用新重试路径，复用已验证的训练和其他评测结果；
+  输出已成功但尚未来得及提交状态的阶段可按已观察的日志、哈希和元数据恢复。
+  attempt ID 同时保留文件系统和 journal 中已分配的编号，即便中断前尚未生成目录也不重用。
+- 所有保留 attempt（包括 canceled/invalidated/未登记孤儿）都有记录；未知 attempt 目录
+  只进入有原因、有文件清单的 invalidated 审计。验证器检查全部计划/执行命令及保留日志、
+  已成功阶段的哈希和身份、终态文件清单及结果/journal 一致性；未闭环 pending attempt
+  阻止完整验证通过。损坏的保留 checkpoint 在反序列化前核对已记录 SHA；被废弃工件后续
+  再变化会导致验证失败，或由控制器显式追加新的完整性审计，不能静默忽略。
+- schema 1 兼容策略：不自动迁移、不改标签、不覆盖旧证据；明确拒绝并要求保留原目录、
+  使用新的输出根。schema 1 缺少真实 global offset 和完整阶段 journal，不能补造它们。
+  本项目尚无真实新实验输出，因此没有生产状态迁移或重训问题。
+- RED：新增真实预检/阶段恢复/孤儿审计/schema 回归先观察 `4 failures`；补测“已分配但未
+  创建目录”再观察 `5 != 4` 的 ID 冲突；保留 checkpoint 损坏回归暴露反序列化前未核对
+  哈希，均已修正。伪执行器现在在每次命令开始时读取磁盘状态，要求对应 running 阶段已
+  持久化。旧版耗时重放在源码修正后被终止/取代，其日志不充当最终验证证据。
+- 最终局部验证：
+  `TMPDIR=/dev/shm /home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest tests.test_nanotrack_factorial_controller -v > /tmp/nanotrack-task4-fix-controller-final.log 2>&1`，
+  实测 `22 tests / OK`（70.606 s）；相关历史回归实测 `87 tests / OK`（3.541 s），
+  日志 `/tmp/nanotrack-task4-fix-historical.log`。此外磁盘 `/tmp` 上的已分配 ID/孤儿/损坏
+  重放验证为 `2 tests / OK`（259.446 s），日志 `/tmp/nanotrack-task4-fix-edge.log`。
+  为减少事务测试磁盘刷写，最终完整/局部套件只将测试临时工件放在内存临时目录，自动清理；
+  不修改源码或测试断言，原子文件操作仍实际执行。
+- 真实来源命令预检日志 `/tmp/nanotrack-task4-fix-command-validation.log` 记录三种 batch
+  均 validated=true，绑定 143 个输入文件；context SHA-256
+  `d0156c770f20ad3f4cac53ba1f15aeeae5a16a27e6fea63ff9ece26d0fd0ee33`。
+  CLI help 均 exit 0。冻结 manifest SHA 仍为
+  `d8385c25de4fce516545ee7e7b45c30f9aa7d76af8256a0afa965d93abee99cd`，
+  g5000 权重 SHA 仍为 `40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1`。
+- 本轮源码 SHA-256：控制器
+  `5bfd6af6514344d3ccbd088b1eb75326e1cc5c1ae8b19c7f7535862b937c15f0`；验证器
+  `c920a15b32396ab9797f51c2d17df611478277f00e65d2edb6f9040d6f824208`；训练器
+  `4651e28992f2e5b9384683986183c6d0f38c8bb8f3c2d9a165defe06120f2c55`；新控制器测试
+  `0eca501d24d789347943ad721fabbee7a71fd4a0e5adfa42740ae1c831f242e2`。
+- 源码冻结后完整 discover 本修复回合仅运行一次：
+  `TMPDIR=/dev/shm /home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest discover -s tests -v > /tmp/nanotrack-task4-fix-discover.log 2>&1`，
+  实测 `233 tests / failures=4 / exit 1`（74.724 s），无 errors。四条仍为历史
+  `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest` 的
+  `test_formal_configs_match_quota_paths_and_training_contract` 中 stage1/stage2/stage3
+  三个 subtest，以及 `test_smoke_configs_are_bounded_and_keep_policy_representative_pools`，
+  均是主资产根与 linked worktree 的绝对路径断言；没有新增失败，不能宣称全套通过。
+  日志 SHA-256 `6ca29401963cc019b1b3c05b2e2e6f2fd3abd3d5cd8e7bd52b0e13d1a0f87d17`。
+- 边界/下一步：以上是预检、CPU 权重初始化与伪端到端证据，没有真实 GPU 训练/评测，
+  没有隐藏集/视频回归或模型改选；等待独立复审后再执行任务 5/6。结果提交在提交后回报，
+  可通过 `git log -1 --format=%H -- scripts/run_nanotrack_factorial.py` 查询。
+  Handoff：消费新 schema 2 和 source-offset/阶段遥测契约；不请求改变公共模型契约，
+  不修改 STATUS、公共契约或其他 owner 文件。
 
 ## 2026-10-25 任务 4：可恢复控制器、精确样本 LR 和只读验证器
 

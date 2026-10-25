@@ -874,6 +874,8 @@ def _main(pair_policy_cleanup: ExitStack) -> None:
         "--candidate-every-steps", type=int, default=CANDIDATE_CHECKPOINT_STEPS
     )
     parser.add_argument("--seed", type=int, default=123456)
+    parser.add_argument("--validate-only", action="store_true",
+                        help="Validate parser/checkpoint boundary contracts without loading a model or CUDA")
     args = parser.parse_args()
     pair_policy = load_pair_policy(args.pair_policy) if args.pair_policy is not None else None
     pair_policy_sha256 = pair_policy["sha256"] if pair_policy is not None else None
@@ -900,6 +902,19 @@ def _main(pair_policy_cleanup: ExitStack) -> None:
                 RESUME_CHECKPOINT_STEPS
             )
         )
+    if args.validate_only:
+        source_step = None
+        if args.initialize_from is not None:
+            header = torch.load(str(args.initialize_from.resolve()), map_location="cpu")
+            source_step = int(header.get("global_step", 0))
+            if source_step < 0 or start_global_step < source_step:
+                raise ValueError("stage initializer would move the run global_step backwards")
+        print(json.dumps({"validated": True, "start_global_step": start_global_step,
+                          "source_global_step": source_step,
+                          "stop_after_global_step": args.stop_after_global_step,
+                          "checkpoint_every_steps": args.checkpoint_every_steps,
+                          "candidate_every_steps": args.candidate_every_steps}, sort_keys=True))
+        return
 
     config_path = args.config.resolve()
     nanotrack_root = args.nanotrack_root.resolve()

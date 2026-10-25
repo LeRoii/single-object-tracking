@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import pickle
 from pathlib import Path
 import subprocess
 import sys
@@ -59,7 +60,7 @@ def read_json(path):
 
 def atomic_json(path, value):
     path = Path(path)
-    content = (json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n").encode()
+    content = (json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
     if path.is_file() and path.read_bytes() == content:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,8 +186,15 @@ def load_context(manifest_path, evaluation_inputs=None, execution_backend="subpr
         bound["evaluation:" + key] = artifact(path)
     if execution_backend not in ("subprocess", "fake_cpu_fixture"):
         raise ValueError("unknown execution backend")
+    import torch
+    header = torch.load(bound["initial_checkpoint"]["path"], map_location="cpu")
+    if not isinstance(header, dict) or type(header.get("global_step")) is not int or header["global_step"] < 0:
+        raise ValueError("initial checkpoint requires a nonnegative source global_step")
+    source_header = {key: header.get(key) for key in
+                     ("global_step", "stage_step", "stage", "epoch", "policy", "seed", "lr_schedule")}
     context = {"bound": bound, "evaluation_inputs": inputs, "python": artifact(sys.executable),
                "execution_backend": execution_backend,
+               "initial_source_header": source_header,
                "scoring_version": SCORING_VERSION}
     context["sha256"] = json_hash(context)
     return manifest, context
@@ -197,12 +205,12 @@ def training_command(cell, seed, samples, destination, context, previous):
     command = [sys.executable, str(ROOT / "scripts" / SCRIPTS["train"]),
                "--config", cell["config_path"], "--nanotrack-root", inputs["nanotrack_root"],
                "--pretrained", cell["initial_checkpoint"], "--output-dir", str(destination),
-               "--stop-after-global-step", str(samples // cell["batch_size"]),
+               "--stop-after-global-step", str(context["initial_source_header"]["global_step"] + samples // cell["batch_size"]),
                "--policy", "head_only", "--pair-policy", cell["pair_policy_path"],
                "--stage", "factorial", "--lr-schedule", "sample", "--seed", str(seed),
-               "--checkpoint-every-steps", str(2560 // cell["batch_size"]),
+               "--checkpoint-every-steps", "250",
                "--candidate-every-steps", str(2560 // cell["batch_size"])]
-    command += ["--resume", previous["path"]] if previous else ["--initialize-from", cell["initial_checkpoint"], "--initial-global-step", "0"]
+    command += ["--resume", previous["path"]] if previous else ["--initialize-from", cell["initial_checkpoint"], "--initial-global-step", str(context["initial_source_header"]["global_step"])]
     return command
 
 
@@ -262,7 +270,8 @@ def evaluate(config, checkpoint, destination, context, runner):
 
 def node_identity(cell_id, cell, seed, samples, context):
     return {"context_sha256": context["sha256"], "cell": cell_id, "seed": seed,
-            "seen_samples": samples, "global_step": samples // cell["batch_size"],
+            "seen_samples": samples, "stage_step": samples // cell["batch_size"],
+            "global_step": context["initial_source_header"]["global_step"] + samples // cell["batch_size"],
             "config_sha256": cell["config_sha256"],
             "initial_checkpoint_sha256": context["bound"]["initial_checkpoint"]["sha256"],
             "pair_policy_sha256": context["bound"]["pair_policy"]["sha256"],
@@ -282,7 +291,7 @@ def check_evidence(evidence):
 def check_checkpoint(path, identity):
     import torch
     payload = torch.load(str(path), map_location="cpu")
-    expected = {"global_step": identity["global_step"], "stage_step": identity["global_step"],
+    expected = {"global_step": identity["global_step"], "stage_step": identity["stage_step"],
                 "seed": identity["seed"], "stage": "factorial", "policy": "head_only",
                 "lr_schedule": "sample", "pair_policy_sha256": identity["pair_policy_sha256"]}
     if any(payload.get(k) != v for k, v in expected.items()) or "optimizer" not in payload or "model" not in payload:
@@ -295,12 +304,13 @@ def validate_telemetry(evidence, cell, identity, previous, context):
     check_artifact(evidence["telemetry"])
     value = read_json(evidence["telemetry"]["path"])
     batch = cell["batch_size"]
-    end = identity["global_step"]
+    end = identity["stage_step"]
     start = end - 2560 // batch
     expected = {"schema_version": 1, "stage": "factorial", "seed": identity["seed"],
                 "batch_size": batch, "lr_schedule": "sample", "full_sample_budget": 40960,
                 "start_update": start, "end_update": end, "segment_updates": end - start,
-                "start_global_step": start, "end_global_step": end,
+                "start_global_step": context["initial_source_header"]["global_step"] + start,
+                "end_global_step": identity["global_step"],
                 "start_seen_samples": identity["seen_samples"] - 2560,
                 "end_seen_samples": identity["seen_samples"], "segment_samples": 2560,
                 "loss_finite": True, "loss_count": end - start, "wall_boundary": "training_loop",
@@ -341,10 +351,10 @@ def validate_record(record, cell, context, previous, baseline):
     expected_command = training_command(cell, record["seed"], record["seen_samples"], Path(checkpoint["path"]).parent, context, previous)
     if record["training"]["command"] != expected_command:
         raise ValueError("training command mismatch")
-    destination = Path(record["training"]["log"]["path"]).parent / "evaluation"
-    expected = evaluation_commands(cell["config_path"], checkpoint["path"], destination, context)
-    for role, (command, output) in expected.items():
+    for role in ("aerial", "uav", "got"):
         evidence = record["evaluations"][role]
+        destination = Path(evidence["destination"])
+        command, output = evaluation_commands(cell["config_path"], checkpoint["path"], destination, context)[role]
         check_evidence(evidence)
         if evidence["command"] != command or evidence["output"]["path"] != str(output):
             raise ValueError("evaluation command mismatch")
@@ -378,9 +388,13 @@ def _next_attempt(root):
     return root / ("attempt%04d" % number)
 
 
-def validate_state_identity(state, manifest, context):
-    if state.get("schema_version") != 1 or state.get("context") != context or state.get("scoring_version") != SCORING_VERSION:
+def validate_state_identity(state, manifest, context, output_root=None):
+    if state.get("schema_version") != 2:
+        raise ValueError("schema 2 is required; preserve schema 1 fake evidence in its original root and start a new output root")
+    if state.get("context") != context or state.get("scoring_version") != SCORING_VERSION:
         raise ValueError("persisted experiment identity mismatch")
+    if output_root is not None and state.get("output_root") != str(Path(output_root).resolve()):
+        raise ValueError("persisted output-root identity mismatch")
     seen = set()
     for record in state["candidates"]:
         key = (record["cell"], record["seed"], record["seen_samples"])
@@ -394,15 +408,24 @@ def validate_state_identity(state, manifest, context):
         validate_command(record["training"]["command"])
         for evidence in record["evaluations"].values():
             validate_command(evidence["command"])
+    for attempt in state["attempts"]:
+        root = Path(state["output_root"]).resolve()
+        destination = Path(attempt["destination"]).resolve()
+        if not any(str(destination).startswith(str(root / name) + "/") for name in ("baseline", "nodes")) or not destination.name.startswith("attempt") or not destination.name[7:].isdigit():
+            raise ValueError("retained attempt outside experiment root")
+        for execution in attempt["executions"]:
+            if "destination" in execution and not (Path(execution["destination"]).resolve() == destination or str(Path(execution["destination"]).resolve()).startswith(str(destination) + "/")):
+                raise ValueError("stage execution outside retained attempt")
+        audit_commands(attempt)
 
 
 def validate_baseline(state, manifest, context):
     baseline = state["baseline"]
     cell = manifest["cells"][CELLS[0]]
     config = context["bound"]["config:" + CELLS[0]]
-    expected = evaluation_commands(cell["config_path"], cell["initial_checkpoint"], Path(baseline["destination"]), context)
-    for role, (command, output) in expected.items():
+    for role in ("aerial", "uav", "got"):
         evidence = baseline["evaluations"][role]
+        command, output = evaluation_commands(cell["config_path"], cell["initial_checkpoint"], Path(evidence["destination"]), context)[role]
         check_evidence(evidence)
         if evidence["command"] != command or evidence["output"]["path"] != str(output):
             raise ValueError("baseline command mismatch")
@@ -412,68 +435,348 @@ def validate_baseline(state, manifest, context):
     return metrics
 
 
+def audit_commands(value):
+    """Inspect every retained/planned command, including failed and orphan attempts."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "command":
+                validate_command(item)
+            else:
+                audit_commands(item)
+    elif isinstance(value, list):
+        for item in value:
+            audit_commands(item)
+
+
+def inventory(destination):
+    return [artifact(path) for path in sorted(Path(destination).rglob("*")) if path.is_file()]
+
+
+def audit_logs(destination):
+    for path in Path(destination).rglob("*.log"):
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            candidate = line[len("command="):] if line.startswith("command=") else line
+            if candidate.startswith("["):
+                try:
+                    value = json.loads(candidate)
+                except ValueError:
+                    continue
+                if isinstance(value, list) and value and isinstance(value[0], str):
+                    validate_command(value)
+
+
+def attempt_directories(output_root):
+    return {str(p.resolve()) for name in ("baseline", "nodes")
+            for p in (Path(output_root) / name).rglob("attempt[0-9]*") if p.is_dir()}
+
+
+def invalidate_attempt(attempt, reason):
+    attempt["status"] = "invalidated"
+    attempt["invalidation_reason"] = reason
+    attempt["integrity_audit"] = {"previous_inventory": attempt.get("retained_inventory", []),
+                                   "observed_inventory": inventory(attempt["destination"])}
+    attempt["retained_inventory"] = attempt["integrity_audit"]["observed_inventory"]
+    for execution in attempt["executions"]:
+        if execution["status"] in ("planned", "running", "interrupted"):
+            execution["status"] = "canceled"
+            execution["reason"] = "parent_attempt_invalidated"
+
+
+def reconcile_retained_attempts(state, output_root):
+    known = {a["destination"] for a in state["attempts"]}
+    for destination in sorted(attempt_directories(output_root) - known):
+        audit_logs(destination)
+        attempt = {"id": destination, "destination": destination, "kind": "orphan",
+                   "executions": [], "status": "running"}
+        invalidate_attempt(attempt, "orphan_directory_not_reused")
+        state["attempts"].append(attempt)
+    for attempt in state["attempts"]:
+        audit_commands(attempt)
+        audit_logs(attempt["destination"])
+        if attempt["status"] == "invalidated" and inventory(attempt["destination"]) != attempt["retained_inventory"]:
+            invalidate_attempt(attempt, "retained_invalidated_artifact_changed")
+
+
+def plan_execution(role, destination, cell, context, snapshot=None, seed=None, samples=None, previous=None):
+    destination = Path(destination)
+    if role == "train":
+        command = training_command(cell, seed, samples, destination / "training", context, previous)
+        output = None
+    else:
+        command, output = evaluation_commands(cell["config_path"], snapshot, destination, context)[role]
+    return {"role": role, "destination": str(destination), "command": command,
+            "log_path": str(destination / (role + ".log")),
+            "output_path": str(output) if output else None, "status": "planned"}
+
+
+def allocate_attempt(state, root, cell_id, cell, context, seed=None, samples=None, previous=None):
+    destination = _next_attempt(root)
+    reserved = {a["destination"] for a in state["attempts"]}
+    number = int(destination.name[7:])
+    while str(destination) in reserved:
+        number += 1
+        destination = Path(root) / ("attempt%04d" % number)
+    attempt = {"id": str(destination), "destination": str(destination),
+               "kind": "baseline" if seed is None else "node", "cell": cell_id,
+               "status": "planned", "executions": []}
+    snapshot = cell["initial_checkpoint"]
+    if seed is not None:
+        identity = node_identity(cell_id, cell, seed, samples, context)
+        attempt.update(identity=identity, predecessor=previous or context["bound"]["initial_checkpoint"])
+        train = plan_execution("train", destination, cell, context, seed=seed, samples=samples, previous=previous)
+        attempt["executions"].append(train)
+        snapshot = str(destination / "training" / ("candidate_factorial_g%08d_e000_s%05d.pth" %
+                       (identity["global_step"], identity["stage_step"])))
+        attempt["checkpoint_path"] = snapshot
+    for role in ("aerial", "uav", "got"):
+        attempt["executions"].append(plan_execution(role, destination / "evaluation", cell, context, snapshot=snapshot))
+    state["attempts"].append(attempt)
+    return attempt
+
+
+def inspect_execution(execution, attempt, cell, context):
+    """Validate successful stage files, including an orphan success after a crash."""
+    log = Path(execution["log_path"])
+    if not log.is_file() or "exit_code=0" not in log.read_text(encoding="utf-8"):
+        raise ValueError("stage has no observed successful command exit")
+    evidence = {"command": execution["command"], "command_sha256": json_hash(execution["command"]),
+                "log": artifact(log), "destination": execution["destination"]}
+    role = execution["role"]
+    if role == "train":
+        checkpoint = artifact(attempt["checkpoint_path"])
+        check_checkpoint(checkpoint["path"], attempt["identity"])
+        evidence["checkpoint"] = checkpoint
+        evidence["telemetry"] = artifact(Path(checkpoint["path"]).parent / "segment-telemetry.json")
+        previous = None if attempt["predecessor"] == context["bound"]["initial_checkpoint"] else attempt["predecessor"]
+        validate_telemetry(evidence, cell, attempt["identity"], previous, context)
+    else:
+        evidence["output"] = artifact(execution["output_path"])
+        output = read_json(evidence["output"]["path"])
+        snapshot = context["bound"]["initial_checkpoint"] if attempt["kind"] == "baseline" else attempt["checkpoint"]
+        if output.get("snapshot_sha256") != snapshot["sha256"] or output.get("config_sha256", cell["config_sha256"]) != cell["config_sha256"]:
+            raise ValueError("stage output identity mismatch")
+        if role == "got" and output.get("subset") != "val" or role == "uav" and output.get("split") != "val":
+            raise ValueError("stage output split mismatch")
+    return evidence
+
+
+def check_execution(execution, attempt, cell, context):
+    validate_command(execution["command"])
+    role = execution["role"]
+    if role == "train":
+        ident = attempt["identity"]
+        previous = None if attempt["predecessor"] == context["bound"]["initial_checkpoint"] else attempt["predecessor"]
+        expected = training_command(cell, ident["seed"], ident["seen_samples"],
+                                    Path(execution["destination"]) / "training", context, previous)
+    else:
+        snapshot = cell["initial_checkpoint"] if attempt["kind"] == "baseline" else attempt["checkpoint_path"]
+        expected, output = evaluation_commands(cell["config_path"], snapshot, Path(execution["destination"]), context)[role]
+        if execution["output_path"] != str(output):
+            raise ValueError("planned stage output path mismatch")
+    if execution["command"] != expected:
+        raise ValueError("planned stage command mismatch")
+    if execution["status"] == "succeeded":
+        check_evidence(execution["evidence"])
+        for key in ("checkpoint", "telemetry", "output"):
+            if key in execution["evidence"]:
+                check_artifact(execution["evidence"][key])
+        actual = inspect_execution(execution, attempt, cell, context)
+        if execution["evidence"] != actual:
+            raise ValueError("retained stage evidence hash mismatch")
+
+
+def verify_attempts(state, manifest, context, output_root, require_terminal=True):
+    ids = [a["id"] for a in state["attempts"]]
+    destinations = [a["destination"] for a in state["attempts"]]
+    if len(ids) != len(set(ids)) or len(destinations) != len(set(destinations)):
+        raise ValueError("duplicate retained attempt identity")
+    if not attempt_directories(output_root).issubset(set(destinations)):
+        raise ValueError("unrecorded orphan attempt directory")
+    for attempt in state["attempts"]:
+        audit_commands(attempt)
+        audit_logs(attempt["destination"])
+        if require_terminal and attempt["status"] not in ("complete", "invalidated"):
+            raise ValueError("unresolved pending attempt")
+        if attempt["kind"] == "orphan" and attempt["status"] != "invalidated":
+            raise ValueError("orphan attempt must have an audited invalidated status")
+        if attempt["status"] == "invalidated":
+            if not attempt.get("invalidation_reason") or "integrity_audit" not in attempt:
+                raise ValueError("invalidated attempt requires an explicit audit")
+        elif attempt["kind"] != "orphan":
+            cell = manifest["cells"][attempt["cell"]]
+            if attempt["kind"] == "node":
+                identity = attempt["identity"]
+                if identity != node_identity(attempt["cell"], cell, identity["seed"], identity["seen_samples"], context):
+                    raise ValueError("retained node attempt identity mismatch")
+            for execution in attempt["executions"]:
+                check_execution(execution, attempt, cell, context)
+                if require_terminal and execution["status"] not in ("succeeded", "invalidated", "canceled"):
+                    raise ValueError("unresolved retained stage execution")
+            if attempt["status"] == "complete":
+                roles = [e["role"] for e in attempt["executions"] if e["status"] == "succeeded"]
+                expected_roles = ["aerial", "got", "uav"] + (["train"] if attempt["kind"] == "node" else [])
+                if sorted(roles) != sorted(expected_roles):
+                    raise ValueError("complete attempt lacks exactly one success per stage")
+        if attempt["status"] in ("complete", "invalidated") and inventory(attempt["destination"]) != attempt["retained_inventory"]:
+            raise ValueError("retained attempt inventory/hash mismatch")
+    by_id = {a["id"]: a for a in state["attempts"]}
+    for record in ([state["baseline"]] if "baseline" in state else []) + state["candidates"]:
+        attempt = by_id.get(record["attempt_id"])
+        if attempt is None or attempt["status"] != "complete":
+            raise ValueError("result has no completed retained attempt")
+        successful = {e["role"]: e["evidence"] for e in attempt["executions"] if e["status"] == "succeeded"}
+        if record["evaluations"] != {r: successful[r] for r in ("aerial", "uav", "got")}:
+            raise ValueError("result evaluator evidence differs from stage journal")
+        if attempt["kind"] == "node" and (record["training"] != successful["train"] or record["checkpoint"] != attempt["checkpoint"]["path"] or record["checkpoint_sha256"] != attempt["checkpoint"]["sha256"]):
+            raise ValueError("result training evidence differs from stage journal")
+
+
+class InvalidAttempt(ValueError):
+    pass
+
+
+def run_attempt(attempt, cell, context, state, table_path, runner):
+    attempt["status"] = "running"
+    atomic_json(table_path, state)
+    roles = ("train", "aerial", "uav", "got") if attempt["kind"] == "node" else ("aerial", "uav", "got")
+    results = {}
+    for role in roles:
+        execution = next(e for e in reversed(attempt["executions"]) if e["role"] == role)
+        try:
+            check_execution(execution, attempt, cell, context)
+        except (ValueError, OSError, KeyError, EOFError, RuntimeError, pickle.UnpicklingError) as error:
+            if execution["status"] == "succeeded":
+                raise InvalidAttempt("retained successful stage is invalid: " + str(error))
+            raise
+        if execution["status"] in ("running", "interrupted"):
+            try:
+                execution["evidence"] = inspect_execution(execution, attempt, cell, context)
+                execution["status"] = "succeeded"
+                execution["recovery"] = "observed_success_after_interruption"
+                atomic_json(table_path, state)
+            except (ValueError, OSError, KeyError, EOFError, RuntimeError, pickle.UnpicklingError):
+                execution["status"] = "invalidated"
+                execution["reason"] = "interrupted_stage_incomplete_or_invalid"
+                execution["retained_inventory"] = inventory(execution["destination"])
+                if role == "train":
+                    raise InvalidAttempt("interrupted training has no valid completed checkpoint")
+                number = sum(e["role"] == role for e in attempt["executions"]) + 1
+                destination = Path(attempt["destination"]) / "evaluation" / ("retry-%s-%04d" % (role, number))
+                snapshot = cell["initial_checkpoint"] if attempt["kind"] == "baseline" else attempt["checkpoint_path"]
+                execution = plan_execution(role, destination, cell, context, snapshot=snapshot)
+                attempt["executions"].append(execution)
+                atomic_json(table_path, state)
+        if execution["status"] == "planned":
+            execution["status"] = "running"
+            atomic_json(table_path, state)
+            try:
+                execute(execution["command"], Path(execution["log_path"]), runner)
+                execution["evidence"] = inspect_execution(execution, attempt, cell, context)
+                execution["status"] = "succeeded"
+                if role == "train":
+                    attempt["checkpoint"] = execution["evidence"]["checkpoint"]
+                atomic_json(table_path, state)
+            except BaseException as error:
+                execution["status"] = "interrupted"
+                execution["error"] = {"type": type(error).__name__, "message": str(error)}
+                execution["retained_inventory"] = inventory(execution["destination"])
+                atomic_json(table_path, state)
+                raise
+        if execution["status"] != "succeeded":
+            raise InvalidAttempt("retained stage has no resumable success")
+        results[role] = execution["evidence"]
+        if role == "train":
+            attempt["checkpoint"] = execution["evidence"]["checkpoint"]
+    return results
+
+
 def run_screening(manifest_path, output_root, runner=run_command, evaluation_inputs=None):
-    backend = "subprocess" if runner is run_command else "fake_cpu_fixture"
-    manifest, context = load_context(manifest_path, evaluation_inputs, backend)
     output_root = Path(output_root).resolve()
     table_path = output_root / "candidate_table.json"
-    state = read_json(table_path) if table_path.is_file() else {
-        "schema_version": 1, "scoring_version": SCORING_VERSION, "context": context,
-        "candidates": [], "invalidated": []}
-    validate_state_identity(state, manifest, context)
+    existing = read_json(table_path) if table_path.is_file() else None
+    if existing is not None and existing.get("schema_version") != 2:
+        raise ValueError("schema 2 is required; preserve schema 1 fake evidence and use a new output root")
+    backend = "subprocess" if runner is run_command else "fake_cpu_fixture"
+    manifest, context = load_context(manifest_path, evaluation_inputs, backend)
+    state = existing if existing is not None else {
+        "schema_version": 2, "scoring_version": SCORING_VERSION, "context": context,
+        "output_root": str(output_root),
+        "candidates": [], "invalidated": [], "attempts": []}
+    validate_state_identity(state, manifest, context, output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     with (output_root / ".controller.lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if table_path.is_file():
             state = read_json(table_path)
-            validate_state_identity(state, manifest, context)
-        if "baseline" not in state:
-            destination = _next_attempt(output_root / "baseline")
-            cell = manifest["cells"][CELLS[0]]
-            evaluations, metrics = evaluate(context["bound"]["config:" + CELLS[0]],
-                                            context["bound"]["initial_checkpoint"], destination, context, runner)
-            state["baseline"] = {"destination": str(destination), "evaluations": evaluations, "metrics": metrics}
-            atomic_json(table_path, state)
-        baseline = validate_baseline(state, manifest, context)
-        for cell_id in CELLS:
+            validate_state_identity(state, manifest, context, output_root)
+        reconcile_retained_attempts(state, output_root)
+        atomic_json(table_path, state)
+        for cell_id, seed, samples in [(CELLS[0], None, None)] + [
+                (c, s, n) for c in CELLS for s in SEEDS for n in NODES]:
             cell = manifest["cells"][cell_id]
-            for seed in SEEDS:
-                previous = None
-                invalid_suffix = False
-                for samples in NODES:
-                    record = next((r for r in state["candidates"] if (r["cell"], r["seed"], r["seen_samples"]) == (cell_id, seed, samples)), None)
-                    if record and not invalid_suffix:
-                        try:
-                            previous = validate_record(record, cell, context, previous, baseline)
-                            continue
-                        except (ValueError, OSError, KeyError, EOFError, RuntimeError):
-                            invalid_suffix = True
-                    if record:
+            previous = None
+            if seed is not None and samples != NODES[0]:
+                predecessor = next(r for r in state["candidates"] if (r["cell"], r["seed"], r["seen_samples"]) == (cell_id, seed, samples - 2560))
+                previous = {"path": predecessor["checkpoint"], "sha256": predecessor["checkpoint_sha256"]}
+            records = [r for r in state["candidates"] if (r["cell"], r["seed"], r["seen_samples"]) == (cell_id, seed, samples)] if seed is not None else []
+            record = records[0] if records else state.get("baseline") if seed is None else None
+            attempt = next((a for a in reversed(state["attempts"]) if a["kind"] == ("baseline" if seed is None else "node") and a["cell"] == cell_id and (seed is None or (a["identity"]["seed"], a["identity"]["seen_samples"]) == (seed, samples)) and a["status"] != "invalidated"), None)
+            if record is not None:
+                try:
+                    if attempt is None or attempt["status"] != "complete" or record["attempt_id"] != attempt["id"]:
+                        raise ValueError("candidate has no matching completed attempt")
+                    if inventory(attempt["destination"]) != attempt["retained_inventory"]:
+                        raise ValueError("completed attempt inventory changed")
+                    if seed is None:
+                        validate_baseline(state, manifest, context)
+                    else:
+                        validate_record(record, cell, context, previous, state["baseline"]["metrics"])
+                    continue
+                except (ValueError, OSError, KeyError, EOFError, RuntimeError) as error:
+                    if attempt is not None:
+                        invalidate_attempt(attempt, str(error))
+                    if seed is None:
+                        state.pop("baseline", None)
+                    else:
                         state["candidates"].remove(record)
                         state["invalidated"].append(record)
-                    identity = node_identity(cell_id, cell, seed, samples, context)
-                    destination = _next_attempt(output_root / "nodes" / cell_id / str(seed) / str(samples))
-                    train_dir = destination / "training"
-                    command = training_command(cell, seed, samples, train_dir, context, previous)
-                    training = execute(command, destination / "training.log", runner)
-                    matches = list(train_dir.glob("candidate_factorial_g%08d_*.pth" % identity["global_step"]))
-                    if len(matches) != 1:
-                        raise ValueError("training must produce exactly one boundary checkpoint")
-                    check_checkpoint(matches[0], identity)
-                    training["telemetry"] = artifact(train_dir / "segment-telemetry.json")
-                    validate_telemetry(training, cell, identity, previous, context)
-                    checkpoint = artifact(matches[0])
-                    evaluations, metrics = evaluate(context["bound"]["config:" + cell_id], checkpoint, destination / "evaluation", context, runner)
-                    record = {"cell": cell_id, "seed": seed, "seen_samples": samples,
-                              "global_step": identity["global_step"], "identity": identity,
-                              "checkpoint": checkpoint["path"], "checkpoint_sha256": checkpoint["sha256"],
-                              "predecessor": previous or context["bound"]["initial_checkpoint"],
-                              "training": training, "evaluations": evaluations, "metrics": metrics,
-                              "decision": guardrail_decision(metrics, baseline)}
-                    state["candidates"].append(record)
-                    state["candidates"].sort(key=lambda r: (r["cell"], r["seed"], r["seen_samples"]))
+                    attempt = None
                     atomic_json(table_path, state)
-                    previous = checkpoint
+            while True:
+                if attempt is not None and seed is not None and attempt["predecessor"] != (previous or context["bound"]["initial_checkpoint"]):
+                    invalidate_attempt(attempt, "predecessor_changed")
+                    attempt = None
+                if attempt is None:
+                    root = output_root / "baseline" if seed is None else output_root / "nodes" / cell_id / str(seed) / str(samples)
+                    attempt = allocate_attempt(state, root, cell_id, cell, context, seed, samples, previous)
+                    atomic_json(table_path, state)  # durable plan exists before any command or directory creation
+                try:
+                    stages = run_attempt(attempt, cell, context, state, table_path, runner)
+                    break
+                except InvalidAttempt as error:
+                    invalidate_attempt(attempt, str(error))
+                    atomic_json(table_path, state)
+                    attempt = None
+            evaluations = {role: stages[role] for role in ("aerial", "uav", "got")}
+            checkpoint = context["bound"]["initial_checkpoint"] if seed is None else attempt["checkpoint"]
+            metrics = combine(evaluations, context["bound"]["config:" + cell_id], checkpoint)
+            record = {"attempt_id": attempt["id"], "destination": attempt["destination"],
+                      "evaluations": evaluations, "metrics": metrics}
+            if seed is None:
+                state["baseline"] = record
+            else:
+                identity = attempt["identity"]
+                record.update(cell=cell_id, seed=seed, seen_samples=samples,
+                              global_step=identity["global_step"], identity=identity,
+                              checkpoint=checkpoint["path"], checkpoint_sha256=checkpoint["sha256"],
+                              predecessor=attempt["predecessor"], training=stages["train"],
+                              decision=guardrail_decision(metrics, state["baseline"]["metrics"]))
+                state["candidates"].append(record)
+                state["candidates"].sort(key=lambda r: (r["cell"], r["seed"], r["seen_samples"]))
+            attempt["status"] = "complete"
+            attempt["retained_inventory"] = inventory(attempt["destination"])
+            atomic_json(table_path, state)
+        verify_attempts(state, manifest, context, output_root)
         atomic_json(output_root / "cell_summary.json", summarize(manifest, state))
     return state
 

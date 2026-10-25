@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.run_nanotrack_factorial import (
     CELLS, NODES, SEEDS, load_context, read_json, summarize,
-    validate_baseline, validate_record, validate_state_identity,
+    validate_baseline, validate_record, validate_state_identity, verify_attempts,
 )
 
 
@@ -18,9 +18,12 @@ def verify_experiment(manifest_path, output_root):
     """Raise ValueError for incomplete, altered or inconsistent retained evidence."""
     output_root = Path(output_root).resolve()
     state = read_json(output_root / "candidate_table.json")
+    if state.get("schema_version") != 2:
+        raise ValueError("schema 2 is required; schema 1 fake evidence must remain in its original root")
     manifest, context = load_context(manifest_path, state["context"]["evaluation_inputs"],
                                      state["context"]["execution_backend"])
-    validate_state_identity(state, manifest, context)
+    validate_state_identity(state, manifest, context, output_root)
+    verify_attempts(state, manifest, context, output_root)
     expected = {(cell, seed, samples) for cell in CELLS for seed in SEEDS for samples in NODES}
     if {(r["cell"], r["seed"], r["seen_samples"]) for r in state["candidates"]} != expected:
         raise ValueError("incomplete matrix: exactly 72 nodes required")
