@@ -439,6 +439,50 @@ handoff。`development_board_validation.latest_handoff.available` 必须继续�
   分别为
   `e84814050a5698d4e0a896987c83a0c82e343cdc9260abb53ca70d0c3439403a`、
   `3cf58780fd121382d9e20b38ad63a537d7f9a9ef2ef4cf40fedaf81021e54c20`。
+- 本次有界启动绑定的输入、NanoTrack template/search/head/manifest 和 VisDrone9
+  detector RKNN/manifest/labels SHA-256 依次为
+  `8090fcd5090adb62f21e79e799f0b0871d9c610d8cf8087b9fcdd3c7e9c2e9b9`、
+  `38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709`、
+  `92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a`、
+  `2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600`、
+  `441e93f2092afe94bac663f27adb1fe99848357356efd67c7473b0b506f854b2`、
+  `3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0`、
+  `05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e`、
+  `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992`。
+  二进制绑定 OpenCV 4.10 `libopencv_world.so.410`；启动日志实测 RKNN API
+  `2.3.2 (429f97ae6b@2025-04-09T09:09:27)`、driver `0.8.2`。
+- 实际启动、窗口查询和停止命令如下。程序由 `timeout` 设置 25 秒硬边界；查询到
+  窗口后向本轮启动的进程发送 `SIGINT`，没有让其继续执行长时跟踪：
+
+```bash
+cd /home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry
+timeout --signal=INT 25s env DISPLAY=:0 stdbuf -oL -eL \
+  ./build-board/nanotrack_v3 --config config/interactive-debug.conf \
+  --video /home/cat/Project/SOT/nanotrack_v3_longterm/data/girl_dance.mp4 \
+  --bbox 244,161,74,70 \
+  --model-dir /home/cat/Project/SOT/nanotrack_v3_longterm/models \
+  --controller-config /home/cat/Project/SOT/nanotrack_v3_longterm/config/visible-default.conf \
+  --detector-model /home/cat/Project/SOT/nanotrack_v3_longterm/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/yolov8n-visdrone9-rk3566-fp16.rknn \
+  --detector-manifest /home/cat/Project/SOT/nanotrack_v3_longterm/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/detector-manifest.json \
+  --detector-labels /home/cat/Project/SOT/nanotrack_v3_longterm/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/visdrone9.txt \
+  --max-frames 1 >/tmp/nanotrack-window-720p.log 2>&1 &
+app_pid=$!
+found=0
+attempt=0
+while [ "$attempt" -lt 15 ]; do
+  if xwininfo -display :0 -name "NanoTrack V3 RK3566 Debug" \
+      >/tmp/nanotrack-window-720p.xwininfo 2>/dev/null; then
+    found=1
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+test "$found" -eq 1
+kill -INT "$app_pid"
+wait "$app_pid" || true
+```
+
 - 板端 `interactive_control` 及其他 12 项测试通过；全量 CTest 为 `13/14`，唯一
   失败是 `cli` 对发行配置视频路径的断言。根因已由重复运行和差异核对确认：本轮
   开始前用户已把 `config/interactive-debug.conf` 的 `video` 从
