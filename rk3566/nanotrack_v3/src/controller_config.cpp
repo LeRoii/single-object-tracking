@@ -81,6 +81,7 @@ void set_value(ControllerConfig& config,
   else if (key == "detector_interval_ms") config.detector_interval_ms = parse_integer(key, value);
   else if (key == "detector_stale_ms") config.detector_stale_ms = parse_integer(key, value);
   else if (key == "detector_max_candidates") config.detector_max_candidates = static_cast<std::size_t>(parse_integer(key, value));
+  else if (key == "detector_candidate_max_center_ratio") config.detector_candidate_max_center_ratio = parse_float(key, value);
   else if (key == "detector_target_mode") config.detector_target_mode = parse_detector_target_mode(value);
   else if (key == "detector_search_scale") config.detector_search_scale = parse_float(key, value);
   else if (key == "detector_subtarget_max_probes") config.detector_subtarget_max_probes = static_cast<std::size_t>(parse_integer(key, value));
@@ -126,7 +127,8 @@ void validate_controller_config(const ControllerConfig& config) {
   }
   const float probabilities[] = {
       config.reliable_score, config.weak_score, config.template_agreement_iou,
-      config.detector_confirmation_iou};
+      config.detector_confirmation_iou,
+      config.detector_candidate_max_center_ratio};
   for (const float value : probabilities) {
     if (!std::isfinite(value) || !in_unit_interval(value)) {
       throw std::invalid_argument("probability-like controller values must be in [0,1]");

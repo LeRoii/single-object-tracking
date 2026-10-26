@@ -51,6 +51,7 @@ const char* to_string(DetectorBatchStatus value) {
     case DetectorBatchStatus::kStale: return "STALE";
     case DetectorBatchStatus::kFrameMismatch: return "FRAME_MISMATCH";
     case DetectorBatchStatus::kInvalid: return "INVALID";
+    case DetectorBatchStatus::kPositionRejected: return "POSITION_REJECTED";
   }
   return "UNKNOWN";
 }

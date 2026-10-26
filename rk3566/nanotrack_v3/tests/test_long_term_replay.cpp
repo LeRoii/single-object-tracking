@@ -109,7 +109,7 @@ int main() {
   step(single_detector, 1, 100, std::nullopt);
   SearchPlan detector_plan = single_detector.begin_frame(2, 1100, true);
   DetectorBatch single_batch{
-      2, 1100, {{BBox{120, 40, 20, 20}, 0.99F, 0}}};
+      2, 1100, {{BBox{70, 40, 20, 20}, 0.99F, 0}}};
   output = single_detector.finish_frame(detector_plan, {}, single_batch);
   expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
                   !output.control_valid,
@@ -130,10 +130,10 @@ int main() {
   confirmed_detector.initialize(initial, 0, 0, frame_size);
   step(confirmed_detector, 1, 100, std::nullopt);
   detector_plan = confirmed_detector.begin_frame(2, 1100, true);
-  const BBox recovered{120, 40, 20, 20};
+  const BBox recovered{70, 40, 20, 20};
   DetectorBatch consistent_batch{
       2, 1100,
-      {{recovered, 0.99F, 0}, {BBox{121, 40, 20, 20}, 0.98F, 1}}};
+      {{recovered, 0.99F, 0}, {BBox{71, 40, 20, 20}, 0.98F, 1}}};
   confirmed_detector.finish_frame(detector_plan, {}, consistent_batch);
   detector_plan = confirmed_detector.begin_frame(3, 1140, false);
   output = confirmed_detector.finish_frame(
@@ -181,26 +181,25 @@ int main() {
   DetectorBatch distractor_batch{
       2, 1100,
       {{distractor_box, 0.99F, 0}, {distractor_box, 0.98F, 0}}};
-  same_class_distractor.finish_frame(detector_plan, {}, distractor_batch);
-  std::optional<std::uint64_t> previous_distractor_candidate;
-  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
-    detector_plan = same_class_distractor.begin_frame(
-        frame, 1140 + static_cast<std::int64_t>(frame - 3) * 40, false);
-    expect_true(detector_plan.detector_same_class_candidates == 2 &&
-                    detector_plan.detector_same_class_ambiguous,
-                "same-class detector alternatives are marked ambiguous");
-    output = same_class_distractor.finish_frame(
-        detector_plan,
-        {reliable_for_plan(detector_plan, initial, frame)}, std::nullopt);
-    expect_true(!output.accepted && !output.control_valid,
-                "same-class confidence cannot override failed template geometry");
-    if (previous_distractor_candidate) {
-      expect_true(detector_plan.detector_candidate_id !=
-                      previous_distractor_candidate,
-                  "failed same-class candidates retain distinct identities");
-    }
-    previous_distractor_candidate = detector_plan.detector_candidate_id;
-  }
+  output = same_class_distractor.finish_frame(
+      detector_plan, {}, distractor_batch);
+  expect_true(output.detector_status ==
+                      DetectorBatchStatus::kPositionRejected &&
+                  output.detector_position_valid_count == 0 &&
+                  output.detector_position_rejected_count == 2 &&
+                  output.detector_candidates_queued == 0 &&
+                  !output.accepted && !output.reacquired &&
+                  !output.control_valid,
+              "far same-class distractors are rejected before NanoTrack verification");
+  detector_plan = same_class_distractor.begin_frame(3, 1140, false);
+  expect_true(detector_plan.hypothesis_source == HypothesisSource::kMotion &&
+                  !detector_plan.detector_candidate_id.has_value(),
+              "far distractors cannot become queued detector hypotheses");
+  output = same_class_distractor.finish_frame(
+      detector_plan,
+      {reliable_for_plan(detector_plan, initial, 3)}, std::nullopt);
+  expect_true(!output.accepted && !output.control_valid,
+              "position rejection cannot bypass recovery confirmation");
 
   LongTermController deformation(config);
   deformation.initialize(initial, 0, 0, frame_size);

@@ -8,6 +8,8 @@
 namespace nanotrack {
 namespace {
 
+constexpr float kPositionGateEpsilon = 1e-6F;
+
 bool finite_bbox(const BBox& bbox) {
   return std::isfinite(bbox.x) && std::isfinite(bbox.y) &&
          std::isfinite(bbox.width) && std::isfinite(bbox.height);
@@ -30,6 +32,20 @@ float normalized_center_distance(const BBox& first, const BBox& second) {
   const float second_y = second.y + 0.5F * second.height;
   const float scale = std::sqrt(std::max(1.0F, second.width * second.height));
   return std::hypot(first_x - second_x, first_y - second_y) / scale;
+}
+
+float frame_normalized_center_distance(const BBox& first,
+                                       const BBox& second,
+                                       FrameSize frame_size) {
+  const float first_x = first.x + 0.5F * first.width;
+  const float first_y = first.y + 0.5F * first.height;
+  const float second_x = second.x + 0.5F * second.width;
+  const float second_y = second.y + 0.5F * second.height;
+  const float frame_diagonal = std::hypot(
+      static_cast<float>(frame_size.width),
+      static_cast<float>(frame_size.height));
+  return std::hypot(first_x - second_x, first_y - second_y) /
+         frame_diagonal;
 }
 
 float area_log_delta(const BBox& first, const BBox& second) {
@@ -157,7 +173,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   }
 
   mode_ = mode_for_timestamp(timestamp_ms);
-  BBox predicted = motion_.predict(timestamp_ms);
+  const BBox motion_predicted = motion_.predict(timestamp_ms);
+  BBox predicted = motion_predicted;
   HypothesisSource source = HypothesisSource::kMotion;
   const bool recovery_uses_detector =
       mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost;
@@ -182,6 +199,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.frame_id = frame_id;
   plan.timestamp_ms = timestamp_ms;
   plan.mode = mode_;
+  plan.motion_predicted_bbox = motion_predicted;
   plan.predicted_bbox = predicted;
   plan.search_scale = source == HypothesisSource::kDetector
                           ? config_.detector_search_scale
@@ -194,6 +212,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.detector_candidate_region = active.queued.candidate.bbox;
     plan.detector_candidate_class_id = active.queued.candidate.class_id;
     plan.detector_candidate_confidence = active.queued.candidate.confidence;
+    plan.detector_candidate_center_ratio = active.queued.center_ratio;
     plan.detector_same_class_candidates =
         active.queued.same_class_candidates;
     plan.detector_same_class_ambiguous =
@@ -346,47 +365,81 @@ bool LongTermController::detector_geometry_consistent(
              config_.detector_confirmation_max_aspect_log_change;
 }
 
-DetectorBatchStatus LongTermController::ingest_detector_batch(
+LongTermController::DetectorIngestResult
+LongTermController::ingest_detector_batch(
     const SearchPlan& plan,
     const std::optional<DetectorBatch>& batch) {
-  if (!batch) return DetectorBatchStatus::kNone;
+  DetectorIngestResult result;
+  if (!batch) return result;
   if (!last_detector_request_frame_ || !last_detector_request_ms_ ||
       batch->source_frame_id != *last_detector_request_frame_ ||
       batch->source_timestamp_ms != *last_detector_request_ms_) {
-    return DetectorBatchStatus::kFrameMismatch;
+    result.status = DetectorBatchStatus::kFrameMismatch;
+    return result;
   }
   const std::int64_t age = plan.timestamp_ms - batch->source_timestamp_ms;
   if (age < 0 || age > config_.detector_stale_ms) {
-    return DetectorBatchStatus::kStale;
+    result.status = DetectorBatchStatus::kStale;
+    return result;
   }
-  std::vector<DetectorCandidate> valid;
-  valid.reserve(batch->candidates.size());
+  struct PositionedCandidate {
+    DetectorCandidate candidate{};
+    float center_ratio = 0.0F;
+  };
+  std::vector<PositionedCandidate> positioned;
+  std::size_t geometry_valid_count = 0;
+  positioned.reserve(batch->candidates.size());
   for (const DetectorCandidate& candidate : batch->candidates) {
-    if (valid_candidate(candidate, frame_size_)) valid.push_back(candidate);
+    if (!valid_candidate(candidate, frame_size_)) continue;
+    ++geometry_valid_count;
+    const float center_ratio = frame_normalized_center_distance(
+        candidate.bbox, plan.motion_predicted_bbox, frame_size_);
+    if (center_ratio <=
+        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
+      positioned.push_back(PositionedCandidate{candidate, center_ratio});
+    } else {
+      ++result.position_rejected_count;
+    }
   }
-  if (valid.empty()) return DetectorBatchStatus::kInvalid;
-  std::sort(valid.begin(), valid.end(), [](const DetectorCandidate& first,
-                                           const DetectorCandidate& second) {
-    return first.confidence > second.confidence;
+  if (geometry_valid_count == 0) {
+    result.status = DetectorBatchStatus::kInvalid;
+    return result;
+  }
+  result.position_valid_count = positioned.size();
+  if (positioned.empty()) {
+    result.status = DetectorBatchStatus::kPositionRejected;
+    return result;
+  }
+  std::sort(positioned.begin(), positioned.end(),
+            [](const PositionedCandidate& first,
+               const PositionedCandidate& second) {
+    if (first.center_ratio != second.center_ratio) {
+      return first.center_ratio < second.center_ratio;
+    }
+    return first.candidate.confidence > second.candidate.confidence;
   });
-  if (valid.size() > config_.detector_max_candidates) {
-    valid.resize(config_.detector_max_candidates);
+  if (positioned.size() > config_.detector_max_candidates) {
+    positioned.resize(config_.detector_max_candidates);
   }
   detector_candidates_.clear();
-  for (const DetectorCandidate& candidate : valid) {
+  for (const PositionedCandidate& positioned_candidate : positioned) {
+    const DetectorCandidate& candidate = positioned_candidate.candidate;
     QueuedDetectorCandidate queued;
     queued.id = next_detector_candidate_id_++;
     queued.candidate = candidate;
+    queued.center_ratio = positioned_candidate.center_ratio;
     queued.same_class_candidates = static_cast<std::size_t>(std::count_if(
-        valid.begin(), valid.end(), [&](const DetectorCandidate& other) {
-          return other.class_id == candidate.class_id;
+        positioned.begin(), positioned.end(),
+        [&](const PositionedCandidate& other) {
+          return other.candidate.class_id == candidate.class_id;
         }));
     queued.probes = detector_probes(candidate);
     if (!queued.probes.empty()) {
       detector_candidates_.push_back(std::move(queued));
     }
   }
-  return DetectorBatchStatus::kAccepted;
+  result.status = DetectorBatchStatus::kAccepted;
+  return result;
 }
 
 ControllerOutput LongTermController::finish_frame(
@@ -413,7 +466,13 @@ ControllerOutput LongTermController::finish_frame(
       plan.detector_same_class_ambiguous;
   output.detector_candidate_locked = plan.detector_candidate_locked;
   output.detector_probe_index = plan.detector_probe_index;
-  output.detector_status = ingest_detector_batch(plan, detector_batch);
+  const DetectorIngestResult ingest_result =
+      ingest_detector_batch(plan, detector_batch);
+  output.detector_status = ingest_result.status;
+  output.detector_position_valid_count =
+      ingest_result.position_valid_count;
+  output.detector_position_rejected_count =
+      ingest_result.position_rejected_count;
 
   std::optional<EvaluatedObservation> anchor;
   std::optional<EvaluatedObservation> recent;

@@ -190,6 +190,7 @@ int main() {
   detector_controller.finish_frame(plan, {}, std::nullopt);
 
   ControllerConfig lock_config = config;
+  lock_config.detector_candidate_max_center_ratio = 1.0F;
   LongTermController candidate_lock(lock_config);
   candidate_lock.initialize(BBox{40, 30, 20, 20}, 0, 0,
                             FrameSize{200, 120});
@@ -267,6 +268,7 @@ int main() {
 
   ControllerConfig subtarget_config = config;
   subtarget_config.detector_target_mode = DetectorTargetMode::kSubtarget;
+  subtarget_config.detector_candidate_max_center_ratio = 1.0F;
   LongTermController subtarget(subtarget_config);
   subtarget.initialize(BBox{40, 30, 20, 10}, 0, 0, FrameSize{200, 120});
   reject_frame(subtarget, 1, 100);
@@ -418,10 +420,10 @@ int main() {
   expect_true(plan.request_detector, "later detector request is scheduled");
   DetectorBatch valid{6,
                       2100,
-                      {{BBox{10, 10, 20, 20}, 0.7F, 1},
-                       {BBox{30, 10, 20, 20}, 0.95F, 1},
-                       {BBox{50, 10, 20, 20}, 0.8F, 1},
-                       {BBox{70, 10, 20, 20}, 0.99F, 1}}};
+                      {{BBox{10, 30, 20, 20}, 0.7F, 1},
+                       {BBox{30, 30, 20, 20}, 0.95F, 1},
+                       {BBox{50, 30, 20, 20}, 0.8F, 1},
+                       {BBox{70, 30, 20, 20}, 0.99F, 1}}};
   output = detector_controller.finish_frame(plan, {}, valid);
   expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
                   output.detector_candidates_queued == 3,
@@ -431,11 +433,105 @@ int main() {
               "next frame verifies one queued detector hypothesis");
   expect_true(plan.detector_candidate_class_id == std::optional<int>(1) &&
                   plan.detector_candidate_confidence ==
-                      std::optional<float>(0.99F),
-              "detector hypothesis preserves candidate identity for audit logs");
-  expect_near(plan.predicted_bbox.x, 70.0F, 1e-6F,
-              "highest-confidence detector candidate is verified first");
+                      std::optional<float>(0.95F),
+              "nearest detector hypothesis preserves candidate identity for audit logs");
+  expect_near(plan.predicted_bbox.x, 30.0F, 1e-6F,
+              "nearer detector candidate outranks a farther high-confidence box");
   detector_controller.finish_frame(plan, {}, std::nullopt);
+
+  const FrameSize gate_frame{200, 120};
+  const BBox gate_initial{40, 30, 20, 20};
+  const float frame_diagonal = std::hypot(
+      static_cast<float>(gate_frame.width),
+      static_cast<float>(gate_frame.height));
+
+  LongTermController boundary_gate(config);
+  boundary_gate.initialize(gate_initial, 0, 0, gate_frame);
+  reject_frame(boundary_gate, 1, 100);
+  plan = boundary_gate.begin_frame(2, 1100, true);
+  const BBox exact_boundary{
+      gate_initial.x + 0.15F * frame_diagonal,
+      gate_initial.y, gate_initial.width, gate_initial.height};
+  DetectorBatch exact_boundary_batch{
+      2, 1100, {{exact_boundary, 0.70F, 0}}};
+  output = boundary_gate.finish_frame(plan, {}, exact_boundary_batch);
+  expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                  output.detector_position_valid_count == 1 &&
+                  output.detector_position_rejected_count == 0 &&
+                  output.detector_candidates_queued == 1,
+              "candidate exactly at the 0.15 center-ratio boundary is admitted");
+  plan = boundary_gate.begin_frame(3, 1140, false);
+  expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                  plan.detector_candidate_center_ratio.has_value(),
+              "admitted boundary candidate becomes a detector hypothesis");
+  expect_near(*plan.detector_candidate_center_ratio, 0.15F, 1e-5F,
+              "active detector hypothesis exposes its normalized center distance");
+  boundary_gate.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController rejected_gate(config);
+  rejected_gate.initialize(gate_initial, 0, 0, gate_frame);
+  reject_frame(rejected_gate, 1, 100);
+  plan = rejected_gate.begin_frame(2, 1100, true);
+  const BBox just_over_boundary{
+      gate_initial.x + 0.15001F * frame_diagonal,
+      gate_initial.y, gate_initial.width, gate_initial.height};
+  DetectorBatch rejected_batch{
+      2, 1100, {{just_over_boundary, 0.99F, 0}}};
+  output = rejected_gate.finish_frame(plan, {}, rejected_batch);
+  expect_true(output.detector_status ==
+                      DetectorBatchStatus::kPositionRejected &&
+                  output.detector_position_valid_count == 0 &&
+                  output.detector_position_rejected_count == 1 &&
+                  output.detector_candidates_queued == 0 &&
+                  !output.accepted && !output.reacquired &&
+                  !output.control_valid,
+              "otherwise-valid candidate just over the hard gate is rejected safely");
+  expect_true(std::string(to_string(output.detector_status)) ==
+                  "POSITION_REJECTED",
+              "position-only rejection has a distinct auditable status");
+  plan = rejected_gate.begin_frame(3, 1140, false);
+  expect_true(plan.hypothesis_source == HypothesisSource::kMotion &&
+                  !plan.detector_candidate_id.has_value(),
+              "position-rejected batch cannot create a later detector hypothesis");
+  rejected_gate.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController mixed_gate(config);
+  mixed_gate.initialize(gate_initial, 0, 0, gate_frame);
+  reject_frame(mixed_gate, 1, 100);
+  plan = mixed_gate.begin_frame(2, 1100, true);
+  DetectorBatch mixed_batch{
+      2, 1100,
+      {{BBox{50, 30, 20, 20}, 0.70F, 0},
+       {BBox{70, 30, 20, 20}, 0.99F, 0},
+       {BBox{120, 30, 20, 20}, 1.00F, 0}}};
+  output = mixed_gate.finish_frame(plan, {}, mixed_batch);
+  expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                  output.detector_position_valid_count == 2 &&
+                  output.detector_position_rejected_count == 1 &&
+                  output.detector_candidates_queued == 2,
+              "mixed batch reports pre-cap position admission and rejection counts");
+  plan = mixed_gate.begin_frame(3, 1140, false);
+  expect_near(plan.predicted_bbox.x, 50.0F, 1e-6F,
+              "near lower-confidence candidate is verified before farther candidate");
+  expect_true(plan.detector_candidate_confidence ==
+                  std::optional<float>(0.70F),
+              "distance ordering takes priority over detector confidence");
+  mixed_gate.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController lost_gate(config);
+  lost_gate.initialize(gate_initial, 0, 0, gate_frame);
+  reject_frame(lost_gate, 1, 100);
+  plan = lost_gate.begin_frame(2, 3100, true);
+  expect_true(plan.mode == TrackingMode::kLost,
+              "strict gate test reaches LOST without relaxing policy");
+  DetectorBatch lost_far_batch{
+      2, 3100, {{BBox{120, 30, 20, 20}, 0.99F, 0}}};
+  output = lost_gate.finish_frame(plan, {}, lost_far_batch);
+  expect_true(output.detector_status ==
+                      DetectorBatchStatus::kPositionRejected &&
+                  output.detector_position_rejected_count == 1 &&
+                  !output.control_valid,
+              "LOST uses the same strict position gate and cannot authorize control");
 
   ControllerConfig template_config = config;
   LongTermController templates(template_config);

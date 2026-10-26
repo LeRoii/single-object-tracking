@@ -16,6 +16,7 @@ struct SearchPlan {
   std::uint64_t frame_id = 0;
   std::int64_t timestamp_ms = 0;
   TrackingMode mode = TrackingMode::kTracking;
+  BBox motion_predicted_bbox{};
   BBox predicted_bbox{};
   float search_scale = 1.0F;
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
@@ -24,6 +25,7 @@ struct SearchPlan {
   std::optional<BBox> detector_candidate_region;
   std::optional<int> detector_candidate_class_id;
   std::optional<float> detector_candidate_confidence;
+  std::optional<float> detector_candidate_center_ratio;
   std::size_t detector_same_class_candidates = 0;
   bool detector_same_class_ambiguous = false;
   bool detector_candidate_locked = false;
@@ -52,6 +54,8 @@ struct ControllerOutput {
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
   DetectorBatchStatus detector_status = DetectorBatchStatus::kNone;
   std::size_t detector_candidates_queued = 0;
+  std::size_t detector_position_valid_count = 0;
+  std::size_t detector_position_rejected_count = 0;
   std::optional<std::uint64_t> detector_candidate_id;
   std::size_t detector_same_class_candidates = 0;
   bool detector_same_class_ambiguous = false;
@@ -98,6 +102,7 @@ class LongTermController {
   struct QueuedDetectorCandidate {
     std::uint64_t id = 0;
     DetectorCandidate candidate{};
+    float center_ratio = 0.0F;
     std::vector<BBox> probes;
     std::size_t same_class_candidates = 0;
   };
@@ -112,6 +117,12 @@ class LongTermController {
     std::vector<BBox> confirmation_boxes;
   };
 
+  struct DetectorIngestResult {
+    DetectorBatchStatus status = DetectorBatchStatus::kNone;
+    std::size_t position_valid_count = 0;
+    std::size_t position_rejected_count = 0;
+  };
+
   TrackingMode mode_for_timestamp(std::int64_t timestamp_ms) const;
   float search_scale_for(TrackingMode mode, std::int64_t timestamp_ms) const;
   EvaluatedObservation evaluate(const TrackerObservation& observation,
@@ -122,7 +133,7 @@ class LongTermController {
   bool detector_geometry_consistent(const BBox& reference,
                                     const BBox& bbox) const;
   bool detector_confirmation_consistent(const BBox& bbox) const;
-  DetectorBatchStatus ingest_detector_batch(
+  DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
 

@@ -31,6 +31,7 @@ struct ControllerConfig {
   std::int64_t detector_interval_ms = 500;
   std::int64_t detector_stale_ms = 150;
   std::size_t detector_max_candidates = 3;
+  float detector_candidate_max_center_ratio = 0.15F;
   DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
   float detector_search_scale = 1.5F;
   std::size_t detector_subtarget_max_probes = 9;

@@ -54,18 +54,38 @@ int main() {
               "visible bring-up default accepts observed RKNN PSR range");
   expect_near(default_visible.reliable_peak_margin, 0.06F, 1e-6F,
               "visible bring-up default accepts observed RKNN peak margin");
+  expect_near(default_visible.detector_candidate_max_center_ratio, 0.15F,
+              1e-6F,
+              "visible default strictly limits detector center jumps");
   const ControllerConfig default_infrared =
       default_controller_config("infrared");
   expect_near(default_infrared.reliable_psr, 8.0F, 1e-6F,
               "visible evidence does not alter infrared PSR default");
   expect_near(default_infrared.reliable_peak_margin, 0.10F, 1e-6F,
               "visible evidence does not alter infrared peak-margin default");
+  expect_near(default_infrared.detector_candidate_max_center_ratio, 0.15F,
+              1e-6F,
+              "infrared default uses the same strict detector position gate");
+
+  const std::string source_file = __FILE__;
+  const std::string source_dir = source_file.substr(
+      0, source_file.find_last_of("/\\"));
+  const std::string config_dir = source_dir + "/../config/";
+  expect_near(load_controller_config(config_dir + "visible-default.conf")
+                  .detector_candidate_max_center_ratio,
+              0.15F, 1e-6F,
+              "shipped visible config enables the strict detector gate");
+  expect_near(load_controller_config(config_dir + "infrared-default.conf")
+                  .detector_candidate_max_center_ratio,
+              0.15F, 1e-6F,
+              "shipped infrared config enables the strict detector gate");
 
   const std::string visible_path = "/tmp/nanotrack_visible_test.conf";
   write_file(visible_path,
              "sensor=visible\n"
              "calibrated=false\n"
              "detector_target_mode=subtarget\n"
+             "detector_candidate_max_center_ratio=0.15\n"
              "detector_search_scale=1.6\n"
              "detector_subtarget_max_probes=7\n"
              "detector_confirmation_iou=0.55\n"
@@ -92,6 +112,8 @@ int main() {
               "subtarget probe budget override");
   expect_near(visible.detector_confirmation_iou, 0.55F, 1e-6F,
               "detector confirmation IoU override");
+  expect_near(visible.detector_candidate_max_center_ratio, 0.15F, 1e-6F,
+              "detector center ratio parses at the boundary");
   expect_near(visible.reliable_score, 0.82F, 1e-6F,
               "visible reliable score override");
   expect_true(visible.uncertain_ms == 200 &&
@@ -121,6 +143,27 @@ int main() {
   write_file(invalid_path, "sensor=visible\nreliable_score=nan\n");
   expect_throws([&] { load_controller_config(invalid_path); },
                 "non-finite config values must fail");
+  const std::string invalid_detector_ratio_nan_path =
+      "/tmp/nanotrack_invalid_detector_ratio_nan_test.conf";
+  write_file(invalid_detector_ratio_nan_path,
+             "sensor=visible\ndetector_candidate_max_center_ratio=nan\n");
+  expect_throws(
+      [&] { load_controller_config(invalid_detector_ratio_nan_path); },
+      "non-finite detector center ratio must fail");
+  const std::string invalid_detector_ratio_negative_path =
+      "/tmp/nanotrack_invalid_detector_ratio_negative_test.conf";
+  write_file(invalid_detector_ratio_negative_path,
+             "sensor=visible\ndetector_candidate_max_center_ratio=-0.01\n");
+  expect_throws(
+      [&] { load_controller_config(invalid_detector_ratio_negative_path); },
+      "negative detector center ratio must fail");
+  const std::string invalid_detector_ratio_large_path =
+      "/tmp/nanotrack_invalid_detector_ratio_large_test.conf";
+  write_file(invalid_detector_ratio_large_path,
+             "sensor=visible\ndetector_candidate_max_center_ratio=1.01\n");
+  expect_throws(
+      [&] { load_controller_config(invalid_detector_ratio_large_path); },
+      "detector center ratio above one must fail");
   const std::string timing_path = "/tmp/nanotrack_timing_test.conf";
   write_file(timing_path,
              "sensor=visible\nuncertain_ms=1000\nlocal_recovery_ms=500\n");

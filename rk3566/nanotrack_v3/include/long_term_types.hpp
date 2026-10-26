@@ -28,6 +28,7 @@ enum class DetectorBatchStatus {
   kStale,
   kFrameMismatch,
   kInvalid,
+  kPositionRejected,
 };
 
 struct FrameSize {
