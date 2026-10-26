@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-26T09:21:27+08:00`。
+- 最近核对：`2026-10-26T09:35:39+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；新实验控制器在两轮修复后通过独立评审。25 项控制器测试、87 项相关历史回归、真实权重 CPU 初始化和实际训练器预检均通过；batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
+- 状态说明：既有 g5000 可交付下游评估；控制器已通过独立评审。任务 5 已完成实施者验证：196 条序列-模型轨迹诊断、24 张联系图和仅训练集困难池，等待独立评审。batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -52,10 +52,135 @@
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
    `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略和任务 2 配对策略及审计已完成局部验证。
-2. 九单元格精确样本配置和可恢复控制器已实现；下一步为
-   验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。当前没有启动真实训练、
+2. 九单元格精确样本配置和可恢复控制器已实现；验证失败诊断与训练集困难池已完成实施者验证，
+   待独立评审后执行等样本交叉实验、训练集困难样本对照和最终报告。当前没有启动真实训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-26 任务 5：验证失败诊断与仅训练集困难池（待独立评审）
+
+- 时间：`2026-10-26T09:35:39+08:00`；分支/工作树为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+  初始 HEAD 为 `c72a800f8ba0b13057cfd6914c8e26568e336cde`，`git status --short` 无输出。
+  本节是实施者验证，任务 5 checkbox 暂不勾选；不替代独立评审。
+- 新增 `scripts/analyze_nanotrack_failures.py`、
+  `scripts/build_nanotrack_failure_matched_pool.py` 及 16 项测试。诊断记录逐帧 IoU、零交集段、
+  持续漂移段、预测/GT 面积比、相对初始尺度、目标大小、位移及真实图像尺寸/边界线索；
+  保留带 SHA 的图像身份。冻结面板中存在 null GT，按原 scoring mask 保持不计分，且打断
+  漂移/零交集区间；没有补造框或把缺失 GT 推断为遮挡。
+
+### 实际输入与模型身份
+
+以下工件均位于绝对根目录 `/home/u20/single-object-tracking`，生成 JSON 完整记录每项输入的
+绝对路径/SHA-256；这里只列关键身份。
+
+| 输入 | SHA-256 |
+| --- | --- |
+| `data/nanotrack_conservative_three_stage/val-aerial.json` | `8af84a37cc29bf1efc72a37adeae30b3ebf364c9c928e51b120077414f12b77f` |
+| `artifacts/nanotrack_got_replay_v2/baseline/baseline/aerial.json` | `d045f2c507a2c2f29411fc314dda9cc812d5c5c9899520ce5ca8feca0560d6c5` |
+| `artifacts/nanotrack_got_replay_v2/run/candidate_table.json` | `a61c7815c9f0a002069eea886a5c250ca5922b0f242a75b1f9874e1cd0ec7636` |
+| `artifacts/nanotrack_got_replay_v2/run/validation/seed20261011_stage1_c1/aerial.json` | `e159c5ec1505b04831601cd388333921ab9332373119a43fb08695a9963e4c38` |
+| `data/nanotrack_conservative_three_stage/source-video-splits.json` | `9b26aa8346a3693be2e7e000d141dce2bc3611ca7bc2112f6fd639c030a96513` |
+
+- g5000 的 checkpoint SHA 仍为
+  `40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1`；本次读取的是既有
+  v2 baseline 预测，其实际推理配置为 `configs/nanotrack_got_replay_v1/stage1.yaml`，SHA
+  `cb505635e81420fc9786c614de7a6eb848aa555c89de98f34522009ddeca7181`，没有以文件名相似
+  假定它使用当前 v3 配置。
+- 依据已保存 v2 `composite_score` 的最大值确定历史最佳为
+  `seed20261011_stage1_c1`：checkpoint
+  `artifacts/nanotrack_got_replay_v2/run/20261011/stage1/candidate_stage1_g00005157_e000_s00157.pth`，
+  SHA `337a19f2d217d0bce50c526bd3a9106a9351045ffaa528b328205c2a8ded5498`；
+  `final_gate.qualified=false`，明确为未晋级历史候选。本次不以 v3 规则改写 v2 选择。
+  其实际配置 SHA 为 `3e209b1b46481df742b9d5349d0f9a1c76050e15bcc80f9608b857aa40238a4b`。
+
+### 观察结果与人工帮助边界
+
+- 三个现有 aerial 域各 98 条序列 × 两个模型，共 **196 条序列-模型轨迹、31,878 个帧记录**；
+  其中 12 个为原面板不计分 null GT。几何线索按序列-模型计：scale_change 106、
+  boundary_truncation 60、tiny_target 10、rapid_motion 4；sustained_drift 12、zero_overlap 10。
+  这些线索可以重叠，不是独立失效原因计数，也不证明 v2 优于基线。
+- 只在同一帧 IoU < 0.5 时出现的几何线索/有来源事件才形成训练请求，防止把跟踪正常的
+  小目标或尺度变化直接当作失败来源。共 9 个 source/category/reason 请求。
+- **26 个序列-模型歧义条目、15 条唯一序列**需要人工判断遮挡/相似目标/身份问题：g5000
+  11 条、v2 15 条。队列保存原帧 ID；自动诊断未声称任何一次遮挡或身份切换成立。其余
+  几何分析与训练样本筛选可继续自动执行，不需要人工逐帧标注整个训练集。
+- 生成并核验 24 张联系图，逐图绑定源图哈希和联系图 SHA。实施者实际查看 00、04、12，
+  父任务另查看 00、04：00 可见多人邻近场景中预测与 GT 渐失重叠，图像不足以确认身份
+  切换；04 可见车辆框的重叠降至零及尺度变化，仍不足以定性遮挡；12 是夜间路口车辆
+  场景，预测框相对 GT 扩张/偏移。均保留几何结论及歧义，不强行赋予语义原因。
+
+### 训练池及防泄漏核验
+
+- 先以 `source-video-splits.json` 的精确 train/validation/hidden-test 列表验证成员，再加
+  保守别名排除：规范化路径、大小写、扩展名和片段后缀；VisDrone MOT/SOT 共享父 uav ID，
+  UAV123 合并编号片段和 `_s` 变体。未知身份失败关闭；没有读取隐藏集预测、指标或原始帧。
+- 额外排除原先精确 train 中 **538 条轨迹、29 个精确源视频**：VisDrone-MOT 515 条、
+  VisDrone-SOT 18 条、UAV123 5 条。输出同时记录精确 ID 和规范化父 ID，未修改/重标
+  历史划分，不把这些排除解释成已证实的数据泄漏事件。
+- 从四域训练 audit 的 `hard_reasons` 与原 prepared train annotation 重新筛选，而非把
+  既有 hard 池统一当成同一种困难。每个请求最多 128 条 reason-frame 成员，确定性排序。
+  最终 **1,024 条 reason-frame 成员、830 个唯一训练帧、72 条轨迹、9 个规范化源组**；
+  MOT 896 条、SOT 128 条，person 256、vehicle 384、bike 256、unknown 128。
+  UAVDT 的 boundary 请求没有对应 audited truncation 样本，明确记录 available=0，未伪造。
+- 审计的 small/scale/motion 规则与诊断的阈值并不完全相同；此池匹配的是已有困难原因层，
+  不声称数值严重程度相同。重复 reason-frame 不应被当成独立样本；任务 7 仍需冻结困难
+  采样比例与按源组分布，并与无强化分支作同预算对照。当前池不加入任务 6 主矩阵。
+- 只读 verifier 重新校验文件哈希、精确训练成员、来源框/帧及规范化源组不相交，再重算
+  确定性选择；实际返回 `verified=true, members=1024, canonical_train_groups=9,
+  excluded_training_tracks=538`。合成测试覆盖验证别名、隐藏源组排除和未知来源失败关闭。
+
+### 输出与复现
+
+输出目录：`/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/failure-analysis`。
+
+| 输出 | SHA-256 |
+| --- | --- |
+| `analysis.json` | `6acd7e5a720cbe489205289fec26dc7eed5b7063dfda69b66fe696f24f7575c9` |
+| `ambiguity-queue.json` | `f2b259d1703eff064c62426672d68d48fccefe3c36f9e692178dca9f850917af` |
+| `training-only-matched-pool.json` | `46b396c7f80175d517b22d4a83e8cb42ff46961fb4e39a1760a7d1a8c6ad9a3f` |
+
+实际执行（工作目录为本任务 worktree）：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B scripts/analyze_nanotrack_failures.py \
+  --root /home/u20/single-object-tracking \
+  --output-dir /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/failure-analysis --sheet-limit 24
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B scripts/build_nanotrack_failure_matched_pool.py \
+  --root /home/u20/single-object-tracking \
+  --analysis /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/failure-analysis/analysis.json \
+  --output /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/failure-analysis/training-only-matched-pool.json \
+  --cap-per-request 128
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B scripts/build_nanotrack_failure_matched_pool.py \
+  --verify /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/failure-analysis/training-only-matched-pool.json
+```
+
+- 最终相同输入的两个 CLI 均重复执行，analysis、queue、pool SHA 均与上表逐字节一致；
+  24 张联系图 SHA 亦逐项核对。初始未按低 IoU 条件筛请求的试运行 JSON 保留为
+  `analysis-pilot-all-geometry.json` / `training-only-matched-pool-pilot-all-geometry.json`，
+  它们是已废弃的试运行口径，不作为当前池或训练证据。
+
+### 测试及证据限制
+
+- RED：先观察分析模块缺失；新增语义事件跨序列拒绝、可选 diagnosis 哈希绑定、null GT
+  保留及低 IoU 条件训练请求时分别观察预期失败，再修正。首次测试曾引用不可用 PIL，
+  随后改用项目既有 OpenCV；这项导入失败不计作功能 RED。
+- 聚焦 `python -B -m unittest tests.test_nanotrack_failure_analysis -v`：16/16 通过。
+  相关历史/评分/配对/数据/控制器六模块：103/103 通过（169.242 s）。最初历史命令中
+  两个模块名拼写错误，已改用实际存在的 `test_nanotrack_three_stage_runner` 与
+  `test_nanotrack_got_replay_controller` 重跑；不是生产实现错误。
+- 本轮唯一完整 discover：`TMPDIR=/dev/shm ... -m unittest discover -s tests -v`，
+  **252 项、4 failures、0 errors**（89.950 s），仍为历史
+  `test_formal_configs_match_quota_paths_and_training_contract` 的 stage1/2/3 三个 subtest 及
+  `test_smoke_configs_are_bounded_and_keep_policy_representative_pools` 的 worktree 绝对路径
+  不兼容。日志 `/tmp/nanotrack-task5-full-suite.log`，SHA
+  `8f1fbefb36ef43d19151deb8dcb3e4468d1e3ce7e32fe3ad96a9ca5bbad56eed`。没有宣称全套全绿。
+- 已保存的 g5000 UAV123 baseline 目录只有 summary，成对诊断限于有逐帧结果的 UAVDT、
+  VisDrone-MOT、VisDrone-SOT；没有补造 UAV123 基线预测。没有启动 GPU 训练、重新推理、
+  隐藏集评测、视频回归、模型导出/转换、板端或吊舱测试。
+- 实施报告：`.superpowers/sdd/2026-10-24-nanotrack-factorial-v3/task-5-report.md`。
+  下一步为独立评审，再执行任务 6；公共 g5000 身份不变，无需更新公共契约。
 
 ## 2026-10-26 任务 4 评审修复回合 2：中断工件身份先验校验
 
