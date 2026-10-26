@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,7 +66,7 @@ class FakeGPU:
                         "seed": int(flags["--seed"]), "stage": "factorial",
                         "policy": "head_only", "lr_schedule": flags["--lr-schedule"],
                         "pair_policy_sha256": sha(flags["--pair-policy"]),
-                        "optimizer": {}, "model": {}},
+                        "optimizer": {}, "model": {"weight": torch.tensor([0.0])}},
                        destination / ("candidate_factorial_g%08d_e000_s%05d.pth" % (step, stage_step)))
             batch = yaml.safe_load(Path(flags["--config"]).read_text())["TRAIN"]["BATCH_SIZE"]
             start = stage_step - 2560 // batch
@@ -411,6 +412,94 @@ class FactorialControllerTest(unittest.TestCase):
         ids = [a["id"] for a in state["attempts"]]
         self.assertEqual(len(ids), len(set(ids)), "allocated-but-uncreated attempts must reserve their identity")
         self.assertEqual(state["attempts"][2]["status"], "invalidated")
+
+    def test_changed_loadable_interrupted_model_is_not_adopted_and_original_hash_is_retained(self):
+        class ExitAfterTraining(FakeGPU):
+            def __call__(self, command, log):
+                super().__call__(command, log)
+                if len(self.commands) == 8:
+                    raise RuntimeError("after training output")
+        with self.assertRaises(RuntimeError):
+            self.run_fake(ExitAfterTraining())
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        attempt = state["attempts"][-1]
+        execution = next(e for e in attempt["executions"] if e["role"] == "train")
+        original_inventory = copy.deepcopy(execution["retained_inventory"])
+        checkpoint = Path(attempt["checkpoint_path"])
+        original_sha = sha(checkpoint)
+        payload = torch.load(checkpoint, map_location="cpu")
+        payload["model"]["weight"].add_(1.0)  # all metadata, keys, shapes and types remain valid
+        torch.save(payload, checkpoint)
+        self.assertNotEqual(sha(checkpoint), original_sha)
+        retry = FakeGPU(fail_at=2)
+        real_load = torch.load
+        def reject_changed_checkpoint_load(path, *args, **kwargs):
+            if Path(path) == checkpoint:
+                self.fail("changed interrupted checkpoint reached deserialization")
+            return real_load(path, *args, **kwargs)
+        with patch.object(torch, "load", side_effect=reject_changed_checkpoint_load):
+            with self.assertRaises(RuntimeError):
+                self.run_fake(retry)
+        self.assertIn("train_nanotrack_uav123.py", retry.commands[0][1])
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        rejected = next(a for a in state["attempts"] if a["id"] == attempt["id"])
+        self.assertEqual(rejected["status"], "invalidated")
+        retained = next(e for e in rejected["executions"] if e["role"] == "train")
+        self.assertEqual(retained["retained_inventory"], original_inventory)
+        self.assertEqual(next(r["sha256"] for r in retained["retained_inventory"]
+                              if r["path"] == str(checkpoint)), original_sha)
+        completed = self.run_fake()
+        self.assertTrue(all(r["checkpoint"] != str(checkpoint) for r in completed["candidates"]))
+        self.assertTrue(verify_experiment(self.manifest_path, self.output)["valid"])
+
+    def test_changed_valid_interrupted_evaluator_is_retried_without_retraining(self):
+        class ExitAfterAerial(FakeGPU):
+            def __call__(self, command, log):
+                super().__call__(command, log)
+                if len(self.commands) == 9:
+                    raise RuntimeError("after aerial output")
+        with self.assertRaises(RuntimeError):
+            self.run_fake(ExitAfterAerial())
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        attempt = state["attempts"][-1]
+        execution = next(e for e in attempt["executions"] if e["role"] == "aerial")
+        original_inventory = copy.deepcopy(execution["retained_inventory"])
+        output = Path(execution["output_path"])
+        value = json.loads(output.read_text())
+        value["metrics"]["sources"]["UAVDT"]["overall_auc"] = 0.52
+        write_json(output, value)
+        retry = FakeGPU(fail_at=2)
+        from scripts import run_nanotrack_factorial as controller
+        real_read = controller.read_json
+        def reject_changed_evaluator_parse(path):
+            if Path(path) == output:
+                self.fail("changed interrupted evaluator reached JSON parsing")
+            return real_read(path)
+        with patch.object(controller, "read_json", side_effect=reject_changed_evaluator_parse):
+            with self.assertRaises(RuntimeError):
+                self.run_fake(retry)
+        self.assertIn("evaluate_aerial_tracklets_nanotrack.py", retry.commands[0][1])
+        self.assertNotIn(str(output), retry.commands[0])
+        self.assertFalse(any("train_nanotrack" in c[1] for c in retry.commands))
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        rejected = next(e for e in state["attempts"][-1]["executions"]
+                        if e["role"] == "aerial" and e["status"] == "invalidated")
+        self.assertEqual(rejected["retained_inventory"], original_inventory)
+
+    def test_recorded_file_cannot_be_replaced_by_equal_bytes_symlink(self):
+        from scripts import run_nanotrack_factorial as controller
+        self.assertTrue(hasattr(controller, "check_recorded_inventory"))
+        destination = self.root / "stage"
+        destination.mkdir()
+        original = destination / "output.bin"
+        replacement = self.root / "replacement.bin"
+        original.write_bytes(b"same bytes")
+        replacement.write_bytes(b"same bytes")
+        execution = {"destination": str(destination), "retained_inventory": controller.inventory(destination)}
+        original.unlink()
+        original.symlink_to(replacement)
+        with self.assertRaisesRegex(ValueError, "type|symlink"):
+            controller.check_recorded_inventory(execution)
 
 
 class SampleLearningRateTest(unittest.TestCase):

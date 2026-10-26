@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-25T16:33:50+08:00`。
+- 最近核对：`2026-10-26T09:17:30+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；新实验控制器首轮评审的三项 Major 已修正：恢复 cadence 固定 250，保留来源 global=5000 与独立 stage 计数，schema 2 逐阶段持久化 attempt。22 项局部测试及真实权重 CPU 初始化/实际训练器预检通过，仍待独立复审；batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
+- 状态说明：既有 g5000 可交付下游评估；新实验控制器首轮评审的三项 Major 已修正，二次复审发现的“中断后可解析工件被替换”完整性缺口也已补测修复。25 项控制器测试、87 项相关历史回归及真实权重 CPU 初始化/实际训练器预检通过，仍待最终独立复审；batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -56,6 +56,45 @@
    验证失败诊断、等样本交叉实验、训练集困难样本对照和最终报告。当前没有启动真实训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-26 任务 4 评审修复回合 2：中断工件身份先验校验
+
+- 时间：`2026-10-26T09:17:30+08:00`；分支/工作树仍为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+  开始基线为修复回合 1 提交 `a1f69eab0e0972cf426a7a3d8d15be8ec57ec441`；开始时仅有
+  实施者在额度中断前留下的两个未提交文件，父任务先只读核对差异、进程与测试日志，未发现
+  并发测试或半提交。
+- 二次复审确认生产命令 cadence、来源 global offset 和普通评测中断恢复已经闭合，但复现
+  一个剩余 Major：命令已成功、状态尚未提交时，journal 已保存原工件清单；若 checkpoint
+  被替换成元数据仍合法、可以反序列化但 SHA 已改变的文件，旧恢复逻辑会采用新哈希。
+- 修正后，任何中断阶段在解析 JSON 或反序列化 checkpoint 前，先逐项比较先前持久化的
+  绝对路径、文件类型、SHA-256；符号链接还比较 link target，并要求所有路径位于该阶段
+  destination 内。原始 `retained_inventory` 不再被恢复失败分支覆盖；失效审计同时保留
+  原始清单和当前观察清单。该规则同样覆盖训练 checkpoint/遥测、评测 JSON 和日志。
+- 新增三个回归：修改 checkpoint 的合法 tensor 内容但保留全部元数据；修改合法评测 JSON；
+  用同字节符号链接替换普通文件。测试还 patch 了解析入口，确认身份不一致在 `torch.load`
+  或 JSON parse 前即被拒绝。失败 attempt 保留原 SHA 并进入显式 invalidated 审计，后续使用
+  新 attempt；有效训练或既有评测仍不重复。
+- 本轮父任务重新实测：
+  - 三项完整性回归：`3 tests / OK`（10.308 s）；实施者冻结日志
+    `/tmp/nanotrack-task4-fix2-targeted-final.log` 为 `3 tests / OK`（10.146 s），SHA-256
+    `e0006ba6eba9b0a26018bacbebd935908182ff76ffc170db57b6da907c1b43c6`。
+  - `TMPDIR=/dev/shm ... -m unittest tests.test_nanotrack_factorial_controller -v`：
+    `25 tests / OK`（81.037 s）；实施者冻结日志 SHA-256
+    `df84c4c83f19d1bf7326e20fc9ef409b937aad0a9b91995a4b3da162b5be22af`。
+  - 六个相关历史模块：`87 tests / OK`（2.891 s）；实施者冻结日志 SHA-256
+    `3063b112d4feb92cadb09e31de54e6f17a964c675dcaa8c7e3ce0b94cd2a4bfa`。
+  修复回合 1 已在源码冻结时运行完整 discover：233 项中只有 4 条既有工作树绝对路径失败、
+  无 errors；本回合仅改控制器及其测试，按修复范围重跑上述 25+87 项，不把全套称为全绿。
+- 当前 SHA-256：`scripts/run_nanotrack_factorial.py`
+  `925a7965765ca83b5ecde8bd7065044046ee162d30a5bc02a445e551d21e66ec`；
+  `tests/test_nanotrack_factorial_controller.py`
+  `0bb5808df23d15c7688ef1f5bab6cc5c64f94a03324f7873d7160558897b9464`。
+- 边界/下一步：没有启动真实 GPU 训练/评测，没有访问隐藏集或视频回归，没有产生新模型、
+  ONNX/RKNN、板端或吊舱证据。提交后交由同一独立评审者定向复审；通过前任务 4 仍不标记
+  完成，也不请求更新公共契约。结果 commit 在提交后回报，可通过
+  `git log -1 --format=%H -- scripts/run_nanotrack_factorial.py` 查询。
 
 ## 2026-10-25 任务 4 评审修复回合 1：生产命令契约与逐阶段恢复
 

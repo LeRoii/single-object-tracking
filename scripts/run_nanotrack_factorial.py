@@ -449,7 +449,35 @@ def audit_commands(value):
 
 
 def inventory(destination):
-    return [artifact(path) for path in sorted(Path(destination).rglob("*")) if path.is_file()]
+    result = []
+    for path in sorted(Path(destination).rglob("*")):
+        if path.is_file():
+            entry = artifact(path)
+            entry["path"] = str(path.absolute())  # retain the recorded path, not a symlink's target
+            entry["type"] = "symlink" if path.is_symlink() else "file"
+            if path.is_symlink():
+                entry["link_target"] = os.readlink(str(path))
+            result.append(entry)
+    return result
+
+
+def check_recorded_inventory(execution):
+    """Compare pre-recorded identities before parsing or adopting any stage output."""
+    root = Path(os.path.abspath(execution["destination"]))
+    for entry in execution.get("retained_inventory", []):
+        path = Path(entry["path"])
+        if not path.is_absolute():
+            raise ValueError("retained stage inventory path must be absolute")
+        try:
+            Path(os.path.abspath(str(path))).relative_to(root)
+        except ValueError:
+            raise ValueError("retained stage inventory path escaped its destination")
+        actual_type = "symlink" if path.is_symlink() else "file" if path.is_file() else "other"
+        if actual_type != entry.get("type", "file"):
+            raise ValueError("retained stage inventory type/symlink mismatch: " + str(path))
+        if actual_type == "symlink" and os.readlink(str(path)) != entry.get("link_target"):
+            raise ValueError("retained stage inventory symlink target mismatch: " + str(path))
+        check_artifact(entry)
 
 
 def audit_logs(destination):
@@ -473,8 +501,15 @@ def attempt_directories(output_root):
 def invalidate_attempt(attempt, reason):
     attempt["status"] = "invalidated"
     attempt["invalidation_reason"] = reason
-    attempt["integrity_audit"] = {"previous_inventory": attempt.get("retained_inventory", []),
-                                   "observed_inventory": inventory(attempt["destination"])}
+    attempt["integrity_audit"] = {
+        "previous_inventory": attempt.get("retained_inventory", []),
+        "recorded_stage_inventories": [
+            {"role": execution["role"], "destination": execution["destination"],
+             "inventory": execution["retained_inventory"]}
+            for execution in attempt["executions"] if "retained_inventory" in execution],
+        "observed_inventory": inventory(attempt["destination"]),
+    }
+    attempt.setdefault("integrity_audits", []).append(attempt["integrity_audit"])
     attempt["retained_inventory"] = attempt["integrity_audit"]["observed_inventory"]
     for execution in attempt["executions"]:
         if execution["status"] in ("planned", "running", "interrupted"):
@@ -536,6 +571,7 @@ def allocate_attempt(state, root, cell_id, cell, context, seed=None, samples=Non
 
 def inspect_execution(execution, attempt, cell, context):
     """Validate successful stage files, including an orphan success after a crash."""
+    check_recorded_inventory(execution)
     log = Path(execution["log_path"])
     if not log.is_file() or "exit_code=0" not in log.read_text(encoding="utf-8"):
         raise ValueError("stage has no observed successful command exit")
@@ -595,6 +631,11 @@ def verify_attempts(state, manifest, context, output_root, require_terminal=True
     for attempt in state["attempts"]:
         audit_commands(attempt)
         audit_logs(attempt["destination"])
+        for execution in attempt["executions"]:
+            if execution["status"] == "invalidated" and "retained_inventory" in execution:
+                audits = execution.get("integrity_audits", [])
+                if not audits or any(a.get("recorded_inventory") != execution["retained_inventory"] for a in audits):
+                    raise ValueError("invalidated stage lost its original recorded inventory")
         if require_terminal and attempt["status"] not in ("complete", "invalidated"):
             raise ValueError("unresolved pending attempt")
         if attempt["kind"] == "orphan" and attempt["status"] != "invalidated":
@@ -654,10 +695,14 @@ def run_attempt(attempt, cell, context, state, table_path, runner):
                 execution["status"] = "succeeded"
                 execution["recovery"] = "observed_success_after_interruption"
                 atomic_json(table_path, state)
-            except (ValueError, OSError, KeyError, EOFError, RuntimeError, pickle.UnpicklingError):
+            except (ValueError, OSError, KeyError, EOFError, RuntimeError, pickle.UnpicklingError) as error:
                 execution["status"] = "invalidated"
                 execution["reason"] = "interrupted_stage_incomplete_or_invalid"
-                execution["retained_inventory"] = inventory(execution["destination"])
+                execution.setdefault("retained_inventory", [])
+                execution.setdefault("integrity_audits", []).append({
+                    "reason": str(error), "recorded_inventory": execution["retained_inventory"],
+                    "observed_inventory": inventory(execution["destination"]),
+                })
                 if role == "train":
                     raise InvalidAttempt("interrupted training has no valid completed checkpoint")
                 number = sum(e["role"] == role for e in attempt["executions"]) + 1
@@ -679,7 +724,7 @@ def run_attempt(attempt, cell, context, state, table_path, runner):
             except BaseException as error:
                 execution["status"] = "interrupted"
                 execution["error"] = {"type": type(error).__name__, "message": str(error)}
-                execution["retained_inventory"] = inventory(execution["destination"])
+                execution.setdefault("retained_inventory", inventory(execution["destination"]))
                 atomic_json(table_path, state)
                 raise
         if execution["status"] != "succeeded":
