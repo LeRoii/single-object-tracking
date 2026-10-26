@@ -125,10 +125,8 @@ cv::Mat render_interactive(const cv::Mat& source,
       int baseline = 0;
       const cv::Size text_size = cv::getTextSize(
           descriptor.label, cv::FONT_HERSHEY_SIMPLEX, 0.44, 1, &baseline);
-      const int label_x = std::clamp(rectangle.x, 0,
-                                     std::max(0, rendered.cols - text_size.width - 4));
-      const int preferred_y = rectangle.y + 17 +
-                              static_cast<int>(index) * 16;
+      const int label_x = std::max(8, rendered.cols - text_size.width - 8);
+      const int preferred_y = 80 + static_cast<int>(index) * 18;
       const int label_y = std::clamp(preferred_y, text_size.height + 3,
                                      std::max(text_size.height + 3,
                                               rendered.rows - 50));
