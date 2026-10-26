@@ -542,3 +542,104 @@ Handoff：<requested contract change or none>
 协调对话只需集成本次文档提交；不需要修改 `integration-contract.yaml`，不改变
 `functional_pass_promotion_held` 和
 `development_board_validation.latest_handoff.available=false`。
+
+## 2026-10-26 detector 位置硬门与 Debug 分色框简单板端验证
+
+- 时间：`2026-10-26T21:25:05+08:00`。共享工作树/分支为
+  `/home/u20/single-object-tracking/.worktrees/debug-runtime-config` /
+  `codex/debug-runtime-config`，实现基线为
+  `7d2fad2bbe4ebe67efe2f67aee492d755dbb3bf6`；实现提交为
+  `c07f85080e1af02b53e9fa77f2b8bb0a5503b60e`、
+  `5055e75af57c2a99e1d92a4eff13440e04f90759`、`1451537`、`02aef3c`。
+  板端独立工作树/分支为
+  `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry` /
+  `codex/rk3566-debug-telemetry`，结果提交为
+  `d845f056d41d5b1ab108b72375dbde59aab61f62`。
+- 同步前板端已有用户修改 `config/interactive-debug.conf`（视频路径为
+  `/home/cat/Project/SOT/data/1.mp4`）和未跟踪 `log.txt`；两者均未覆盖、未暂存、
+  未提交。板端系统时间与 RTC 已正确到 2026，系统报告时钟已同步。
+- 新增严格位置门：候选中心到本帧运动预测中心的距离除以画面对角线不得超过
+  `detector_candidate_max_center_ratio=0.15`；`ASSISTED_RECOVERY` 与 `LOST`
+  不放宽，通过者按距离升序、置信度降序排序。新增 `POSITION_REJECTED`、位置通过/
+  拒绝计数和 schema 6 字段，且 detector 仍不能直接产生 `control_valid=true`。
+- 交互窗口区分青色 motion、紫色 detector candidate、橙色 detector probe、蓝色
+  anchor、黄色 recent、绿色 `ACCEPTED CTRL` 与红色 `REJECTED NO_CTRL`。第一次
+  板端截图发现动态标签遮挡，随后通过共享提交 `02aef3c` 改为右侧固定纵向标签并
+  重新原生链接。非交互输出视频的原单框渲染未改变。
+
+主机 clean build 命令：
+
+```bash
+cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-position-gate-clean-build \
+  -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF
+cmake --build /tmp/nanotrack-position-gate-clean-build -- -j2
+ctest --test-dir /tmp/nanotrack-position-gate-clean-build --output-on-failure
+```
+
+结果 `15/15` 通过。新增 `interactive_debug_overlay` 测试覆盖六类框的绘制顺序、
+`FULL_OBJECT` 候选/probe 同坐标仍保留不同标签，以及未确认假设不得生成
+`ACCEPTED CTRL`。
+
+板端为 LubanCat RK3566/AArch64、Linux `4.19.232`、GCC `8.3.0`、CMake
+`3.13.4`、OpenCV 4.10、RKNN API `2.3.2` / driver `0.8.2`。原生命令：
+
+```bash
+cd /home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry
+cmake -S . -B build-board -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON
+cmake --build build-board -- -j2
+cd build-board
+ctest --output-on-failure
+ctest --output-on-failure -E '^cli$'
+```
+
+完整 RKNN/OpenCV 可执行程序构建成功。全量 CTest 为 `14/15`；唯一失败的 `cli`
+读取了必须保留的用户绝对视频路径覆盖，导致 shipped-profile 相对路径断言失败。
+没有为凑通过而覆盖用户文件。排除这项已解释的本地配置差异，其余板端测试
+`14/14` 通过；干净共享工作树的同一 `cli` 已包含在主机 `15/15` 中。
+
+板端有界交互命令：
+
+```bash
+DISPLAY=:0 ./build-board/nanotrack_v3 \
+  --config config/interactive-debug.conf \
+  --video /home/cat/Project/SOT/nanotrack_v3_longterm/data/girl_dance.mp4 \
+  --bbox 244,161,74,70 --max-frames 200
+```
+
+通过 X11 发送一次空格开始播放，帧 200 自动暂停后截图，再发送 `Q` 正常退出。日志
+在帧 129 进入 `ASSISTED_RECOVERY`，帧 189 进入 `LOST`；帧 176 实际记录：
+
+```text
+DEBUG_EVENT event=detector_batch frame=176 source_frame=174 age_ms=67 raw=1 filtered=1 position_valid=0 position_rejected=1 status=POSITION_REJECTED total_ms=196.923
+```
+
+该候选没有后续 `detector_verify` 或 `reacquired`，不可靠状态始终
+`control_valid=0`。帧 200 截图显示青色 `MOTION PRED`、蓝色 `NT ANCHOR`、黄色
+`NT RECENT` 和红色 `REJECTED NO_CTRL`，标签不再互相遮挡；被位置门拒绝的候选
+没有伪装成活动假设或绿色控制框。由于本次真实候选被硬门拒绝，截图不包含紫色/
+橙色实例；它们及 `FULL_OBJECT` 重合情况由板端通过的纯数据 overlay 测试覆盖，
+不能表述为七种颜色均完成了人工视觉验收。
+
+| 工件 | 路径 | SHA-256 |
+|---|---|---|
+| Debug 可执行程序 | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/build-board/nanotrack_v3` | `30855451e2e7050ad208e70fb459e43cf61e459b962cfba8ac680111514c13ac` |
+| template RKNN | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/models/template_backbone.rknn` | `38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709` |
+| search RKNN | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/models/search_backbone.rknn` | `92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a` |
+| head RKNN | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/models/head.rknn` | `2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600` |
+| tracker manifest | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/models/manifest.json` | `441e93f2092afe94bac663f27adb1fe99848357356efd67c7473b0b506f854b2` |
+| VisDrone9 RKNN | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/yolov8n-visdrone9-rk3566-fp16.rknn` | `3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0` |
+| detector manifest | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/detector-manifest.json` | `05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e` |
+| VisDrone9 labels | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/visdrone9.txt` | `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992` |
+| 输入视频 | `/home/cat/Project/SOT/nanotrack_v3_longterm/data/girl_dance.mp4` | `8090fcd5090adb62f21e79e799f0b0871d9c610d8cf8087b9fcdd3c7e9c2e9b9` |
+| 帧 200 截图 | `/tmp/nanotrack-position-gate-debug-v2.png` | `53c8ace17b620759536e2f42a11b2b76b488073aca04684c36d60ebaad709efe` |
+| 200 帧 Debug 日志 | `/tmp/nanotrack-position-gate-debug-v2.log` | `f70331b9f028b2ad361cc0dcd9debac6c3d32fe527f270f8fa466d9329e9805d` |
+
+本轮只达到 `integrated_function_short_smoke` 与 Debug 可观测性验证，不是长时重捕
+质量、阈值标定、资源平台化、完整七色人工视觉验收、真实吊舱或开发板发布门通过。
+任务状态继续为 `functional_pass_promotion_held`，`latest_handoff.available=false`。
+
+### Handoff
+
+请协调对话在集成本任务提交后，把下一轮共享源码候选更新到该集成结果，并继续保持
+detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 不可用；
+是否把严格 `0.15` Debug 策略锁定为下一轮板端候选仍由协调者决定。
