@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-26T09:59:54+08:00`。
+- 最近核对：`2026-10-26T14:08:13+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；控制器已通过独立评审。任务 5 的来源图像、传递依赖、隐藏成员绑定修复已获独立复审 APPROVED；新增 JSON EOF 加固通过25项聚焦测试。下一步执行任务6。batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
+- 状态说明：既有 g5000 可交付下游评估；任务 6 宿主机预检和 batch 8/32/64 各 50 步真实 CUDA 探测已完成并核验。主矩阵尚未完成，不能据探测选择最优 batch/GOT 或切换模型；下一步启动 schema-2 可恢复筛选。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -43,7 +43,7 @@
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
 - 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新控制器已接入 `T_v3`，目前只有伪端到端结果，不能宣称新实验已实际训练或产生性能提升。
 - 外部 NanoTrack 数据加载器保留历史列表索引语义；受控训练入口已可用显式 `--pair-policy` 在构造数据集前仅为匹配的 GOT 子池安装原始帧号策略，尚未用于真实新训练。
-- batch `{8,32,64}` × GOT `{0%,10%,30%}` 的新实验、困难样本归因与强化对照没有可交付的运行记录；不能声明 batch 64 或任何配比最优。
+- batch `{8,32,64}` 已各完成 50 步 CUDA 容量探测，但九格主矩阵和困难样本强化对照尚未完成；探测不是等样本性能比较，不能声明 batch 64 或任何配比最优。
 - 后续独立目标域留出集的可用性与隔离性尚需核查；已查看的历史隐藏集不能重新称为未触碰测试集。
 
 ## Next action
@@ -53,9 +53,90 @@
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
    `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略和任务 2 配对策略及审计已完成局部验证。
 2. 九单元格精确样本配置和可恢复控制器已实现；验证失败诊断与训练集困难池已通过独立复审，
-   下一步执行等样本交叉实验、训练集困难样本对照和最终报告。当前没有启动真实训练、
-   隐藏集评测或 `sot-v1.mp4` 回归。
+   任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
+   最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-26 任务 6：冻结输入预检与三档真实 CUDA 探测
+
+- 时间：`2026-10-26T14:08:13+08:00`；分支/工作树为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+  初始 HEAD `145f1c6cf7b30b53fd6dfbe8d54dcce85775ed5e`，初始工作树干净；本里程碑仅提交
+  此 owner 文件，结果 commit 在提交后回报，不预写尚未产生的 commit ID。
+- 已阅读 STATUS、集成契约、owner 进度、任务 6 brief、冻结规格以及任务 3/4 的实际清单、
+  控制器、训练器和验证器。没有消费其他 owner 的新模型或板端 handoff。
+- 受限环境 `nvidia-smi` 实测无法连接驱动；同机宿主执行成功，故此为设备访问边界。
+  宿主实测 driver `580.178.04`、RTX 2060 6144 MiB；PyTorch `1.7.1`、CUDA `10.2`、
+  cuDNN `7605`、`cuda_available=true`、一张设备，初始 allocated=0。未观察到其他 CUDA
+  compute 进程；桌面图形进程占用约 225 MiB。磁盘可用约 306 GB。
+- 冻结 manifest SHA `d8385c25de4fce516545ee7e7b45c30f9aa7d76af8256a0afa965d93abee99cd`；
+  g5000 SHA `40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1`；
+  来源配置 SHA `cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e`；
+  pair-policy SHA `e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024`；
+  pair-audit SHA `69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2`。
+  `load_context` 实际绑定/核对 143 个配置、训练清单、评测列表和源码文件，context SHA
+  `4f55202fd2da582bd850217c2ca19c378a76c8fcff89c4442fa80aa6b741d14f`。
+  控制器 SHA `925a7965765ca83b5ecde8bd7065044046ee162d30a5bc02a445e551d21e66ec`，
+  训练器 SHA `4651e28992f2e5b9384683986183c6d0f38c8bb8f3c2d9a165defe06120f2c55`。
+
+### 实际命令与测量
+
+工件根为 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/`；以下均从任务
+worktree 调用，GPU 探测使用宿主执行。生成的 runner/verifier 位于工件根，不修改生产代码。
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6-execution.py preflight
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6-execution.py probes
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6-verify-probes.py
+```
+
+三档均使用冻结的 `b{8,32,64}_g30.yaml`、seed `123456`、GOT 原始帧号配对、`head_only`、
+冻结 BN、新优化器和 sample LR，从 g5000 各执行 50 次完整 forward/backward/optimizer
+update，global `5000 -> 5050`。单独 verifier 对实际 `train_metrics.jsonl` 逐项重读，核验
+恰好 50 条连续更新、三类 loss 全有限以及原生 CUDA telemetry；**三档均 exit 0，无 OOM**。
+
+| batch | 样本数 | 训练循环秒 | 进程墙钟秒 | peak allocated/reserved MiB | trainer PID |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | 400 | 39.586 | 54.162 | 61.69 / 96 | 2552184 |
+| 32 | 1600 | 163.724 | 169.023 | 236.40 / 250 | 2552670 |
+| 64 | 3200 | 201.596 | 206.987 | 468.59 / 508 | 2554075 |
+
+训练循环口径包括数据取样/增强、CUDA 训练和循环内保存，不含模型/数据集构造；进程口径
+另含初始化和退出。三档样本数不同，探测时间不能直接作为主实验等样本 batch 结论。
+固定单进程确定性数据加载和 head-only 策略造成较低显存使用，不因此增加未声明 batch。
+
+- 生成 wrapper 起初错误查找 `metrics.jsonl`，而真实 trainer 输出 `train_metrics.jsonl`，
+  因而全部 trainer 成功后 wrapper 自身 exit 1。原 runner、原始 result/log/checkpoint 均保留，
+  没有重训或覆盖；新增单独 verifier 读取真实文件，实测 exit 0。此为工件收集路径错误，
+  不是训练失败或生产代码缺陷。预检绑定的原 runner SHA 已恢复并由 verifier 实际核对。
+- 预检 JSON `task6/preflight.json` SHA
+  `e682500a106a4a3912ace4a4e9e3f086483cf8470c61fbafb6e1ecd7fdd32307`；
+  完整验证摘要 `task6/verified-probe-summary.json` SHA
+  `a0cfd16ee7ae373b1bb29797b4f1f6d819cca8a91149307e156e5099414bd1cc`。
+  摘要绑定每档精确命令、PID、原始 result、metrics、telemetry 和 checkpoint SHA；
+  绝对输出目录为 `task6/probes/b{8,32,64}_g30/attempt0001/`。
+- 各档 probe checkpoint 文件名均为
+  `candidate_factorial_probe_g00005050_e000_s00050.pth`；batch 8/32/64 SHA 依次为
+  `b86f1a883b7561516eb25af97ad9a45cd8c1128ba50fe6d45e9dc6911832eb94`、
+  `c549c78426a609e29f7134c5d65a48d8e2679464b18cf4cd0f7fa0476af2f79a`、
+  `7b55d3b89e0ded5d23e4fe63437928f8bbec6d3afc166bc0f6e95127d6ca81fc`。
+  这些只是容量探测工件，不进入主矩阵或候选排名。
+
+### 已冻结的后续口径与边界
+
+- 协调者在筛选结果出现前裁定，确认阶段的共同四节点为
+  `10240/20480/30720/40960` 样本：筛选终点加三段等长扩展；各格/三个种子共用相同节点，
+  不能逐种子选择训练时长。若此解释错误，确认调度/评测需重跑，筛选仍有效。
+- 现有 schema-2 控制器只实现筛选；先完成并验证 72 个节点及冻结 expansion，随后报告
+  可恢复确认路径缺口，由协调者安排单独经测试的修复，不使用无 journal 的手工续训。
+- 本阶段只证明真实桌面 CUDA 容量与冻结输入预检；尚无完整主矩阵、确认、分组 bootstrap
+  或 batch/GOT 最优结论。不将任务 5 hard pool 加入主矩阵；没有访问 GOT train-hidden、
+  历史隐藏图像/框/预测/指标，没有运行 `sot-v1.mp4`、转换、板端或吊舱工作。
+  g5000、公共 STATUS/集成契约和其他 owner 文件不变；SDD Task 6 保持未勾选。
+- 下一步：提交此里程碑后立即运行原 schema-2 控制器，18 条轨迹各至 10,240 样本，
+  每条固定评测 `2560/5120/7680/10240`；中断时保留 attempt 并使用同一根恢复。
+  任务实施报告：`.superpowers/sdd/2026-10-24-nanotrack-factorial-v3/task-6-report.md`。
 
 ## 2026-10-26 任务 5 复审批准与 JSON EOF 加固
 
