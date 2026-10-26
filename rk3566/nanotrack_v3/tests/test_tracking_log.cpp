@@ -66,6 +66,7 @@ int main() {
   row.bbox = BBox{1, 2, 3, 4};
   row.search_scale = 4.0F;
   row.hypothesis_source = HypothesisSource::kDetector;
+  row.motion_predicted_bbox = BBox{5, 6, 7, 8};
   row.detector_configured = true;
   row.detector_ready = false;
   row.detector_requested = true;
@@ -78,6 +79,7 @@ int main() {
   row.detector_filtered_candidate_count = 3;
   row.detector_verified_class_id = 2;
   row.detector_verified_confidence = 0.88F;
+  row.detector_candidate_center_ratio = 0.12F;
   row.detector_target_mode = DetectorTargetMode::kSubtarget;
   row.detector_candidate_id = 42;
   row.detector_candidate_region = BBox{10, 20, 80, 100};
@@ -89,6 +91,8 @@ int main() {
   row.detector_confirmation_hits = 1;
   row.detector_timing = DetectorTiming{1.0F, 7.0F, 2.0F, 10.0F};
   row.detector_status = DetectorBatchStatus::kStale;
+  row.detector_position_valid_count = 2;
+  row.detector_position_rejected_count = 4;
   row.pipeline_ms = 50.0F;
   row.anchor_metrics = ResponseMetrics{0.8F, 0.7F, 8.0F, 9.0F, 0.1F};
   row.anchor_present = true;
@@ -117,11 +121,16 @@ int main() {
         "detector_probe_index", "detector_confirmation_attempts",
         "detector_confirmation_hits",
         "detector_preprocess_ms", "detector_inference_ms",
-        "detector_postprocess_ms", "detector_total_ms"}) {
+        "detector_postprocess_ms", "detector_total_ms",
+        "motion_predicted_x", "motion_predicted_y",
+        "motion_predicted_width", "motion_predicted_height",
+        "detector_candidate_center_ratio",
+        "detector_position_valid_count",
+        "detector_position_rejected_count"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("5,", 0) == 0,
-              "tracking rows carry schema version 5 exactly once");
+  expect_true(encoded.rfind("6,", 0) == 0,
+              "tracking rows carry schema version 6 exactly once");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
               "detector errors escape commas, newlines, and quotes");
   expect_true(encoded.find("\"detector, timeout \"\"late\"\"\"") !=
@@ -157,8 +166,10 @@ int main() {
   runtime.plan.frame_id = 12;
   runtime.plan.timestamp_ms = 440;
   runtime.plan.request_detector = true;
+  runtime.plan.motion_predicted_bbox = BBox{11, 22, 33, 44};
   runtime.plan.detector_candidate_class_id = 2;
   runtime.plan.detector_candidate_confidence = 0.91F;
+  runtime.plan.detector_candidate_center_ratio = 0.125F;
   runtime.plan.detector_target_mode = DetectorTargetMode::kSubtarget;
   runtime.plan.detector_candidate_id = 88;
   runtime.plan.detector_candidate_region = BBox{30, 40, 100, 80};
@@ -176,6 +187,8 @@ int main() {
   runtime.output.detector_probe_index = 4;
   runtime.output.detector_confirmation_attempts = 3;
   runtime.output.detector_confirmation_hits = 2;
+  runtime.output.detector_position_valid_count = 2;
+  runtime.output.detector_position_rejected_count = 1;
   runtime.detector.configured = true;
   runtime.detector.ready = true;
   runtime.detector.request_submitted = true;
@@ -205,6 +218,14 @@ int main() {
                   mapped.detector_probe_index == 4 &&
                   mapped.detector_confirmation_attempts == 3 &&
                   mapped.detector_confirmation_hits == 2 &&
+                  mapped.motion_predicted_bbox.x == 11.0F &&
+                  mapped.motion_predicted_bbox.y == 22.0F &&
+                  mapped.motion_predicted_bbox.width == 33.0F &&
+                  mapped.motion_predicted_bbox.height == 44.0F &&
+                  mapped.detector_candidate_center_ratio ==
+                      std::optional<float>(0.125F) &&
+                  mapped.detector_position_valid_count == 2 &&
+                  mapped.detector_position_rejected_count == 1 &&
                   mapped.detector_timing.total_ms == 7.0F,
               "runtime detector diagnostics and verified candidate are mapped");
 
@@ -218,6 +239,7 @@ int main() {
   metadata.controller_config_hash = "controller-hash";
   metadata.sensor = "visible";
   metadata.detector_target_mode = DetectorTargetMode::kSubtarget;
+  metadata.detector_candidate_max_center_ratio = 0.15F;
   metadata.source_fps = 30.0;
   metadata.frame_step_ms = 33;
   metadata.tracked_frames = 18;
@@ -242,8 +264,10 @@ int main() {
   metadata.detector.reject_count = 2;
   metadata.detector.error_count = 1;
   const std::string json = tracking_session_metadata_json(metadata);
-  expect_true(contains(json, "\"schema_version\": 5") &&
+  expect_true(contains(json, "\"schema_version\": 6") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
+                  contains(json,
+                           "\"detector_candidate_max_center_ratio\": 0.150000") &&
                   contains(json, "\"enabled\": true") &&
                   contains(json, "\"calibrated\": false") &&
                   contains(json, "\"model_path\": \"models/yolov8.rknn\"") &&
@@ -261,7 +285,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v5 metadata exposes recovery mode, detector identity, tensors, versions, and counters");
+              "schema-v6 metadata exposes position gate, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

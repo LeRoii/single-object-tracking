@@ -30,6 +30,14 @@ std::string optional_bbox(const std::optional<BBox>& value) {
   return stream.str();
 }
 
+std::string optional_ratio(const std::optional<float>& value) {
+  if (!value) return "none";
+  std::ostringstream stream;
+  stream.imbue(std::locale::classic());
+  stream << std::fixed << std::setprecision(3) << *value;
+  return stream.str();
+}
+
 std::string sanitized_value(const std::string& value) {
   std::string sanitized;
   sanitized.reserve(value.size());
@@ -96,6 +104,10 @@ std::vector<std::string> DebugTelemetry::frame_events(
            << " age_ms=" << result.detector.batch_age_ms
            << " raw=" << result.detector.raw_candidate_count
            << " filtered=" << result.detector.filtered_candidate_count
+           << " position_valid="
+           << result.output.detector_position_valid_count
+           << " position_rejected="
+           << result.output.detector_position_rejected_count
            << " status=" << to_string(result.output.detector_status)
            << " total_ms=" << result.detector.timing.total_ms;
     events.push_back(stream.str());
@@ -113,6 +125,8 @@ std::vector<std::string> DebugTelemetry::frame_events(
            << " candidate_id=" << optional_id(result.output.detector_candidate_id)
            << " candidate_region="
            << optional_bbox(result.plan.detector_candidate_region)
+           << " center_ratio="
+           << optional_ratio(result.plan.detector_candidate_center_ratio)
            << " probe=" << result.output.detector_probe_index
            << " same_class=" << result.output.detector_same_class_candidates
            << " ambiguous="

@@ -127,7 +127,10 @@ std::string tracking_csv_header() {
          "detector_confirmation_attempts,detector_confirmation_hits,"
          "detector_preprocess_ms,detector_inference_ms,detector_postprocess_ms,"
          "detector_total_ms,detector_status,detector_candidates_queued,"
-         "tracker_ms,runtime_ms,pipeline_ms,note";
+         "tracker_ms,runtime_ms,pipeline_ms,note,"
+         "motion_predicted_x,motion_predicted_y,motion_predicted_width,"
+         "motion_predicted_height,detector_candidate_center_ratio,"
+         "detector_position_valid_count,detector_position_rejected_count";
 }
 
 std::string tracking_csv_row(const TrackingLogRow& row) {
@@ -186,6 +189,14 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                  number(row.tracker_ms), number(row.runtime_ms),
                  number(row.pipeline_ms),
                  csv_escape(row.note)});
+  fields.insert(fields.end(),
+                {number(row.motion_predicted_bbox.x),
+                 number(row.motion_predicted_bbox.y),
+                 number(row.motion_predicted_bbox.width),
+                 number(row.motion_predicted_bbox.height),
+                 optional_number(row.detector_candidate_center_ratio),
+                 std::to_string(row.detector_position_valid_count),
+                 std::to_string(row.detector_position_rejected_count)});
   return join(fields);
 }
 
@@ -203,6 +214,7 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.control_valid = true;
   row.accepted = true;
   row.bbox = bbox;
+  row.motion_predicted_bbox = bbox;
   row.anchor_present = true;
   row.recent_present = true;
   row.anchor_metrics = ResponseMetrics{1.0F, 1.0F, 0.0F, 0.0F, 1.0F};
@@ -246,6 +258,7 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.aspect_log_change = output.aspect_log_change;
   row.search_scale = output.search_scale;
   row.hypothesis_source = output.hypothesis_source;
+  row.motion_predicted_bbox = result.plan.motion_predicted_bbox;
   row.detector_configured = result.detector.configured;
   row.detector_ready = result.detector.ready;
   row.detector_requested = result.plan.request_detector;
@@ -278,6 +291,8 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.detector_verified_class_id = result.plan.detector_candidate_class_id;
   row.detector_verified_confidence =
       result.plan.detector_candidate_confidence;
+  row.detector_candidate_center_ratio =
+      result.plan.detector_candidate_center_ratio;
   row.detector_target_mode = result.plan.detector_target_mode;
   row.detector_candidate_id = result.output.detector_candidate_id;
   row.detector_candidate_region = result.plan.detector_candidate_region;
@@ -293,6 +308,10 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.detector_timing = result.detector.timing;
   row.detector_status = output.detector_status;
   row.detector_candidates_queued = output.detector_candidates_queued;
+  row.detector_position_valid_count =
+      output.detector_position_valid_count;
+  row.detector_position_rejected_count =
+      output.detector_position_rejected_count;
   row.tracker_ms = result.tracker_ms;
   row.runtime_ms = result.runtime_ms;
   row.note = note;
@@ -339,6 +358,7 @@ std::string tracking_session_metadata_json(
       metadata.reliable_psr,
       metadata.reliable_apce,
       metadata.reliable_peak_margin,
+      metadata.detector_candidate_max_center_ratio,
       metadata.latency.mean_runtime_ms,
       metadata.latency.p50_runtime_ms,
       metadata.latency.p95_runtime_ms,
@@ -378,6 +398,8 @@ std::string tracking_session_metadata_json(
          << ",\n"
          << "  \"detector_target_mode\": \""
          << to_string(metadata.detector_target_mode) << "\",\n"
+         << "  \"detector_candidate_max_center_ratio\": "
+         << metadata.detector_candidate_max_center_ratio << ",\n"
          << "  \"rknn_api_version\": \""
          << json_escape(metadata.rknn_api_version) << "\",\n"
          << "  \"rknn_driver_version\": \""

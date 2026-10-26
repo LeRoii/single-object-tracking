@@ -9,7 +9,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 5;
+constexpr int kTrackingSchemaVersion = 6;
 
 class MonotonicVideoClock {
  public:
@@ -45,6 +45,7 @@ struct TrackingLogRow {
   float aspect_log_change = 0.0F;
   float search_scale = 1.0F;
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
+  BBox motion_predicted_bbox{};
   bool detector_configured = false;
   bool detector_ready = false;
   bool detector_requested = false;
@@ -57,6 +58,7 @@ struct TrackingLogRow {
   std::size_t detector_filtered_candidate_count = 0;
   std::optional<int> detector_verified_class_id;
   std::optional<float> detector_verified_confidence;
+  std::optional<float> detector_candidate_center_ratio;
   DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
   std::optional<std::uint64_t> detector_candidate_id;
   std::optional<BBox> detector_candidate_region;
@@ -69,6 +71,8 @@ struct TrackingLogRow {
   DetectorTiming detector_timing{};
   DetectorBatchStatus detector_status = DetectorBatchStatus::kNone;
   std::size_t detector_candidates_queued = 0;
+  std::size_t detector_position_valid_count = 0;
+  std::size_t detector_position_rejected_count = 0;
   float tracker_ms = 0.0F;
   float runtime_ms = 0.0F;
   float pipeline_ms = 0.0F;
@@ -119,6 +123,7 @@ struct TrackingSessionMetadata {
   std::string sensor;
   bool calibrated = false;
   DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
+  float detector_candidate_max_center_ratio = 0.15F;
   std::string rknn_api_version;
   std::string rknn_driver_version;
   double source_fps = 0.0;

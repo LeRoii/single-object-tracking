@@ -117,6 +117,8 @@ int main() {
   detector.detector.filtered_candidate_count = 2;
   detector.detector.timing = DetectorTiming{1.0F, 5.0F, 2.0F, 8.0F};
   detector.output.detector_status = DetectorBatchStatus::kAccepted;
+  detector.output.detector_position_valid_count = 2;
+  detector.output.detector_position_rejected_count = 3;
   detector.output.hypothesis_source = HypothesisSource::kDetector;
   detector.output.detector_candidate_id = 19;
   detector.output.detector_same_class_candidates = 2;
@@ -126,17 +128,33 @@ int main() {
   detector.output.detector_confirmation_attempts = 3;
   detector.output.detector_confirmation_hits = 2;
   detector.output.template_iou = 0.72F;
+  detector.plan.detector_candidate_center_ratio = 0.125F;
   events = telemetry.frame_events(detector, 11.0F, false);
   expect_true(contains(events,
                        "event=detector_request frame=6 request_frame=6") &&
                   contains(events,
-                           "event=detector_batch frame=6 source_frame=5 age_ms=42 raw=7 filtered=2 status=ACCEPTED total_ms=8.000") &&
+                           "event=detector_batch frame=6 source_frame=5 age_ms=42 raw=7 filtered=2 position_valid=2 position_rejected=3 status=ACCEPTED total_ms=8.000") &&
                   contains(events,
                            "event=detector_verify frame=6 candidate_id=19") &&
                   contains(events,
-                           "candidate_region=none probe=1 same_class=2 ambiguous=1 locked=1 confirmation=2/3") &&
+                           "candidate_region=none center_ratio=0.125 probe=1 same_class=2 ambiguous=1 locked=1 confirmation=2/3") &&
                   contains(events, "template_iou=0.720"),
               "detector request, completion, and verification are visible");
+
+  RuntimeFrameResult detector_rejected = frame_result(61);
+  detector_rejected.detector.batch_received = true;
+  detector_rejected.detector.batch_frame_id = 60;
+  detector_rejected.detector.batch_age_ms = 31;
+  detector_rejected.detector.raw_candidate_count = 4;
+  detector_rejected.detector.filtered_candidate_count = 2;
+  detector_rejected.output.detector_status =
+      DetectorBatchStatus::kPositionRejected;
+  detector_rejected.output.detector_position_valid_count = 0;
+  detector_rejected.output.detector_position_rejected_count = 2;
+  events = telemetry.frame_events(detector_rejected, 9.0F, false);
+  expect_true(contains(events,
+                       "event=detector_batch frame=61 source_frame=60 age_ms=31 raw=4 filtered=2 position_valid=0 position_rejected=2 status=POSITION_REJECTED"),
+              "position-only rejection is explicit in detector batch telemetry");
 
   RuntimeFrameResult detector_missing = frame_result(7);
   detector_missing.output.hypothesis_source = HypothesisSource::kDetector;
