@@ -295,6 +295,14 @@ class MatchedPoolTests(unittest.TestCase):
             atomic_json(self.hidden,payload)
             with self.assertRaises(ValueError):self.build()
 
+    def test_hidden_membership_rejects_trailing_non_whitespace(self):
+        valid=self.hidden.read_text()
+        for suffix in ('{}','\n[]','trailing-junk'):
+            self.hidden.write_text(valid+suffix)
+            with self.assertRaises(ValueError):self.build()
+        self.hidden.write_text(valid+'\n \t')
+        self.assertEqual(len(self.build()['members']),1)
+
     def test_source_specific_layouts_and_symlink_resolution(self):
         layouts=[('UAV123','bike1','data_seq/UAV123_10fps/bike1/000001.jpg'),
                  ('UAVDT','M0201','UAVDT/UAV-benchmark-M/M0201/img000001.jpg'),

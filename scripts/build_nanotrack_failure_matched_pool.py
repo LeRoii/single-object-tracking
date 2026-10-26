@@ -131,7 +131,10 @@ def hidden_panel_membership(path,splits):
     Hashing necessarily reads file bytes. Image/box/other fields are lexically skipped,
     never deserialized; no referenced hidden data file is opened.
     """
-    text=Path(path).read_text();top={k:(a,b) for k,a,b in _fields(text,_whitespace(text,0))}
+    text=Path(path).read_text();start=_whitespace(text,0)
+    if _whitespace(text,_value_end(text,start))!=len(text):
+        raise ValueError('trailing content after hidden membership JSON object')
+    top={k:(a,b) for k,a,b in _fields(text,start)}
     if not {'split','members','sequences'}<=set(top):raise ValueError('hidden membership missing required fields')
     read=lambda pair:json.loads(text[pair[0]:pair[1]])
     if read(top['split'])!='hidden-test':raise ValueError('wrong historical hidden split')

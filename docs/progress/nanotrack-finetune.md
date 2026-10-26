@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-26T09:51:36+08:00`。
+- 最近核对：`2026-10-26T09:59:54+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；控制器已通过独立评审。任务 5 首轮独立评审未通过，已修复真实图像路径绑定、诊断依赖传递验证及隐藏成员表绑定，等待独立复审。batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
+- 状态说明：既有 g5000 可交付下游评估；控制器已通过独立评审。任务 5 的来源图像、传递依赖、隐藏成员绑定修复已获独立复审 APPROVED；新增 JSON EOF 加固通过25项聚焦测试。下一步执行任务6。batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -52,12 +52,39 @@
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
    `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略和任务 2 配对策略及审计已完成局部验证。
-2. 九单元格精确样本配置和可恢复控制器已实现；验证失败诊断与训练集困难池已完成实施者验证，
-   待独立评审后执行等样本交叉实验、训练集困难样本对照和最终报告。当前没有启动真实训练、
+2. 九单元格精确样本配置和可恢复控制器已实现；验证失败诊断与训练集困难池已通过独立复审，
+   下一步执行等样本交叉实验、训练集困难样本对照和最终报告。当前没有启动真实训练、
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
 
-## 2026-10-26 任务 5 修复回合 1：来源图像、传递依赖和隐藏成员表绑定（待复审）
+## 2026-10-26 任务 5 复审批准与 JSON EOF 加固
+
+- 时间：`2026-10-26T09:59:54+08:00`；分支/工作树仍为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`，初始干净 HEAD
+  `2e8daf260b991d2246966f4abf1d7167e7804a2c`。
+- 同范围独立复审对 `2e8daf2` 给出 `APPROVED`，原 Major 均已关闭。唯一 Minor 为隐藏
+  成员 JSON 解析器尚未拒绝顶层对象后的非空白内容。新增精确回归先实测 1 failure，
+  最小修改要求顶层 JSON 对象之后仅允许空白直至 EOF；测试覆盖追加 `{}`、`[]`、垃圾
+  文本均拒绝，合法尾随空白仍接受。
+- RED 日志 `/tmp/nanotrack-task5-eof-red.log`，SHA
+  `4748c1e8274f08ef508ec81822358fd7a26e81f253937b5bbaf7356a74672d5e`。
+  运行 `python -B -m unittest tests.test_nanotrack_failure_analysis -v`，实测 **25/25 OK**
+  （9.818 s），日志 `/tmp/nanotrack-task5-eof-focused.log`，SHA
+  `57083d2ee08ad31df6f9b5edc99698ec7cac4b5be659f91e4d0833a3ef86ab59`。本次仅为 EOF
+  检查增补，按范围复跑聚焦测试与真实池验证；上一回合全套 260 项及同四条历史路径失败
+  的边界继续保留，不称本次重新运行了全套。
+- builder SHA 更新为 `7cd0538c2f115b181727faf6505255ce06ad813ee0d99f8dfca0717d4d81c15b`，
+  因其身份在池 inputs 中，已保留旧池为 `training-only-matched-pool-approved-2e8daf2.json`
+  并重新生成当前池，不能复用旧 builder 身份。analysis、歧义队列、联系图无需重生成。
+  当前池 SHA 为 `4ec7720d7874a1893c82381243bbafe89de9470fc80ca202c8cb3724fc466c30`；
+  analysis SHA 仍为 `c2479f0547a5636332f37bd624be1d9302342ccb9d272235439758a4b9796f77`，
+  歧义队列 SHA 仍为 `f2b259d1703eff064c62426672d68d48fccefe3c36f9e692178dca9f850917af`。
+- 计数及访问边界不变：1,024 条原因-目标-帧成员关系，830 个目标轨迹帧观察，502 个源
+  图像帧；不训练、不读取隐藏图像/框值/预测/指标，不切换公共模型身份。内部 SDD ledger
+  在本次验证完成后勾选任务 5；下一步任务 6 的真实交叉对照，公共契约无需变化。
+
+## 2026-10-26 任务 5 修复回合 1：来源图像、传递依赖和隐藏成员表绑定（已获复审批准）
 
 - 时间：`2026-10-26T09:51:36+08:00`；分支/工作树仍为
   `codex/nanotrack-factorial-v3` /
