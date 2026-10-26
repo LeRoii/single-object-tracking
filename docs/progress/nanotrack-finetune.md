@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-26T09:35:39+08:00`。
+- 最近核对：`2026-10-26T09:51:36+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；控制器已通过独立评审。任务 5 已完成实施者验证：196 条序列-模型轨迹诊断、24 张联系图和仅训练集困难池，等待独立评审。batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
+- 状态说明：既有 g5000 可交付下游评估；控制器已通过独立评审。任务 5 首轮独立评审未通过，已修复真实图像路径绑定、诊断依赖传递验证及隐藏成员表绑定，等待独立复审。batch/GOT 交叉对照及困难样本强化尚无真实 GPU 训练证据。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -57,7 +57,89 @@
    隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
 
-## 2026-10-26 任务 5：验证失败诊断与仅训练集困难池（待独立评审）
+## 2026-10-26 任务 5 修复回合 1：来源图像、传递依赖和隐藏成员表绑定（待复审）
+
+- 时间：`2026-10-26T09:51:36+08:00`；分支/工作树仍为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+  开始 HEAD `7a8213743ce8d23d3666c3964cc14a0e1cc49456`，初始工作树干净。
+  首轮评审 `NOT APPROVED` 成立：原池只相信声明的 video 身份，没有解析实际图像父目录和
+  帧号；诊断依赖没有传递验证；历史隐藏面板成员表没有独立绑定。以下为修复后的证据。
+- 每个候选训练图像先 resolve 到实际文件，按四域各自实际目录布局提取精确 video 文件夹
+  和数字/img数字帧号，并与 audit 声明的 video/frame、规范化源组逐项一致；未知布局、
+  替换成验证图像、帧号错配和指向其他视频的符号链接均失败关闭。输出保留解析后的图像身份。
+- 只读池 verifier 在使用请求和重建池之前，校验 diagnosis 文件 SHA，并调用
+  `verify_inputs(diagnosis['inputs'])` 传递核验其全部冻结依赖。分析器把每个显式语义事件的
+  annotation 身份纳入顶层 inputs，去重排序；修改该来源会在改写输出前被拒绝。
+- 池升级为 schema 2，并显式绑定
+  `/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/test-aerial-hidden.json`，
+  SHA `a014b957689636d26df302cb80aac6696f6fab5b45f6eea0bd6957e91f314054`。只解析
+  `split`、`members` 和序列 `name/source/source_video`；其余值仅做词法跳过，不反序列化
+  图像路径数组或框数组，不打开隐藏图像/预测/指标。整文件 SHA 必须读取 manifest 的字节，
+  这不等于读取它引用的隐藏数据文件或执行隐藏评测。
+- 历史面板是 hidden-test 划分的抽样子集，父任务据实际成员表批准按“子集一致”验证，
+  不要求面板覆盖全划分。逐项要求面板组属于同域权威 hidden-test 列表，保护两者并集；
+  未知域、域外组、错误 split 和缺失/不一致成员均失败关闭。实际覆盖：UAVDT 1/3、
+  VisDrone-MOT 2/5、VisDrone-SOT 8/8、UAV123 0/15（该 aerial 面板不含 UAV123）。
+  UAVDT split-only=`M1304,M1306`；MOT split-only=`uav0000352_05980_v,
+  uav0000357_00920_v,uav0000363_00001_v`；UAV123 15 组均由划分表保护。未入面板只是历史
+  抽样未选中，不是划分不一致或泄漏事件；全部精确组列表记录在池 hidden_membership.coverage。
+- 实际重新生成的池计数明确区分：**1,024 条原因-目标-帧成员关系、830 个唯一目标轨迹帧
+  观察（key=`source,track,frame_id`）、502 个唯一源图像帧（唯一 resolved image path）**；
+  72 条轨迹、9 个规范化源组、额外排除 538 条训练轨迹的结果不变。不能把 830 称作不同
+  源图像数量，也不能把同源图像内多个目标视为独立场景。
+
+### 修复后工件及命令
+
+生成目录仍为 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/failure-analysis`。
+初次提交工件已保留为 `analysis-prereview-7a82137.json`、
+`ambiguity-queue-prereview-7a82137.json`、`training-only-matched-pool-prereview-7a82137.json`；
+它们不能通过 schema 2 的新 provenance 验证，不作为当前可训练池。
+
+| 当前输出 | SHA-256 |
+| --- | --- |
+| `analysis.json` | `c2479f0547a5636332f37bd624be1d9302342ccb9d272235439758a4b9796f77` |
+| `ambiguity-queue.json` | `f2b259d1703eff064c62426672d68d48fccefe3c36f9e692178dca9f850917af` |
+| `training-only-matched-pool.json` | `5834eea63933e008d655f6b649803f7ab783d65e8d0269bdea22814b5a7d1fb1` |
+
+分析器按初次实施节相同命令重新执行；池生成实际命令增加显式隐藏成员表参数：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B scripts/build_nanotrack_failure_matched_pool.py \
+  --root /home/u20/single-object-tracking \
+  --analysis /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/failure-analysis/analysis.json \
+  --output /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/failure-analysis/training-only-matched-pool.json \
+  --historical-hidden-panel /home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/test-aerial-hidden.json \
+  --cap-per-request 128
+```
+
+### 修复验证
+
+- 精确缺陷先写回归：前两类四项实测 **4 failures**（0 errors），日志
+  `/tmp/nanotrack-task5-fix1-red.log`，SHA
+  `e26620139c25072b6d60b1c1da09373b1bc4ad982d6a7620abb95bb189cc6f02`；最小修复后
+  同四项 **4/4 OK**（1.298 s）。隐藏成员接口先因缺失新显式参数而 RED（2 errors），
+  日志 `/tmp/nanotrack-task5-fix1-red-hidden.log`，SHA
+  `d0c8358d495dca17a968d99439b6f7553daeb8f1a3ddf3e899d44ac53c427bc1`。
+- 最终聚焦 **24/24 OK**（10.848 s），日志
+  `/tmp/nanotrack-task5-fix1-focused.log`，SHA
+  `39dec82f1950b71b7f832870d269bc49df3fa98f51c8809abb0614ebd88c2eb6`。
+  与初次实施相同六个相关历史模块 **103/103 OK**（4.668 s），日志
+  `/tmp/nanotrack-task5-fix1-historical.log`，SHA
+  `dc52e5ecaa050eb4446a02d46773a4b24a47520aa90339210979b4c109970f27`。
+- 本修复回合完整 discover：**260 项，4 failures，0 errors**（89.027 s），仍是历史
+  `test_formal_configs_match_quota_paths_and_training_contract` 的 stage1/2/3 与
+  `test_smoke_configs_are_bounded_and_keep_policy_representative_pools` 四条路径失败。
+  日志 `/tmp/nanotrack-task5-fix1-full.log`，SHA
+  `f8a7bdd0a16d92f7841f3c084584a805496aebd0b8bf99522a4150fb733b01c2`。没有宣称全绿。
+- 新分析仍为 196 条轨迹、24 张联系图及 26 条歧义队列；语义原因边界不变。未启动 GPU
+  训练、重新推理、隐藏评测、视频回归或板端/吊舱工作，公共模型身份不变。
+  下一步为同范围独立复审；任务 5 保持未勾选，无需更新公共契约。
+- 分析器与池生成器均已同输入重复执行；三个最终 JSON 哈希与本节表格逐字节一致，24 张
+  联系图 SHA 亦与原清单逐项一致。实际只读 verifier 再次返回 `verified=true, members=1024,
+  canonical_train_groups=9, excluded_training_tracks=538`；计数由再生成池重新计算，非沿用旧报告。
+
+## 2026-10-26 任务 5 初次实施（独立评审未通过；以上方修复回合为准）
 
 - 时间：`2026-10-26T09:35:39+08:00`；分支/工作树为
   `codex/nanotrack-factorial-v3` /
@@ -121,7 +203,7 @@
   历史划分，不把这些排除解释成已证实的数据泄漏事件。
 - 从四域训练 audit 的 `hard_reasons` 与原 prepared train annotation 重新筛选，而非把
   既有 hard 池统一当成同一种困难。每个请求最多 128 条 reason-frame 成员，确定性排序。
-  最终 **1,024 条 reason-frame 成员、830 个唯一训练帧、72 条轨迹、9 个规范化源组**；
+  最终 **1,024 条原因-目标-帧成员关系、830 个唯一目标轨迹帧观察、502 个唯一源图像帧、72 条轨迹、9 个规范化源组**；
   MOT 896 条、SOT 128 条，person 256、vehicle 384、bike 256、unknown 128。
   UAVDT 的 boundary 请求没有对应 audited truncation 样本，明确记录 available=0，未伪造。
 - 审计的 small/scale/motion 规则与诊断的阈值并不完全相同；此池匹配的是已有困难原因层，

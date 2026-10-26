@@ -38,16 +38,144 @@ def canonical_group(source, video):
 def _load(path): return json.loads(Path(path).read_text())
 
 
-def build_pool(audit_paths, train_paths, split_path, validation_panel, requests, cap_per_request=128):
+def source_image_identity(source, declared_video, declared_frame, image_path, protected):
+    """Bind an existing resolved image to its source-specific exact video/frame layout."""
+    path=Path(image_path).resolve(strict=True)
+    if not path.is_file() or path.suffix.lower()!='.jpg':
+        raise ValueError('unknown source image file layout')
+    layouts={
+        'UAV123': (('UAV123_10fps','data_seq'),r'(\d+)'),
+        'UAVDT': (('UAV-benchmark-M',),r'img(\d+)'),
+        'VisDrone-MOT': (('sequences','VisDrone2019-MOT-train'),r'(\d+)'),
+        'VisDrone-SOT': (('sequences','VisDrone2019-SOT-train'),r'img(\d+)'),
+    }
+    if source not in layouts: raise ValueError('unknown image source')
+    ancestors,pattern=layouts[source]
+    if tuple(p.name for p in list(path.parents)[1:1+len(ancestors)]) != ancestors:
+        raise ValueError('unknown source-specific image directory layout: '+str(path))
+    match=re.fullmatch(pattern,path.stem)
+    if not match or int(match.group(1))!=int(declared_frame):
+        raise ValueError('source image frame identity mismatch: '+str(path))
+    parsed_video=path.parent.name
+    group=canonical_group(source,parsed_video)
+    if parsed_video!=declared_video or group!=canonical_group(source,declared_video):
+        raise ValueError('source image video identity mismatch: '+str(path))
+    if group in protected: raise ValueError('protected source image group')
+    return dict(path=str(path),source_video=parsed_video,frame_id=int(match.group(1)),canonical_group=group)
+
+
+def _value_end(text, start):
+    """Lexically skip a JSON value without decoding nonmembership strings/arrays."""
+    if start>=len(text): raise ValueError('missing JSON value')
+    if text[start]=='"':
+        pos=start+1
+        while pos<len(text):
+            if text[pos]=='\\': pos+=2;continue
+            if text[pos]=='"': return pos+1
+            pos+=1
+        raise ValueError('unterminated JSON string')
+    if text[start] in '[{':
+        stack=[text[start]];pos=start+1
+        while pos<len(text):
+            char=text[pos]
+            if char=='"': pos=_value_end(text,pos);continue
+            if char in '[{': stack.append(char)
+            elif char in ']}':
+                if not stack or (stack.pop(),char) not in (('[',']'),('{','}')):
+                    raise ValueError('malformed JSON nesting')
+                if not stack:return pos+1
+            pos+=1
+        raise ValueError('unterminated JSON container')
+    pos=start
+    while pos<len(text) and text[pos] not in ',]} \t\r\n':pos+=1
+    if pos==start:raise ValueError('missing JSON scalar')
+    return pos
+
+
+def _whitespace(text,pos):
+    while pos<len(text) and text[pos].isspace():pos+=1
+    return pos
+
+
+def _fields(text,start):
+    if text[start]!='{':raise ValueError('expected membership object')
+    pos=_whitespace(text,start+1);seen=set()
+    while pos<len(text) and text[pos]!='}':
+        end=_value_end(text,pos)
+        key=json.loads(text[pos:end])
+        if not isinstance(key,str) or key in seen:raise ValueError('invalid/duplicate membership key')
+        seen.add(key);pos=_whitespace(text,end)
+        if text[pos]!=':':raise ValueError('missing membership colon')
+        value_start=_whitespace(text,pos+1);value_end=_value_end(text,value_start)
+        yield key,value_start,value_end
+        pos=_whitespace(text,value_end)
+        if text[pos]=='}':return
+        if text[pos]!=',':raise ValueError('missing membership comma')
+        pos=_whitespace(text,pos+1)
+
+
+def _items(text,start):
+    if text[start]!='[':raise ValueError('expected membership array')
+    pos=_whitespace(text,start+1)
+    while pos<len(text) and text[pos]!=']':
+        end=_value_end(text,pos);yield pos,end
+        pos=_whitespace(text,end)
+        if text[pos]==']':return
+        if text[pos]!=',':raise ValueError('missing membership array comma')
+        pos=_whitespace(text,pos+1)
+
+
+def hidden_panel_membership(path,splits):
+    """Consume only split, member IDs and sequence name/source/source_video.
+
+    Hashing necessarily reads file bytes. Image/box/other fields are lexically skipped,
+    never deserialized; no referenced hidden data file is opened.
+    """
+    text=Path(path).read_text();top={k:(a,b) for k,a,b in _fields(text,_whitespace(text,0))}
+    if not {'split','members','sequences'}<=set(top):raise ValueError('hidden membership missing required fields')
+    read=lambda pair:json.loads(text[pair[0]:pair[1]])
+    if read(top['split'])!='hidden-test':raise ValueError('wrong historical hidden split')
+    members=read(top['members'])
+    if (not isinstance(members,list) or not members or
+            any(not isinstance(v,str) or not v for v in members) or len(set(members))!=len(members)):
+        raise ValueError('malformed hidden member identities')
+    sequences=[]
+    for a,b in _items(text,top['sequences'][0]):
+        values={k:read((s,e)) for k,s,e in _fields(text,a) if k in ('name','source','source_video')}
+        if set(values)!=set(('name','source','source_video')) or any(not isinstance(v,str) or not v for v in values.values()):
+            raise ValueError('malformed hidden source membership')
+        if (values['source'] not in splits['sources'] or
+                values['source_video'] not in splits['sources'][values['source']]['hidden-test']):
+            raise ValueError('hidden panel source group outside authoritative hidden-test split')
+        canonical_group(values['source'],values['source_video'])
+        sequences.append(values)
+    if sorted(v['name'] for v in sequences)!=sorted(members):raise ValueError('hidden member list/sequence disagreement')
+    coverage={}
+    for source,parts in sorted(splits['sources'].items()):
+        groups=sorted({v['source_video'] for v in sequences if v['source']==source})
+        split_groups=sorted(parts['hidden-test'])
+        coverage[source]=dict(panel_groups=groups,split_groups=split_groups,
+                              split_only_groups=sorted(set(split_groups)-set(groups)))
+    return dict(panel=file_identity(path),coverage=coverage,
+                consumed_fields=['split','members','sequences.name','sequences.source','sequences.source_video'],
+                rule='panel groups must be an authoritative hidden-test subset; protect union of panel and full split')
+
+
+def build_pool(audit_paths, train_paths, split_path, validation_panel, requests, cap_per_request=128,
+               historical_hidden_panel=None):
     if len(audit_paths)!=len(train_paths) or not audit_paths or not isinstance(cap_per_request,int) or cap_per_request<1:
         raise ValueError('invalid pool source lists/cap')
     splits=_load(split_path)
+    if historical_hidden_panel is None:raise ValueError('explicit historical hidden membership panel required')
+    hidden_membership=hidden_panel_membership(historical_hidden_panel,splits)
     panel=_load(validation_panel)
     if panel.get('split')!='validation': raise ValueError('wrong exclusion panel split')
     protected=set()
     for source, parts in splits['sources'].items():
         for split in ('validation','hidden-test'):
             protected.update(canonical_group(source,v) for v in parts[split])
+    for source,coverage in hidden_membership['coverage'].items():
+        protected.update(canonical_group(source,v) for v in coverage['panel_groups'])
     for seq in panel['sequences']:
         if seq['source_video'] not in splits['sources'][seq['source']]['validation']:
             raise ValueError('validation source missing from split manifest')
@@ -58,7 +186,7 @@ def build_pool(audit_paths, train_paths, split_path, validation_panel, requests,
     for request in requests:
         if request['reason'] not in REASONS or request['source'] not in splits['sources']:
             raise ValueError('unsupported failure request')
-    inputs=[file_identity(split_path),file_identity(validation_panel),file_identity(__file__),
+    inputs=[file_identity(split_path),file_identity(validation_panel),file_identity(historical_hidden_panel),file_identity(__file__),
             file_identity(Path(__file__).with_name('analyze_nanotrack_failures.py'))]
     eligible, excluded=[],[]
     source_pairs=[]
@@ -85,6 +213,7 @@ def build_pool(audit_paths, train_paths, split_path, validation_panel, requests,
                 # Hard pools may retain neighboring references; they are not treated as a matching reason.
                 matches=[t[frame_key] for t in train.get(track,{}).values() if frame_key in t]
                 if not matches: continue
+                image_identity=source_image_identity(source,video,frame,raw['image_path'],protected)
                 box=box_xywh(raw['bbox_xywh'])
                 expected=[box[0],box[1],box[0]+box[2],box[1]+box[3]]
                 if any(list(map(float,m))!=expected for m in matches): raise ValueError('source/training box mismatch')
@@ -93,7 +222,8 @@ def build_pool(audit_paths, train_paths, split_path, validation_panel, requests,
                         eligible.append(dict(track=track,frame_id=int(frame),track_id=provenance['track_id'],
                             category=provenance['category'],source=source,source_video=video,canonical_group=group,
                             matched_reason=request['reason'],audit_reason=REASONS[request['reason']],
-                            bbox_xywh=box,image_path=raw['image_path'],source_annotation=train_identity,
+                            bbox_xywh=box,image_path=image_identity['path'],parsed_image_identity=image_identity,
+                            source_annotation=train_identity,
                             hard_reason_annotation=audit_identity))
     members=[]
     counts=Counter()
@@ -104,8 +234,9 @@ def build_pool(audit_paths, train_paths, split_path, validation_panel, requests,
             members.append(member); counts[key]+=1
     inputs.extend(m['image'] for m in members)
     inputs=sorted({i['path']:i for i in inputs}.values(),key=lambda i:i['path'])
-    return dict(schema_version=1, protocol='training-only-failure-matched-v1',inputs=inputs,
+    return dict(schema_version=2, protocol='training-only-failure-matched-v2',inputs=inputs,
         source_pairs=source_pairs,split=file_identity(split_path),validation_panel=file_identity(validation_panel),
+        hidden_membership=hidden_membership,
         requests=requests,cap_per_request=cap_per_request,
         deterministic_selection='sort source/category/reason/track/frame; first cap_per_request; no validation members',
         canonical_policy='exact split membership first; additional parent-ID exclusion across VisDrone MOT/SOT; UAV123 segment/_s collapse',
@@ -120,14 +251,19 @@ def build_pool(audit_paths, train_paths, split_path, validation_panel, requests,
 def verify_pool(path):
     """Read-only: recompute provenance and exact deterministic membership, without writing."""
     pool=_load(path)
+    if pool.get('schema_version')!=2:raise ValueError('pool requires explicit hidden membership provenance (schema 2)')
     verify_inputs(pool['inputs'])
-    rebuilt=build_pool([p['audit']['path'] for p in pool['source_pairs']],
-                       [p['train']['path'] for p in pool['source_pairs']],pool['split']['path'],
-                       pool['validation_panel']['path'],pool['requests'],pool['cap_per_request'])
     if pool.get('diagnosis'):
         verify_inputs([pool['diagnosis']])
-        if _load(pool['diagnosis']['path'])['training_requests'] != pool['requests']:
+        diagnosis=_load(pool['diagnosis']['path'])
+        verify_inputs(diagnosis['inputs'])
+        if diagnosis['training_requests'] != pool['requests']:
             raise ValueError('diagnosis request identity mismatch')
+    rebuilt=build_pool([p['audit']['path'] for p in pool['source_pairs']],
+                       [p['train']['path'] for p in pool['source_pairs']],pool['split']['path'],
+                       pool['validation_panel']['path'],pool['requests'],pool['cap_per_request'],
+                       historical_hidden_panel=pool['hidden_membership']['panel']['path'])
+    if pool.get('diagnosis'):
         rebuilt['diagnosis']=pool['diagnosis']
     if rebuilt!=pool: raise ValueError('pool provenance/membership mismatch')
     return dict(verified=True,members=len(pool['members']),
@@ -141,18 +277,20 @@ def main():
     parser.add_argument('--analysis',type=Path)
     parser.add_argument('--output',type=Path)
     parser.add_argument('--verify',type=Path)
+    parser.add_argument('--historical-hidden-panel',type=Path)
     parser.add_argument('--cap-per-request',type=int,default=128)
     args=parser.parse_args()
     if args.verify:
         print(json.dumps(verify_pool(args.verify),sort_keys=True)); return
-    if not args.root or not args.analysis or not args.output:
-        parser.error('--root, --analysis and --output required unless --verify')
+    if not args.root or not args.analysis or not args.output or not args.historical_hidden_panel:
+        parser.error('--root, --analysis, --output and --historical-hidden-panel required unless --verify')
     if args.output.exists(): verify_pool(args.output)
     analysis=_load(args.analysis); verify_inputs(analysis['inputs'])
     base=args.root.resolve()/'data/nanotrack_conservative_three_stage'
     domains=('uav123','uavdt','visdrone_mot','visdrone_sot')
     pool=build_pool([base/d/'audit.json' for d in domains],[base/d/'train.json' for d in domains],
-                    base/'source-video-splits.json',base/'val-aerial.json',analysis['training_requests'],args.cap_per_request)
+                    base/'source-video-splits.json',base/'val-aerial.json',analysis['training_requests'],args.cap_per_request,
+                    historical_hidden_panel=args.historical_hidden_panel)
     # Bind diagnosis requests to their source, not to validation members.
     pool['diagnosis']=file_identity(args.analysis)
     # verify_pool supports this optional provenance link and recomputes request identity below.

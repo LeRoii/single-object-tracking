@@ -295,6 +295,7 @@ def run_analysis(root, destination, sheet_limit=24):
             record = analyze_sequence(seq,predicted['predicted_xywh'],cache)
             record['model_key'] = model_key; records.append(record)
     inputs.extend(v[2] for _,v in sorted(cache.items()))
+    inputs.extend(event['annotation'] for record in records for event in record['explicit_events'])
     inputs = sorted({v['path']:v for v in inputs}.values(),key=lambda v:v['path'])
     sheets = make_contact_sheets(records,destination/'contact-sheets',sheet_limit)
     ambiguity = [dict(model_key=r['model_key'],sequence=r['name'],source=r['source'],
