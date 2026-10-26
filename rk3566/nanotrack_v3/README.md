@@ -210,6 +210,14 @@ Manually selected boxes are explicit operator initialization; detector boxes
 remain provisional hypotheses and still cannot directly produce
 `control_valid=1`.
 
+The interactive window draws each stage separately. Cyan is the motion
+prediction, magenta is the raw detector candidate, orange is the detector
+probe actually searched by NanoTrack, blue/yellow are anchor/recent NanoTrack
+observations, green is an accepted control box, and red is the
+`REJECTED NO_CTRL` status. These overlays are Debug evidence only; seeing a
+magenta or orange box never authorizes control. Saved non-interactive output
+keeps the existing single-box rendering.
+
 To enable detector-assisted recovery, supply the model, manifest, and labels as
 one all-or-none set. The thresholds below are uncalibrated bring-up defaults:
 
@@ -243,6 +251,14 @@ Detector recovery has two explicit controller modes:
   `detector_subtarget_max_probes` bounded locations are checked while retaining
   the last accepted subtarget width and height.
 
+Before either mode queues a detector candidate, its center distance from the
+same-frame motion prediction is divided by the frame diagonal. The result must
+be no greater than `detector_candidate_max_center_ratio` (default `0.15`).
+Candidates that pass are ordered by distance first and confidence second;
+the hard limit is not relaxed in `LOST`. A batch whose otherwise-valid boxes
+all fail this gate reports `POSITION_REJECTED`. This strict bring-up policy
+prevents large jumps but intentionally sacrifices far-away reacquisition.
+
 Once a candidate produces agreeing NanoTrack evidence, its generated candidate
 id is locked for the three-frame confirmation window. Pending candidates and
 new detector batches cannot contribute confirmations to that lock.
@@ -252,7 +268,7 @@ from entering the lock. This conservative rule prefers continued
 `control_valid=false` over an identity switch until target-specific appearance
 or ReID evidence is available.
 
-For a retained run, verify source-coordinate boxes, schema-v5 metadata, model
+For a retained run, verify source-coordinate boxes, schema-v6 metadata, model
 hashes, detector state and output frame count with:
 
 ```bash
@@ -269,7 +285,7 @@ refer to the source/CSV coordinate system, not a downscaled preview video.
 
 ## Outputs and safety contract
 
-The schema-v5 CSV contains one row for initialization and one row for each
+The schema-v6 CSV contains one row for initialization and one row for each
 processed frame. It records:
 
 - monotonic timestamp, controller state, quality, `control_valid`, horizontal
@@ -284,6 +300,8 @@ processed frame. It records:
 - detector target mode, candidate id and region, same-class candidate count and
   ambiguity state, probe index, lock state, and confirmation attempt/hit
   counts;
+- the independent motion-predicted box, active detector candidate center
+  ratio, and per-batch position-valid/position-rejected counts;
 - tracker/runtime latency and full video-pipeline latency (decode, tracking,
   overlay, and encode).
 
@@ -294,7 +312,8 @@ contain a predicted box for visualization while remaining invalid for control.
 If `--session-metadata` is omitted, metadata is written next to the CSV as
 `OUTPUT.csv.metadata.json`. It records the model manifest fingerprint, RKNN
 API/driver versions, timing fallback, threshold identity, calibration marker,
-and latency summary. Schema-v5 metadata also records the detector target mode
+and latency summary. Schema-v6 metadata also records the detector target mode,
+`detector_candidate_max_center_ratio`,
 and has a detector section containing
 artifact paths and SHA-256 identities, tensor descriptions, detector RKNN
 API/driver versions, thresholds, `calibrated=false`, and request/completion/

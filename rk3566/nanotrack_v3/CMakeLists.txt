@@ -40,7 +40,10 @@ target_include_directories(nanotrack_controller_support PUBLIC ${CMAKE_CURRENT_S
 target_link_libraries(nanotrack_controller_support PUBLIC nanotrack_math)
 target_compile_options(nanotrack_controller_support PRIVATE -Wall -Wextra -Wpedantic)
 
-add_library(nanotrack_debug_telemetry src/debug_telemetry.cpp)
+add_library(nanotrack_debug_telemetry
+  src/debug_telemetry.cpp
+  src/interactive_debug_overlay.cpp
+)
 target_include_directories(nanotrack_debug_telemetry
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -96,6 +99,14 @@ if(BUILD_TESTING)
   add_executable(test_debug_telemetry tests/test_debug_telemetry.cpp)
   target_link_libraries(test_debug_telemetry PRIVATE nanotrack_debug_telemetry)
   add_test(NAME debug_telemetry COMMAND test_debug_telemetry)
+
+  add_executable(test_interactive_debug_overlay
+    tests/test_interactive_debug_overlay.cpp
+  )
+  target_link_libraries(test_interactive_debug_overlay
+    PRIVATE nanotrack_debug_telemetry
+  )
+  add_test(NAME interactive_debug_overlay COMMAND test_interactive_debug_overlay)
 
   add_executable(test_long_term_replay tests/test_long_term_replay.cpp)
   target_link_libraries(test_long_term_replay PRIVATE nanotrack_controller_support)

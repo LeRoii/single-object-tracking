@@ -3,6 +3,7 @@
 #include "debug_telemetry.hpp"
 #include "detector_adapter.hpp"
 #include "interactive_control.hpp"
+#include "interactive_debug_overlay.hpp"
 #include "long_term_runtime.hpp"
 #include "nanotrack_v3.hpp"
 #include "tracker_math.hpp"
@@ -85,25 +86,91 @@ cv::Mat render_annotated(const cv::Mat& source,
 }
 
 cv::Mat render_interactive(const cv::Mat& source,
-                           const std::optional<nanotrack::ControllerOutput>& output,
+                           const std::optional<nanotrack::RuntimeFrameResult>& result,
                            std::size_t frame_id,
                            bool playing) {
-  cv::Mat rendered = output
-                         ? render_annotated(source, output->bbox, *output,
-                                            source.cols, source.rows)
-                         : source.clone();
+  cv::Mat rendered = source.clone();
+  std::optional<nanotrack::InteractiveDebugOverlay> overlay;
+  if (result) {
+    overlay = nanotrack::make_interactive_debug_overlay(*result);
+    const auto box_color = [](nanotrack::DebugBoxKind kind) {
+      switch (kind) {
+        case nanotrack::DebugBoxKind::kMotionPrediction:
+          return cv::Scalar(255, 255, 0);
+        case nanotrack::DebugBoxKind::kDetectorCandidate:
+          return cv::Scalar(255, 0, 255);
+        case nanotrack::DebugBoxKind::kDetectorProbe:
+          return cv::Scalar(0, 165, 255);
+        case nanotrack::DebugBoxKind::kNanoTrackAnchor:
+          return cv::Scalar(255, 0, 0);
+        case nanotrack::DebugBoxKind::kNanoTrackRecent:
+          return cv::Scalar(0, 255, 255);
+        case nanotrack::DebugBoxKind::kAcceptedControl:
+          return cv::Scalar(0, 255, 0);
+      }
+      return cv::Scalar(0, 0, 255);
+    };
+    for (std::size_t index = 0; index < overlay->boxes.size(); ++index) {
+      const nanotrack::DebugBoxDescriptor& descriptor =
+          overlay->boxes[index];
+      const cv::Rect rectangle(
+          static_cast<int>(std::lround(descriptor.bbox.x)),
+          static_cast<int>(std::lround(descriptor.bbox.y)),
+          std::max(1, static_cast<int>(std::lround(descriptor.bbox.width))),
+          std::max(1, static_cast<int>(std::lround(descriptor.bbox.height))));
+      const cv::Scalar color = box_color(descriptor.kind);
+      const int thickness =
+          descriptor.kind == nanotrack::DebugBoxKind::kAcceptedControl ? 3 : 2;
+      cv::rectangle(rendered, rectangle, color, thickness);
+      int baseline = 0;
+      const cv::Size text_size = cv::getTextSize(
+          descriptor.label, cv::FONT_HERSHEY_SIMPLEX, 0.44, 1, &baseline);
+      const int label_x = std::clamp(rectangle.x, 0,
+                                     std::max(0, rendered.cols - text_size.width - 4));
+      const int preferred_y = rectangle.y + 17 +
+                              static_cast<int>(index) * 16;
+      const int label_y = std::clamp(preferred_y, text_size.height + 3,
+                                     std::max(text_size.height + 3,
+                                              rendered.rows - 50));
+      cv::rectangle(rendered,
+                    cv::Rect(label_x, label_y - text_size.height - 3,
+                             text_size.width + 4,
+                             text_size.height + baseline + 4),
+                    cv::Scalar(0, 0, 0), cv::FILLED);
+      cv::putText(rendered, descriptor.label,
+                  cv::Point(label_x + 2, label_y),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.44, color, 1, cv::LINE_AA);
+    }
+  }
   const std::string status =
       "frame=" + std::to_string(frame_id) +
       (playing ? " PLAY" : " PAUSE") +
-      (output ? "" : " NO_TARGET");
+      (result ? " " + std::string(nanotrack::to_string(result->output.mode)) +
+                    " " + overlay->status_label
+              : " NO_TARGET");
   cv::rectangle(rendered, cv::Rect(0, 0, rendered.cols, 58),
                 cv::Scalar(0, 0, 0), cv::FILLED);
+  const cv::Scalar status_color =
+      result && overlay->control_valid ? cv::Scalar(0, 255, 0)
+                                       : cv::Scalar(0, 0, 255);
   cv::putText(rendered, status, cv::Point(12, 23),
-              cv::FONT_HERSHEY_SIMPLEX, 0.60, cv::Scalar(0, 255, 255), 2,
+              cv::FONT_HERSHEY_SIMPLEX, 0.60, status_color, 2,
               cv::LINE_AA);
   cv::putText(rendered,
               "N/Right: step  Space: play/pause  R: select/reset  Q/Esc: quit",
               cv::Point(12, 49), cv::FONT_HERSHEY_SIMPLEX, 0.52,
+              cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+  const int legend_top = std::max(58, rendered.rows - 42);
+  cv::rectangle(rendered, cv::Rect(0, legend_top, rendered.cols,
+                                   rendered.rows - legend_top),
+                cv::Scalar(0, 0, 0), cv::FILLED);
+  cv::putText(rendered,
+              "CYAN Motion  MAGENTA DetCand  ORANGE DetProbe  BLUE Anchor",
+              cv::Point(8, legend_top + 16), cv::FONT_HERSHEY_SIMPLEX, 0.38,
+              cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+  cv::putText(rendered,
+              "YELLOW Recent  GREEN AcceptedCtrl  RED RejectedNoCtrl",
+              cv::Point(8, legend_top + 34), cv::FONT_HERSHEY_SIMPLEX, 0.38,
               cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   return rendered;
 }
@@ -409,7 +476,7 @@ int main(int argc, char** argv) {
     std::size_t source_frame = options.start_frame;
     std::size_t initialization_count = 0;
     bool initialized = false;
-    std::optional<nanotrack::ControllerOutput> displayed_output;
+    std::optional<nanotrack::RuntimeFrameResult> displayed_result;
     nanotrack::DebugTelemetry debug_telemetry(30);
     const auto initialize_target = [&](const nanotrack::BBox& bbox) {
       const bool reinitializing = initialized;
@@ -423,7 +490,13 @@ int main(int argc, char** argv) {
       initial_output.bbox = bbox;
       initial_output.control_valid = true;
       initial_output.accepted = true;
-      displayed_output = initial_output;
+      nanotrack::RuntimeFrameResult initial_result;
+      initial_result.plan.frame_id = source_frame;
+      initial_result.plan.timestamp_ms = timestamp_ms;
+      initial_result.plan.motion_predicted_bbox = bbox;
+      initial_result.plan.predicted_bbox = bbox;
+      initial_result.output = initial_output;
+      displayed_result = initial_result;
       if (!initialized) {
         if (!options.output_video.empty()) {
           writer.open(options.output_video,
@@ -483,7 +556,7 @@ int main(int argc, char** argv) {
       bool force_heartbeat = false;
       if (options.interactive) {
         cv::imshow(kInteractiveWindow,
-                   render_interactive(frame, displayed_output, source_frame,
+                   render_interactive(frame, displayed_result, source_frame,
                                       playback.playing()));
         const int key = cv::waitKeyEx(playback.playing() ? 1 : 0);
         const nanotrack::InteractiveCommand command =
@@ -545,7 +618,7 @@ int main(int argc, char** argv) {
       ++source_frame;
       timestamp_ms = video_clock.next(capture.get(cv::CAP_PROP_POS_MSEC));
       if (!initialized) {
-        displayed_output.reset();
+        displayed_result.reset();
         continue;
       }
       const nanotrack::RuntimeFrameResult result =
@@ -567,7 +640,7 @@ int main(int argc, char** argv) {
         writer.write(render_annotated(frame, result.output.bbox, result.output,
                                       output_width, output_height));
       }
-      displayed_output = result.output;
+      displayed_result = result;
       const float pipeline_ms = std::chrono::duration<float, std::milli>(
                                     std::chrono::steady_clock::now() -
                                     pipeline_start)

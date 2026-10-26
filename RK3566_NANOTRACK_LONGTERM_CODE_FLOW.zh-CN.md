@@ -254,7 +254,9 @@ LongTermRuntime::process_frame(image, frame_id, timestamp_ms);
 4. 若进入检测辅助阶段并存在 YOLO 候选，改用检测候选作为搜索中心。
 5. 若检测器空闲且达到请求间隔，生成一次全图检测请求。
 
-生成的 `SearchPlan` 包括：预测框、搜索倍率、假设来源、检测候选信息，以及是否提交检测请求。
+生成的 `SearchPlan` 同时保留 detector 覆盖前的 `motion_predicted_bbox` 和实际送入
+NanoTrack 的 `predicted_bbox`，并包含搜索倍率、假设来源、检测候选信息，以及是否
+提交检测请求。两者分开保留是为了能看出 detector 候选相对运动预测发生了多大跳动。
 
 ### 8.2 第二步：异步提交/获取 YOLO 结果
 
@@ -270,9 +272,15 @@ LongTermRuntime::process_frame(image, frame_id, timestamp_ms);
 - `source_frame_id` 和 `source_timestamp_ms` 对应最后一次请求；
 - 结果年龄不超过 `detector_stale_ms`；
 - 候选框和置信度有效；
+- 候选中心到本帧运动预测中心的距离除以画面对角线后不超过
+  `detector_candidate_max_center_ratio`，默认值为 `0.15`；
 - 候选数量不超过配置上限。
 
-帧不匹配、过期或非法结果不会用于恢复。
+位置门在 `ASSISTED_RECOVERY` 和 `LOST` 中相同，不随丢失时间放宽。通过位置门的
+候选按中心距离升序、detector 置信度降序排列，再应用数量上限；不使用面积或 IoU
+作为入队条件，以兼容“局部初始框—完整人/车 detector 框”的尺度差异。帧不匹配、
+过期、非法或超出位置门的结果不会用于恢复。该严格策略会漏掉画面远处重新出现的
+目标，是当前为防止候选大范围跳动而接受的显式代价。
 
 ### 8.3 第三步：NanoTrack 推理
 
@@ -402,7 +410,7 @@ YOLO 全图检测比 NanoTrack 局部匹配更重。后台线程让主跟踪帧�
 
 YOLO 只检测类别目标，不能证明检测到的是用户最初框选的同一实例。因此候选进入控制器后需要继续验证：
 
-1. 按置信度排序候选并分配内部 candidate id。
+1. 按相对运动预测的位置硬门筛选，按距离优先、置信度次优排序并分配 candidate id。
 2. 以候选区域作为 NanoTrack 搜索假设。
 3. anchor 和 recent 都必须给出可靠且相互一致的结果。
 4. NanoTrack 结果还必须与检测候选在位置和形状上相符。
@@ -667,7 +675,7 @@ DEBUG_EVENT event=<事件名> key=value key=value ...
 | `state_change` | 初始化后的第一个已处理帧，或 `ControllerOutput::mode` 变化 | `frame`：`output.frame_id`；`from`：上一输出状态，首次为 `none`；`to`：当前状态；`quality`：当前选中观测的质量等级；`control_valid`：控制器是否授权本帧控制输出 |
 | `control_change` | 状态未变，但 `control_valid` 相比上一输出变化 | `frame`、`mode`：当前输出；`from/to`：前后控制有效标志。状态和控制同时变化时只打印 `state_change`，其 `control_valid` 已包含新值 |
 | `detector_request` | `LongTermRuntime` 成功把请求提交给异步 detector | `frame`：当前处理帧；`request_frame`：`DetectorDiagnostics::request_frame_id`，即被复制并送检的源帧。计划请求但 `submit()` 抛错时不会打印此事件，而会打印 `detector_error` |
-| `detector_batch` | `poll()` 得到一个完成批次，不论控制器最终接受还是拒绝 | `frame`：消费结果时的帧；`source_frame`：批次来自哪一帧；`age_ms`：结果年龄；`raw`：通过置信度和有效框检查、但尚未执行 NMS 的候选数；`filtered`：NMS 和最大候选数限制后的候选数；`status`：控制器对批次的新鲜度和合法性判断；`total_ms`：该批次 detector 总耗时 |
+| `detector_batch` | `poll()` 得到一个完成批次，不论控制器最终接受还是拒绝 | `frame`：消费结果时的帧；`source_frame`：批次来自哪一帧；`age_ms`：结果年龄；`raw`：通过置信度和有效框检查、但尚未执行 NMS 的候选数；`filtered`：detector 后处理后的候选数；`position_valid`：通过控制器位置硬门、应用最大候选数前的数量；`position_rejected`：框/置信度合法但仅因位置硬门被拒绝的数量；`status`：控制器对批次的新鲜度和合法性判断；`total_ms`：该批次 detector 总耗时 |
 | `detector_error` | detector `submit()` 或 `poll()` 抛出异常 | `frame`：发现异常的当前帧；`message`：`DetectorDiagnostics::error`，其中空白已替换为下划线。它是 detector 链路错误，不自动表示 NanoTrack 主链已经停止 |
 | `detector_verify` | 当前 `SearchPlan::hypothesis_source` 为 `DETECTOR`，即正在用 NanoTrack 验证一个 detector 候选或其已锁定位置 | 字段详见下一小节；事件出现只证明“正在验证”，不证明重捕成功 |
 | `reacquired` | `ControllerOutput::reacquired=true` | `frame`：确认成功帧；`source`：本次恢复来自 `MOTION` 还是 `DETECTOR` 假设；`candidate_id`：detector 恢复时的内部候选 ID，否则可为 `none`；`confirmation`：命中数/尝试数；`control_valid`：恢复后控制授权；`bbox`：最终接受框 |
@@ -683,13 +691,14 @@ DEBUG_EVENT event=<事件名> key=value key=value ...
 | `STALE` | `age_ms` 为负或超过 `detector_stale_ms` |
 | `FRAME_MISMATCH` | 批次的源帧或源时间戳不是控制器记录的最后请求 |
 | `INVALID` | 批次存在，但没有尺寸、坐标和置信度均合法的候选 |
+| `POSITION_REJECTED` | 至少存在一个尺寸、坐标和置信度合法的候选，但全部超过 `detector_candidate_max_center_ratio`，没有候选入队 |
 
 ### 20.4 `detector_verify` 字段与安全判读
 
 示例格式：
 
 ```text
-DEBUG_EVENT event=detector_verify frame=120 candidate_id=3 candidate_region=410.00,180.00,90.00,160.00 probe=1 same_class=1 ambiguous=0 locked=1 confirmation=1/2 quality=RELIABLE template_iou=0.74 accepted=0 control_valid=0
+DEBUG_EVENT event=detector_verify frame=120 candidate_id=3 candidate_region=410.00,180.00,90.00,160.00 center_ratio=0.083 probe=1 same_class=1 ambiguous=0 locked=1 confirmation=1/2 quality=RELIABLE template_iou=0.74 accepted=0 control_valid=0
 ```
 
 | 字段 | 含义 | 源码来源 |
@@ -697,6 +706,7 @@ DEBUG_EVENT event=detector_verify frame=120 candidate_id=3 candidate_region=410.
 | `frame` | 当前验证帧 | `ControllerOutput::frame_id` |
 | `candidate_id` | 控制器在一次初始化会话内递增分配的候选 ID；每次初始化都会重置为 1，因此重新框选后 ID 可以重复；`none` 表示没有有效 ID | `ControllerOutput::detector_candidate_id` |
 | `candidate_region` | detector 给出的原始候选框；`none` 表示计划没有候选区域 | `SearchPlan::detector_candidate_region` |
+| `center_ratio` | 候选中心到候选入队帧运动预测中心的欧氏距离除以画面对角线；`none` 表示当前没有可审计的 detector 候选距离 | `SearchPlan::detector_candidate_center_ratio` |
 | `probe` | 当前候选的探针索引；`FULL_OBJECT` 只有 `probe=0`，直接使用完整候选框；`SUBTARGET` 才可能产生多个探针 | `ControllerOutput::detector_probe_index` |
 | `same_class` | 当前合法候选列表中与该候选同类别的数量 | `ControllerOutput::detector_same_class_candidates` |
 | `ambiguous` | `same_class>1` 时为 1；当前策略会阻止未锁定候选直接进入确认 | `ControllerOutput::detector_same_class_ambiguous` |
@@ -770,6 +780,25 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
    `source=DETECTOR control_valid=1`。
 6. 最后结合 `frame_status` 的响应质量和耗时判断是模型质量、阈值、异步 detector
    时延还是显示/写出链路造成问题，并用 `template_action` 排查形变适应过程。
+
+### 20.8 交互窗口框颜色与来源
+
+分色只存在于独立交互式 Debug 程序，不进入生产 `ai_alg`，也不改变非交互输出视频。
+窗口先画假设、再画 NanoTrack 观测，最后画控制器接受框：
+
+| 颜色（OpenCV BGR） | 标签 | 数据来源与含义 |
+|---|---|---|
+| 青色 `(255,255,0)` | `MOTION PRED` | `SearchPlan::motion_predicted_bbox`，detector 覆盖前的运动预测 |
+| 紫色 `(255,0,255)` | `DET CAND id/conf/d` | `detector_candidate_region/id/confidence/center_ratio`，只是原始活动候选 |
+| 橙色 `(0,165,255)` | `DET PROBE index` | `SearchPlan::predicted_bbox`，detector 路径实际送给 NanoTrack 的搜索假设 |
+| 蓝色 `(255,0,0)` | `NT ANCHOR score` | anchor `TrackerObservation::bbox/raw_score` |
+| 黄色 `(0,255,255)` | `NT RECENT score` | recent `TrackerObservation::bbox/raw_score` |
+| 绿色 `(0,255,0)` | `ACCEPTED CTRL` | 仅当 `accepted=true` 且 `control_valid=true` 时绘制的最终输出框 |
+| 红色 `(0,0,255)` | `REJECTED NO_CTRL` | 顶部状态提示；不伪造一条红色“结果框” |
+
+`FULL_OBJECT` 模式下紫色候选框和橙色 probe 可能完全重合；两类标签仍同时保留。
+紫色、橙色、蓝色或黄色框出现只说明相应假设/观测存在，不能据此判定跟踪有效。
+只有绿色 `ACCEPTED CTRL` 和日志中的 `control_valid=1` 才代表控制器授权。
 
 ## 21. 当前实现的已知限制
 
