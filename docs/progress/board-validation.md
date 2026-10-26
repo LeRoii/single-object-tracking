@@ -662,7 +662,20 @@ detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 
 - TDD 证据：新增断言先观察到控制器请求仍为 `3` 而失败、overlay 缺少
   `line_thickness` 而编译失败；实现后
   `long_term_controller`、`yolov8_postprocess`、`interactive_debug_overlay` 三项
-  聚焦测试 `3/3` 通过。完整主机和板端复测将在该修正提交后记录。
+  聚焦测试 `3/3` 通过。修正共享提交为
+  `a6c23be`；主机重新构建后完整 CTest `15/15` 通过。
+- 板端在保留用户修改 `config/interactive-debug.conf` 和未跟踪 `log.txt` 的前提下，
+  应用同一源代码修正并原生重编译完整 RKNN/OpenCV 程序；板端独立提交为
+  `5e620b1`。命令
+  `cmake --build build-board -- -j2` 成功，随后
+  `ctest --output-on-failure -E '^cli$'` 为 `14/14` 通过。这里排除的 `cli` 仍仅因
+  已记录的用户视频路径覆盖，不把结果表述为板端全量 `15/15`。
+- 新 Debug 可执行程序路径为
+  `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/build-board/nanotrack_v3`，
+  SHA-256 为
+  `2b6a3836fb2ff46b38fa21a71a4c1610cab4914bef3f2ae101568a28531c229c`。
+  本次复测是原生编译和测试级验证，没有再次运行视频，也没有新增重捕性能或人工
+  七色视觉验收证据。
 - 安全边界不变：detector 候选仍只是假设，不能直接产生 `control_valid=true`；
   NanoTrack 双模板、几何门和 2/3 确认规则均未绕过。任务状态仍为
   `functional_pass_promotion_held`，`latest_handoff.available=false`。
