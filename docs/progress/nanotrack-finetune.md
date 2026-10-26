@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-26T14:08:13+08:00`。
+- 最近核对：`2026-10-26T14:11:05+08:00`。
 - 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；任务 6 宿主机预检和 batch 8/32/64 各 50 步真实 CUDA 探测已完成并核验。主矩阵尚未完成，不能据探测选择最优 batch/GOT 或切换模型；下一步启动 schema-2 可恢复筛选。
+- 状态说明：既有 g5000 可交付下游评估；任务 6 宿主机预检和 batch 8/32/64 各 50 步真实 CUDA 探测已完成并核验。schema-2 主矩阵已启动，当前在实际 GPU 基线验证阶段；主矩阵尚未完成，不能据探测选择最优 batch/GOT 或切换模型。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -56,6 +56,45 @@
    任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
    最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-26 任务 6：schema-2 主矩阵已启动（运行中）
+
+- 时间：`2026-10-26T14:11:05+08:00`；分支/工作树不变。预检/探测里程碑提交
+  `e73c91c64c8388e54a31cbf58fc09dfd7f94325d` 已完成，仅修改本 owner 文件。
+  控制器在该提交的干净工作树启动；源码/context 身份与前一节完全一致。
+- 实际启动时间 `2026-10-26T14:10:34.499820+08:00`；宿主 supervisor PID `2557095`，
+  controller PID `2557104`，初始 aerial baseline evaluator PID `2557114`。
+  宿主 `ps` 和 `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv`
+  实际观察该 evaluator 正在 CUDA 运行，占用约 964 MiB；不是只创建目录或加载模型。
+  此时尚无已完成候选节点，不能将正在进行的基线验证称为筛选完成。
+- 生成 supervisor 以独立会话持续运行，日志写文件；没有需要保留的交互工具 session。
+  启动记录绝对路径
+  `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6/screening-launch.json`，
+  SHA `4bf880766ba36e65e83862969214c094fbaac77c21f430d4f24dfccc3dd94258`；
+  该记录绑定 source commit、context、探测摘要及精确启动命令/PID。
+- 实际命令：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6-screening.py launch
+```
+
+该生成脚本实际调用原生产控制器，未改配置、配额或训练代码：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B scripts/run_nanotrack_factorial.py \
+  --manifest /home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/experiment-manifest.json \
+  --output-root /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/screening
+```
+
+- 运行根 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/screening/`；
+  原子状态 `candidate_table.json`（schema 2）。supervisor/controller 日志位于工件根
+  `task6/screening-supervisor.log`、`task6/screening-controller.log`；当前 baseline 原始命令
+  日志为 `screening/baseline/attempt0001/evaluation/aerial.log`。运行中文件尚在增长，不冻结
+  临时日志/状态的 SHA。进程退出时 supervisor 写 `task6/screening-process-result.json`。
+- 下一步：等待 18 条轨迹各到 10240 样本、四节点共 72 候选完成，再执行只读验证器并冻结
+  `cell_summary.json` 的扩展决策；其后报告确认控制器缺口。若进程中断，保留当前根和全部
+  attempt，在确认原进程已退出后重调上述相同生产命令恢复，不新建同身份训练。
+  当前不执行确认、equal-update、hidden 或困难池分支，Task 6 仍未完成/未勾选。
 
 ## 2026-10-26 任务 6：冻结输入预检与三档真实 CUDA 探测
 
