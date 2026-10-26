@@ -19,6 +19,10 @@ void expect_true(bool condition, const std::string& message) {
 int main() {
   using namespace nanotrack;
 
+  expect_true(kInteractiveWindowWidth == 1280 &&
+                  kInteractiveWindowHeight == 720,
+              "interactive debug window defaults to 1280x720");
+
   expect_true(decode_interactive_key('n') == InteractiveCommand::kStep,
               "n advances exactly one frame");
   expect_true(decode_interactive_key('N') == InteractiveCommand::kStep,

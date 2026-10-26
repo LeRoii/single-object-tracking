@@ -1,7 +1,7 @@
 # RK3566 开发板验证任务进度
 
 - 任务状态：`functional_pass_promotion_held`
-- 最近核对：`2026-10-23T15:13:21+08:00`
+- 最近核对：`2026-10-26T19:53:37+08:00`
 - 核对基线：`main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
 - 任务工作树：`/home/u20/single-object-tracking/.worktrees/debug-runtime-config`
 - 任务分支：`codex/debug-runtime-config`
@@ -405,6 +405,55 @@ handoff。`development_board_validation.latest_handoff.available` 必须继续�
 当前需要协调对话更新公共契约的内容是“下一轮候选锁定”，不是发布通过的 handoff：
 请明确批准的交互式 Debug source commit、NanoTrack 模型身份和 COCO/VisDrone9 detector
 选择。`latest_handoff.available` 在新的真实板端验收达到门槛前必须继续保持 `false`。
+
+## 2026-10-26 Debug 窗口 720p 初始尺寸验证
+
+- 时间：`2026-10-26T19:53:37+08:00`。共享工作树/分支为
+  `/home/u20/single-object-tracking/.worktrees/debug-runtime-config` /
+  `codex/debug-runtime-config`，任务基线为
+  `2f2f3fb57022d42855f20eca940eaafb3103720f`；结果提交可用
+  `git log -1 --format=%H -- rk3566/nanotrack_v3/src/main.cpp` 查询。
+- 变更仅在交互式 Debug 分支的 `cv::WINDOW_NORMAL` 窗口创建后调用
+  `cv::resizeWindow(..., 1280, 720)`。输入帧、NanoTrack/detector 输入、框坐标、
+  保存输出和生产 `ai_alg` 均未缩放或修改；窗口启动后仍允许用户调整大小。
+- 主机侧先增加尺寸断言并观察到因常量不存在而编译失败，随后实现转绿；
+  `test_interactive_control` 通过，RKNN-independent CTest 为 `14/14` 通过，
+  `git diff --check` 通过。该主机构建目录不含 RKNN 可执行目标，因此完整程序由板端
+  原生环境编译验证。
+- 板端隔离工作树为
+  `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry`，分支
+  `codex/rk3566-debug-telemetry`，基线
+  `0f155ab7dcde33582534f1d87e61a3453167b825`，结果提交
+  `8802eabc4a56d3311de72e450d73967f218ab827`。系统时间为
+  `2026-10-26T19:51:53+08:00` 且 NTP 已同步；`cmake --build build-board -- -j2`
+  原生编译成功。
+- 板端新二进制
+  `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/build-board/nanotrack_v3`
+  SHA-256 为
+  `dbf1804ff2dda7a452d87149980a73dbd967e76744e7314f457a8192dc50fb71`。
+  使用 `DISPLAY=:0`、`girl_dance.mp4`、既有 NanoTrack 模型和 VisDrone9 detector
+  做有界启动后，`xwininfo -name "NanoTrack V3 RK3566 Debug"` 实测窗口内容区为
+  `Width: 1280`、`Height: 720`；程序日志仍报告源视频和输出尺寸为 `856x480`，
+  证明本次只改变窗口初始显示尺寸。启动日志和窗口查询分别保留在
+  `/tmp/nanotrack-window-720p.log`、`/tmp/nanotrack-window-720p.xwininfo`，SHA-256
+  分别为
+  `e84814050a5698d4e0a896987c83a0c82e343cdc9260abb53ca70d0c3439403a`、
+  `3cf58780fd121382d9e20b38ad63a537d7f9a9ef2ef4cf40fedaf81021e54c20`。
+- 板端 `interactive_control` 及其他 12 项测试通过；全量 CTest 为 `13/14`，唯一
+  失败是 `cli` 对发行配置视频路径的断言。根因已由重复运行和差异核对确认：本轮
+  开始前用户已把 `config/interactive-debug.conf` 的 `video` 从
+  `../data/girl_dance.mp4` 改为 `/home/cat/Project/SOT/data/1.mp4`。该用户修改未被
+  覆盖、暂存或提交，因此不能把本轮板端结果表述为全量 CTest 通过；它与窗口尺寸
+  代码无重叠，窗口尺寸聚焦测试和实测均通过。
+
+### 裁决与 Handoff
+
+本轮仅形成 `native_build + interactive_window_geometry_smoke` 功能通过，不增加跟踪、
+重捕、资源、长稳或真实吊舱证据，不改变 detector 不能直接产生
+`control_valid=true` 的安全约束。协调对话可集成本次 Debug 功能提交和板端证据，
+但无需修改 `integration-contract.yaml`；总体状态仍为
+`functional_pass_promotion_held`，
+`development_board_validation.latest_handoff.available` 继续为 `false`。
 
 ## 后续更新模板
 

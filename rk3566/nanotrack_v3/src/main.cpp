@@ -463,6 +463,8 @@ int main(int argc, char** argv) {
     nanotrack::InteractivePlayback playback;
     if (options.interactive) {
       cv::namedWindow(kInteractiveWindow, cv::WINDOW_NORMAL);
+      cv::resizeWindow(kInteractiveWindow, nanotrack::kInteractiveWindowWidth,
+                       nanotrack::kInteractiveWindowHeight);
       std::cout << "INTERACTIVE keys=N/Right(step), Space(play/pause), "
                    "R(select/reset), Q/Esc(quit)\n";
       std::cout << "DEBUG_EVENT event=interactive_ready playing=0 initialized="

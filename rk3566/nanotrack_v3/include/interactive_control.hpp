@@ -4,6 +4,9 @@
 
 namespace nanotrack {
 
+inline constexpr int kInteractiveWindowWidth = 1280;
+inline constexpr int kInteractiveWindowHeight = 720;
+
 enum class InteractiveCommand {
   kNone,
   kStep,
