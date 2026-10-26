@@ -643,3 +643,26 @@ DEBUG_EVENT event=detector_batch frame=176 source_frame=174 age_ms=67 raw=1 filt
 请协调对话在集成本任务提交后，把下一轮共享源码候选更新到该集成结果，并继续保持
 detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 不可用；
 是否把严格 `0.15` Debug 策略锁定为下一轮板端候选仍由协调者决定。
+
+## 2026-10-27 独立审查修正：取消位置门前截断
+
+- 时间：`2026-10-27T00:51:25+08:00`；分支/工作树仍为
+  `codex/debug-runtime-config` /
+  `/home/u20/single-object-tracking/.worktrees/debug-runtime-config`，审查起点为
+  `59187142454acf9773423e42c8d829e3ba24a348`。
+- 独立审查发现实际 RKNN detector 链路此前会在 YOLO 后处理中先按置信度截断为
+  `detector_max_candidates=3`，三个远处高置信框可能在控制器位置门之前挤掉近处
+  候选。这不满足“位置过滤、距离排序之后再截断”的完整顺序。
+- 修正后 detector 请求允许后处理保留全部经过置信度过滤和 NMS 的候选，最终数量
+  限制只在控制器完成 `0.15` 位置硬门和距离优先排序后执行。新增控制器请求与真实
+  YOLO 后处理回归，覆盖第四个较低置信候选不会被上游提前丢弃。
+- 同一审查指出 `FULL_OBJECT` 下候选框与 probe 框重合时，等线宽会使后画的橙色
+  probe 覆盖紫色 candidate。现改为紫色 3 像素粗框、橙色 1 像素细框，并由纯数据
+  overlay 测试锁定线宽关系。
+- TDD 证据：新增断言先观察到控制器请求仍为 `3` 而失败、overlay 缺少
+  `line_thickness` 而编译失败；实现后
+  `long_term_controller`、`yolov8_postprocess`、`interactive_debug_overlay` 三项
+  聚焦测试 `3/3` 通过。完整主机和板端复测将在该修正提交后记录。
+- 安全边界不变：detector 候选仍只是假设，不能直接产生 `control_valid=true`；
+  NanoTrack 双模板、几何门和 2/3 确认规则均未绕过。任务状态仍为
+  `functional_pass_promotion_held`，`latest_handoff.available=false`。

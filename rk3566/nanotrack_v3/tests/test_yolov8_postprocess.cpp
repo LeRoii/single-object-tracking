@@ -282,6 +282,22 @@ int main() {
   expect_true(nms_result.size() == 1 &&
                   std::fabs(nms_result[0].confidence - 0.95F) < 1e-5F,
               "top-N truncation keeps the highest-confidence candidate");
+
+  std::vector<ScaleStorage> untruncated = make_scales();
+  activate(untruncated[0], 0, 0.99F, 0, 0);
+  activate(untruncated[0], 0, 0.98F, 1, 0);
+  activate(untruncated[0], 0, 0.97F, 2, 0);
+  activate(untruncated[0], 0, 0.60F, 3, 0);
+  YoloV8DecodeOptions untruncated_options = options;
+  untruncated_options.class_id = 0;
+  untruncated_options.max_candidates =
+      std::numeric_limits<std::size_t>::max();
+  const std::vector<DetectorCandidate> untruncated_result = decode_yolov8(
+      views(untruncated, false), untruncated_options, identity);
+  expect_true(untruncated_result.size() == 4,
+              "unbounded detector decode preserves lower-confidence candidates "
+              "for controller position gating");
+
   nms_options.class_id = 2;
   expect_throws(
       [&] { decode_yolov8(views(ranked, false), nms_options, identity); },

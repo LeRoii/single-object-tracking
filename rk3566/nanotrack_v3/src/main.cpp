@@ -119,9 +119,7 @@ cv::Mat render_interactive(const cv::Mat& source,
           std::max(1, static_cast<int>(std::lround(descriptor.bbox.width))),
           std::max(1, static_cast<int>(std::lround(descriptor.bbox.height))));
       const cv::Scalar color = box_color(descriptor.kind);
-      const int thickness =
-          descriptor.kind == nanotrack::DebugBoxKind::kAcceptedControl ? 3 : 2;
-      cv::rectangle(rendered, rectangle, color, thickness);
+      cv::rectangle(rendered, rectangle, color, descriptor.line_thickness);
       int baseline = 0;
       const cv::Size text_size = cv::getTextSize(
           descriptor.label, cv::FONT_HERSHEY_SIMPLEX, 0.44, 1, &baseline);

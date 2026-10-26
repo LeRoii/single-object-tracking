@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -179,6 +180,11 @@ int main() {
   plan = detector_controller.begin_frame(2, 1100, true);
   expect_true(plan.request_detector,
               "assisted recovery schedules first detector request");
+  expect_true(
+      plan.detector_request &&
+          plan.detector_request->max_candidates ==
+          std::numeric_limits<std::size_t>::max(),
+      "detector postprocess does not cap by confidence before position gating");
   DetectorBatch mismatched{999, 1100, {{BBox{10, 10, 20, 20}, 0.9F, 1}}};
   output = detector_controller.finish_frame(plan, {}, mismatched);
   expect_true(output.detector_status == DetectorBatchStatus::kFrameMismatch,

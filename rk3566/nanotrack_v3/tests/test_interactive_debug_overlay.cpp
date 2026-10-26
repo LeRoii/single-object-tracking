@@ -99,8 +99,10 @@ int main() {
               "accepted control is last and explicit");
 
   expect_true(same_bbox(overlay.boxes[1].bbox, overlay.boxes[2].bbox) &&
-                  overlay.boxes[1].kind != overlay.boxes[2].kind,
-              "FULL_OBJECT overlap preserves separate candidate and probe descriptors");
+                  overlay.boxes[1].kind != overlay.boxes[2].kind &&
+                  overlay.boxes[1].line_thickness >
+                      overlay.boxes[2].line_thickness,
+              "FULL_OBJECT overlap preserves separately visible candidate and probe borders");
 
   RuntimeFrameResult rejected = complete_result();
   rejected.output.accepted = false;

@@ -30,7 +30,8 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
   overlay.boxes.push_back(DebugBoxDescriptor{
       DebugBoxKind::kMotionPrediction,
       result.plan.motion_predicted_bbox,
-      "MOTION PRED"});
+      "MOTION PRED",
+      2});
 
   if (result.plan.hypothesis_source == HypothesisSource::kDetector &&
       result.plan.detector_candidate_region) {
@@ -41,7 +42,8 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
             " conf=" +
             optional_float(result.plan.detector_candidate_confidence) +
             " d=" +
-            optional_float(result.plan.detector_candidate_center_ratio)});
+            optional_float(result.plan.detector_candidate_center_ratio),
+        3});
   }
 
   if (result.plan.hypothesis_source == HypothesisSource::kDetector) {
@@ -49,7 +51,8 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
         DebugBoxKind::kDetectorProbe,
         result.plan.predicted_bbox,
         "DET PROBE index=" +
-            std::to_string(result.plan.detector_probe_index)});
+            std::to_string(result.plan.detector_probe_index),
+        1});
   }
 
   for (const TemplateKind kind :
@@ -63,7 +66,8 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
           observation.bbox,
           std::string(kind == TemplateKind::kAnchor ? "NT ANCHOR score="
                                                     : "NT RECENT score=") +
-              formatted_float(observation.metrics.raw_score)});
+              formatted_float(observation.metrics.raw_score),
+          2});
       break;
     }
   }
@@ -74,7 +78,8 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
     overlay.boxes.push_back(DebugBoxDescriptor{
         DebugBoxKind::kAcceptedControl,
         result.output.bbox,
-        "ACCEPTED CTRL"});
+        "ACCEPTED CTRL",
+        3});
     overlay.status_label = "ACCEPTED CTRL";
   } else {
     overlay.status_label = "REJECTED NO_CTRL";

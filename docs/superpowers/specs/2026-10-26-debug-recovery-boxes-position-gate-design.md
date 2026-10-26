@@ -41,11 +41,13 @@ candidate_center_ratio =
 
 候选处理顺序：
 
-1. 保留现有有限数值、画面边界、正尺寸和置信度合法性检查。
-2. 计算 `candidate_center_ratio`。
-3. 超过 `detector_candidate_max_center_ratio` 的候选直接拒绝，不进入候选队列。
-4. 剩余候选按距离升序、置信度降序排序。
-5. 最多保留 `detector_max_candidates` 个候选。
+1. detector 后处理完成置信度过滤和 NMS，但不提前按置信度截断为
+   `detector_max_candidates`，避免远处高置信候选挤掉尚未进入位置门的近处候选。
+2. 保留现有有限数值、画面边界、正尺寸和置信度合法性检查。
+3. 计算 `candidate_center_ratio`。
+4. 超过 `detector_candidate_max_center_ratio` 的候选直接拒绝，不进入候选队列。
+5. 剩余候选按距离升序、置信度降序排序。
+6. 最后才最多保留 `detector_max_candidates` 个候选。
 
 该规则在 `ASSISTED_RECOVERY` 和 `LOST` 中使用相同的严格阈值，不随丢失时间放宽。
 它只约束中心位置，不以面积或 IoU 拒绝候选，以保留“局部初始化框—完整人/车框”
@@ -90,6 +92,9 @@ CSV schema 随新增字段递增版本。detector 原始候选仍不能直接产
 绘制顺序从预测/候选到观测再到最终接受框，保证最终框位于最上层。`FULL_OBJECT`
 下原始候选和 probe 坐标相同时保留两种标签，并通过线宽和标签位置区分。窗口底部
 增加紧凑图例。窗口缩放发生在绘制之后，不改变算法坐标。
+
+重合时 detector candidate 使用 3 像素紫色粗框，detector probe 使用 1 像素橙色
+细框；先画粗框再画细框，使两条边界同时可见。
 
 为避免把绘制规则埋在 `main.cpp`，新增不依赖 OpenCV 的纯数据层：它从
 `RuntimeFrameResult` 生成待绘制框描述（种类、框、标签）。`main.cpp` 只负责颜色

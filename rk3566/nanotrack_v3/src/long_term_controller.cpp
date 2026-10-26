@@ -231,7 +231,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
         timestamp_ms,
         BBox{0.0F, 0.0F, static_cast<float>(frame_size_.width),
              static_cast<float>(frame_size_.height)},
-        config_.detector_max_candidates};
+        std::numeric_limits<std::size_t>::max()};
     last_detector_request_ms_ = timestamp_ms;
     last_detector_request_frame_ = frame_id;
   }

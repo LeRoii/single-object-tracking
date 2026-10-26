@@ -20,6 +20,7 @@ struct DebugBoxDescriptor {
   DebugBoxKind kind = DebugBoxKind::kMotionPrediction;
   BBox bbox{};
   std::string label;
+  int line_thickness = 2;
 };
 
 struct InteractiveDebugOverlay {
