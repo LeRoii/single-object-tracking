@@ -1,8 +1,8 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-27T20:16:18+08:00`。
-- 核对基线：`20fcb80c810e7ec7ce0eb2891691f88cfbd001df`（context 过渡实现开始基线）。
+- 最近核对：`2026-10-27T20:27:40+08:00`。
+- 核对基线：`aec1d520990a229c930737858795db77604d81a5`（context 过渡复审修复回合 1 基线）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
 - 状态说明：既有 g5000 可交付下游评估；任务 6 主矩阵断电前完成基线及 44/72 节点。首次恢复因映射顺序引发一 ULP 误差，错误失效一个已完成节点后保护停止；当前原始 journal 保留 43 个候选及 1 个失效记录。本轮仅修复确定性与持久化浮点复核，未恢复训练，不能据部分结果选择最优 batch/GOT 或切换模型。
@@ -58,6 +58,36 @@
    任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
    最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-27 context 过渡复审修复回合 1：归档候选来源身份
+
+- 时间：`2026-10-27T20:27:40+08:00`；分支/工作树仍为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+  开始 HEAD `aec1d520990a229c930737858795db77604d81a5`，初始工作树干净。
+- 独立复审的 Important 问题已复现：归档候选此前只校验 context 是否已登记，未重算完整
+  节点身份或与原 attempt 比对，因此可独立改标至新 context。新增合成归档回归，两个
+  验证入口均覆盖候选/attempt 独立重标、配置/配对策略/schedule/global step 漂移和
+  原 attempt 缺失；有效归档仍保留且内容不变，控制器拒绝时 journal 字节不变、runner 为零。
+- 最小修正为共享 `validate_archived_candidates`，由 `validate_state_identity` 和
+  `verify_attempts` 调用：重算 canonical node identity/global step，并要求存在身份精确
+  相同的原 attempt。不恢复、不改写、不重标归档候选；原命令/工件检查不变。
+- 严格 TDD：生产未改时最终 RED **1 test / 15 failures / 0 errors / exit 1**
+  （9.254 s），修正后 **1 test / OK**（0.700 s）。最终聚焦
+  `TMPDIR=/dev/shm /home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest
+  tests.test_nanotrack_factorial_controller -k context_transition -v` 为 **10 tests / OK / exit 0**
+  （17.728 s）；去掉 `-k context_transition` 的整个控制器模块为
+  **40 tests / OK / exit 0**（99.202 s）。日志分别为
+  `/tmp/nanotrack-context-transition-fix1-red-final.log`、`-fix1-green.log`、
+  `-fix1-focused.log`、`-fix1-controller.log`，完整 SHA 与实际命令保存在同一 SDD report。
+- 本回合按协调者明确范围未重复 full discover；上轮 276 项中的四条已知路径失败仍为
+  full-suite 边界，不宣称本轮全项目全绿。`git diff --check` 通过。
+- 最终源码 SHA：controller
+  `201eafbb00eb8efe2ff5f287902ba21fa8dde6b8c45724e824b1ca1ce2da5be7`；测试
+  `52eb68adb24bbb4303d166b93c65a3143ddb35dbb727e7aea130210aab08a62b`。
+  本提交仍仅为 code/tests/本 owner 证据，结果提交后回报；真实 journal、工件、迁移
+  manifest、训练与公共契约均未修改或启动。下一步为独立复审本修复，再决定真实恢复。
+  报告追加于 `.superpowers/sdd/2026-10-27-nanotrack-context-transition/task-1-report.md`。
 
 ## 2026-10-27 context 过渡任务 1：实现和验证（待独立复审）
 

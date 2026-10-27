@@ -395,6 +395,56 @@ class FactorialControllerTest(unittest.TestCase):
             with self.subTest(location=location), self.assertRaises(ValueError):
                 validate_state_identity(changed, manifest, current, self.output)
 
+    def test_context_transition_rejects_archived_candidate_identity_drift(self):
+        from scripts.run_nanotrack_factorial import (invalidate_attempt,
+                                                    validate_state_identity, verify_attempts)
+        state, current, path = self.transition_fixture()
+        archived = state["candidates"].pop()
+        state["invalidated"].append(archived)
+        origin = next(a for a in state["attempts"] if a["id"] == archived["attempt_id"])
+        invalidate_attempt(origin, "historical false invalidation")
+        table = self.output / "candidate_table.json"
+        write_json(table, state)
+        with self.assertRaisesRegex(RuntimeError, "interruption"):
+            self.run_transition(path, FakeGPU(fail_at=1))
+        adopted = json.loads(table.read_text())
+        manifest = json.loads(self.manifest_path.read_text())
+        unchanged = copy.deepcopy(adopted)
+        validate_state_identity(adopted, manifest, current, self.output)
+        verify_attempts(adopted, manifest, current, self.output, require_terminal=False)
+        self.assertEqual(adopted, unchanged)
+        self.assertEqual(adopted["invalidated"], [archived])
+        self.assertEqual(adopted["candidates"], [])
+
+        def relabel(identity):
+            identity.update(context_sha256=current["sha256"],
+                            scoring_source_sha256=current["bound"]["code:nanotrack_factorial_policy.py"]["sha256"])
+
+        mutations = {
+            "archived_context": lambda r, a: relabel(r["identity"]),
+            "origin_context": lambda r, a: relabel(a["identity"]),
+            "configuration": lambda r, a: r["identity"].update(config_sha256="f" * 64),
+            "pair_policy": lambda r, a: r["identity"].update(pair_policy_sha256="f" * 64),
+            "schedule": lambda r, a: r["identity"]["lr_schedule"].update(denominator_samples=40961),
+            "global_step": lambda r, a: r.update(global_step=r["global_step"] + 1),
+            "missing_origin": lambda r, a: r.update(attempt_id="unknown-attempt"),
+        }
+        for name, mutate in mutations.items():
+            changed = copy.deepcopy(adopted)
+            record = changed["invalidated"][0]
+            attempt = next(a for a in changed["attempts"] if a["id"] == record["attempt_id"])
+            mutate(record, attempt)
+            for validator in ("state", "attempts"):
+                with self.subTest(change=name, validator=validator), self.assertRaises(ValueError):
+                    if validator == "state":
+                        validate_state_identity(changed, manifest, current, self.output)
+                    else:
+                        verify_attempts(changed, manifest, current, self.output, require_terminal=False)
+        changed = copy.deepcopy(adopted)
+        relabel(changed["invalidated"][0]["identity"])
+        write_json(table, changed)
+        self.assert_transition_rejected(None)
+
     def test_full_matrix_boundaries_commands_and_read_only_verification(self):
         gpu = FakeGPU()
         state = self.run_fake(gpu)

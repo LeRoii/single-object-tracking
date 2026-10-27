@@ -509,6 +509,21 @@ def _next_attempt(root):
     return root / ("attempt%04d" % number)
 
 
+def validate_archived_candidates(state, manifest, contexts):
+    attempts = {a["id"]: a for a in state["attempts"]}
+    for record in state["invalidated"]:
+        cell, seed, samples = record["cell"], record["seed"], record["seen_samples"]
+        if cell not in CELLS or seed not in SEEDS or samples not in NODES:
+            raise ValueError("unexpected archived matrix node")
+        context = identity_context(record["identity"], contexts)
+        expected = node_identity(cell, manifest["cells"][cell], seed, samples, context)
+        if record["identity"] != expected or record["global_step"] != expected["global_step"]:
+            raise ValueError("archived node identity mismatch")
+        attempt = attempts.get(record["attempt_id"])
+        if attempt is None or attempt.get("identity") != expected:
+            raise ValueError("archived candidate identity differs from originating attempt")
+
+
 def validate_state_identity(state, manifest, context, output_root=None):
     if state.get("schema_version") != 2:
         raise ValueError("schema 2 is required; preserve schema 1 fake evidence in its original root and start a new output root")
@@ -518,6 +533,7 @@ def validate_state_identity(state, manifest, context, output_root=None):
         raise ValueError("persisted experiment identity mismatch")
     if output_root is not None and state.get("output_root") != str(Path(output_root).resolve()):
         raise ValueError("persisted output-root identity mismatch")
+    validate_archived_candidates(state, manifest, contexts)
     attempts = {a["id"]: a for a in state["attempts"]}
     seen = set()
     for record in state["candidates"]:
@@ -533,7 +549,6 @@ def validate_state_identity(state, manifest, context, output_root=None):
             raise ValueError("candidate context identity differs from retained attempt")
     # Invalidated artifacts are retained for audit; their commands must remain in scope.
     for record in state["invalidated"]:
-        identity_context(record["identity"], contexts)
         validate_command(record["training"]["command"])
         for evidence in record["evaluations"].values():
             validate_command(evidence["command"])
@@ -758,6 +773,7 @@ def check_execution(execution, attempt, cell, context):
 
 def verify_attempts(state, manifest, context, output_root, require_terminal=True):
     contexts = context_registry(state)
+    validate_archived_candidates(state, manifest, contexts)
     ids = [a["id"] for a in state["attempts"]]
     destinations = [a["destination"] for a in state["attempts"]]
     if len(ids) != len(set(ids)) or len(destinations) != len(set(destinations)):
