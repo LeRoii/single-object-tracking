@@ -39,7 +39,7 @@
 
 ## Blockers
 
-- 任务 6 恢复仍受源码身份门阻塞：控制器和评分源码 SHA 属于 context，修复后不能直接消费旧 journal。须先独立复审本修复，再单独设计、审查显式 opt-in 且保留审计的 context 身份过渡；不得手改旧 journal、重标失效记录或直接重启训练。
+- 任务 6 恢复仍受源码身份门阻塞：控制器和评分源码 SHA 属于 context，修复后不能直接消费旧 journal。恢复修复已通过独立复审，context 过渡的英文设计/计划已冻结，但实现和独立复审尚未完成；不得手改旧 journal、重标失效记录或直接重启训练。
 - 尚未在集成契约中批准 g5000 取代当前板端 NanoTrack 模型。
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
 - 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新控制器已接入 `T_v3`，目前只有伪端到端结果，不能宣称新实验已实际训练或产生性能提升。
@@ -49,7 +49,7 @@
 
 ## Next action
 
-0. 当前优先事项：独立复审本次恢复修复提交；随后由协调者另行设计并独立复审 context 过渡机制和历史误失效恢复策略。旧 attempt、保护停止记录及断电证据保持原状；本轮不执行 GPU 训练恢复。
+0. 当前优先事项：按已冻结的英文设计/计划，以 TDD 实现并独立复审显式 opt-in 的 context 过渡。旧 attempt、保护停止记录及断电证据保持原状；过渡实现获批前不执行 GPU 训练恢复。
 1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
@@ -58,6 +58,31 @@
    任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
    最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-27 任务 6 恢复设计：逐 attempt context 与显式过渡
+
+- 时间：`2026-10-27T20:03:43+08:00`；基线提交
+  `7b8c3caf04f795aee486cb41947de63503969b2f`。该恢复修复已经独立任务复审：spec 和质量均
+  `Approved`，无 Critical/Important/Minor；评审边界是只读 diff/report，未重复执行训练或
+  工件保存过程。
+- 进一步核对确认：旧 journal context SHA 为
+  `4f55202fd2da582bd850217c2ca19c378a76c8fcff89c4442fa80aa6b741d14f`，其中旧 controller /
+  policy SHA 分别为 `925a7965765ca83b5ecde8bd7065044046ee162d30a5bc02a445e551d21e66ec` /
+  `eb1360c4a6bca3d9ec0e9aec96fd5c26a16224da9db01774445527459e7acb16`；修复后对应 SHA 为
+  `da27394102b157445b1896c6d82304bc0d8980fa045599751d5dea1347194c69` /
+  `5a6c1d6e310510d234f38c6536004f93ae9402d623d432a33936498b08e5f410`。其他已核对 code
+  identity 未变化。exact context 门正确阻止直接接管，不能通过放宽整体 context 比较绕过。
+- 已选择“保留原 context、追加严格链式 context registry、按每个 attempt 的
+  `context_sha256` 验证”方案；拒绝把历史身份批量改成新源码，也拒绝在旧含缺陷 commit 上
+  继续训练。显式 schema-1 transition manifest 只允许 controller/policy 两个 SHA 字段变化，
+  自身路径/SHA/size 持久化并在每次恢复复核。旧 context 下未完成 attempt 只能保留并失效，
+  不得跨 context 续跑；新 attempt 使用新 context。
+- 英文设计与计划分别为
+  `docs/superpowers/specs/2026-10-27-nanotrack-context-transition-design.md` 和
+  `docs/superpowers/plans/2026-10-27-nanotrack-context-transition.md`。本里程碑只冻结设计和
+  TDD/复审要求，不修改 journal，不生成真实 transition manifest，不启动训练。下一步由新
+  实施子代理完成单一任务并提交，再由独立子代理复审；只有最终源码身份确定后才生成真实
+  manifest 和新的恢复 runner。
 
 ## 2026-10-27 任务 6 恢复修复：固定聚合顺序与有限浮点复核
 
