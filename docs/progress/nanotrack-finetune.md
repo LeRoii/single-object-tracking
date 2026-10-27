@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-27T20:27:40+08:00`。
-- 核对基线：`aec1d520990a229c930737858795db77604d81a5`（context 过渡复审修复回合 1 基线）。
+- 最近核对：`2026-10-27T20:36:09+08:00`。
+- 核对基线：`35119d7d57467821f3290dbd3b58f242698501a1`（context 过渡复审修复及受控恢复源码）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；任务 6 主矩阵断电前完成基线及 44/72 节点。首次恢复因映射顺序引发一 ULP 误差，错误失效一个已完成节点后保护停止；当前原始 journal 保留 43 个候选及 1 个失效记录。本轮仅修复确定性与持久化浮点复核，未恢复训练，不能据部分结果选择最优 batch/GOT 或切换模型。
+- 状态说明：既有 g5000 可交付下游评估；任务 6 主矩阵断电前完成基线及 44/72 节点。首次恢复因映射顺序引发一 ULP 误差，错误失效一个已完成节点后保护停止。确定性修复和显式 context 过渡已分别通过任务复审及最终整体复审；受控恢复已启动，当前从保留的 43 个候选重跑误失效节点，仍不能据部分结果选择最优 batch/GOT 或切换模型。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -39,7 +39,7 @@
 
 ## Blockers
 
-- 任务 6 恢复仍受独立复审门阻塞：控制器和评分源码 SHA 属于 context，修复后不能直接消费旧 journal。恢复修复已通过独立复审，显式 context 过渡机制已完成本轮实现和 CPU 回归，尚待独立复审；真实 transition manifest 尚未生成，不得手改旧 journal、重标失效记录或直接重启训练。
+- 任务 6 已解除源码身份门并开始受控恢复；当前阻塞为九格初筛尚未完成，不能冻结 extension 或进入确认阶段。断电、误失效及保护停止 attempt 全部保留，不得手工删除或改写。
 - 尚未在集成契约中批准 g5000 取代当前板端 NanoTrack 模型。
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
 - 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新控制器已接入 `T_v3`，目前只有伪端到端结果，不能宣称新实验已实际训练或产生性能提升。
@@ -49,7 +49,7 @@
 
 ## Next action
 
-0. 当前优先事项：独立复审本轮显式 opt-in 的 context 过渡实现；批准后才按最终源码身份另行生成真实 manifest 和恢复 runner。旧 attempt、保护停止记录及断电证据保持原状；过渡实现获批前不执行 GPU 训练恢复。
+0. 当前优先事项：监控已启动的受控恢复，确认误失效 `b32_g0` 节点重新完成、候选数恢复到 44，随后确认原 `b64_g30` 断电 attempt 被保留/失效并以新 context 重试；不中断正常训练，不手工改写 journal。
 1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
@@ -58,6 +58,57 @@
    任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
    最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-27 任务 6：context 过渡获批并受控恢复启动
+
+- 时间：`2026-10-27T20:36:09+08:00`；运行源码提交
+  `35119d7d57467821f3290dbd3b58f242698501a1`。context 过渡首轮任务复审指出的归档候选
+  provenance Important 已由提交 `35119d7d57467821f3290dbd3b58f242698501a1` 关闭；同范围
+  复审结论为 `ADDRESSED`、无新 Critical/Important。随后整体验收复审结论为
+  `Ready for controlled recovery: Yes`，无 Critical/Important/Minor。
+- 宿主恢复前实测：RTX 2060、driver `580.178.04`、6144 MiB，总使用 199 MiB、可用
+  5540 MiB；PyTorch `1.7.1` / CUDA `10.2`，`cuda_available=true`、一张设备。无其他
+  CUDA compute 进程；磁盘可用约 305 GB。受限环境中的 `nvidia-smi`/PyTorch CUDA 不可见，
+  以上为获准宿主检查结果，不混用两个边界。
+- 原 journal 启动前 SHA
+  `3f388abb0a2032a7993ed4292f322e9423e08eca4b38adb39306d8c3851a662e`：schema 2、context
+  `4f55202fd2da582bd850217c2ca19c378a76c8fcff89c4442fa80aa6b741d14f`、0 个 transition、
+  43 candidates、1 invalidated candidate、47 attempts，两个 running attempt 精确为
+  `b32_g0/123456/2560/attempt0002` 和 `b64_g30/20261011/2560/attempt0001`。启动前无旧
+  controller/trainer/evaluator 进程，未人工恢复误失效候选。
+- 一次性 transition manifest：
+  `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6/context-transition-4f55202-to-89b33c6.json`，
+  SHA `d1e23fb3fd8b69361f5205f625e97c02ebdfd6cac2ee008ced5d3390ef046c1d`，830 bytes。生产
+  `validate_transition` 实际验证 old/new context 为
+  `4f55202f...` -> `89b33c664eb0fa480c7e49be5ade692f000f2254e16a268c976ed75323c81bfc`，
+  只变化 controller SHA `925a7965...` -> `201eafbb...` 和 policy SHA `eb1360c4...` ->
+  `5a6c1d6...`；manifest/config SHA 仍为
+  `d8385c25de4fce516545ee7e7b45c30f9aa7d76af8256a0afa965d93abee99cd`。
+- 恢复 runner：
+  `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6-screening-recovery-v2-20261027.py`，
+  SHA `28940ff87d34a551ee64c425e483db4175a7192e0a4489a4131c6854bea15e83`；语法检查通过，
+  严格绑定提交、clean worktree、controller/policy/manifest/transition/初始 journal 哈希、
+  候选/attempt 计数及两个中断 identity。实际启动命令为：
+
+```bash
+/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B \
+  /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6-screening-recovery-v2-20261027.py launch
+```
+
+- 启动时间 `2026-10-27T20:35:41.007518+08:00`，supervisor PID `36935`、controller PID
+  `36938`；launch record
+  `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/task6/screening-recovery-v2-20261027-launch.json`
+  SHA `8b3ae7bf38053ac14aef9ded155923cd3531e498bb9ed80d2632db921b50b553`。controller log 为同
+  目录 `screening-recovery-v2-20261027-controller.log`，supervisor log 同前缀。进程已脱离
+  交互会话，由 PID 1 持有 supervisor。
+- 启动后实测 transition 已持久化为 1 个，目标 context 正确；旧
+  `b32_g0/.../attempt0002` 保留并以 `context_transition_requires_new_attempt` 失效，未续跑。
+  新 `attempt0003` 使用 batch 32、seed 123456、2560 samples、初始化 g5000，trainer PID
+  `36968` 正在 CUDA 运行，观察显存约 1178 MiB，检查时已有 4 条训练 metrics。此时仍为
+  43 candidates、1 个原误失效 candidate；尚未宣称节点恢复完成或矩阵完成。
+- 本阶段没有访问 hidden、运行 `sot-v1.mp4`、改变 g5000、执行转换/开发板/吊舱工作。
+  运行中 journal/log 不冻结最终 SHA。若本次进程异常退出，transition 已登记，后续恢复必须
+  **省略** `--context-transition` 并生成新的绑定 runner；不得再次提交一次性 manifest。
 
 ## 2026-10-27 context 过渡复审修复回合 1：归档候选来源身份
 
