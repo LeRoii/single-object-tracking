@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the frozen nine-cell, two-seed NanoTrack screening matrix resumably."""
 import argparse
+import copy
 import fcntl
 import hashlib
 import json
@@ -40,6 +41,7 @@ FLAGS = {
             "--split", "--output-dir"},
     "got": {"--subset", "--dataset-root", "--nanotrack-root", "--config", "--snapshot", "--output", "--device"},
 }
+TRANSITION_CODE_KEYS = {"code:run_nanotrack_factorial.py", "code:nanotrack_factorial_policy.py"}
 
 
 def sha256(path):
@@ -52,6 +54,105 @@ def sha256(path):
 
 def json_hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def valid_sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def check_context(context):
+    if not isinstance(context, dict) or not valid_sha256(context.get("sha256")):
+        raise ValueError("malformed context SHA-256")
+    if json_hash({k: v for k, v in context.items() if k != "sha256"}) != context["sha256"]:
+        raise ValueError("context SHA-256 mismatch")
+
+
+def validate_transition(old, new, document):
+    """Authorize exactly the reviewed controller/policy source-hash replacement."""
+    check_context(old)
+    check_context(new)
+    fields = {"schema_version", "old_context_sha256", "new_context_sha256", "reason", "allowed_code_changes"}
+    if not isinstance(document, dict) or set(document) != fields:
+        raise ValueError("malformed context transition manifest")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise ValueError("context transition requires schema 1")
+    if not isinstance(document["reason"], str) or not document["reason"].strip():
+        raise ValueError("context transition requires a reason")
+    if document["old_context_sha256"] != old["sha256"] or document["new_context_sha256"] != new["sha256"]:
+        raise ValueError("context transition endpoints mismatch")
+    changes = document["allowed_code_changes"]
+    if not isinstance(changes, dict) or set(changes) != TRANSITION_CODE_KEYS:
+        raise ValueError("context transition must declare exactly controller and policy")
+    expected = copy.deepcopy(old)
+    for key in TRANSITION_CODE_KEYS:
+        hashes = changes[key]
+        if not isinstance(hashes, dict) or set(hashes) != {"old_sha256", "new_sha256"}:
+            raise ValueError("malformed source SHA transition")
+        if not all(valid_sha256(hashes[k]) for k in hashes) or hashes["old_sha256"] == hashes["new_sha256"]:
+            raise ValueError("context transition requires two changed source SHA-256 values")
+        if hashes["old_sha256"] != old["bound"][key]["sha256"] or hashes["new_sha256"] != new["bound"][key]["sha256"]:
+            raise ValueError("source SHA transition mismatch")
+        expected["bound"][key]["sha256"] = hashes["new_sha256"]
+    expected["sha256"] = json_hash({k: v for k, v in expected.items() if k != "sha256"})
+    if json_hash(expected) != json_hash(new):
+        raise ValueError("unapproved context difference")
+
+
+def transition_manifest(path):
+    path = Path(path).resolve()
+    content = path.read_bytes()
+    return ({"path": str(path), "sha256": hashlib.sha256(content).hexdigest(), "size": len(content)},
+            json.loads(content.decode("utf-8")))
+
+
+def context_registry(state):
+    """Revalidate all registered contexts and retained opt-in evidence on each use."""
+    original = state["context"]
+    check_context(original)
+    contexts = {original["sha256"]: original}
+    transitions = state.get("context_transitions", [])
+    # This recovery authorizes one upgrade only; another needs a reviewed design.
+    if not isinstance(transitions, list) or len(transitions) > 1:
+        raise ValueError("only one context transition is authorized")
+    tail = original
+    for entry in transitions:
+        new = entry["new_context"]
+        if entry["old_context_sha256"] != tail["sha256"] or new["sha256"] in contexts:
+            raise ValueError("duplicate or forked context transition")
+        retained = entry["manifest"]
+        observed, document = transition_manifest(retained["path"])
+        if observed != retained or document != entry["manifest_content"]:
+            raise ValueError("retained context transition manifest changed")
+        validate_transition(tail, new, document)
+        if any(entry[key] != document[key] for key in
+               ("old_context_sha256", "new_context_sha256", "reason", "allowed_code_changes")):
+            raise ValueError("registered context transition differs from manifest")
+        contexts[new["sha256"]] = new
+        tail = new
+    return contexts
+
+
+def identity_context(identity, contexts):
+    digest = identity.get("context_sha256")
+    if digest not in contexts:
+        raise ValueError("unknown identity context SHA-256")
+    return contexts[digest]
+
+
+def register_transition(state, context, path):
+    contexts = context_registry(state)
+    if state.get("context_transitions"):
+        raise ValueError("a second context transition is not authorized")
+    retained, document = transition_manifest(path)
+    old = list(contexts.values())[-1]
+    validate_transition(old, context, document)
+    entry = {key: copy.deepcopy(document[key]) for key in
+             ("old_context_sha256", "new_context_sha256", "reason", "allowed_code_changes")}
+    entry.update(new_context=copy.deepcopy(context), manifest=retained, manifest_content=document)
+    # Construct a proposal without mutating the loaded journal on any rejection.
+    proposed = dict(state)
+    proposed["context_transitions"] = [entry]
+    return proposed
 
 
 def read_json(path):
@@ -356,6 +457,9 @@ def validate_telemetry(evidence, cell, identity, previous, context):
 
 
 def validate_record(record, cell, context, previous, baseline):
+    # State/attempt validation resolves identity.context_sha256 first. The read-only
+    # verifier also uses this API with the active context: every field consumed
+    # here is invariant across the narrowly validated two-source-SHA transition.
     checkpoint = {"path": record["checkpoint"], "sha256": record["checkpoint_sha256"]}
     check_artifact(checkpoint)
     check_checkpoint(checkpoint["path"], record["identity"])
@@ -408,24 +512,37 @@ def _next_attempt(root):
 def validate_state_identity(state, manifest, context, output_root=None):
     if state.get("schema_version") != 2:
         raise ValueError("schema 2 is required; preserve schema 1 fake evidence in its original root and start a new output root")
-    if state.get("context") != context or state.get("scoring_version") != SCORING_VERSION:
+    contexts = context_registry(state)
+    check_context(context)
+    if list(contexts.values())[-1] != context or state.get("scoring_version") != SCORING_VERSION:
         raise ValueError("persisted experiment identity mismatch")
     if output_root is not None and state.get("output_root") != str(Path(output_root).resolve()):
         raise ValueError("persisted output-root identity mismatch")
+    attempts = {a["id"]: a for a in state["attempts"]}
     seen = set()
     for record in state["candidates"]:
         key = (record["cell"], record["seed"], record["seen_samples"])
         if key in seen or key[0] not in CELLS or key[1] not in SEEDS or key[2] not in NODES:
             raise ValueError("duplicate or unexpected matrix node")
         seen.add(key)
-        if record["identity"] != node_identity(key[0], manifest["cells"][key[0]], key[1], key[2], context) or record["global_step"] != record["identity"]["global_step"]:
+        record_context = identity_context(record["identity"], contexts)
+        if record["identity"] != node_identity(key[0], manifest["cells"][key[0]], key[1], key[2], record_context) or record["global_step"] != record["identity"]["global_step"]:
             raise ValueError("persisted node identity mismatch")
+        attempt = attempts.get(record["attempt_id"])
+        if attempt is not None and attempt.get("identity") != record["identity"]:
+            raise ValueError("candidate context identity differs from retained attempt")
     # Invalidated artifacts are retained for audit; their commands must remain in scope.
     for record in state["invalidated"]:
+        identity_context(record["identity"], contexts)
         validate_command(record["training"]["command"])
         for evidence in record["evaluations"].values():
             validate_command(evidence["command"])
     for attempt in state["attempts"]:
+        if attempt["kind"] == "node":
+            identity = attempt["identity"]
+            recorded_context = identity_context(identity, contexts)
+            if identity != node_identity(attempt["cell"], manifest["cells"][attempt["cell"]], identity["seed"], identity["seen_samples"], recorded_context):
+                raise ValueError("retained node attempt identity mismatch")
         root = Path(state["output_root"]).resolve()
         destination = Path(attempt["destination"]).resolve()
         if not any(str(destination).startswith(str(root / name) + "/") for name in ("baseline", "nodes")) or not destination.name.startswith("attempt") or not destination.name[7:].isdigit():
@@ -437,6 +554,7 @@ def validate_state_identity(state, manifest, context, output_root=None):
 
 
 def validate_baseline(state, manifest, context):
+    context = state["context"]  # Baseline has no node identity and stays original.
     baseline = state["baseline"]
     cell = manifest["cells"][CELLS[0]]
     config = context["bound"]["config:" + CELLS[0]]
@@ -639,6 +757,7 @@ def check_execution(execution, attempt, cell, context):
 
 
 def verify_attempts(state, manifest, context, output_root, require_terminal=True):
+    contexts = context_registry(state)
     ids = [a["id"] for a in state["attempts"]]
     destinations = [a["destination"] for a in state["attempts"]]
     if len(ids) != len(set(ids)) or len(destinations) != len(set(destinations)):
@@ -662,12 +781,14 @@ def verify_attempts(state, manifest, context, output_root, require_terminal=True
                 raise ValueError("invalidated attempt requires an explicit audit")
         elif attempt["kind"] != "orphan":
             cell = manifest["cells"][attempt["cell"]]
+            attempt_context = state["context"]
             if attempt["kind"] == "node":
                 identity = attempt["identity"]
-                if identity != node_identity(attempt["cell"], cell, identity["seed"], identity["seen_samples"], context):
+                attempt_context = identity_context(identity, contexts)
+                if identity != node_identity(attempt["cell"], cell, identity["seed"], identity["seen_samples"], attempt_context):
                     raise ValueError("retained node attempt identity mismatch")
             for execution in attempt["executions"]:
-                check_execution(execution, attempt, cell, context)
+                check_execution(execution, attempt, cell, attempt_context)
                 if require_terminal and execution["status"] not in ("succeeded", "invalidated", "canceled"):
                     raise ValueError("unresolved retained stage execution")
             if attempt["status"] == "complete":
@@ -752,7 +873,8 @@ def run_attempt(attempt, cell, context, state, table_path, runner):
     return results
 
 
-def run_screening(manifest_path, output_root, runner=run_command, evaluation_inputs=None):
+def run_screening(manifest_path, output_root, runner=run_command, evaluation_inputs=None,
+                  context_transition=None):
     output_root = Path(output_root).resolve()
     table_path = output_root / "candidate_table.json"
     existing = read_json(table_path) if table_path.is_file() else None
@@ -764,13 +886,19 @@ def run_screening(manifest_path, output_root, runner=run_command, evaluation_inp
         "schema_version": 2, "scoring_version": SCORING_VERSION, "context": context,
         "output_root": str(output_root),
         "candidates": [], "invalidated": [], "attempts": []}
-    validate_state_identity(state, manifest, context, output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     with (output_root / ".controller.lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if table_path.is_file():
             state = read_json(table_path)
-            validate_state_identity(state, manifest, context, output_root)
+        if context_transition is not None:
+            if existing is None:
+                raise ValueError("context transition requires an existing journal")
+            state = register_transition(state, context, context_transition)
+        validate_state_identity(state, manifest, context, output_root)
+        if context_transition is not None:
+            atomic_json(table_path, state)  # accepted under lock before reconciliation
+        contexts = context_registry(state)
         reconcile_retained_attempts(state, output_root)
         atomic_json(table_path, state)
         for cell_id, seed, samples in [(CELLS[0], None, None)] + [
@@ -792,7 +920,7 @@ def run_screening(manifest_path, output_root, runner=run_command, evaluation_inp
                     if seed is None:
                         validate_baseline(state, manifest, context)
                     else:
-                        validate_record(record, cell, context, previous, state["baseline"]["metrics"])
+                        validate_record(record, cell, identity_context(record["identity"], contexts), previous, state["baseline"]["metrics"])
                     continue
                 except (ValueError, OSError, KeyError, EOFError, RuntimeError) as error:
                     if attempt is not None:
@@ -805,6 +933,11 @@ def run_screening(manifest_path, output_root, runner=run_command, evaluation_inp
                     attempt = None
                     atomic_json(table_path, state)
             while True:
+                if (attempt is not None and seed is not None and attempt["status"] != "complete"
+                        and attempt["identity"]["context_sha256"] != context["sha256"]):
+                    invalidate_attempt(attempt, "context_transition_requires_new_attempt")
+                    attempt = None
+                    atomic_json(table_path, state)
                 if attempt is not None and seed is not None and attempt["predecessor"] != (previous or context["bound"]["initial_checkpoint"]):
                     invalidate_attempt(attempt, "predecessor_changed")
                     attempt = None
@@ -813,7 +946,8 @@ def run_screening(manifest_path, output_root, runner=run_command, evaluation_inp
                     attempt = allocate_attempt(state, root, cell_id, cell, context, seed, samples, previous)
                     atomic_json(table_path, state)  # durable plan exists before any command or directory creation
                 try:
-                    stages = run_attempt(attempt, cell, context, state, table_path, runner)
+                    attempt_context = state["context"] if seed is None else identity_context(attempt["identity"], contexts)
+                    stages = run_attempt(attempt, cell, attempt_context, state, table_path, runner)
                     break
                 except InvalidAttempt as error:
                     invalidate_attempt(attempt, str(error))
@@ -847,9 +981,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=ROOT / "configs/nanotrack_factorial_v3/experiment-manifest.json")
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--context-transition", type=Path)
     args = parser.parse_args()
     manifest = read_json(args.manifest)
-    state = run_screening(args.manifest, args.output_root or Path(manifest["output_root"]) / "screening")
+    state = run_screening(args.manifest, args.output_root or Path(manifest["output_root"]) / "screening",
+                          context_transition=args.context_transition)
     print(json.dumps({"completed_nodes": len(state["candidates"]), "scoring_version": SCORING_VERSION}))
 
 

@@ -1,8 +1,8 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-27T20:00:40+08:00`。
-- 核对基线：`4aea962256d0ac9cb008ac829995315ce6fc09cb`（本轮恢复修复开始基线）。
+- 最近核对：`2026-10-27T20:16:18+08:00`。
+- 核对基线：`20fcb80c810e7ec7ce0eb2891691f88cfbd001df`（context 过渡实现开始基线）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
 - 状态说明：既有 g5000 可交付下游评估；任务 6 主矩阵断电前完成基线及 44/72 节点。首次恢复因映射顺序引发一 ULP 误差，错误失效一个已完成节点后保护停止；当前原始 journal 保留 43 个候选及 1 个失效记录。本轮仅修复确定性与持久化浮点复核，未恢复训练，不能据部分结果选择最优 batch/GOT 或切换模型。
@@ -39,7 +39,7 @@
 
 ## Blockers
 
-- 任务 6 恢复仍受源码身份门阻塞：控制器和评分源码 SHA 属于 context，修复后不能直接消费旧 journal。恢复修复已通过独立复审，context 过渡的英文设计/计划已冻结，但实现和独立复审尚未完成；不得手改旧 journal、重标失效记录或直接重启训练。
+- 任务 6 恢复仍受独立复审门阻塞：控制器和评分源码 SHA 属于 context，修复后不能直接消费旧 journal。恢复修复已通过独立复审，显式 context 过渡机制已完成本轮实现和 CPU 回归，尚待独立复审；真实 transition manifest 尚未生成，不得手改旧 journal、重标失效记录或直接重启训练。
 - 尚未在集成契约中批准 g5000 取代当前板端 NanoTrack 模型。
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
 - 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新控制器已接入 `T_v3`，目前只有伪端到端结果，不能宣称新实验已实际训练或产生性能提升。
@@ -49,7 +49,7 @@
 
 ## Next action
 
-0. 当前优先事项：按已冻结的英文设计/计划，以 TDD 实现并独立复审显式 opt-in 的 context 过渡。旧 attempt、保护停止记录及断电证据保持原状；过渡实现获批前不执行 GPU 训练恢复。
+0. 当前优先事项：独立复审本轮显式 opt-in 的 context 过渡实现；批准后才按最终源码身份另行生成真实 manifest 和恢复 runner。旧 attempt、保护停止记录及断电证据保持原状；过渡实现获批前不执行 GPU 训练恢复。
 1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
@@ -58,6 +58,67 @@
    任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
    最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-27 context 过渡任务 1：实现和验证（待独立复审）
+
+- 时间：`2026-10-27T20:16:18+08:00`；分支/工作树为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+  开始 HEAD `20fcb80c810e7ec7ce0eb2891691f88cfbd001df`，初始 tracked worktree 干净。
+  输入为该提交冻结的英文 design/plan，以及已复审修复 `7b8c3caf04f795aee486cb41947de63503969b2f`。
+  本提交仅包含控制器、控制器测试和本 owner 文件；结果 commit 提交后回报，可用
+  `git log -1 --format=%H -- scripts/run_nanotrack_factorial.py` 查询。
+- 新增 `run_screening(..., context_transition=None)` 与 `--context-transition PATH`。
+  原始 `state.context` 不变；schema-1 manifest 只允许 controller/policy 两个源码 SHA
+  真正变化，路径及其余完整字段逐项受同一上下文哈希约束。完整新 context 和 manifest
+  绝对路径/SHA/size/content 写入 `context_transitions`，每次恢复重新核对。
+- 协调者明确裁定：本次恢复只授权一个过渡；保留列表/链式数据结构，但第二次登记、
+  duplicate、fork、未知 context 全部失败关闭，未来升级必须重新设计和复审。
+  迁移校验及原子提交均在控制器锁内，接受记录先于 reconciliation 或任何外部命令；
+  拒绝时 journal 字节不变且 runner 调用为零。
+- 完成节点和 retained attempt 按自身 `identity.context_sha256` 验证，并精确核对候选与
+  对应 attempt 的身份一致；旧 context 的 planned/running/interrupted 节点保留原身份、
+  工件与清单，显式失效并分配唯一新 attempt。新节点绑定当前 context/policy SHA。
+  baseline 始终使用原 context。只读 verifier 源码保持不变；其 record 验证消费的命令、
+  模型/配置/数据/评测身份、source header、Python/backend 全是过渡强制保持一致的字段。
+- 严格 TDD：初始 8 项迁移测试在生产未改时实测 **20 failures / 0 errors**（2.822 s），
+  均为缺少显式接口；初次 GREEN **8 tests / OK**（15.681 s）。自检另增候选/attempt
+  来源重标回归，先观察 **1 test / 2 failures / 0 errors**（0.535 s），最小修正后
+  聚焦 **9 tests / OK**（16.920 s）；最终同一聚焦命令再次为 **9 tests / OK / exit 0**
+  （16.138 s），日志 `/tmp/nanotrack-context-transition-focused-final.log` SHA
+  `0fe3e8a992cdaed6e6de5e4d53c072c01daad7f715bed93e468f27dcbc8fa24c`。
+  最终六模块历史回归 **102 tests / OK / exit 0**
+  （104.889 s），覆盖最终全部迁移断言及既有恢复、命令和工件完整性检查。
+- 实际相关命令（解释器 `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python`）：
+  `TMPDIR=/dev/shm <python> -B -m unittest tests.test_nanotrack_factorial_policy
+  tests.test_nanotrack_factorial_controller tests.test_nanotrack_got_replay_controller
+  tests.test_nanotrack_got_replay_reporting tests.test_nanotrack_three_stage_runner
+  tests.test_nanotrack_factorial_configs -v`。日志
+  `/tmp/nanotrack-context-transition-historical-final.log` SHA
+  `6f89bee3b1f7fbc19d9ad2d1a65fad77ca34a88991e8ae45834ee89226972907`。
+  更早的一次历史回归在源码仍调整时出现 1 项 context identity error（101 tests），
+  已保留为非最终日志；以冻结源码后的上述 102 项通过结果为准。
+- 本轮唯一完整 discover：`TMPDIR=/dev/shm <python> -B -m unittest discover -s tests -v`，
+  **276 tests / failures=4 / errors=0 / exit 1**（108.235 s）。仍是历史
+  `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest` 的
+  `test_formal_configs_match_quota_paths_and_training_contract` 中 stage1/stage2/stage3
+  三个 subtest，以及 `test_smoke_configs_are_bounded_and_keep_policy_representative_pools`，
+  全部为主资产根与 linked worktree 绝对路径比较；完整套件不是全绿。
+  日志 `/tmp/nanotrack-context-transition-discover.log` SHA
+  `66a81608cf48213fcab7bb689f5d81acd53192911b274994a2db0a9d7f113010`。
+- 输出源码 SHA：`scripts/run_nanotrack_factorial.py`
+  `3875154b61fd1d4a4f3a2f1736230f70cf2c4f020a027e9587cdd831e982a161`；测试
+  `tests/test_nanotrack_factorial_controller.py`
+  `96289f45a9f25ef67704aa8b4efa870334118f1a76d13e6a3b4f1624d27ee7aa`。
+  policy/verifier SHA 分别仍为
+  `5a6c1d6e310510d234f38c6536004f93ae9402d623d432a33936498b08e5f410` /
+  `c920a15b32396ab9797f51c2d17df611478277f00e65d2edb6f9040d6f824208`。
+- 边界：只操作临时合成 fixture，未修改真实 journal/attempt/工件，未生成真实 transition
+  manifest，未运行 GPU 训练、隐藏集、`sot-v1.mp4`、ONNX/RKNN、板端或吊舱工作。
+  `git diff --check` 与真实 CLI `--help` 通过。完整实施报告为
+  `.superpowers/sdd/2026-10-27-nanotrack-context-transition/task-1-report.md`。
+  下一步/Handoff：协调者组织独立复审后，才生成最终源码绑定的真实迁移清单并讨论恢复；
+  不请求改变公共模型或 promotion gate，不修改公共 STATUS/契约及其他 owner 文件。
 
 ## 2026-10-27 任务 6 恢复设计：逐 attempt context 与显式过渡
 

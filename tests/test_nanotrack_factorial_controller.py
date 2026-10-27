@@ -1,6 +1,7 @@
 """Exercise real controller state with a file-producing stand-in for GPU commands."""
 import copy
 import hashlib
+import inspect
 import json
 import math
 import subprocess
@@ -161,6 +162,238 @@ class FactorialControllerTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "interruption"):
             self.run_fake(FakeGPU(fail_at=8))
         return json.loads((self.output / "candidate_table.json").read_text())
+
+    def transition_fixture(self, fail_at=8):
+        manifest, current = load_context(self.manifest_path, self.inputs, "fake_cpu_fixture")
+        old = copy.deepcopy(current)
+        for key, digest in (("code:run_nanotrack_factorial.py", "a" * 64),
+                            ("code:nanotrack_factorial_policy.py", "b" * 64)):
+            old["bound"][key]["sha256"] = digest
+        old["sha256"] = self.context_digest(old)
+        with patch("scripts.run_nanotrack_factorial.load_context", return_value=(manifest, old)):
+            with self.assertRaisesRegex(RuntimeError, "interruption"):
+                self.run_fake(FakeGPU(fail_at=fail_at))
+        state = json.loads((self.output / "candidate_table.json").read_text())
+        transition = {"schema_version": 1, "old_context_sha256": old["sha256"],
+                      "new_context_sha256": current["sha256"], "reason": "reviewed restart fix",
+                      "allowed_code_changes": {
+                          key: {"old_sha256": old["bound"][key]["sha256"],
+                                "new_sha256": current["bound"][key]["sha256"]}
+                          for key in ("code:run_nanotrack_factorial.py",
+                                      "code:nanotrack_factorial_policy.py")}}
+        path = self.root / "transition.json"
+        write_json(path, transition)
+        return state, current, path
+
+    @staticmethod
+    def context_digest(context):
+        body = {k: v for k, v in context.items() if k != "sha256"}
+        return hashlib.sha256(json.dumps(body, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+    def run_transition(self, path, gpu=None, current=None):
+        self.assertIn("context_transition", inspect.signature(run_screening).parameters,
+                      "controller lacks explicit opt-in context transition")
+        if current is None:
+            return run_screening(self.manifest_path, self.output, runner=gpu or FakeGPU(),
+                                 evaluation_inputs=self.inputs, context_transition=path)
+        manifest = json.loads(self.manifest_path.read_text())
+        with patch("scripts.run_nanotrack_factorial.load_context", return_value=(manifest, current)):
+            return self.run_transition(path, gpu)
+
+    def assert_transition_rejected(self, path, current=None):
+        table = self.output / "candidate_table.json"
+        before = table.read_bytes()
+        gpu = FakeGPU()
+        with self.assertRaises((ValueError, OSError)):
+            self.run_transition(path, gpu, current)
+        self.assertEqual(before, table.read_bytes())
+        self.assertEqual(gpu.commands, [])
+
+    def test_context_transition_requires_opt_in_without_writes_or_commands(self):
+        self.transition_fixture()
+        self.assert_transition_rejected(None)
+
+    def test_context_transition_rejects_malformed_manifest_and_hashes(self):
+        _, _, path = self.transition_fixture()
+        original = json.loads(path.read_text())
+        mutations = [lambda m: m.update(schema_version=2),
+                     lambda m: m.update(reason=" "),
+                     lambda m: m.update(old_context_sha256="0" * 64),
+                     lambda m: m.update(new_context_sha256="bad"),
+                     lambda m: m["allowed_code_changes"].pop("code:nanotrack_factorial_policy.py"),
+                     lambda m: m["allowed_code_changes"].update(extra={}),
+                     lambda m: m["allowed_code_changes"]["code:run_nanotrack_factorial.py"].update(old_sha256="bad"),
+                     lambda m: m["allowed_code_changes"]["code:nanotrack_factorial_policy.py"].update(new_sha256="0" * 64)]
+        for mutate in mutations:
+            changed = copy.deepcopy(original)
+            mutate(changed)
+            write_json(path, changed)
+            with self.subTest(manifest=changed):
+                self.assert_transition_rejected(path)
+
+    def test_context_transition_rejects_every_extra_context_difference(self):
+        _, current, path = self.transition_fixture()
+        original = json.loads(path.read_text())
+        mutations = [lambda c: c["bound"]["code:run_nanotrack_factorial.py"].update(path="/other/controller.py"),
+                     lambda c: c["bound"]["code:train_nanotrack_uav123.py"].update(sha256="c" * 64),
+                     lambda c: c["bound"]["code:evaluate_got10k_nanotrack.py"].update(sha256="c" * 64),
+                     lambda c: c["bound"]["config:b32_g0"].update(sha256="c" * 64),
+                     lambda c: c["bound"]["pair_policy"].update(sha256="c" * 64),
+                     lambda c: c["bound"]["pair_audit"].update(sha256="c" * 64),
+                     lambda c: c["bound"]["evaluation:got_list"].update(sha256="c" * 64),
+                     lambda c: c["bound"]["initial_checkpoint"].update(sha256="c" * 64),
+                     lambda c: c["evaluation_inputs"].update(panel="/other/panel.json"),
+                     lambda c: c["initial_source_header"].update(global_step=5001),
+                     lambda c: c["python"].update(sha256="c" * 64),
+                     lambda c: c.update(execution_backend="subprocess"),
+                     lambda c: c.update(extra="unapproved")]
+        for mutate in mutations:
+            changed = copy.deepcopy(current)
+            mutate(changed)
+            changed["sha256"] = self.context_digest(changed)
+            proposal = copy.deepcopy(original)
+            proposal["new_context_sha256"] = changed["sha256"]
+            write_json(path, proposal)
+            with self.subTest(context=changed):
+                self.assert_transition_rejected(path, changed)
+
+    def test_context_transition_is_durable_under_lock_before_reconciliation(self):
+        import fcntl
+        from scripts.run_nanotrack_factorial import reconcile_retained_attempts
+        state, current, path = self.transition_fixture()
+        table = self.output / "candidate_table.json"
+        def reconcile(persisted, root):
+            retained = json.loads(table.read_text())
+            self.assertEqual(len(retained["context_transitions"]), 1)
+            self.assertEqual(retained["context"], state["context"])
+            self.assertEqual(retained["candidates"], state["candidates"])
+            self.assertEqual(retained["attempts"], state["attempts"])
+            entry = retained["context_transitions"][0]
+            self.assertEqual(entry["new_context"], current)
+            self.assertEqual(entry["manifest"]["path"], str(path.resolve()))
+            self.assertEqual(entry["manifest"]["sha256"], sha(path))
+            self.assertEqual(entry["manifest"]["size"], path.stat().st_size)
+            self.assertEqual(entry["manifest_content"], json.loads(path.read_text()))
+            with (self.output / ".controller.lock").open("a+") as lock:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            raise RuntimeError("observed durable transition")
+        with patch("scripts.run_nanotrack_factorial.reconcile_retained_attempts", side_effect=reconcile):
+            with self.assertRaisesRegex(RuntimeError, "durable transition"):
+                self.run_transition(path)
+
+    def test_context_transition_preserves_history_and_retries_old_nonterminal_attempt(self):
+        old, current, path = self.transition_fixture(fail_at=9)
+        interrupted = old["attempts"][-1]
+        before_files = {str(p): sha(p) for p in Path(interrupted["destination"]).rglob("*") if p.is_file()}
+        gpu = FakeGPU()
+        state = self.run_transition(path, gpu)
+        self.assertEqual(state["context"], old["context"])
+        self.assertEqual(state["baseline"], old["baseline"])
+        self.assertEqual(state["candidates"][0], old["candidates"][0])
+        self.assertEqual(state["attempts"][:2], old["attempts"][:2])
+        abandoned = next(a for a in state["attempts"] if a["id"] == interrupted["id"])
+        self.assertEqual(abandoned["identity"], interrupted["identity"])
+        self.assertEqual(abandoned["status"], "invalidated")
+        self.assertIn("context", abandoned["invalidation_reason"])
+        self.assertTrue(abandoned["retained_inventory"])
+        self.assertEqual(before_files, {str(p): sha(p) for p in Path(interrupted["destination"]).rglob("*") if p.is_file()})
+        first = gpu.commands[0]
+        self.assertIn("train_nanotrack", first[1])
+        self.assertNotIn(interrupted["destination"], first[first.index("--output-dir") + 1])
+        self.assertEqual(first[first.index("--resume") + 1], old["candidates"][0]["checkpoint"])
+        self.assertEqual(state["candidates"][1]["identity"]["context_sha256"], current["sha256"])
+        self.assertEqual(state["candidates"][1]["identity"]["scoring_source_sha256"], current["bound"]["code:nanotrack_factorial_policy.py"]["sha256"])
+        self.assertTrue(verify_experiment(self.manifest_path, self.output)["valid"])
+        before = (self.output / "candidate_table.json").read_bytes()
+        resumed_gpu = FakeGPU()
+        self.run_fake(resumed_gpu)
+        self.assertEqual(resumed_gpu.commands, [])
+        self.assertEqual(before, (self.output / "candidate_table.json").read_bytes())
+
+    def test_context_transition_retries_planned_old_attempt_and_preserves_invalidated(self):
+        from scripts.run_nanotrack_factorial import allocate_attempt, invalidate_attempt
+        state, _, path = self.transition_fixture()
+        archived_attempt = state["attempts"][-1]
+        invalidate_attempt(archived_attempt, "historical interruption")
+        original_archived = copy.deepcopy(archived_attempt)
+        cell_id = archived_attempt["cell"]
+        cell = json.loads(self.manifest_path.read_text())["cells"][cell_id]
+        attempt = allocate_attempt(state, Path(archived_attempt["destination"]).parent,
+                                   cell_id, cell, state["context"], 123456, 5120,
+                                   archived_attempt["predecessor"])
+        archived = copy.deepcopy(state["candidates"][0])
+        state["invalidated"].append(archived)
+        write_json(self.output / "candidate_table.json", state)
+        gpu = FakeGPU(fail_at=1)
+        with self.assertRaisesRegex(RuntimeError, "interruption"):
+            self.run_transition(path, gpu)
+        retained = json.loads((self.output / "candidate_table.json").read_text())
+        self.assertEqual(retained["invalidated"], [archived])
+        self.assertEqual(retained["attempts"][2], original_archived)
+        self.assertEqual(retained["attempts"][3]["status"], "invalidated")
+        self.assertNotEqual(retained["attempts"][-1]["id"], attempt["id"])
+
+    def test_context_transition_revalidates_manifest_and_rejects_duplicates_forks_unknown_contexts(self):
+        _, current, path = self.transition_fixture()
+        with self.assertRaisesRegex(RuntimeError, "interruption"):
+            self.run_transition(path, FakeGPU(fail_at=1))
+        table = self.output / "candidate_table.json"
+        adopted = json.loads(table.read_text())
+        original_manifest = path.read_bytes()
+        path.write_bytes(original_manifest + b" ")
+        self.assert_transition_rejected(None)
+        path.write_bytes(original_manifest)
+        self.assert_transition_rejected(path)
+        mutations = [lambda s: s["context_transitions"].append(copy.deepcopy(s["context_transitions"][0])),
+                     lambda s: s["context_transitions"][0].update(old_context_sha256="f" * 64),
+                     lambda s: s["context_transitions"][0]["new_context"].update(sha256="f" * 64),
+                     lambda s: s["context"].update(sha256="f" * 64),
+                     lambda s: s["candidates"][0]["identity"].update(context_sha256="f" * 64),
+                     lambda s: s["attempts"][1]["identity"].update(context_sha256="f" * 64)]
+        for mutate in mutations:
+            changed = copy.deepcopy(adopted)
+            mutate(changed)
+            write_json(table, changed)
+            with self.subTest(state=changed):
+                self.assert_transition_rejected(None)
+        write_json(table, adopted)
+        newer = copy.deepcopy(current)
+        for key in ("code:run_nanotrack_factorial.py", "code:nanotrack_factorial_policy.py"):
+            newer["bound"][key]["sha256"] = "e" * 64
+        newer["sha256"] = self.context_digest(newer)
+        proposal = json.loads(path.read_text())
+        proposal.update(old_context_sha256=current["sha256"], new_context_sha256=newer["sha256"])
+        for key, hashes in proposal["allowed_code_changes"].items():
+            hashes.update(old_sha256=current["bound"][key]["sha256"], new_sha256="e" * 64)
+        second_path = self.root / "second-transition.json"
+        write_json(second_path, proposal)
+        self.assert_transition_rejected(second_path, newer)
+
+    def test_context_transition_rejects_invalid_runtime_context_hash(self):
+        _, current, path = self.transition_fixture()
+        current["sha256"] = "f" * 64
+        proposal = json.loads(path.read_text())
+        proposal["new_context_sha256"] = current["sha256"]
+        write_json(path, proposal)
+        self.assert_transition_rejected(path, current)
+
+    def test_context_transition_rejects_candidate_attempt_provenance_relabeling(self):
+        from scripts.run_nanotrack_factorial import validate_state_identity
+        _, current, path = self.transition_fixture()
+        with self.assertRaisesRegex(RuntimeError, "interruption"):
+            self.run_transition(path, FakeGPU(fail_at=1))
+        adopted = json.loads((self.output / "candidate_table.json").read_text())
+        manifest = json.loads(self.manifest_path.read_text())
+        for location in ("candidate", "attempt"):
+            changed = copy.deepcopy(adopted)
+            record = changed["candidates"][0]
+            attempt = next(a for a in changed["attempts"] if a["id"] == record["attempt_id"])
+            identity = record["identity"] if location == "candidate" else attempt["identity"]
+            identity.update(context_sha256=current["sha256"],
+                            scoring_source_sha256=current["bound"]["code:nanotrack_factorial_policy.py"]["sha256"])
+            with self.subTest(location=location), self.assertRaises(ValueError):
+                validate_state_identity(changed, manifest, current, self.output)
 
     def test_full_matrix_boundaries_commands_and_read_only_verification(self):
         gpu = FakeGPU()
