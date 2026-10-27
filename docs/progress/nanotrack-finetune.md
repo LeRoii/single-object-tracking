@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-27T20:36:09+08:00`。
+- 最近核对：`2026-10-28T00:48:50+08:00`。
 - 核对基线：`35119d7d57467821f3290dbd3b58f242698501a1`（context 过渡复审修复及受控恢复源码）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；任务 6 主矩阵断电前完成基线及 44/72 节点。首次恢复因映射顺序引发一 ULP 误差，错误失效一个已完成节点后保护停止。确定性修复和显式 context 过渡已分别通过任务复审及最终整体复审；受控恢复已启动，当前从保留的 43 个候选重跑误失效节点，仍不能据部分结果选择最优 batch/GOT 或切换模型。
+- 状态说明：既有 g5000 可交付下游评估；任务 6 主矩阵断电前完成基线及 44/72 节点。首次恢复因映射顺序引发一 ULP 误差，错误失效一个已完成节点后保护停止。确定性修复和显式 context 过渡已分别通过任务复审及最终整体复审；受控恢复仍在运行，已完成旧 `b32_g0` 因前驱变化而必须重建的完整轨迹及断电中的 `b64_g30` 轨迹，当前为 50/72，仍不能据部分结果选择最优 batch/GOT 或切换模型。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -49,7 +49,7 @@
 
 ## Next action
 
-0. 当前优先事项：监控已启动的受控恢复，确认误失效 `b32_g0` 节点重新完成、候选数恢复到 44，随后确认原 `b64_g30` 断电 attempt 被保留/失效并以新 context 重试；不中断正常训练，不手工改写 journal。
+0. 当前优先事项：继续监控受控恢复直至 72/72；当前正在执行 `b8_g0`、seed `123456`、7680 samples 节点的 GOT-10K 验证。不中断正常训练，不手工改写 journal，也不再次提交已经登记的一次性 context transition。
 1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
@@ -58,6 +58,40 @@
    任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
    最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-28 任务 6：受控恢复推进至 50/72
+
+- 时间：`2026-10-28T00:48:50+08:00`；记录基线 HEAD
+  `70ef7bcb4335b6e73f15db152d9dc658479fb201`，运行源码仍为
+  `35119d7d57467821f3290dbd3b58f242698501a1`。工作树核对时干净；公共
+  `STATUS.md`、`integration-contract.yaml` 和其他任务文件未修改。
+- 宿主只读实测 supervisor PID `36935`、controller PID `36938` 已连续运行约
+  4 小时 13 分；当前 GOT evaluator PID `148333`，显存使用约 964 MiB。GPU 为
+  RTX 2060、driver `580.178.04`，总显存 6144 MiB，检查时整卡使用 1239 MiB、空闲
+  4500 MiB、GPU utilization 9%。受限进程命名空间看不到这些 PID，但 GOT 日志持续更新；
+  进程和 GPU 结论以获准的宿主只读检查为准。
+- `screening/candidate_table.json` 在 `2026-10-28T00:40:26+08:00` 提交的快照 SHA 为
+  `26958ac748423ccc7edad9df8e29323a7120e5c3290f167ec1853f8fef879a28`：schema 2、
+  1 个 context transition、50 candidates、4 个 retained invalidated candidates、58 attempts；
+  attempt 状态为 51 complete、6 invalidated、1 running。该 SHA 只绑定所述运行中快照，
+  后续节点提交会继续变化，不作为最终 journal 哈希。
+- 原 `b32_g0`、seed `123456` 的 2560/5120/7680/10240 四个旧候选仍完整保存在
+  `invalidated`。2560 节点在修复后生成了不同 checkpoint SHA，因此旧 5120/7680/10240
+  的 predecessor SHA 不再对应新轨迹；控制器按因果链失效并用新 context 重跑整条轨迹。
+  新轨迹四节点现均 complete。这是审计保留和前驱一致性保护的预期结果，不是新增误失效；
+  原 2560 `attempt0002` 及断电中的 `b64_g30` attempt 也作为 invalidated 历史保留。
+- `b64_g30`、seed `20261011` 的四节点已在新 context 下完成。当前 50 个有效候选覆盖
+  batch 32/64 的全部 6 个 batch/GOT cell、每个 cell 两个 seed、每个 seed 四个样本节点，
+  以及 `b8_g0`、seed `123456` 的 2560 和 5120 节点。
+- 唯一运行中 attempt 为
+  `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/screening/nodes/b8_g0/123456/7680/attempt0001`；
+  training、aerial、UAV123 已 succeeded，GOT-10K val 正在运行，`00:48:50` 前后日志已到
+  150/180。恢复 runner 的 `screening-recovery-v2-20261027-process-result.json` 尚未生成，
+  因此本记录不声明控制器完成、72/72、最优 batch/GOT 或 extension 冻结。
+- 本阶段没有访问 hidden、运行 `sot-v1.mp4`、切换 g5000、执行 ONNX/RKNN、开发板或
+  吊舱工作。下一步是在同一长生命周期 invocation 内继续监控至 72/72，再运行只读 verifier、
+  冻结最终 journal/结果身份并生成中文最终报告；若进程异常退出，后续 runner 必须省略
+  `--context-transition`，不得重复登记已有 transition。
 
 ## 2026-10-27 任务 6：context 过渡获批并受控恢复启动
 
