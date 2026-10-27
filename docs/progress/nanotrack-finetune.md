@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-26T14:11:05+08:00`。
-- 核对基线：`bb297504070b3dfcf2fd4b4da05ebb1503e309db`（四任务进度集成提交）。
+- 最近核对：`2026-10-27T20:00:40+08:00`。
+- 核对基线：`4aea962256d0ac9cb008ac829995315ce6fc09cb`（本轮恢复修复开始基线）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；任务 6 宿主机预检和 batch 8/32/64 各 50 步真实 CUDA 探测已完成并核验。schema-2 主矩阵已启动，当前在实际 GPU 基线验证阶段；主矩阵尚未完成，不能据探测选择最优 batch/GOT 或切换模型。
+- 状态说明：既有 g5000 可交付下游评估；任务 6 主矩阵断电前完成基线及 44/72 节点。首次恢复因映射顺序引发一 ULP 误差，错误失效一个已完成节点后保护停止；当前原始 journal 保留 43 个候选及 1 个失效记录。本轮仅修复确定性与持久化浮点复核，未恢复训练，不能据部分结果选择最优 batch/GOT 或切换模型。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -39,6 +39,7 @@
 
 ## Blockers
 
+- 任务 6 恢复仍受源码身份门阻塞：控制器和评分源码 SHA 属于 context，修复后不能直接消费旧 journal。须先独立复审本修复，再单独设计、审查显式 opt-in 且保留审计的 context 身份过渡；不得手改旧 journal、重标失效记录或直接重启训练。
 - 尚未在集成契约中批准 g5000 取代当前板端 NanoTrack 模型。
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
 - 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新控制器已接入 `T_v3`，目前只有伪端到端结果，不能宣称新实验已实际训练或产生性能提升。
@@ -48,6 +49,7 @@
 
 ## Next action
 
+0. 当前优先事项：独立复审本次恢复修复提交；随后由协调者另行设计并独立复审 context 过渡机制和历史误失效恢复策略。旧 attempt、保护停止记录及断电证据保持原状；本轮不执行 GPU 训练恢复。
 1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
@@ -56,6 +58,92 @@
    任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
    最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-10-27 任务 6 恢复修复：固定聚合顺序与有限浮点复核
+
+- 时间：`2026-10-27T20:00:40+08:00`；分支/工作树为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
+  开始 HEAD `4aea962256d0ac9cb008ac829995315ce6fc09cb`，tracked worktree 干净。
+  本提交包含生产修复、回归与本 owner 记录；结果提交在提交后回报，可用
+  `git log -1 --format=%H -- scripts/run_nanotrack_factorial.py` 查询。
+- 断电边界为基线及 44/72 个完整节点；`b64_g30 / seed 20261011 / 2560 /
+  attempt0001` 只有 12/40 条训练指标，没有有效 checkpoint/telemetry。首次恢复误失效
+  `b32_g0 / seed 123456 / 2560 / attempt0001`；保护停止的 attempt0002 只有 1 条
+  指标。当前 journal 为 43 个候选、1 个失效记录；没有删除或重标任何历史 attempt。
+- 原因经未改生产代码的只读重算复现：已完成 attempt 的 inventory 逐字节相同，metrics
+  精确相等，qualified/reasons 相同。只有 vehicle guardrail 的 baseline 从持久化
+  `0.7562493078245914` 变成重算 `0.7562493078245915`，drop 从
+  `0.016996178816342633` 变成 `0.016996178816342744`。`build_metrics` 先插入 aerial
+  再插入 UAV123，JSON sort_keys 改变域顺序，旧 category sum 依赖输入迭代顺序，
+  严格字典比较把一 ULP 舍入差误判为结果变更。
+- 最小修复：policy 遍历冻结 `AERIAL_DOMAINS`；保留必需域/类别校验。控制器仅对
+  persisted baseline metrics、candidate metrics/decision 使用递归等价比较，有限数值
+  使用 `math.isclose(rel_tol=1e-12, abs_tol=1e-12)`；字典键集合、列表顺序/长度和
+  非数值保持精确，bool 在 int 前处理，NaN/Inf 永不等价。路径、哈希、清单、源码
+  context、qualification bool 和原因文本仍精确校验；不重写历史浮点或决策。
+
+### 保留工件与日志身份
+
+以下路径相对工件根 `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/`，
+本轮全部只读；完整节点证据清单另见本次 SDD report。
+
+| 路径 | SHA-256 |
+| --- | --- |
+| `screening/candidate_table.json` | `3f388abb0a2032a7993ed4292f322e9423e08eca4b38adb39306d8c3851a662e` |
+| `task6/candidate_table-post-false-resume-20261027.json` | `3f388abb0a2032a7993ed4292f322e9423e08eca4b38adb39306d8c3851a662e` |
+| `task6/screening-resume-20261027-controller.log` | `9df2def8bb8792272f9ff5b735ed635cc36d3c2c9d5ffe7c30a3543b470ed497` |
+| `task6/screening-resume-20261027-supervisor.log` | `4927fae09a73262fd70f9773a3428e8f828bc1e094f03c693c87d50d3910bd9d` |
+| `task6-screening-resume-20261027.py` | `3eaee3b44e1ef25ad9b48e061252a66707e4c01f5b7f6465cf48b82b90e87181` |
+| `screening/nodes/b32_g0/123456/2560/attempt0001/training/candidate_factorial_g00005080_e000_s00080.pth` | `5f5eeeefa0b9c99169d36ee3988f331263ae32250232c06f5c1fb53ccf095e5d` |
+| `screening/nodes/b32_g0/123456/2560/attempt0001/training/segment-telemetry.json` | `9db52938d947724f251c6853724a1c4d32abc03ec4f96f2fa15036d00ff32593` |
+| `screening/nodes/b64_g30/20261011/2560/attempt0001/training/train_metrics.jsonl` | `1decb6e7c57b51a971f679c4d8c664c2c8f62038906b58873a8140a37d3078cf` |
+| `screening/nodes/b32_g0/123456/2560/attempt0002/training/train_metrics.jsonl` | `3a90e15f4cda918c489c4166884de46e9ba2276bdc5eb34d247bd232699d8b21` |
+
+### 实际测试与边界
+
+- 严格 TDD：先新增 6 个回归方法，生产未改时最终 RED 为 **6 tests / 32 failures /
+  0 errors / exit 1**（6.924 s；含 subtests）；最小修复后同命令 **6 tests / OK /
+  exit 0**（7.771 s）。初次 RED 的缺 baseline 断言曾产生 KeyError，已改为明确
+  assertIn 并重新观察无 error 的功能 RED，不把测试拼写/断言错误当功能证据。
+- 聚焦命令：`/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest
+  tests.test_nanotrack_factorial_policy.FactorialPolicyTest.test_domain_order_and_sorted_json_preserve_exact_score_and_decision
+  tests.test_nanotrack_factorial_controller.FactorialControllerTest.test_restart_reuses_complete_attempt_with_one_ulp_persisted_floats
+  tests.test_nanotrack_factorial_controller.FactorialControllerTest.test_persisted_semantic_changes_are_rejected_by_record_revalidation
+  tests.test_nanotrack_factorial_controller.PersistedEquivalenceTest -v`。
+  日志 `/tmp/nanotrack-task6-resume-fix-red-final.log` SHA
+  `4d9257ee4ae6f59296f9be401ba16995f2abe377ddda3c0c3a3a8c8be23feeb8`；GREEN 日志
+  `/tmp/nanotrack-task6-resume-fix-green.log` SHA
+  `dd1eacc15be5e17d13e30b26606e2a05309b87a83ac58e7433e83cec87667889`。
+- 相关历史套件：`TMPDIR=/dev/shm` 加同一解释器，`-B -m unittest
+  tests.test_nanotrack_factorial_policy tests.test_nanotrack_factorial_controller
+  tests.test_nanotrack_got_replay_controller tests.test_nanotrack_got_replay_reporting
+  tests.test_nanotrack_three_stage_runner tests.test_nanotrack_factorial_configs -v`，
+  六模块实测 **93 tests / OK / exit 0**（85.729 s）。最终日志
+  `/tmp/nanotrack-task6-resume-fix-historical-final.log` SHA
+  `8edf3f800df5a21c31c245970bc173ecc49fcd75faa4e5c153d01097e78273ed`。首次磁盘临时目录
+  运行因刷盘缓慢主动中断，保留 `/tmp/nanotrack-task6-resume-fix-historical.log`，不计为
+  完成证据；改为 `TMPDIR=/dev/shm` 运行相同断言，日志使用新路径。
+- 唯一完整 discover 命令：`TMPDIR=/dev/shm
+  /home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B -m unittest discover -s tests -v`，
+  **267 tests / failures=4 / errors=0 / exit 1**（94.335 s）。仍为历史
+  `test_nanotrack_three_stage_configs.FormalThreeStageConfigTest` 的
+  `test_formal_configs_match_quota_paths_and_training_contract` 中 stage1/stage2/stage3
+  三个 subtest，以及 `test_smoke_configs_are_bounded_and_keep_policy_representative_pools`。
+  四条均是主资产根与 linked worktree 的绝对路径比较，本轮未改对应配置/测试；完整套件
+  **不是全绿**。日志 `/tmp/nanotrack-task6-resume-fix-discover.log`，SHA
+  `41a35c313f24f7325b6ff094f5a2c7892395af00dc1834276dcceb643e333d0e`。
+- 提交前 `git diff --check` 通过，重新计算上述 journal/恢复日志/runner 哈希仍与表格
+  逐字节一致。生产 policy/controller SHA 分别为
+  `5a6c1d6e310510d234f38c6536004f93ae9402d623d432a33936498b08e5f410` /
+  `da27394102b157445b1896c6d82304bc0d8980fa045599751d5dea1347194c69`。
+- 以上仅为 CPU 回归、伪命令驱动的真实控制器与只读旧工件重算。本轮没有恢复训练、
+  新推理、hidden 内容、`sot-v1.mp4`、导出/转换、开发板或吊舱测试，没有性能结论。
+  `candidate_table.json`、全部 attempt、公共 STATUS/契约及其他 owner 文件均未修改。
+- 下一安全动作/Handoff：独立复审本修复后，由协调者另行设计和独立复审显式 opt-in、
+  保留审计的 context 过渡及历史误失效处理。本轮保留 exact source/context 身份门，
+  不引入过渡机制；Task 6 仍未完成，不因本修复允许直接恢复旧 journal。
+  完整实施报告：`.superpowers/sdd/2026-10-24-nanotrack-factorial-v3/task-6-resume-fix-report.md`。
 
 ## 2026-10-26 任务 6：schema-2 主矩阵已启动（运行中）
 

@@ -1,4 +1,6 @@
 import copy
+import itertools
+import json
 import unittest
 
 from scripts.run_nanotrack_got_replay import (
@@ -79,6 +81,28 @@ class FactorialPolicyTest(unittest.TestCase):
     def test_missing_categories_average_only_present_domains(self):
         # P=0.5, V=0.6, D=0.55, so T_v3=0.55.
         self.assertAlmostEqual(target_score_v3(sparse_metrics()), 0.55)
+
+    def test_domain_order_and_sorted_json_preserve_exact_score_and_decision(self):
+        candidate = metrics()
+        baseline = metrics()
+        for name, value in zip(DOMAINS, (0.1, 0.2, 0.3, 0.4)):
+            candidate["domains"][name].update(person_auc=value, vehicle_auc=value)
+            baseline["domains"][name].update(person_auc=value, vehicle_auc=value)
+        expected_score = target_score_v3(candidate)
+        expected_decision = guardrail_decision(candidate, baseline)
+        for order in itertools.permutations(DOMAINS):
+            reordered = copy.deepcopy(candidate)
+            reordered_baseline = copy.deepcopy(baseline)
+            for item in (reordered, reordered_baseline):
+                item["domains"] = {name: item["domains"][name] for name in order}
+            for roundtrip in (False, True):
+                with self.subTest(order=order, sorted_json=roundtrip):
+                    if roundtrip:
+                        reordered = json.loads(json.dumps(reordered, sort_keys=True))
+                        reordered_baseline = json.loads(json.dumps(reordered_baseline, sort_keys=True))
+                    self.assertEqual(target_score_v3(reordered), expected_score)
+                    self.assertEqual(guardrail_decision(reordered, reordered_baseline),
+                                     expected_decision)
 
     def test_frame_trajectory_and_manifest_counts_do_not_weight_score(self):
         candidate = sparse_metrics()

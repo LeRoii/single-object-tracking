@@ -58,6 +58,22 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def persisted_equivalent(left, right):
+    """Compare persisted metrics/decisions without tolerating semantic changes."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return (math.isfinite(left) and math.isfinite(right)
+                and math.isclose(left, right, rel_tol=1e-12, abs_tol=1e-12))
+    if isinstance(left, dict) and isinstance(right, dict):
+        return (left.keys() == right.keys()
+                and all(persisted_equivalent(left[key], right[key]) for key in left))
+    if isinstance(left, list) and isinstance(right, list):
+        return (len(left) == len(right)
+                and all(persisted_equivalent(a, b) for a, b in zip(left, right)))
+    return type(left) is type(right) and left == right
+
+
 def atomic_json(path, value):
     path = Path(path)
     content = (json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
@@ -359,7 +375,8 @@ def validate_record(record, cell, context, previous, baseline):
         if evidence["command"] != command or evidence["output"]["path"] != str(output):
             raise ValueError("evaluation command mismatch")
     metrics = combine(record["evaluations"], context["bound"]["config:" + record["cell"]], checkpoint)
-    if record["metrics"] != metrics or record["decision"] != guardrail_decision(metrics, baseline):
+    if (not persisted_equivalent(record["metrics"], metrics)
+            or not persisted_equivalent(record["decision"], guardrail_decision(metrics, baseline))):
         raise ValueError("persisted metrics or scoring decision mismatch")
     return checkpoint
 
@@ -430,7 +447,7 @@ def validate_baseline(state, manifest, context):
         if evidence["command"] != command or evidence["output"]["path"] != str(output):
             raise ValueError("baseline command mismatch")
     metrics = combine(baseline["evaluations"], config, context["bound"]["initial_checkpoint"])
-    if metrics != baseline["metrics"]:
+    if not persisted_equivalent(metrics, baseline["metrics"]):
         raise ValueError("baseline metrics mismatch")
     return metrics
 

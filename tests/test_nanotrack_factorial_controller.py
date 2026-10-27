@@ -200,6 +200,53 @@ class FactorialControllerTest(unittest.TestCase):
         first_train = next(c for c in retry.commands if "train_nanotrack" in c[1])
         self.assertEqual(first_train[first_train.index("--resume") + 1], checkpoint)
 
+    def test_restart_reuses_complete_attempt_with_one_ulp_persisted_floats(self):
+        state = self.partial_state()
+        self.assertEqual(state["schema_version"], 2)
+        record = state["candidates"][0]
+        # Adjacent binary64 values, representing legacy aggregation rounding.
+        state["baseline"]["metrics"]["person_macro"] = 0.5000000000000001
+        record["metrics"]["got_val_ao"] = 0.6000000000000001
+        record["decision"]["checks"]["vehicle_macro"]["candidate"] = 0.5100000000000001
+        write_json(self.output / "candidate_table.json", state)
+        retained = {str(p): (sha(p), p.stat().st_mtime_ns)
+                    for p in Path(record["destination"]).rglob("*") if p.is_file()}
+        retry = FakeGPU(fail_at=1)
+        with self.assertRaisesRegex(RuntimeError, "interruption"):
+            self.run_fake(retry)
+        resumed = json.loads((self.output / "candidate_table.json").read_text())
+        self.assertEqual(resumed["candidates"], [record])
+        self.assertEqual(resumed["invalidated"], [])
+        attempt = next(a for a in resumed["attempts"] if a["id"] == record["attempt_id"])
+        self.assertEqual(attempt["status"], "complete")
+        self.assertIn("baseline", resumed, "one-ULP baseline drift must not invalidate it")
+        self.assertEqual(resumed["baseline"], state["baseline"])
+        self.assertNotIn(str(Path(record["checkpoint"]).parent), retry.commands[0])
+        self.assertEqual(retained, {str(p): (sha(p), p.stat().st_mtime_ns)
+                                    for p in Path(record["destination"]).rglob("*") if p.is_file()})
+
+    def test_persisted_semantic_changes_are_rejected_by_record_revalidation(self):
+        from scripts.run_nanotrack_factorial import validate_record
+        state = self.partial_state()
+        manifest, context = load_context(self.manifest_path, self.inputs, "fake_cpu_fixture")
+        record = state["candidates"][0]
+        mutations = {
+            "qualification": lambda r: r["decision"].update(qualified=False),
+            "qualification_integer": lambda r: r["decision"].update(qualified=1),
+            "check_boolean_integer": lambda r: r["decision"]["checks"]["vehicle_macro"].update(passed=1),
+            "reason_text": lambda r: r["decision"]["reasons"].append("changed_reason"),
+            "missing_decision_key": lambda r: r["decision"].pop("target_score_v3"),
+            "missing_metric_key": lambda r: r["metrics"].pop("got_val_ao"),
+            "material_metric": lambda r: r["metrics"].update(got_val_ao=0.600001),
+            "material_decision": lambda r: r["decision"].update(target_score_v3=0.510001),
+        }
+        for name, mutate in mutations.items():
+            changed = copy.deepcopy(record)
+            mutate(changed)
+            with self.subTest(change=name), self.assertRaisesRegex(ValueError, "persisted metrics"):
+                validate_record(changed, manifest["cells"][record["cell"]], context,
+                                None, state["baseline"]["metrics"])
+
     def test_frozen_input_or_persisted_identity_drift_is_rejected_without_writes(self):
         self.partial_state()
         table = self.output / "candidate_table.json"
@@ -500,6 +547,41 @@ class FactorialControllerTest(unittest.TestCase):
         original.symlink_to(replacement)
         with self.assertRaisesRegex(ValueError, "type|symlink"):
             controller.check_recorded_inventory(execution)
+
+
+class PersistedEquivalenceTest(unittest.TestCase):
+    def equivalent(self, left, right):
+        from scripts import run_nanotrack_factorial as controller
+        self.assertTrue(hasattr(controller, "persisted_equivalent"),
+                        "persisted float equivalence is missing")
+        return controller.persisted_equivalent(left, right)
+
+    def test_nested_finite_numbers_allow_only_the_requested_tolerance(self):
+        for left, right in ((0.6, 0.6000000000000001), (0.0, 1e-12),
+                            (1000000.0, 1000000.0000005), (1, 1.0)):
+            with self.subTest(left=left, right=right):
+                self.assertTrue(self.equivalent({"v": [left]}, {"v": [right]}))
+        for left, right in ((0.0, 1.0001e-12), (0.6, 0.600001),
+                            (1000000.0, 1000000.000002)):
+            with self.subTest(left=left, right=right):
+                self.assertFalse(self.equivalent({"v": [left]}, {"v": [right]}))
+
+    def test_structure_reason_order_and_scalar_types_remain_exact(self):
+        for left, right in ((True, 1), (False, 0.0), (1, True),
+                            ("1", 1), (None, 0), (None, ""),
+                            ({"a": 1}, {"a": 1, "b": 2}),
+                            ([1], [1, 2]), (["a", "b"], ["b", "a"]),
+                            ([1], {"0": 1}), ("reason", "changed_reason")):
+            with self.subTest(left=left, right=right):
+                self.assertFalse(self.equivalent(left, right))
+        self.assertTrue(self.equivalent({"qualified": True, "reasons": [], "other": None},
+                                        {"other": None, "reasons": [], "qualified": True}))
+
+    def test_nonfinite_numbers_are_never_equivalent_even_to_themselves(self):
+        for value in (float("nan"), float("inf"), -float("inf")):
+            for other in (value, 0.5):
+                with self.subTest(value=value, other=other):
+                    self.assertFalse(self.equivalent({"v": [value]}, {"v": [other]}))
 
 
 class SampleLearningRateTest(unittest.TestCase):

@@ -31,7 +31,8 @@ def _summary(metrics: Mapping[str, object]) -> dict:
 
     categories = {"person": [], "vehicle": []}
     overalls = {}
-    for name, values in domains.items():
+    for name in AERIAL_DOMAINS:
+        values = domains[name]
         if not isinstance(values, Mapping):
             raise ValueError("domain {} metrics must be a mapping".format(name))
         overalls[name] = _finite(values.get("overall_auc"), "{}.overall_auc".format(name))
