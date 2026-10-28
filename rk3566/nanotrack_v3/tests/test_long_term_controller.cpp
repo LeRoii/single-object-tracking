@@ -54,6 +54,20 @@ nanotrack::TrackerObservation rejected_observation(
       token};
 }
 
+nanotrack::TrackerObservation weak_observation(
+    const nanotrack::SearchPlan& plan,
+    nanotrack::TemplateKind kind,
+    const nanotrack::BBox& bbox,
+    std::uint64_t token = 1) {
+  return nanotrack::TrackerObservation{
+      plan.frame_id,
+      plan.timestamp_ms,
+      bbox,
+      nanotrack::ResponseMetrics{0.60F, 0.58F, 6.0F, 5.0F, 0.05F},
+      kind,
+      token};
+}
+
 std::vector<nanotrack::TrackerObservation> reliable_pair(
     const nanotrack::SearchPlan& plan,
     const nanotrack::BBox& bbox,
@@ -682,6 +696,124 @@ int main() {
   expect_true(output.mode == TrackingMode::kLost && !output.control_valid &&
                   output.detector_candidates_queued == 0,
               "long detector-free loss remains bounded and invalid");
+
+  const auto feed_reliable_box = [](LongTermController& controller,
+                                    std::uint64_t frame_id,
+                                    const BBox& bbox) {
+    const SearchPlan reliable_plan =
+        controller.begin_frame(frame_id, frame_id * 40, false);
+    return controller.finish_frame(
+        reliable_plan,
+        {reliable_observation(reliable_plan, TemplateKind::kAnchor, bbox,
+                              frame_id)},
+        std::nullopt);
+  };
+  const auto feed_weak_box = [](LongTermController& controller,
+                                std::uint64_t frame_id,
+                                const BBox& bbox) {
+    const SearchPlan weak_plan =
+        controller.begin_frame(frame_id, frame_id * 40, false);
+    return controller.finish_frame(
+        weak_plan,
+        {weak_observation(weak_plan, TemplateKind::kAnchor, bbox, frame_id)},
+        std::nullopt);
+  };
+
+  ControllerConfig hold_config = config;
+  hold_config.uncertain_ms = 1000;
+  hold_config.local_recovery_ms = 2000;
+  hold_config.assisted_recovery_ms = 3000;
+
+  LongTermController incomplete_reference(hold_config);
+  incomplete_reference.initialize(BBox{60, 40, 20, 20}, 0, 0,
+                                  FrameSize{240, 160});
+  for (std::uint64_t frame = 1; frame <= 7; ++frame) {
+    expect_true(feed_reliable_box(incomplete_reference, frame,
+                                  BBox{60, 40, 20, 20})
+                    .accepted,
+                "reliable pre-occlusion sample is accepted");
+  }
+  feed_weak_box(incomplete_reference, 8, BBox{63, 43, 14, 14});
+  output = feed_weak_box(incomplete_reference, 9, BBox{63, 43, 14, 14});
+  expect_true(!output.occlusion_hold_triggered &&
+                  incomplete_reference.mode() != TrackingMode::kOcclusionHold,
+              "fewer than a full reliable reference window cannot trigger hold");
+
+  LongTermController median_boundary(hold_config);
+  median_boundary.initialize(BBox{70, 50, 20, 40}, 0, 0,
+                             FrameSize{300, 220});
+  const float reference_widths[] = {16, 18, 20, 22, 24, 26, 28, 30};
+  for (std::uint64_t index = 0; index < 8; ++index) {
+    const float width = reference_widths[index];
+    feed_reliable_box(median_boundary, index + 1,
+                      BBox{80.0F - 0.5F * width, 50, width, 40});
+  }
+  output = feed_weak_box(median_boundary, 9,
+                         BBox{71.95F, 56, 16.10F, 28.0F});
+  expect_true(!output.occlusion_hold_triggered,
+              "one unreliable frame cannot trigger hold");
+  output = feed_weak_box(median_boundary, 10,
+                         BBox{71.95F, 56, 16.10F, 28.0F});
+  expect_true(output.occlusion_hold_triggered &&
+                  output.mode == TrackingMode::kOcclusionHold &&
+                  output.occlusion_hold_remaining_frames == 12,
+              "second unreliable observation at the inclusive ratio boundary triggers hold");
+  expect_true(output.occlusion_reference_width.has_value() &&
+                  output.occlusion_reference_height.has_value(),
+              "trigger exposes the robust scale reference");
+  if (output.occlusion_reference_width && output.occlusion_reference_height) {
+    expect_near(*output.occlusion_reference_width, 23.0F, 1e-5F,
+                "even reliable window averages the two middle widths");
+    expect_near(*output.occlusion_reference_height, 40.0F, 1e-5F,
+                "even reliable window averages the two middle heights");
+  }
+  if (output.occlusion_width_ratio && output.occlusion_height_ratio) {
+    expect_near(*output.occlusion_width_ratio, 0.70F, 1e-5F,
+                "width shrink ratio is measured against the robust reference");
+    expect_near(*output.occlusion_height_ratio, 0.70F, 1e-5F,
+                "height shrink ratio is measured against the robust reference");
+  } else {
+    expect_true(false, "trigger exposes both observed shrink ratios");
+  }
+
+  LongTermController above_boundary(hold_config);
+  above_boundary.initialize(BBox{60, 40, 20, 20}, 0, 0,
+                            FrameSize{240, 160});
+  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
+    feed_reliable_box(above_boundary, frame, BBox{60, 40, 20, 20});
+  }
+  feed_weak_box(above_boundary, 9, BBox{62.999F, 42.999F, 14.002F, 14.002F});
+  output = feed_weak_box(above_boundary, 10,
+                         BBox{62.999F, 42.999F, 14.002F, 14.002F});
+  expect_true(!output.occlusion_hold_triggered &&
+                  above_boundary.mode() != TrackingMode::kOcclusionHold,
+              "a minimum dimension ratio of 0.7001 does not trigger hold");
+
+  LongTermController no_observation_counter(hold_config);
+  no_observation_counter.initialize(BBox{60, 40, 20, 20}, 0, 0,
+                                    FrameSize{240, 160});
+  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
+    feed_reliable_box(no_observation_counter, frame, BBox{60, 40, 20, 20});
+  }
+  output = reject_frame(no_observation_counter, 9, 360);
+  expect_true(!output.occlusion_hold_triggered,
+              "a no-observation frame cannot trigger hold by itself");
+  output = feed_weak_box(no_observation_counter, 10,
+                         BBox{63, 43, 14, 14});
+  expect_true(output.occlusion_hold_triggered,
+              "a no-observation frame still counts toward consecutive unreliability");
+
+  LongTermController fast_translation(hold_config);
+  fast_translation.initialize(BBox{60, 40, 20, 20}, 0, 0,
+                              FrameSize{240, 160});
+  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
+    feed_reliable_box(fast_translation, frame, BBox{60, 40, 20, 20});
+  }
+  feed_weak_box(fast_translation, 9, BBox{85, 40, 20, 20});
+  output = feed_weak_box(fast_translation, 10, BBox{85, 40, 20, 20});
+  expect_true(!output.occlusion_hold_triggered &&
+                  fast_translation.mode() != TrackingMode::kOcclusionHold,
+              "fast translation at stable scale does not trigger occlusion hold");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

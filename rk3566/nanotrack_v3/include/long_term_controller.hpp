@@ -131,6 +131,11 @@ class LongTermController {
     std::size_t position_rejected_count = 0;
   };
 
+  struct ScaleReference {
+    float width = 0.0F;
+    float height = 0.0F;
+  };
+
   TrackingMode mode_for_timestamp(std::int64_t timestamp_ms) const;
   float search_scale_for(TrackingMode mode, std::int64_t timestamp_ms) const;
   EvaluatedObservation evaluate(const TrackerObservation& observation,
@@ -144,6 +149,8 @@ class LongTermController {
   DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
+  std::optional<ScaleReference> occlusion_scale_reference() const;
+  void record_reliable_scale(const BBox& bbox);
 
   ControllerConfig config_;
   MotionEstimator motion_;
@@ -164,6 +171,11 @@ class LongTermController {
   std::int64_t last_recent_update_ms_ = 0;
   bool recent_probation_ = false;
   int probation_reliable_frames_ = 0;
+  std::deque<BBox> reliable_scale_history_;
+  int consecutive_unreliable_frames_ = 0;
+  std::size_t hold_remaining_frames_ = 0;
+  bool hold_used_for_loss_ = false;
+  std::optional<ScaleReference> frozen_scale_reference_;
   bool initialized_ = false;
   bool frame_open_ = false;
 };

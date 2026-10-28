@@ -126,6 +126,11 @@ void LongTermController::initialize(const BBox& initial_bbox,
   last_recent_update_ms_ = timestamp_ms;
   recent_probation_ = false;
   probation_reliable_frames_ = 0;
+  reliable_scale_history_.clear();
+  consecutive_unreliable_frames_ = 0;
+  hold_remaining_frames_ = 0;
+  hold_used_for_loss_ = false;
+  frozen_scale_reference_.reset();
   initialized_ = true;
   frame_open_ = false;
 }
@@ -156,6 +161,7 @@ float LongTermController::search_scale_for(TrackingMode mode,
     }
     case TrackingMode::kAssistedRecovery: return config_.search_assisted;
     case TrackingMode::kLost: return config_.search_lost;
+    case TrackingMode::kOcclusionHold: return config_.search_local_initial;
   }
   return config_.search_lost;
 }
@@ -172,8 +178,27 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     throw std::invalid_argument("frame timestamp must be strictly increasing");
   }
 
-  mode_ = mode_for_timestamp(timestamp_ms);
+  const TrackingMode timestamp_mode = mode_for_timestamp(timestamp_ms);
   const BBox motion_predicted = motion_.predict(timestamp_ms);
+  if (hold_remaining_frames_ > 0) {
+    mode_ = TrackingMode::kOcclusionHold;
+    SearchPlan plan;
+    plan.frame_id = frame_id;
+    plan.timestamp_ms = timestamp_ms;
+    plan.mode = mode_;
+    plan.motion_predicted_bbox = motion_predicted;
+    plan.predicted_bbox = motion_predicted;
+    plan.search_scale = search_scale_for(timestamp_mode, timestamp_ms);
+    plan.hypothesis_source = HypothesisSource::kMotion;
+    plan.detector_target_mode = config_.detector_target_mode;
+    plan.run_tracker = false;
+    plan.hold_remaining_frames = hold_remaining_frames_;
+    active_plan_ = plan;
+    frame_open_ = true;
+    return plan;
+  }
+
+  mode_ = timestamp_mode;
   BBox predicted = motion_predicted;
   HypothesisSource source = HypothesisSource::kMotion;
   const bool recovery_uses_detector =
@@ -238,6 +263,36 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   active_plan_ = plan;
   frame_open_ = true;
   return plan;
+}
+
+std::optional<LongTermController::ScaleReference>
+LongTermController::occlusion_scale_reference() const {
+  if (reliable_scale_history_.size() !=
+      static_cast<std::size_t>(config_.occlusion_reference_window)) {
+    return std::nullopt;
+  }
+  std::vector<float> widths;
+  std::vector<float> heights;
+  widths.reserve(reliable_scale_history_.size());
+  heights.reserve(reliable_scale_history_.size());
+  for (const BBox& bbox : reliable_scale_history_) {
+    widths.push_back(bbox.width);
+    heights.push_back(bbox.height);
+  }
+  std::sort(widths.begin(), widths.end());
+  std::sort(heights.begin(), heights.end());
+  const std::size_t upper = widths.size() / 2;
+  const std::size_t lower = (widths.size() - 1) / 2;
+  return ScaleReference{0.5F * (widths[lower] + widths[upper]),
+                        0.5F * (heights[lower] + heights[upper])};
+}
+
+void LongTermController::record_reliable_scale(const BBox& bbox) {
+  reliable_scale_history_.push_back(bbox);
+  while (reliable_scale_history_.size() >
+         static_cast<std::size_t>(config_.occlusion_reference_window)) {
+    reliable_scale_history_.pop_front();
+  }
 }
 
 LongTermController::EvaluatedObservation LongTermController::evaluate(
@@ -466,6 +521,24 @@ ControllerOutput LongTermController::finish_frame(
       plan.detector_same_class_ambiguous;
   output.detector_candidate_locked = plan.detector_candidate_locked;
   output.detector_probe_index = plan.detector_probe_index;
+
+  if (plan.mode == TrackingMode::kOcclusionHold) {
+    output.quality = QualityLevel::kRejected;
+    output.control_valid = false;
+    output.accepted = false;
+    output.occlusion_hold_remaining_frames = plan.hold_remaining_frames;
+    if (frozen_scale_reference_) {
+      output.occlusion_reference_width = frozen_scale_reference_->width;
+      output.occlusion_reference_height = frozen_scale_reference_->height;
+    }
+    if (hold_remaining_frames_ > 0) --hold_remaining_frames_;
+    mode_ = hold_remaining_frames_ > 0 ? TrackingMode::kOcclusionHold
+                                      : mode_for_timestamp(plan.timestamp_ms);
+    last_frame_id_ = plan.frame_id;
+    last_timestamp_ms_ = plan.timestamp_ms;
+    return output;
+  }
+
   const DetectorIngestResult ingest_result =
       ingest_detector_batch(plan, detector_batch);
   output.detector_status = ingest_result.status;
@@ -526,6 +599,18 @@ ControllerOutput LongTermController::finish_frame(
 
   bool accepted = false;
   bool reacquired = false;
+  const std::optional<ScaleReference> scale_reference =
+      occlusion_scale_reference();
+  if (scale_reference) {
+    output.occlusion_reference_width = scale_reference->width;
+    output.occlusion_reference_height = scale_reference->height;
+    if (selected) {
+      output.occlusion_width_ratio =
+          selected->observation.bbox.width / scale_reference->width;
+      output.occlusion_height_ratio =
+          selected->observation.bbox.height / scale_reference->height;
+    }
+  }
   if (selected) {
     output.quality = selected->quality;
     output.selected_template = selected->observation.template_kind;
@@ -614,13 +699,54 @@ ControllerOutput LongTermController::finish_frame(
     mode_ = TrackingMode::kTracking;
     output.mode = mode_;
     ++stable_frames_;
+    consecutive_unreliable_frames_ = 0;
+    if (reacquired) {
+      hold_used_for_loss_ = false;
+      hold_remaining_frames_ = 0;
+      frozen_scale_reference_.reset();
+      reliable_scale_history_.clear();
+    }
+    record_reliable_scale(output.bbox);
   } else {
+    ++consecutive_unreliable_frames_;
     if (!loss_start_ms_) loss_start_ms_ = plan.timestamp_ms;
     mode_ = mode_for_timestamp(plan.timestamp_ms);
     output.mode = mode_;
     output.control_valid = false;
     output.accepted = false;
     stable_frames_ = 0;
+  }
+
+  const bool hold_source_mode =
+      plan.mode == TrackingMode::kTracking ||
+      plan.mode == TrackingMode::kUncertain ||
+      plan.mode == TrackingMode::kLocalRecovery;
+  const bool selected_non_reliable =
+      selected && (selected->quality == QualityLevel::kWeak ||
+                   selected->quality == QualityLevel::kRejected);
+  const bool detector_verification_active =
+      plan.hypothesis_source == HypothesisSource::kDetector ||
+      active_detector_candidate_.has_value();
+  if (!accepted && hold_source_mode && !detector_verification_active &&
+      !hold_used_for_loss_ && scale_reference && selected_non_reliable &&
+      consecutive_unreliable_frames_ >=
+          config_.occlusion_trigger_consecutive_unreliable &&
+      output.occlusion_width_ratio && output.occlusion_height_ratio &&
+      std::min(*output.occlusion_width_ratio, *output.occlusion_height_ratio) <=
+          config_.occlusion_trigger_min_dimension_ratio) {
+    motion_.freeze_scale(scale_reference->width, scale_reference->height);
+    frozen_scale_reference_ = scale_reference;
+    hold_remaining_frames_ =
+        static_cast<std::size_t>(config_.occlusion_hold_frames);
+    hold_used_for_loss_ = true;
+    confirmations_.clear();
+    detector_candidates_.clear();
+    active_detector_candidate_.reset();
+    output.occlusion_hold_triggered = true;
+    output.occlusion_hold_remaining_frames = hold_remaining_frames_;
+    output.bbox = motion_.current_bbox();
+    mode_ = TrackingMode::kOcclusionHold;
+    output.mode = mode_;
   }
 
   if (!accepted && discard_active_detector) {
