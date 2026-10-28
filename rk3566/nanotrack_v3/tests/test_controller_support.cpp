@@ -346,6 +346,66 @@ int main() {
   expect_true(fractional_edges_are_valid,
               "floating-point edge projection remains strictly inside frame");
 
+  MotionEstimator frozen_scale(motion_config);
+  frozen_scale.initialize(BBox{100.0F, 100.0F, 80.0F, 60.0F}, 0, 500, 400);
+  frozen_scale.predict(100);
+  frozen_scale.correct(BBox{120.0F, 115.0F, 60.0F, 40.0F}, 100);
+  frozen_scale.freeze_scale(40.0F, 30.0F);
+  expect_true(frozen_scale.scale_frozen(),
+              "explicit scale freeze reports active state");
+  const BBox first_frozen_prediction = frozen_scale.predict(200);
+  expect_near(first_frozen_prediction.x + 0.5F * first_frozen_prediction.width,
+              155.0F, 1e-5F,
+              "scale freeze preserves learned horizontal center velocity");
+  expect_near(first_frozen_prediction.y + 0.5F * first_frozen_prediction.height,
+              137.5F, 1e-5F,
+              "scale freeze preserves learned vertical center velocity");
+  expect_near(first_frozen_prediction.width, 40.0F, 1e-6F,
+              "first frozen prediction retains requested width");
+  expect_near(first_frozen_prediction.height, 30.0F, 1e-6F,
+              "first frozen prediction retains requested height");
+  frozen_scale.correct(BBox{145.0F, 130.0F, 20.0F, 10.0F}, 200);
+  const BBox second_frozen_prediction = frozen_scale.predict(300);
+  expect_true(second_frozen_prediction.x +
+                      0.5F * second_frozen_prediction.width >
+                  first_frozen_prediction.x +
+                      0.5F * first_frozen_prediction.width,
+              "frozen scale does not stop corrected center motion");
+  expect_near(second_frozen_prediction.width, 40.0F, 1e-6F,
+              "correction cannot reintroduce frozen width motion");
+  expect_near(second_frozen_prediction.height, 30.0F, 1e-6F,
+              "correction cannot reintroduce frozen height motion");
+
+  MotionEstimator frozen_boundary(motion_config);
+  frozen_boundary.initialize(BBox{90.0F, 70.0F, 10.0F, 10.0F}, 0, 100, 80);
+  frozen_boundary.freeze_scale(40.0F, 30.0F);
+  const BBox frozen_boundary_prediction = frozen_boundary.predict(100);
+  validate_bbox(frozen_boundary_prediction, 100, 80);
+  expect_near(frozen_boundary_prediction.x, 60.0F, 1e-6F,
+              "frozen scale clamps horizontal center to frame");
+  expect_near(frozen_boundary_prediction.y, 50.0F, 1e-6F,
+              "frozen scale clamps vertical center to frame");
+  frozen_boundary.initialize(BBox{10.0F, 10.0F, 20.0F, 20.0F}, 200, 100, 80);
+  expect_true(!frozen_boundary.scale_frozen(),
+              "initialization clears scale freeze state");
+
+  MotionEstimator invalid_freeze(motion_config);
+  invalid_freeze.initialize(BBox{10.0F, 10.0F, 20.0F, 20.0F}, 0, 100, 80);
+  for (float invalid_width : {0.0F, -1.0F,
+                              std::numeric_limits<float>::quiet_NaN(),
+                              std::numeric_limits<float>::infinity()}) {
+    expect_throws([&] { invalid_freeze.freeze_scale(invalid_width, 20.0F); },
+                  "scale freeze rejects invalid width");
+  }
+  for (float invalid_height : {0.0F, -1.0F,
+                               std::numeric_limits<float>::quiet_NaN(),
+                               std::numeric_limits<float>::infinity()}) {
+    expect_throws([&] { invalid_freeze.freeze_scale(20.0F, invalid_height); },
+                  "scale freeze rejects invalid height");
+  }
+  expect_true(!invalid_freeze.scale_frozen(),
+              "rejected dimensions do not activate scale freeze");
+
   NullDetectorAdapter detector;
   expect_true(!detector.available(), "null detector reports unavailable");
   expect_true(!detector.can_submit(),

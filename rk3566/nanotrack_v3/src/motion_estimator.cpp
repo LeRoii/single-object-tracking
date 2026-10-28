@@ -23,6 +23,7 @@ void MotionEstimator::initialize(const BBox& bbox,
   last_dt_seconds_ = 0.0F;
   initialized_ = true;
   correction_allowed_ = false;
+  scale_frozen_ = false;
 }
 
 BBox MotionEstimator::predict(std::int64_t timestamp_ms) {
@@ -35,8 +36,10 @@ BBox MotionEstimator::predict(std::int64_t timestamp_ms) {
   last_dt_seconds_ = static_cast<float>(capped_ms) / 1000.0F;
   center_x_ += velocity_x_ * last_dt_seconds_;
   center_y_ += velocity_y_ * last_dt_seconds_;
-  width_ = std::max(1.0F, width_ + velocity_width_ * last_dt_seconds_);
-  height_ = std::max(1.0F, height_ + velocity_height_ * last_dt_seconds_);
+  if (!scale_frozen_) {
+    width_ = std::max(1.0F, width_ + velocity_width_ * last_dt_seconds_);
+    height_ = std::max(1.0F, height_ + velocity_height_ * last_dt_seconds_);
+  }
   clamp_state_to_frame();
   last_timestamp_ms_ = timestamp_ms;
   correction_allowed_ = true;
@@ -59,17 +62,42 @@ void MotionEstimator::correct(const BBox& observation, std::int64_t timestamp_ms
   const float residual_height = observation.height - height_;
   center_x_ += config_.motion_alpha * residual_x;
   center_y_ += config_.motion_alpha * residual_y;
-  width_ = std::max(1.0F, width_ + config_.motion_alpha * residual_width);
-  height_ = std::max(1.0F, height_ + config_.motion_alpha * residual_height);
+  if (!scale_frozen_) {
+    width_ = std::max(1.0F, width_ + config_.motion_alpha * residual_width);
+    height_ = std::max(1.0F, height_ + config_.motion_alpha * residual_height);
+  }
   if (last_dt_seconds_ > 0.0F) {
     const float gain = config_.motion_beta / last_dt_seconds_;
     velocity_x_ += gain * residual_x;
     velocity_y_ += gain * residual_y;
-    velocity_width_ += gain * residual_width;
-    velocity_height_ += gain * residual_height;
+    if (!scale_frozen_) {
+      velocity_width_ += gain * residual_width;
+      velocity_height_ += gain * residual_height;
+    }
+  }
+  if (scale_frozen_) {
+    velocity_width_ = 0.0F;
+    velocity_height_ = 0.0F;
   }
   clamp_state_to_frame();
   correction_allowed_ = false;
+}
+
+void MotionEstimator::freeze_scale(float width, float height) {
+  if (!initialized_) {
+    throw std::logic_error("motion estimator is not initialized");
+  }
+  if (!std::isfinite(width) || !std::isfinite(height) || width <= 0.0F ||
+      height <= 0.0F) {
+    throw std::invalid_argument(
+        "frozen motion scale dimensions must be finite and positive");
+  }
+  width_ = width;
+  height_ = height;
+  velocity_width_ = 0.0F;
+  velocity_height_ = 0.0F;
+  scale_frozen_ = true;
+  clamp_state_to_frame();
 }
 
 BBox MotionEstimator::state_to_bbox() const {
