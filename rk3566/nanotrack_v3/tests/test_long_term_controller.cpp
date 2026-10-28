@@ -78,6 +78,77 @@ nanotrack::ControllerOutput reject_frame(nanotrack::LongTermController& controll
 int main() {
   using namespace nanotrack;
 
+  expect_true(std::string(to_string(TrackingMode::kOcclusionHold)) ==
+                  "OCCLUSION_HOLD",
+              "occlusion hold has a stable external mode name");
+  SearchPlan hold_plan;
+  hold_plan.mode = TrackingMode::kOcclusionHold;
+  hold_plan.run_tracker = false;
+  hold_plan.hold_remaining_frames = 11;
+  const SearchPlan copied_hold_plan = hold_plan;
+  expect_true(copied_hold_plan.mode == TrackingMode::kOcclusionHold &&
+                  !copied_hold_plan.run_tracker &&
+                  copied_hold_plan.hold_remaining_frames == 11,
+              "search plan carries the explicit hold execution contract");
+
+  ControllerOutput hold_output;
+  expect_true(!hold_output.occlusion_hold_triggered &&
+                  hold_output.occlusion_hold_remaining_frames == 0 &&
+                  !hold_output.occlusion_reference_width &&
+                  !hold_output.occlusion_reference_height &&
+                  !hold_output.occlusion_width_ratio &&
+                  !hold_output.occlusion_height_ratio,
+              "unset hold diagnostics remain distinguishable from zero ratios");
+  hold_output.occlusion_hold_triggered = true;
+  hold_output.occlusion_hold_remaining_frames = 12;
+  hold_output.occlusion_reference_width = 20.0F;
+  hold_output.occlusion_reference_height = 30.0F;
+  hold_output.occlusion_width_ratio = 0.65F;
+  hold_output.occlusion_height_ratio = 0.90F;
+  const ControllerOutput copied_hold_output = hold_output;
+  expect_true(copied_hold_output.occlusion_hold_triggered &&
+                  copied_hold_output.occlusion_hold_remaining_frames == 12 &&
+                  copied_hold_output.occlusion_reference_width == 20.0F &&
+                  copied_hold_output.occlusion_reference_height == 30.0F &&
+                  copied_hold_output.occlusion_width_ratio == 0.65F &&
+                  copied_hold_output.occlusion_height_ratio == 0.90F,
+              "controller output preserves explicit hold diagnostic values");
+
+  DetectorCandidateDiagnostic diagnostic;
+  expect_true(!diagnostic.center_ratio && !diagnostic.candidate_id &&
+                  !diagnostic.batch_eligible && !diagnostic.position_gate_pass &&
+                  !diagnostic.queued && !diagnostic.drawable &&
+                  diagnostic.rejection == DetectorCandidateRejection::kNone,
+              "candidate diagnostics default to unevaluated and unqueued");
+  diagnostic.candidate = DetectorCandidate{BBox{1, 2, 3, 4}, 0.85F, 7};
+  diagnostic.center_ratio = 0.12F;
+  diagnostic.candidate_id = 42;
+  diagnostic.batch_eligible = true;
+  diagnostic.position_gate_pass = true;
+  diagnostic.queued = true;
+  diagnostic.drawable = true;
+  for (DetectorCandidateRejection rejection : {
+           DetectorCandidateRejection::kNone,
+           DetectorCandidateRejection::kInvalid,
+           DetectorCandidateRejection::kFrameMismatch,
+           DetectorCandidateRejection::kStale,
+           DetectorCandidateRejection::kHoldInvalidated,
+           DetectorCandidateRejection::kPositionRejected,
+           DetectorCandidateRejection::kCapacityRejected}) {
+    diagnostic.rejection = rejection;
+    const DetectorCandidateDiagnostic copied = diagnostic;
+    expect_true(copied.candidate.bbox.x == 1.0F &&
+                    copied.candidate.bbox.y == 2.0F &&
+                    copied.candidate.bbox.width == 3.0F &&
+                    copied.candidate.bbox.height == 4.0F &&
+                    copied.candidate.confidence == 0.85F &&
+                    copied.candidate.class_id == 7 &&
+                    copied.center_ratio == 0.12F && copied.candidate_id == 42 &&
+                    copied.batch_eligible && copied.position_gate_pass &&
+                    copied.queued && copied.drawable && copied.rejection == rejection,
+                "candidate diagnostics retain payload, flags, and rejection reason");
+  }
+
   ControllerConfig config;
   LongTermController boundaries(config);
   boundaries.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120});

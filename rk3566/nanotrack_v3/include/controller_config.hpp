@@ -28,6 +28,10 @@ struct ControllerConfig {
   std::int64_t uncertain_ms = 200;
   std::int64_t local_recovery_ms = 1000;
   std::int64_t assisted_recovery_ms = 3000;
+  int occlusion_hold_frames = 12;
+  int occlusion_trigger_consecutive_unreliable = 2;
+  float occlusion_trigger_min_dimension_ratio = 0.70F;
+  int occlusion_reference_window = 8;
   std::int64_t detector_interval_ms = 500;
   std::int64_t detector_stale_ms = 150;
   std::size_t detector_max_candidates = 3;

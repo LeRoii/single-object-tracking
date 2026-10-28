@@ -78,6 +78,10 @@ void set_value(ControllerConfig& config,
   else if (key == "uncertain_ms") config.uncertain_ms = parse_integer(key, value);
   else if (key == "local_recovery_ms") config.local_recovery_ms = parse_integer(key, value);
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
+  else if (key == "occlusion_hold_frames") config.occlusion_hold_frames = parse_int(key, value);
+  else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
+  else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
+  else if (key == "occlusion_reference_window") config.occlusion_reference_window = parse_int(key, value);
   else if (key == "detector_interval_ms") config.detector_interval_ms = parse_integer(key, value);
   else if (key == "detector_stale_ms") config.detector_stale_ms = parse_integer(key, value);
   else if (key == "detector_max_candidates") config.detector_max_candidates = static_cast<std::size_t>(parse_integer(key, value));
@@ -161,6 +165,18 @@ void validate_controller_config(const ControllerConfig& config) {
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
     throw std::invalid_argument("detector limits are invalid");
+  }
+  if (config.occlusion_hold_frames < 1 || config.occlusion_hold_frames > 300 ||
+      config.occlusion_trigger_consecutive_unreliable < 1 ||
+      config.occlusion_trigger_consecutive_unreliable > 10 ||
+      config.occlusion_reference_window < 3 ||
+      config.occlusion_reference_window > 60) {
+    throw std::invalid_argument("occlusion hold counts are invalid");
+  }
+  if (!std::isfinite(config.occlusion_trigger_min_dimension_ratio) ||
+      config.occlusion_trigger_min_dimension_ratio <= 0.0F ||
+      config.occlusion_trigger_min_dimension_ratio > 1.0F) {
+    throw std::invalid_argument("occlusion dimension ratio must be in (0,1]");
   }
   if (!std::isfinite(config.detector_search_scale) ||
       config.detector_search_scale < 1.0F ||

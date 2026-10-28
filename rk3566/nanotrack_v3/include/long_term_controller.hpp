@@ -32,6 +32,8 @@ struct SearchPlan {
   std::size_t detector_probe_index = 0;
   bool request_detector = false;
   std::optional<DetectorRequest> detector_request;
+  bool run_tracker = true;
+  std::size_t hold_remaining_frames = 0;
 };
 
 struct ControllerOutput {
@@ -63,6 +65,12 @@ struct ControllerOutput {
   std::size_t detector_probe_index = 0;
   std::size_t detector_confirmation_attempts = 0;
   std::size_t detector_confirmation_hits = 0;
+  bool occlusion_hold_triggered = false;
+  std::size_t occlusion_hold_remaining_frames = 0;
+  std::optional<float> occlusion_reference_width;
+  std::optional<float> occlusion_reference_height;
+  std::optional<float> occlusion_width_ratio;
+  std::optional<float> occlusion_height_ratio;
 };
 
 class LongTermController {

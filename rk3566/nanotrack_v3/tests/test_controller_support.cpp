@@ -5,6 +5,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -41,12 +42,26 @@ void write_file(const std::string& path, const std::string& contents) {
   stream << contents;
 }
 
+void expect_occlusion_defaults(const nanotrack::ControllerConfig& config,
+                               const std::string& context) {
+  expect_true(config.occlusion_hold_frames == 12,
+              context + " defaults to twelve hold frames");
+  expect_true(config.occlusion_trigger_consecutive_unreliable == 2,
+              context + " defaults to two consecutive unreliable frames");
+  expect_near(config.occlusion_trigger_min_dimension_ratio, 0.70F, 1e-6F,
+              context + " defaults to a 0.70 dimension ratio");
+  expect_true(config.occlusion_reference_window == 8,
+              context + " defaults to eight reference observations");
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
 
   const ControllerConfig default_visible = default_controller_config("visible");
+  expect_occlusion_defaults(ControllerConfig{}, "structure");
+  expect_occlusion_defaults(default_visible, "visible defaults");
   expect_true(default_visible.detector_target_mode ==
                   DetectorTargetMode::kFullObject,
               "whole-object detector hypotheses remain the default");
@@ -59,6 +74,7 @@ int main() {
               "visible default strictly limits detector center jumps");
   const ControllerConfig default_infrared =
       default_controller_config("infrared");
+  expect_occlusion_defaults(default_infrared, "infrared defaults");
   expect_near(default_infrared.reliable_psr, 8.0F, 1e-6F,
               "visible evidence does not alter infrared PSR default");
   expect_near(default_infrared.reliable_peak_margin, 0.10F, 1e-6F,
@@ -71,6 +87,12 @@ int main() {
   const std::string source_dir = source_file.substr(
       0, source_file.find_last_of("/\\"));
   const std::string config_dir = source_dir + "/../config/";
+  expect_occlusion_defaults(
+      load_controller_config(config_dir + "visible-default.conf"),
+      "shipped visible configuration");
+  expect_occlusion_defaults(
+      load_controller_config(config_dir + "infrared-default.conf"),
+      "shipped infrared configuration");
   expect_near(load_controller_config(config_dir + "visible-default.conf")
                   .detector_candidate_max_center_ratio,
               0.15F, 1e-6F,
@@ -102,6 +124,7 @@ int main() {
              "motion_beta=0.5\n"
              "motion_max_dt_ms=200\n");
   const ControllerConfig visible = load_controller_config(visible_path);
+  expect_occlusion_defaults(visible, "legacy configuration with missing keys");
   expect_true(visible.sensor == "visible" && !visible.calibrated,
               "visible config identity and calibration marker");
   expect_true(visible.detector_target_mode == DetectorTargetMode::kSubtarget,
@@ -187,6 +210,76 @@ int main() {
   unsafe_confirmation.confirmation_required = 1;
   expect_throws([&] { validate_controller_config(unsafe_confirmation); },
                 "recovery confirmation policy must remain two of three");
+
+  const std::string occlusion_path = "/tmp/nanotrack_occlusion_test.conf";
+  write_file(occlusion_path,
+             "occlusion_hold_frames=24\n"
+             "occlusion_trigger_consecutive_unreliable=4\n"
+             "occlusion_trigger_min_dimension_ratio=0.55\n"
+             "occlusion_reference_window=16\n");
+  const ControllerConfig occlusion = load_controller_config(occlusion_path);
+  expect_true(occlusion.occlusion_hold_frames == 24 &&
+                  occlusion.occlusion_trigger_consecutive_unreliable == 4 &&
+                  occlusion.occlusion_reference_window == 16,
+              "occlusion count overrides parse independently");
+  expect_near(occlusion.occlusion_trigger_min_dimension_ratio, 0.55F, 1e-6F,
+              "occlusion dimension ratio override parses");
+
+  struct CountLimit {
+    const char* key;
+    int ControllerConfig::*field;
+    int minimum;
+    int maximum;
+  };
+  const CountLimit occlusion_counts[] = {
+      {"occlusion_hold_frames", &ControllerConfig::occlusion_hold_frames, 1, 300},
+      {"occlusion_trigger_consecutive_unreliable",
+       &ControllerConfig::occlusion_trigger_consecutive_unreliable, 1, 10},
+      {"occlusion_reference_window", &ControllerConfig::occlusion_reference_window,
+       3, 60},
+  };
+  for (const CountLimit& limit : occlusion_counts) {
+    for (int value : {limit.minimum, limit.maximum}) {
+      write_file(occlusion_path,
+                 std::string(limit.key) + "=" + std::to_string(value) + "\n");
+      expect_true(load_controller_config(occlusion_path).*(limit.field) == value,
+                  std::string(limit.key) + " accepts both inclusive limits");
+    }
+    for (int value : {limit.minimum - 1, limit.maximum + 1}) {
+      ControllerConfig invalid = default_visible;
+      invalid.*(limit.field) = value;
+      expect_throws([&] { validate_controller_config(invalid); },
+                    std::string(limit.key) + " rejects values outside limits");
+      write_file(occlusion_path,
+                 std::string(limit.key) + "=" + std::to_string(value) + "\n");
+      expect_throws([&] { load_controller_config(occlusion_path); },
+                    std::string(limit.key) + " rejects invalid file values");
+    }
+    for (const std::string& value : {"1.5", "2147483648"}) {
+      write_file(occlusion_path, std::string(limit.key) + "=" + value + "\n");
+      expect_throws([&] { load_controller_config(occlusion_path); },
+                    std::string(limit.key) + " requires an in-range integer");
+    }
+  }
+  for (float ratio : {0.01F, 1.0F}) {
+    write_file(occlusion_path, "occlusion_trigger_min_dimension_ratio=" +
+                                   std::to_string(ratio) + "\n");
+    expect_near(load_controller_config(occlusion_path)
+                    .occlusion_trigger_min_dimension_ratio,
+                ratio, 1e-6F, "occlusion ratio accepts (0,1] values");
+  }
+  for (float ratio : {-0.01F, 0.0F, 1.01F,
+                      std::numeric_limits<float>::quiet_NaN(),
+                      std::numeric_limits<float>::infinity()}) {
+    ControllerConfig invalid = default_visible;
+    invalid.occlusion_trigger_min_dimension_ratio = ratio;
+    expect_throws([&] { validate_controller_config(invalid); },
+                  "occlusion ratio rejects out-of-range or non-finite values");
+    write_file(occlusion_path, "occlusion_trigger_min_dimension_ratio=" +
+                                   std::to_string(ratio) + "\n");
+    expect_throws([&] { load_controller_config(occlusion_path); },
+                  "occlusion ratio rejects invalid file values");
+  }
 
   ControllerConfig motion_config;
   motion_config.motion_alpha = 1.0F;

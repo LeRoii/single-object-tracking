@@ -9,6 +9,7 @@ const char* to_string(TrackingMode value) {
     case TrackingMode::kLocalRecovery: return "LOCAL_RECOVERY";
     case TrackingMode::kAssistedRecovery: return "ASSISTED_RECOVERY";
     case TrackingMode::kLost: return "LOST";
+    case TrackingMode::kOcclusionHold: return "OCCLUSION_HOLD";
   }
   return "UNKNOWN";
 }

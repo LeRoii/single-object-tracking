@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@ enum class TrackingMode {
   kLocalRecovery,
   kAssistedRecovery,
   kLost,
+  kOcclusionHold,
 };
 
 enum class QualityLevel { kReliable, kWeak, kRejected };
@@ -57,6 +59,22 @@ struct DetectorCandidate {
   BBox bbox{};
   float confidence = 0.0F;
   int class_id = -1;
+};
+
+enum class DetectorCandidateRejection {
+  kNone, kInvalid, kFrameMismatch, kStale, kHoldInvalidated,
+  kPositionRejected, kCapacityRejected
+};
+
+struct DetectorCandidateDiagnostic {
+  DetectorCandidate candidate{};
+  std::optional<float> center_ratio;
+  std::optional<std::uint64_t> candidate_id;
+  bool batch_eligible = false;
+  bool position_gate_pass = false;
+  bool queued = false;
+  bool drawable = false;
+  DetectorCandidateRejection rejection = DetectorCandidateRejection::kNone;
 };
 
 struct DetectorRequest {
