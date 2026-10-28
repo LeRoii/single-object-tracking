@@ -109,6 +109,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
     throw std::invalid_argument("controller frame size must be positive");
   }
   validate_bbox(initial_bbox, frame_size.width, frame_size.height);
+  if (initialized_) ++detector_eligibility_generation_;
   frame_size_ = frame_size;
   current_bbox_ = initial_bbox;
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
@@ -256,7 +257,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
         timestamp_ms,
         BBox{0.0F, 0.0F, static_cast<float>(frame_size_.width),
              static_cast<float>(frame_size_.height)},
-        std::numeric_limits<std::size_t>::max()};
+        std::numeric_limits<std::size_t>::max(),
+        detector_eligibility_generation_};
     last_detector_request_ms_ = timestamp_ms;
     last_detector_request_frame_ = frame_id;
   }
@@ -426,33 +428,65 @@ LongTermController::ingest_detector_batch(
     const std::optional<DetectorBatch>& batch) {
   DetectorIngestResult result;
   if (!batch) return result;
+
+  result.diagnostics.reserve(batch->candidates.size());
+  for (const DetectorCandidate& candidate : batch->candidates) {
+    DetectorCandidateDiagnostic diagnostic;
+    diagnostic.candidate = candidate;
+    diagnostic.drawable = valid_candidate(candidate, frame_size_);
+    if (!diagnostic.drawable) {
+      diagnostic.rejection = DetectorCandidateRejection::kInvalid;
+    }
+    result.diagnostics.push_back(diagnostic);
+  }
+
+  const auto reject_eligible_candidates =
+      [&](DetectorCandidateRejection rejection) {
+        for (DetectorCandidateDiagnostic& diagnostic : result.diagnostics) {
+          if (diagnostic.drawable) diagnostic.rejection = rejection;
+        }
+      };
+
+  if (batch->generation != detector_eligibility_generation_) {
+    reject_eligible_candidates(DetectorCandidateRejection::kHoldInvalidated);
+    result.status = DetectorBatchStatus::kInvalid;
+    return result;
+  }
   if (!last_detector_request_frame_ || !last_detector_request_ms_ ||
       batch->source_frame_id != *last_detector_request_frame_ ||
       batch->source_timestamp_ms != *last_detector_request_ms_) {
+    reject_eligible_candidates(DetectorCandidateRejection::kFrameMismatch);
     result.status = DetectorBatchStatus::kFrameMismatch;
     return result;
   }
   const std::int64_t age = plan.timestamp_ms - batch->source_timestamp_ms;
   if (age < 0 || age > config_.detector_stale_ms) {
+    reject_eligible_candidates(DetectorCandidateRejection::kStale);
     result.status = DetectorBatchStatus::kStale;
     return result;
   }
   struct PositionedCandidate {
-    DetectorCandidate candidate{};
+    std::size_t diagnostic_index = 0;
     float center_ratio = 0.0F;
   };
   std::vector<PositionedCandidate> positioned;
   std::size_t geometry_valid_count = 0;
   positioned.reserve(batch->candidates.size());
-  for (const DetectorCandidate& candidate : batch->candidates) {
-    if (!valid_candidate(candidate, frame_size_)) continue;
+  for (std::size_t index = 0; index < batch->candidates.size(); ++index) {
+    const DetectorCandidate& candidate = batch->candidates[index];
+    DetectorCandidateDiagnostic& diagnostic = result.diagnostics[index];
+    if (!diagnostic.drawable) continue;
     ++geometry_valid_count;
+    diagnostic.batch_eligible = true;
     const float center_ratio = frame_normalized_center_distance(
         candidate.bbox, plan.motion_predicted_bbox, frame_size_);
+    diagnostic.center_ratio = center_ratio;
     if (center_ratio <=
         config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
-      positioned.push_back(PositionedCandidate{candidate, center_ratio});
+      diagnostic.position_gate_pass = true;
+      positioned.push_back(PositionedCandidate{index, center_ratio});
     } else {
+      diagnostic.rejection = DetectorCandidateRejection::kPositionRejected;
       ++result.position_rejected_count;
     }
   }
@@ -466,19 +500,27 @@ LongTermController::ingest_detector_batch(
     return result;
   }
   std::sort(positioned.begin(), positioned.end(),
-            [](const PositionedCandidate& first,
-               const PositionedCandidate& second) {
+            [&](const PositionedCandidate& first,
+                const PositionedCandidate& second) {
     if (first.center_ratio != second.center_ratio) {
       return first.center_ratio < second.center_ratio;
     }
-    return first.candidate.confidence > second.candidate.confidence;
+    return result.diagnostics[first.diagnostic_index].candidate.confidence >
+           result.diagnostics[second.diagnostic_index].candidate.confidence;
   });
   if (positioned.size() > config_.detector_max_candidates) {
+    for (std::size_t index = config_.detector_max_candidates;
+         index < positioned.size(); ++index) {
+      result.diagnostics[positioned[index].diagnostic_index].rejection =
+          DetectorCandidateRejection::kCapacityRejected;
+    }
     positioned.resize(config_.detector_max_candidates);
   }
   detector_candidates_.clear();
   for (const PositionedCandidate& positioned_candidate : positioned) {
-    const DetectorCandidate& candidate = positioned_candidate.candidate;
+    DetectorCandidateDiagnostic& diagnostic =
+        result.diagnostics[positioned_candidate.diagnostic_index];
+    const DetectorCandidate& candidate = diagnostic.candidate;
     QueuedDetectorCandidate queued;
     queued.id = next_detector_candidate_id_++;
     queued.candidate = candidate;
@@ -486,11 +528,16 @@ LongTermController::ingest_detector_batch(
     queued.same_class_candidates = static_cast<std::size_t>(std::count_if(
         positioned.begin(), positioned.end(),
         [&](const PositionedCandidate& other) {
-          return other.candidate.class_id == candidate.class_id;
+          return result.diagnostics[other.diagnostic_index]
+                     .candidate.class_id == candidate.class_id;
         }));
     queued.probes = detector_probes(candidate);
     if (!queued.probes.empty()) {
+      diagnostic.candidate_id = queued.id;
+      diagnostic.queued = true;
       detector_candidates_.push_back(std::move(queued));
+    } else {
+      diagnostic.rejection = DetectorCandidateRejection::kCapacityRejected;
     }
   }
   result.status = DetectorBatchStatus::kAccepted;
@@ -522,6 +569,15 @@ ControllerOutput LongTermController::finish_frame(
   output.detector_candidate_locked = plan.detector_candidate_locked;
   output.detector_probe_index = plan.detector_probe_index;
 
+  const DetectorIngestResult ingest_result =
+      ingest_detector_batch(plan, detector_batch);
+  output.detector_status = ingest_result.status;
+  output.detector_position_valid_count =
+      ingest_result.position_valid_count;
+  output.detector_position_rejected_count =
+      ingest_result.position_rejected_count;
+  output.detector_candidate_diagnostics = ingest_result.diagnostics;
+
   if (plan.mode == TrackingMode::kOcclusionHold) {
     output.quality = QualityLevel::kRejected;
     output.control_valid = false;
@@ -538,14 +594,6 @@ ControllerOutput LongTermController::finish_frame(
     last_timestamp_ms_ = plan.timestamp_ms;
     return output;
   }
-
-  const DetectorIngestResult ingest_result =
-      ingest_detector_batch(plan, detector_batch);
-  output.detector_status = ingest_result.status;
-  output.detector_position_valid_count =
-      ingest_result.position_valid_count;
-  output.detector_position_rejected_count =
-      ingest_result.position_rejected_count;
 
   std::optional<EvaluatedObservation> anchor;
   std::optional<EvaluatedObservation> recent;
@@ -738,6 +786,7 @@ ControllerOutput LongTermController::finish_frame(
     frozen_scale_reference_ = scale_reference;
     hold_remaining_frames_ =
         static_cast<std::size_t>(config_.occlusion_hold_frames);
+    ++detector_eligibility_generation_;
     hold_used_for_loss_ = true;
     confirmations_.clear();
     detector_candidates_.clear();
@@ -747,6 +796,15 @@ ControllerOutput LongTermController::finish_frame(
     output.bbox = motion_.current_bbox();
     mode_ = TrackingMode::kOcclusionHold;
     output.mode = mode_;
+    for (DetectorCandidateDiagnostic& diagnostic :
+         output.detector_candidate_diagnostics) {
+      if (!diagnostic.drawable) continue;
+      diagnostic.batch_eligible = false;
+      diagnostic.position_gate_pass = false;
+      diagnostic.queued = false;
+      diagnostic.candidate_id.reset();
+      diagnostic.rejection = DetectorCandidateRejection::kHoldInvalidated;
+    }
   }
 
   if (!accepted && discard_active_detector) {

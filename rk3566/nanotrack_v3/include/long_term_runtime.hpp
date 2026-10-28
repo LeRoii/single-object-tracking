@@ -17,6 +17,7 @@ struct RuntimeFrameResult {
   DetectorDiagnostics detector{};
   float tracker_ms = 0.0F;
   float runtime_ms = 0.0F;
+  bool tracker_skipped = false;
 };
 
 class LongTermRuntime {

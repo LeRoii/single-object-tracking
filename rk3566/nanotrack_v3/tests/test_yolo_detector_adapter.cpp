@@ -151,7 +151,7 @@ int main() {
       1, 2, 3, 4, 5, 6, 99, 99,
       7, 8, 9, 10, 11, 12, 88, 88};
   const ImageView padded_view{padded.data(), 2, 2, 8, 3};
-  const DetectorRequest request{42, 1200, BBox{0, 0, 2, 2}, 3};
+  const DetectorRequest request{42, 1200, BBox{0, 0, 2, 2}, 3, 17};
   adapter.submit(padded_view, request);
   expect_true(!adapter.can_submit(),
               "pending or in-flight request closes the bounded slot");
@@ -173,8 +173,9 @@ int main() {
   expect_true(batch.has_value(), "completed result becomes pollable");
   if (batch) {
     expect_true(batch->source_frame_id == 42 &&
-                    batch->source_timestamp_ms == 1200,
-                "batch preserves source request identity");
+                    batch->source_timestamp_ms == 1200 &&
+                    batch->generation == 17,
+                "batch preserves source request identity and eligibility generation");
     expect_true(batch->raw_candidate_count == 2 &&
                     batch->filtered_candidate_count == 1 &&
                     batch->timing.total_ms == 7.0F &&
@@ -203,7 +204,7 @@ int main() {
   const ImageView short_stride{padded.data(), 2, 2, 5, 3};
   expect_throws([&] { adapter.submit(short_stride, request); }, "stride",
                 "short source stride is rejected");
-  const DetectorRequest outside{43, 1300, BBox{1, 1, 2, 2}, 3};
+  const DetectorRequest outside{43, 1300, BBox{1, 1, 2, 2}, 3, 18};
   expect_throws([&] { adapter.submit(padded_view, outside); }, "ROI",
                 "request ROI outside the image is rejected");
 

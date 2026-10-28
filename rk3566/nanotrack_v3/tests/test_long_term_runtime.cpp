@@ -30,16 +30,18 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
       const nanotrack::SearchPlan& plan) override {
     ++infer_calls;
     ++search_token;
-    if (!emit_reliable) return {};
-    const nanotrack::ResponseMetrics metrics{0.92F, 0.90F, 10.0F, 12.0F,
-                                              0.20F};
+    if (!emit_reliable && !emit_weak) return {};
+    const nanotrack::ResponseMetrics metrics = emit_weak
+        ? nanotrack::ResponseMetrics{0.45F, 0.40F, 2.5F, 3.0F, 0.04F}
+        : nanotrack::ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F};
+    const nanotrack::BBox bbox = emit_weak ? weak_bbox : plan.predicted_bbox;
     return {
         nanotrack::TrackerObservation{plan.frame_id, plan.timestamp_ms,
-                                      plan.predicted_bbox, metrics,
+                                      bbox, metrics,
                                       nanotrack::TemplateKind::kAnchor,
                                       search_token},
         nanotrack::TrackerObservation{plan.frame_id, plan.timestamp_ms,
-                                      plan.predicted_bbox, metrics,
+                                      bbox, metrics,
                                       nanotrack::TemplateKind::kRecent,
                                       search_token},
     };
@@ -58,6 +60,8 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
 
   bool initialized = false;
   bool emit_reliable = true;
+  bool emit_weak = false;
+  nanotrack::BBox weak_bbox{43, 33, 14, 14};
   int infer_calls = 0;
   int commit_calls = 0;
   int stage_calls = 0;
@@ -274,6 +278,48 @@ int main() {
                   error_detector.submit_calls == 1 &&
                   error_tracker.infer_calls == 3,
               "disabled detector remains out of later NanoTrack frames");
+
+  ControllerConfig hold_config = config;
+  hold_config.occlusion_reference_window = 3;
+  hold_config.occlusion_hold_frames = 2;
+  hold_config.uncertain_ms = 1000;
+  hold_config.local_recovery_ms = 2000;
+  hold_config.assisted_recovery_ms = 3000;
+  FakeTracker hold_tracker;
+  FakeDetector hold_detector;
+  hold_detector.enabled = true;
+  LongTermRuntime hold_runtime(hold_config, hold_tracker, hold_detector);
+  hold_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 3; ++frame) {
+    hold_runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+  }
+  hold_tracker.emit_reliable = false;
+  hold_tracker.emit_weak = true;
+  hold_runtime.process_frame(image, 4, 160);
+  RuntimeFrameResult trigger = hold_runtime.process_frame(image, 5, 200);
+  expect_true(trigger.output.occlusion_hold_triggered &&
+                  hold_tracker.infer_calls == 5,
+              "trigger frame still performs tracker inference");
+  const int polls_before_hold = hold_detector.poll_calls;
+  RuntimeFrameResult hold_one = hold_runtime.process_frame(image, 6, 240);
+  RuntimeFrameResult hold_two = hold_runtime.process_frame(image, 7, 280);
+  expect_true(hold_one.tracker_skipped && hold_two.tracker_skipped &&
+                  hold_one.observations.empty() && hold_two.observations.empty() &&
+                  hold_tracker.infer_calls == 5,
+              "every complete hold frame skips tracker inference");
+  expect_true(hold_detector.submit_calls == 0 &&
+                  hold_detector.poll_calls == polls_before_hold + 2,
+              "hold suppresses detector submit while continuing one poll per frame");
+  RuntimeFrameResult resumed = hold_runtime.process_frame(image, 8, 320);
+  expect_true(!resumed.tracker_skipped && hold_tracker.infer_calls == 6,
+              "tracker resumes on the frame after the exact hold window");
+
+  hold_runtime.initialize(image, BBox{40, 30, 20, 20}, 20, 800);
+  hold_tracker.emit_reliable = true;
+  hold_tracker.emit_weak = false;
+  RuntimeFrameResult reinitialized = hold_runtime.process_frame(image, 21, 840);
+  expect_true(!reinitialized.tracker_skipped && hold_tracker.infer_calls == 7,
+              "explicit reinitialization clears runtime skip state");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

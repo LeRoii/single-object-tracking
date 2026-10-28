@@ -79,11 +79,15 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     }
   }
 
-  const auto tracker_start = std::chrono::steady_clock::now();
-  result.observations = tracker_.infer(image, result.plan);
-  result.tracker_ms = std::chrono::duration<float, std::milli>(
-                          std::chrono::steady_clock::now() - tracker_start)
-                          .count();
+  if (result.plan.run_tracker) {
+    const auto tracker_start = std::chrono::steady_clock::now();
+    result.observations = tracker_.infer(image, result.plan);
+    result.tracker_ms = std::chrono::duration<float, std::milli>(
+                            std::chrono::steady_clock::now() - tracker_start)
+                            .count();
+  } else {
+    result.tracker_skipped = true;
+  }
   result.output =
       controller_.finish_frame(result.plan, result.observations, detector_batch);
   if (result.output.accepted) tracker_.commit_bbox(result.output.bbox);

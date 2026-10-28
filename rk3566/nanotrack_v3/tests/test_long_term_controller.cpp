@@ -815,6 +815,99 @@ int main() {
                   fast_translation.mode() != TrackingMode::kOcclusionHold,
               "fast translation at stable scale does not trigger occlusion hold");
 
+  ControllerConfig diagnostic_config = hold_config;
+  diagnostic_config.occlusion_reference_window = 3;
+  diagnostic_config.occlusion_hold_frames = 1;
+  diagnostic_config.uncertain_ms = 100;
+  diagnostic_config.local_recovery_ms = 200;
+  diagnostic_config.assisted_recovery_ms = 1000;
+  diagnostic_config.detector_max_candidates = 1;
+  diagnostic_config.detector_candidate_max_center_ratio = 0.20F;
+  LongTermController diagnostics(diagnostic_config);
+  diagnostics.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160});
+  for (std::uint64_t frame = 1; frame <= 3; ++frame) {
+    feed_reliable_box(diagnostics, frame, BBox{60, 40, 20, 20});
+  }
+  feed_weak_box(diagnostics, 4, BBox{63, 43, 14, 14});
+  output = feed_weak_box(diagnostics, 5, BBox{63, 43, 14, 14});
+  expect_true(output.occlusion_hold_triggered,
+              "diagnostic fixture enters hold before detector recovery");
+  plan = diagnostics.begin_frame(6, 240, true);
+  DetectorBatch during_hold_batch;
+  during_hold_batch.source_frame_id = 5;
+  during_hold_batch.source_timestamp_ms = 200;
+  during_hold_batch.generation = 0;
+  during_hold_batch.candidates = {{BBox{65, 45, 20, 20}, 0.9F, 0}};
+  output = diagnostics.finish_frame(plan, {}, during_hold_batch);
+  expect_true(plan.mode == TrackingMode::kOcclusionHold,
+              "single configured complete hold frame is explicit");
+  expect_true(output.detector_candidate_diagnostics.size() == 1 &&
+                  output.detector_candidate_diagnostics[0].rejection ==
+                      DetectorCandidateRejection::kHoldInvalidated &&
+                  !output.detector_candidate_diagnostics[0].queued &&
+                  !output.control_valid,
+              "late pre-hold batch is drained for diagnostics during hold only");
+  plan = diagnostics.begin_frame(7, 1200, true);
+  expect_true(plan.request_detector && plan.detector_request.has_value(),
+              "post-hold assisted recovery schedules a new generation");
+  DetectorBatch invalidated_batch;
+  invalidated_batch.source_frame_id = plan.frame_id;
+  invalidated_batch.source_timestamp_ms = plan.timestamp_ms;
+  invalidated_batch.generation = plan.detector_request->generation - 1;
+  invalidated_batch.candidates = {{BBox{65, 45, 20, 20}, 0.9F, 0}};
+  output = diagnostics.finish_frame(plan, {}, invalidated_batch);
+  expect_true(output.detector_candidate_diagnostics.size() == 1 &&
+                  !output.detector_candidate_diagnostics[0].batch_eligible &&
+                  !output.detector_candidate_diagnostics[0].queued &&
+                  output.detector_candidate_diagnostics[0].drawable &&
+                  output.detector_candidate_diagnostics[0].rejection ==
+                      DetectorCandidateRejection::kHoldInvalidated &&
+                  !output.control_valid,
+              "pre-hold generation remains diagnostic-only after hold exits");
+
+  plan = diagnostics.begin_frame(8, 1800, true);
+  expect_true(plan.request_detector && plan.detector_request.has_value(),
+              "next detector interval provides a current-generation request");
+  DetectorBatch mixed_diagnostics;
+  mixed_diagnostics.source_frame_id = plan.frame_id;
+  mixed_diagnostics.source_timestamp_ms = plan.timestamp_ms;
+  mixed_diagnostics.generation = plan.detector_request->generation;
+  mixed_diagnostics.candidates = {
+      {BBox{61, 41, 20, 20}, 0.90F, 0},
+      {BBox{200, 120, 20, 20}, 0.80F, 0},
+      {BBox{70, 45, 20, 20}, 0.70F, 1},
+      {BBox{std::numeric_limits<float>::quiet_NaN(), 0, 20, 20}, 0.60F, 0},
+  };
+  output = diagnostics.finish_frame(plan, {}, mixed_diagnostics);
+  expect_true(output.detector_candidate_diagnostics.size() == 4,
+              "every post-NMS candidate receives one canonical diagnostic");
+  if (output.detector_candidate_diagnostics.size() == 4) {
+    const auto& pass = output.detector_candidate_diagnostics[0];
+    const auto& position_reject = output.detector_candidate_diagnostics[1];
+    const auto& capacity_reject = output.detector_candidate_diagnostics[2];
+    const auto& invalid = output.detector_candidate_diagnostics[3];
+    expect_true(pass.batch_eligible && pass.position_gate_pass && pass.queued &&
+                    pass.drawable && pass.candidate_id.has_value() &&
+                    pass.rejection == DetectorCandidateRejection::kNone,
+                "nearest eligible candidate is queued with an assigned id");
+    expect_true(position_reject.batch_eligible &&
+                    !position_reject.position_gate_pass &&
+                    !position_reject.queued && position_reject.drawable &&
+                    position_reject.rejection ==
+                        DetectorCandidateRejection::kPositionRejected,
+                "large position jump remains drawable but cannot queue");
+    expect_true(capacity_reject.batch_eligible &&
+                    capacity_reject.position_gate_pass &&
+                    !capacity_reject.queued && capacity_reject.drawable &&
+                    capacity_reject.rejection ==
+                        DetectorCandidateRejection::kCapacityRejected,
+                "top-N exclusion has a distinct canonical reason");
+    expect_true(!invalid.batch_eligible && !invalid.position_gate_pass &&
+                    !invalid.queued && !invalid.drawable &&
+                    invalid.rejection == DetectorCandidateRejection::kInvalid,
+                "non-finite geometry is text-only and never control eligible");
+  }
+
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";
     return 1;

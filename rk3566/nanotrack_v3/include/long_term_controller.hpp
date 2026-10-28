@@ -71,6 +71,7 @@ struct ControllerOutput {
   std::optional<float> occlusion_reference_height;
   std::optional<float> occlusion_width_ratio;
   std::optional<float> occlusion_height_ratio;
+  std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
 };
 
 class LongTermController {
@@ -129,6 +130,7 @@ class LongTermController {
     DetectorBatchStatus status = DetectorBatchStatus::kNone;
     std::size_t position_valid_count = 0;
     std::size_t position_rejected_count = 0;
+    std::vector<DetectorCandidateDiagnostic> diagnostics;
   };
 
   struct ScaleReference {
@@ -176,6 +178,7 @@ class LongTermController {
   std::size_t hold_remaining_frames_ = 0;
   bool hold_used_for_loss_ = false;
   std::optional<ScaleReference> frozen_scale_reference_;
+  std::uint64_t detector_eligibility_generation_ = 0;
   bool initialized_ = false;
   bool frame_open_ = false;
 };

@@ -82,6 +82,7 @@ struct DetectorRequest {
   std::int64_t timestamp_ms = 0;
   BBox roi{};
   std::size_t max_candidates = 3;
+  std::uint64_t generation = 0;
 };
 
 struct DetectorTiming {
@@ -98,6 +99,7 @@ struct DetectorBatch {
   std::size_t raw_candidate_count = 0;
   std::size_t filtered_candidate_count = 0;
   DetectorTiming timing{};
+  std::uint64_t generation = 0;
 };
 
 struct DetectorDiagnostics {
