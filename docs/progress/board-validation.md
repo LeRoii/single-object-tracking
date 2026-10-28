@@ -761,3 +761,108 @@ detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 
 当前不请求协调对话修改 `STATUS.md` 或 `integration-contract.yaml`。完成真实 RK3566
 原生构建、CTest 和有界 `girl_dance` 观察后，再在本文件追加板端工件身份、观察项、
 未观察项和最终 Debug 分支提交。
+
+## 2026-10-28 OCCLUSION_HOLD RK3566 原生构建与有界视频观察
+
+- 时间：`2026-10-28T23:35:55+08:00`。共享源码提交为
+  `578613dbe11a67c4241363e02e6554755258c178`，工作树/分支为
+  `/home/u20/single-object-tracking/.worktrees/debug-runtime-config` /
+  `codex/debug-runtime-config`。板端为 `lubancat`、Linux `4.19.232`，源码工作树/分支为
+  `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry` /
+  `codex/rk3566-debug-telemetry`，同步前提交 `5e620b1`，同步后的审计提交为
+  `7ba0da0e0359c1ead4bd00656366a4cfbd463d69`。
+- 同步前板端仍只有用户修改的 `config/interactive-debug.conf` 和未跟踪 `log.txt`；前者
+  把视频改为 `/home/cat/Project/SOT/data/1.mp4`。二者均未覆盖、暂存或提交。系统时间为
+  `2026-10-28T23:28:19+08:00`，时区 `Asia/Shanghai`，时钟已同步；根分区可用约
+  `15G`。
+- 板端源码仓库没有配置远程，且其仓库根对应共享仓库的 `rk3566/nanotrack_v3` 子目录。
+  因此使用以下可审计同步方式：从两个精确共享提交生成相对路径补丁，传到板端 `/tmp`，
+  校验 SHA-256，先执行 `git apply --check`，再应用并只暂存补丁列出的 31 个文件：
+
+  ```bash
+  git diff --relative=rk3566/nanotrack_v3 --binary \
+    a6c23be..578613d -- rk3566/nanotrack_v3 \
+    > /tmp/nanotrack-occlusion-hold-578613d.patch
+  sha256sum /tmp/nanotrack-occlusion-hold-578613d.patch
+  git apply --check /tmp/nanotrack-occlusion-hold-578613d.patch
+  git apply /tmp/nanotrack-occlusion-hold-578613d.patch
+  ```
+
+  主机和板端补丁 SHA-256 均为
+  `a481f5a69700bcb15a0935f626d009734ce27f59ce4627f6a6158e1cdb79b75d`；
+  板端应用检查成功。提交后 `git status --short` 仍只显示上述用户配置和 `log.txt`。
+- 板端工具链为 GCC `8.3.0`、CMake `3.13.4`、OpenCV `4.10.0`。首次按最简命令配置
+  失败，明确提示必须设置 `RKNN_INCLUDE_DIR` 和 `RKNN_LIBRARY`；未改源码。随后复用
+  板端既有验证路径，在新的独立构建目录完成原生配置和全量链接：
+
+  ```bash
+  cmake -S . -B build-board-occlusion-hold-578613d \
+    -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON \
+    -DOpenCV_DIR=/home/cat/ThirdParty/OpenCV4100/lib/cmake/opencv4 \
+    -DRKNN_INCLUDE_DIR=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/include \
+    -DRKNN_LIBRARY=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so
+  cmake --build build-board-occlusion-hold-578613d -- -j2
+  cd build-board-occlusion-hold-578613d
+  ctest --output-on-failure
+  ctest --output-on-failure -E '^cli$'
+  ```
+
+  构建成功。完整 CTest 为 `14/15`，唯一失败仍是用户绝对视频路径导致的既有 `cli`
+  shipped-profile 断言；没有覆盖用户配置。排除该已解释差异后其余 `14/14` 全部通过，
+  包括新增 HOLD/controller/runtime/overlay/telemetry/schema-7 回归。
+- 有界板端命令：
+
+  ```bash
+  DISPLAY=:0 ./build-board-occlusion-hold-578613d/nanotrack_v3 \
+    --config config/interactive-debug.conf \
+    --video /home/cat/Project/SOT/nanotrack_v3_longterm/data/girl_dance.mp4 \
+    --bbox 244,161,74,70 --max-frames 400
+  ```
+
+  通过本机 X11 向精确窗口发送 Space 开始连续播放，处理 307 帧后保留窗口 XWD 并发送
+  Q 正常退出；因此这是 307 帧有界观察，不宣称达到配置上限 400。日志记录 RKNN API
+  `2.3.2 (429f97ae6b@2025-04-09T09:09:27)`、driver `0.8.2`，最终摘要为
+  `tracked_frames=307`、`mean_tracker_ms=45.596`、`mean_runtime_ms=45.846`、
+  `runtime_fps=21.812`、`mean_pipeline_ms=50.029`、`end_to_end_fps=19.989`；这是单次
+  Debug 观察值，不是性能门通过。
+- 本次 `girl_dance` 自然流程没有触发 `occlusion_hold_enter/tick/exit`，三类事件计数均
+  为 `0`。因此“触发帧仍有 anchor/recent、随后恰好 12 帧跳过推理、冻结尺度、
+  `control_valid=0`、之后恢复搜索”在真实视频中均标记为**未观察到**，不使用人工伪造
+  或单元测试代替板端视频证据。对应状态机边界仅有板端通过的自动化测试证据。
+- Detector 在该 307 帧运行中完成 `12` 个 batch，记录 `7` 条逐候选事件。例如帧 237
+  的 batch 对 `source_frame=234`、`age_ms=100` 的两个 filtered 候选逐一记录 bbox、
+  class/confidence、center ratio、`eligible=1`、`position_pass=0`、`queued=0` 和
+  `POSITION_REJECTED`；随后 batch 汇总为 `raw=10 filtered=2 position_rejected=2`。
+  运行中没有 `reacquired` 事件；候选出现后的周期状态均保持
+  `ASSISTED_RECOVERY/LOST`、`control_valid=0`。这证明本次返回的候选未直接授权控制，
+  但由于所有候选均被位置门拒绝，未观察到 PASS/queued/active-probe 实例，也未在候选
+  完成帧人工截图验证全部颜色；这些显示分支只有板端通过的纯数据 overlay 测试证据。
+
+| 工件 | 板端绝对路径 | SHA-256 |
+|---|---|---|
+| Debug 可执行程序 | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/build-board-occlusion-hold-578613d/nanotrack_v3` | `62fe954c00fd4cce96e55db62a1f1687e037b53c5045070eef333dc02cf2e3f2` |
+| template RKNN | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/models/template_backbone.rknn` | `38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709` |
+| search RKNN | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/models/search_backbone.rknn` | `92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a` |
+| head RKNN | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/models/head.rknn` | `2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600` |
+| tracker manifest | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/models/manifest.json` | `441e93f2092afe94bac663f27adb1fe99848357356efd67c7473b0b506f854b2` |
+| VisDrone9 RKNN | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/yolov8n-visdrone9-rk3566-fp16.rknn` | `3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0` |
+| detector manifest | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/detector-manifest.json` | `05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e` |
+| VisDrone9 labels | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/releases/yolov8n-visdrone9-rk3566-fp16-v1/models/visdrone9.txt` | `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992` |
+| visible controller config | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/config/visible-default.conf` | `b9a128b78063056173626af1c7c7d2c580a59b295c45a4afc0ef8e2e04bff95b` |
+| preserved user Debug config | `/home/cat/Project/SOT/nanotrack_v3_longterm-debug-telemetry/config/interactive-debug.conf` | `c07da92f912f91d5c57d42f005017a309b874445e728079d3740148b9584ab6e` |
+| 输入视频 | `/home/cat/Project/SOT/nanotrack_v3_longterm/data/girl_dance.mp4` | `8090fcd5090adb62f21e79e799f0b0871d9c610d8cf8087b9fcdd3c7e9c2e9b9` |
+| 307 帧 Debug 日志 | `/tmp/nanotrack-occlusion-hold-578613d-girl-dance.log` | `9118fab42e1d512617689afb88efcaeae621994e49f61a415482158d88dd4bc0` |
+| 退出前窗口 XWD | `/tmp/nanotrack-occlusion-hold-578613d-frame-limit.xwd` | `dff2ed7e978ee665e2151ae2bbc7519a56956e45fb3347e1f96d1d6b710519a5` |
+| 同步补丁 | `/tmp/nanotrack-occlusion-hold-578613d.patch` | `a481f5a69700bcb15a0935f626d009734ce27f59ce4627f6a6158e1cdb79b75d` |
+
+- 裁决：本轮达到“精确提交同步 + RK3566 原生完整链接 + 除已解释 CLI 本地配置差异外
+  其余测试通过 + 无标注有界 detector 诊断观察”。不达到真实视频 HOLD 时序观察、
+  detector PASS/入队/活动探针人工视觉验收、标注重捕率、资源长稳、发布门或真实吊舱
+  验收。任务状态继续为 `functional_pass_promotion_held`，
+  `development_board_validation.latest_handoff.available=false`。
+
+### Handoff
+
+协调对话可采纳本节锁定的共享源码提交和板端工件身份，但不应把它发布为公共
+`latest_handoff`。公共契约需要协调者评估是否仅更新 Debug 源码候选；VisDrone9
+promotion hold、detector 直接控制禁令、交叉编译前板端门和人工吊舱边界均保持不变。
