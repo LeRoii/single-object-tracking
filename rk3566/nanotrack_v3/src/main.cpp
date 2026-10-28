@@ -49,6 +49,7 @@ cv::Scalar state_color(const nanotrack::ControllerOutput& output) {
     case nanotrack::TrackingMode::kLocalRecovery: return cv::Scalar(0, 165, 255);
     case nanotrack::TrackingMode::kAssistedRecovery: return cv::Scalar(255, 0, 255);
     case nanotrack::TrackingMode::kLost: return cv::Scalar(0, 0, 255);
+    case nanotrack::TrackingMode::kOcclusionHold: return cv::Scalar(255, 255, 0);
   }
   return cv::Scalar(0, 0, 255);
 }
@@ -97,8 +98,12 @@ cv::Mat render_interactive(const cv::Mat& source,
       switch (kind) {
         case nanotrack::DebugBoxKind::kMotionPrediction:
           return cv::Scalar(255, 255, 0);
-        case nanotrack::DebugBoxKind::kDetectorCandidate:
+        case nanotrack::DebugBoxKind::kDetectorCandidatePass:
           return cv::Scalar(255, 0, 255);
+        case nanotrack::DebugBoxKind::kDetectorCandidateRejected:
+          return cv::Scalar(128, 128, 128);
+        case nanotrack::DebugBoxKind::kDetectorCandidate:
+          return cv::Scalar(0, 165, 255);
         case nanotrack::DebugBoxKind::kDetectorProbe:
           return cv::Scalar(0, 165, 255);
         case nanotrack::DebugBoxKind::kNanoTrackAnchor:
@@ -113,6 +118,14 @@ cv::Mat render_interactive(const cv::Mat& source,
     for (std::size_t index = 0; index < overlay->boxes.size(); ++index) {
       const nanotrack::DebugBoxDescriptor& descriptor =
           overlay->boxes[index];
+      if (!std::isfinite(descriptor.bbox.x) ||
+          !std::isfinite(descriptor.bbox.y) ||
+          !std::isfinite(descriptor.bbox.width) ||
+          !std::isfinite(descriptor.bbox.height) ||
+          descriptor.bbox.x < 0.0F || descriptor.bbox.y < 0.0F ||
+          descriptor.bbox.width <= 0.0F || descriptor.bbox.height <= 0.0F) {
+        continue;
+      }
       const cv::Rect rectangle(
           static_cast<int>(std::lround(descriptor.bbox.x)),
           static_cast<int>(std::lround(descriptor.bbox.y)),
@@ -123,11 +136,13 @@ cv::Mat render_interactive(const cv::Mat& source,
       int baseline = 0;
       const cv::Size text_size = cv::getTextSize(
           descriptor.label, cv::FONT_HERSHEY_SIMPLEX, 0.44, 1, &baseline);
-      const int label_x = std::max(8, rendered.cols - text_size.width - 8);
-      const int preferred_y = 80 + static_cast<int>(index) * 18;
-      const int label_y = std::clamp(preferred_y, text_size.height + 3,
-                                     std::max(text_size.height + 3,
-                                              rendered.rows - 50));
+      const int rows_per_column = std::max(1, (rendered.rows - 130) / 18);
+      const int column = static_cast<int>(index) / rows_per_column;
+      const int row = static_cast<int>(index) % rows_per_column;
+      const int label_x = std::max(
+          8, rendered.cols - text_size.width - 8 - column *
+              std::max(180, text_size.width + 12));
+      const int label_y = 80 + row * 18;
       cv::rectangle(rendered,
                     cv::Rect(label_x, label_y - text_size.height - 3,
                              text_size.width + 4,
@@ -136,6 +151,28 @@ cv::Mat render_interactive(const cv::Mat& source,
       cv::putText(rendered, descriptor.label,
                   cv::Point(label_x + 2, label_y),
                   cv::FONT_HERSHEY_SIMPLEX, 0.44, color, 1, cv::LINE_AA);
+    }
+    for (std::size_t index = 0; index < overlay->texts.size(); ++index) {
+      const std::string& label = overlay->texts[index].label;
+      int baseline = 0;
+      const cv::Size text_size = cv::getTextSize(
+          label, cv::FONT_HERSHEY_SIMPLEX, 0.44, 1, &baseline);
+      const std::size_t display_index = overlay->boxes.size() + index;
+      const int rows_per_column = std::max(1, (rendered.rows - 130) / 18);
+      const int column = static_cast<int>(display_index) / rows_per_column;
+      const int row = static_cast<int>(display_index) % rows_per_column;
+      const int label_x = std::max(
+          8, rendered.cols - text_size.width - 8 - column *
+              std::max(180, text_size.width + 12));
+      const int label_y = 80 + row * 18;
+      cv::rectangle(rendered,
+                    cv::Rect(label_x, label_y - text_size.height - 3,
+                             text_size.width + 4,
+                             text_size.height + baseline + 4),
+                    cv::Scalar(0, 0, 0), cv::FILLED);
+      cv::putText(rendered, label, cv::Point(label_x + 2, label_y),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.44,
+                  cv::Scalar(0, 0, 139), 1, cv::LINE_AA);
     }
   }
   const std::string status =
@@ -161,11 +198,11 @@ cv::Mat render_interactive(const cv::Mat& source,
                                    rendered.rows - legend_top),
                 cv::Scalar(0, 0, 0), cv::FILLED);
   cv::putText(rendered,
-              "CYAN Motion  MAGENTA DetCand  ORANGE DetProbe  BLUE Anchor",
+              "CYAN Motion  MAGENTA DetPass  GRAY DetReject  ORANGE Active",
               cv::Point(8, legend_top + 16), cv::FONT_HERSHEY_SIMPLEX, 0.38,
               cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   cv::putText(rendered,
-              "YELLOW Recent  GREEN AcceptedCtrl  RED RejectedNoCtrl",
+              "DARKRED InvalidText  BLUE Anchor  YELLOW Recent  GREEN Ctrl",
               cv::Point(8, legend_top + 34), cv::FONT_HERSHEY_SIMPLEX, 0.38,
               cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   return rendered;
@@ -285,6 +322,10 @@ std::string builtin_config_identity(const nanotrack::ControllerConfig& config) {
          << config.weak_score << '|' << config.weak_psr << '|'
          << config.weak_apce << '|' << config.weak_peak_margin << '|'
          << config.detector_candidate_max_center_ratio << '|'
+         << config.occlusion_hold_frames << '|'
+         << config.occlusion_trigger_consecutive_unreliable << '|'
+         << config.occlusion_trigger_min_dimension_ratio << '|'
+         << config.occlusion_reference_window << '|'
          << nanotrack::to_string(config.detector_target_mode) << '|'
          << config.detector_search_scale << '|'
          << config.detector_subtarget_max_probes << '|'
@@ -331,6 +372,12 @@ void write_session_metadata(const std::string& path,
   metadata.detector_target_mode = config.detector_target_mode;
   metadata.detector_candidate_max_center_ratio =
       config.detector_candidate_max_center_ratio;
+  metadata.occlusion_hold_frames = config.occlusion_hold_frames;
+  metadata.occlusion_trigger_consecutive_unreliable =
+      config.occlusion_trigger_consecutive_unreliable;
+  metadata.occlusion_trigger_min_dimension_ratio =
+      config.occlusion_trigger_min_dimension_ratio;
+  metadata.occlusion_reference_window = config.occlusion_reference_window;
   metadata.rknn_api_version = tracker.api_version();
   metadata.rknn_driver_version = tracker.driver_version();
   metadata.source_fps = finite_source_fps;
@@ -628,8 +675,12 @@ int main(int argc, char** argv) {
         }
       }
       if (!result.detector.error.empty()) ++detector_error_count;
+      const bool tracker_timing_valid =
+          std::isfinite(result.tracker_ms) &&
+          (result.tracker_skipped ? result.tracker_ms == 0.0F
+                                  : result.tracker_ms > 0.0F);
       if (!std::isfinite(result.runtime_ms) || result.runtime_ms <= 0.0F ||
-          !std::isfinite(result.tracker_ms) || result.tracker_ms <= 0.0F) {
+          !tracker_timing_valid) {
         throw std::runtime_error("measured tracking latency is invalid");
       }
       if (writer.isOpened()) {
@@ -646,7 +697,9 @@ int main(int argc, char** argv) {
       }
       runtime_latencies.push_back(result.runtime_ms);
       pipeline_latencies.push_back(pipeline_ms);
-      tracker_latencies.push_back(result.tracker_ms);
+      if (!result.tracker_skipped) {
+        tracker_latencies.push_back(result.tracker_ms);
+      }
       ++tracked_count;
       nanotrack::TrackingLogRow log_row =
           nanotrack::make_tracking_log_row(result);
@@ -685,10 +738,12 @@ int main(int argc, char** argv) {
     float mean_tracker = 0.0F;
     nanotrack::LatencySummary latency;
     if (!runtime_latencies.empty()) {
-      const float tracker_sum = std::accumulate(
-          tracker_latencies.begin(), tracker_latencies.end(), 0.0F);
-      mean_tracker =
-          tracker_sum / static_cast<float>(tracker_latencies.size());
+      if (!tracker_latencies.empty()) {
+        const float tracker_sum = std::accumulate(
+            tracker_latencies.begin(), tracker_latencies.end(), 0.0F);
+        mean_tracker =
+            tracker_sum / static_cast<float>(tracker_latencies.size());
+      }
       latency =
           nanotrack::summarize_latencies(runtime_latencies, pipeline_latencies);
     }

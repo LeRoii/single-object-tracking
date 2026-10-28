@@ -188,6 +188,65 @@ int main() {
                        "event=template_action frame=10 action=ROLLBACK_RECENT"),
               "recent-template lifecycle actions are visible");
 
+  RuntimeFrameResult hold_enter = frame_result(20);
+  hold_enter.output.mode = TrackingMode::kOcclusionHold;
+  hold_enter.output.control_valid = false;
+  hold_enter.output.accepted = false;
+  hold_enter.output.occlusion_hold_triggered = true;
+  hold_enter.output.occlusion_hold_remaining_frames = 12;
+  hold_enter.output.occlusion_reference_width = 80.0F;
+  hold_enter.output.occlusion_reference_height = 100.0F;
+  hold_enter.output.occlusion_width_ratio = 0.65F;
+  hold_enter.output.occlusion_height_ratio = 0.90F;
+  events = telemetry.frame_events(hold_enter, 9.0F, false);
+  expect_true(contains(events,
+                       "event=occlusion_hold_enter frame=20 remaining=12 reference=80.00,100.00 width_ratio=0.650 height_ratio=0.900") &&
+                  contains(events, "tracker_skipped=0 detector_suppressed=0"),
+              "hold entry records canonical reference ratios and skip flags");
+
+  RuntimeFrameResult hold_tick = hold_enter;
+  hold_tick.output.frame_id = 21;
+  hold_tick.plan.frame_id = 21;
+  hold_tick.output.occlusion_hold_triggered = false;
+  hold_tick.output.occlusion_hold_remaining_frames = 11;
+  hold_tick.plan.motion_predicted_bbox = BBox{11, 21, 80, 100};
+  hold_tick.plan.request_detector = false;
+  hold_tick.tracker_skipped = true;
+  hold_tick.tracker_ms = 0.0F;
+  events = telemetry.frame_events(hold_tick, 7.0F, false);
+  expect_true(contains(events,
+                       "event=occlusion_hold_tick frame=21 remaining=11 motion=11.00,21.00,80.00,100.00 tracker_skipped=1 detector_suppressed=1"),
+              "hold tick exposes frozen motion and intentional suppression");
+
+  RuntimeFrameResult hold_exit = frame_result(22);
+  hold_exit.output.mode = TrackingMode::kLocalRecovery;
+  hold_exit.output.control_valid = false;
+  hold_exit.output.accepted = false;
+  events = telemetry.frame_events(hold_exit, 8.0F, false);
+  expect_true(contains(events,
+                       "event=occlusion_hold_exit frame=22 next_state=LOCAL_RECOVERY loss_duration_ms=66"),
+              "leaving hold reports next state and observed loss duration");
+
+  RuntimeFrameResult diagnostics = frame_result(23);
+  diagnostics.detector.batch_received = true;
+  diagnostics.detector.batch_frame_id = 19;
+  diagnostics.detector.batch_age_ms = 132;
+  diagnostics.output.detector_candidate_diagnostics = {
+      DetectorCandidateDiagnostic{DetectorCandidate{BBox{1, 2, 30, 40}, 0.88F, 2},
+                                  0.125F, 33, true, true, true, true,
+                                  DetectorCandidateRejection::kNone},
+      DetectorCandidateDiagnostic{DetectorCandidate{BBox{3, 4, 31, 41}, 0.77F, 2},
+                                  0.400F, std::nullopt, true, false, false, true,
+                                  DetectorCandidateRejection::kPositionRejected},
+  };
+  events = telemetry.frame_events(diagnostics, 8.0F, false);
+  expect_true(event_count(events, "detector_candidate") == 2 &&
+                  contains(events,
+                           "event=detector_candidate frame=23 index=0 bbox=1.00,2.00,30.00,40.00 class_id=2 confidence=0.880 center_ratio=0.125 source_frame=19 age_ms=132 eligible=1 position_pass=1 queued=1 candidate_id=33 rejection=NONE") &&
+                  contains(events, "index=1 bbox=3.00,4.00,31.00,41.00") &&
+                  contains(events, "rejection=POSITION_REJECTED"),
+              "each canonical detector diagnostic produces one complete event");
+
   telemetry.reset();
   RuntimeFrameResult after_reset = frame_result(11);
   events = telemetry.frame_events(after_reset, 9.0F, false);

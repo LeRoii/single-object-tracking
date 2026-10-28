@@ -60,7 +60,7 @@ height = int(sys.argv[5])
 detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
-EXPECTED_TRACKING_SCHEMA = 5
+EXPECTED_TRACKING_SCHEMA = 7
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 
 manifest = json.loads((artifact_dir / "manifest.json").read_text())
@@ -91,6 +91,10 @@ required = {
     "detector_confirmation_attempts", "detector_confirmation_hits",
     "detector_preprocess_ms", "detector_inference_ms", "detector_postprocess_ms",
     "detector_total_ms", "tracker_ms", "runtime_ms", "pipeline_ms",
+    "occlusion_hold_triggered", "occlusion_hold_remaining_frames",
+    "occlusion_reference_width", "occlusion_reference_height",
+    "occlusion_width_ratio", "occlusion_height_ratio", "tracker_skipped",
+    "detector_suppressed_by_hold",
 }
 missing = required - set(rows[0])
 if missing:
@@ -125,12 +129,20 @@ for index, row in enumerate(rows):
             row["detector_candidate_locked"] == "1" or
             row["control_valid"] == "1"):
         raise SystemExit(f"ambiguous same-class candidate controls at row {index}")
+    for key in {"occlusion_hold_triggered", "tracker_skipped",
+                "detector_suppressed_by_hold"}:
+        if row[key] not in {"0", "1"}:
+            raise SystemExit(f"invalid {key} at row {index}")
+    if row["detector_suppressed_by_hold"] == "1" and row["tracker_skipped"] != "1":
+        raise SystemExit(f"detector hold suppression without tracker skip at row {index}")
     if not all(math.isfinite(value) for value in values.values()):
         raise SystemExit(f"non-finite value at row {index}")
     if values["width"] <= 0 or values["height"] <= 0:
         raise SystemExit(f"non-positive box size at row {index}")
     if index > 0:
-        if (float(row["tracker_ms"]) <= 0 or
+        tracker_ms = float(row["tracker_ms"])
+        if ((row["tracker_skipped"] == "1" and tracker_ms != 0) or
+                (row["tracker_skipped"] == "0" and tracker_ms <= 0) or
                 float(row["runtime_ms"]) <= 0 or
                 float(row["pipeline_ms"]) <= 0):
             raise SystemExit(f"non-positive latency at row {index}")
@@ -149,7 +161,9 @@ if metadata.get("schema_version") != EXPECTED_TRACKING_SCHEMA:
 for key in {
     "schema_version", "manifest_hash", "controller_config_hash", "sensor",
     "calibrated", "detector_target_mode", "rknn_api_version",
-    "rknn_driver_version",
+    "rknn_driver_version", "occlusion_hold_frames",
+    "occlusion_trigger_consecutive_unreliable",
+    "occlusion_trigger_min_dimension_ratio", "occlusion_reference_window",
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",
     "end_to_end_fps",

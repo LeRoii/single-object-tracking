@@ -130,7 +130,11 @@ std::string tracking_csv_header() {
          "tracker_ms,runtime_ms,pipeline_ms,note,"
          "motion_predicted_x,motion_predicted_y,motion_predicted_width,"
          "motion_predicted_height,detector_candidate_center_ratio,"
-         "detector_position_valid_count,detector_position_rejected_count";
+         "detector_position_valid_count,detector_position_rejected_count,"
+         "occlusion_hold_triggered,occlusion_hold_remaining_frames,"
+         "occlusion_reference_width,occlusion_reference_height,"
+         "occlusion_width_ratio,occlusion_height_ratio,tracker_skipped,"
+         "detector_suppressed_by_hold";
 }
 
 std::string tracking_csv_row(const TrackingLogRow& row) {
@@ -196,7 +200,15 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                  number(row.motion_predicted_bbox.height),
                  optional_number(row.detector_candidate_center_ratio),
                  std::to_string(row.detector_position_valid_count),
-                 std::to_string(row.detector_position_rejected_count)});
+                 std::to_string(row.detector_position_rejected_count),
+                 row.occlusion_hold_triggered ? "1" : "0",
+                 std::to_string(row.occlusion_hold_remaining_frames),
+                 optional_number(row.occlusion_reference_width),
+                 optional_number(row.occlusion_reference_height),
+                 optional_number(row.occlusion_width_ratio),
+                 optional_number(row.occlusion_height_ratio),
+                 row.tracker_skipped ? "1" : "0",
+                 row.detector_suppressed_by_hold ? "1" : "0"});
   return join(fields);
 }
 
@@ -312,6 +324,17 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
       output.detector_position_valid_count;
   row.detector_position_rejected_count =
       output.detector_position_rejected_count;
+  row.occlusion_hold_triggered = output.occlusion_hold_triggered;
+  row.occlusion_hold_remaining_frames =
+      output.occlusion_hold_remaining_frames;
+  row.occlusion_reference_width = output.occlusion_reference_width;
+  row.occlusion_reference_height = output.occlusion_reference_height;
+  row.occlusion_width_ratio = output.occlusion_width_ratio;
+  row.occlusion_height_ratio = output.occlusion_height_ratio;
+  row.tracker_skipped = result.tracker_skipped;
+  row.detector_suppressed_by_hold =
+      result.tracker_skipped &&
+      result.plan.mode == TrackingMode::kOcclusionHold;
   row.tracker_ms = result.tracker_ms;
   row.runtime_ms = result.runtime_ms;
   row.note = note;
@@ -359,6 +382,7 @@ std::string tracking_session_metadata_json(
       metadata.reliable_apce,
       metadata.reliable_peak_margin,
       metadata.detector_candidate_max_center_ratio,
+      metadata.occlusion_trigger_min_dimension_ratio,
       metadata.latency.mean_runtime_ms,
       metadata.latency.p50_runtime_ms,
       metadata.latency.p95_runtime_ms,
@@ -400,6 +424,14 @@ std::string tracking_session_metadata_json(
          << to_string(metadata.detector_target_mode) << "\",\n"
          << "  \"detector_candidate_max_center_ratio\": "
          << metadata.detector_candidate_max_center_ratio << ",\n"
+         << "  \"occlusion_hold_frames\": "
+         << metadata.occlusion_hold_frames << ",\n"
+         << "  \"occlusion_trigger_consecutive_unreliable\": "
+         << metadata.occlusion_trigger_consecutive_unreliable << ",\n"
+         << "  \"occlusion_trigger_min_dimension_ratio\": "
+         << metadata.occlusion_trigger_min_dimension_ratio << ",\n"
+         << "  \"occlusion_reference_window\": "
+         << metadata.occlusion_reference_window << ",\n"
          << "  \"rknn_api_version\": \""
          << json_escape(metadata.rknn_api_version) << "\",\n"
          << "  \"rknn_driver_version\": \""

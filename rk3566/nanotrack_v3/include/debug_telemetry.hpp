@@ -3,6 +3,8 @@
 #include "long_term_runtime.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <vector>
 #include <string>
 
@@ -23,6 +25,7 @@ class DebugTelemetry {
   bool has_previous_state_ = false;
   TrackingMode previous_mode_ = TrackingMode::kTracking;
   bool previous_control_valid_ = false;
+  std::optional<std::int64_t> loss_start_timestamp_ms_;
 };
 
 }  // namespace nanotrack

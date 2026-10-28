@@ -268,7 +268,7 @@ from entering the lock. This conservative rule prefers continued
 `control_valid=false` over an identity switch until target-specific appearance
 or ReID evidence is available.
 
-For a retained run, verify source-coordinate boxes, schema-v6 metadata, model
+For a retained run, verify source-coordinate boxes, schema-v7 metadata, model
 hashes, detector state and output frame count with:
 
 ```bash
@@ -285,7 +285,7 @@ refer to the source/CSV coordinate system, not a downscaled preview video.
 
 ## Outputs and safety contract
 
-The schema-v6 CSV contains one row for initialization and one row for each
+The schema-v7 CSV contains one row for initialization and one row for each
 processed frame. It records:
 
 - monotonic timestamp, controller state, quality, `control_valid`, horizontal
@@ -302,8 +302,19 @@ processed frame. It records:
   counts;
 - the independent motion-predicted box, active detector candidate center
   ratio, and per-batch position-valid/position-rejected counts;
+- occlusion-HOLD trigger/remaining count, frozen reference size, observed size
+  ratios, and explicit tracker/detector skip flags;
 - tracker/runtime latency and full video-pipeline latency (decode, tracking,
   overlay, and encode).
+
+During `OCCLUSION_HOLD`, NanoTrack inference and detector submission are
+intentionally skipped, `tracker_ms=0`, and that zero is excluded from the
+reported mean tracker inference latency. `runtime_ms` and `pipeline_ms` remain
+positive. All post-NMS detector diagnostics are shown in interactive Debug:
+purple means the position gate passed, gray means a rejected/non-queued raw
+hypothesis, deep-red text means invalid geometry, and orange is the active
+NanoTrack verification probe. `PASS` does not imply `queued=1`, and no raw
+detector box can directly authorize `control_valid`.
 
 Only a row with `control_valid=1` may drive a gimbal or downstream control
 loop. `UNCERTAIN`, `LOCAL_RECOVERY`, `ASSISTED_RECOVERY`, and `LOST` rows can
@@ -312,7 +323,7 @@ contain a predicted box for visualization while remaining invalid for control.
 If `--session-metadata` is omitted, metadata is written next to the CSV as
 `OUTPUT.csv.metadata.json`. It records the model manifest fingerprint, RKNN
 API/driver versions, timing fallback, threshold identity, calibration marker,
-and latency summary. Schema-v6 metadata also records the detector target mode,
+and latency summary. Schema-v7 metadata also records the detector target mode,
 `detector_candidate_max_center_ratio`,
 and has a detector section containing
 artifact paths and SHA-256 identities, tensor descriptions, detector RKNN

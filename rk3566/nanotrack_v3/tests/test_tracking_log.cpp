@@ -93,6 +93,14 @@ int main() {
   row.detector_status = DetectorBatchStatus::kStale;
   row.detector_position_valid_count = 2;
   row.detector_position_rejected_count = 4;
+  row.occlusion_hold_triggered = true;
+  row.occlusion_hold_remaining_frames = 12;
+  row.occlusion_reference_width = 80.0F;
+  row.occlusion_reference_height = 100.0F;
+  row.occlusion_width_ratio = 0.65F;
+  row.occlusion_height_ratio = 0.90F;
+  row.tracker_skipped = true;
+  row.detector_suppressed_by_hold = true;
   row.pipeline_ms = 50.0F;
   row.anchor_metrics = ResponseMetrics{0.8F, 0.7F, 8.0F, 9.0F, 0.1F};
   row.anchor_present = true;
@@ -126,11 +134,15 @@ int main() {
         "motion_predicted_width", "motion_predicted_height",
         "detector_candidate_center_ratio",
         "detector_position_valid_count",
-        "detector_position_rejected_count"}) {
+        "detector_position_rejected_count",
+        "occlusion_hold_triggered", "occlusion_hold_remaining_frames",
+        "occlusion_reference_width", "occlusion_reference_height",
+        "occlusion_width_ratio", "occlusion_height_ratio",
+        "tracker_skipped", "detector_suppressed_by_hold"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("6,", 0) == 0,
-              "tracking rows carry schema version 6 exactly once");
+  expect_true(encoded.rfind("7,", 0) == 0,
+              "tracking rows carry schema version 7 exactly once");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
               "detector errors escape commas, newlines, and quotes");
   expect_true(encoded.find("\"detector, timeout \"\"late\"\"\"") !=
@@ -189,6 +201,15 @@ int main() {
   runtime.output.detector_confirmation_hits = 2;
   runtime.output.detector_position_valid_count = 2;
   runtime.output.detector_position_rejected_count = 1;
+  runtime.output.occlusion_hold_triggered = true;
+  runtime.output.occlusion_hold_remaining_frames = 6;
+  runtime.output.occlusion_reference_width = 33.0F;
+  runtime.output.occlusion_reference_height = 44.0F;
+  runtime.output.occlusion_width_ratio = 0.65F;
+  runtime.output.occlusion_height_ratio = 0.90F;
+  runtime.tracker_skipped = true;
+  runtime.tracker_ms = 0.0F;
+  runtime.plan.mode = TrackingMode::kOcclusionHold;
   runtime.detector.configured = true;
   runtime.detector.ready = true;
   runtime.detector.request_submitted = true;
@@ -226,6 +247,13 @@ int main() {
                       std::optional<float>(0.125F) &&
                   mapped.detector_position_valid_count == 2 &&
                   mapped.detector_position_rejected_count == 1 &&
+                  mapped.occlusion_hold_triggered &&
+                  mapped.occlusion_hold_remaining_frames == 6 &&
+                  mapped.occlusion_reference_width == std::optional<float>(33.0F) &&
+                  mapped.occlusion_reference_height == std::optional<float>(44.0F) &&
+                  mapped.occlusion_width_ratio == std::optional<float>(0.65F) &&
+                  mapped.occlusion_height_ratio == std::optional<float>(0.90F) &&
+                  mapped.tracker_skipped && mapped.detector_suppressed_by_hold &&
                   mapped.detector_timing.total_ms == 7.0F,
               "runtime detector diagnostics and verified candidate are mapped");
 
@@ -240,6 +268,10 @@ int main() {
   metadata.sensor = "visible";
   metadata.detector_target_mode = DetectorTargetMode::kSubtarget;
   metadata.detector_candidate_max_center_ratio = 0.15F;
+  metadata.occlusion_hold_frames = 12;
+  metadata.occlusion_trigger_consecutive_unreliable = 2;
+  metadata.occlusion_trigger_min_dimension_ratio = 0.70F;
+  metadata.occlusion_reference_window = 8;
   metadata.source_fps = 30.0;
   metadata.frame_step_ms = 33;
   metadata.tracked_frames = 18;
@@ -264,10 +296,16 @@ int main() {
   metadata.detector.reject_count = 2;
   metadata.detector.error_count = 1;
   const std::string json = tracking_session_metadata_json(metadata);
-  expect_true(contains(json, "\"schema_version\": 6") &&
+  expect_true(contains(json, "\"schema_version\": 7") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&
+                  contains(json, "\"occlusion_hold_frames\": 12") &&
+                  contains(json,
+                           "\"occlusion_trigger_consecutive_unreliable\": 2") &&
+                  contains(json,
+                           "\"occlusion_trigger_min_dimension_ratio\": 0.700000") &&
+                  contains(json, "\"occlusion_reference_window\": 8") &&
                   contains(json, "\"enabled\": true") &&
                   contains(json, "\"calibrated\": false") &&
                   contains(json, "\"model_path\": \"models/yolov8.rknn\"") &&
@@ -285,7 +323,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v6 metadata exposes position gate, detector identity, tensors, versions, and counters");
+              "schema-v7 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

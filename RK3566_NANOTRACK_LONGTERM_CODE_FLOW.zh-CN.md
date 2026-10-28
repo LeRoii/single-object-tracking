@@ -677,6 +677,10 @@ DEBUG_EVENT event=<事件名> key=value key=value ...
 | `detector_request` | `LongTermRuntime` 成功把请求提交给异步 detector | `frame`：当前处理帧；`request_frame`：`DetectorDiagnostics::request_frame_id`，即被复制并送检的源帧。计划请求但 `submit()` 抛错时不会打印此事件，而会打印 `detector_error` |
 | `detector_batch` | `poll()` 得到一个完成批次，不论控制器最终接受还是拒绝 | `frame`：消费结果时的帧；`source_frame`：批次来自哪一帧；`age_ms`：结果年龄；`raw`：通过置信度和有效框检查、但尚未执行 NMS 的候选数；`filtered`：detector 后处理后的候选数；`position_valid`：通过控制器位置硬门、应用最大候选数前的数量；`position_rejected`：框/置信度合法但仅因位置硬门被拒绝的数量；`status`：控制器对批次的新鲜度和合法性判断；`total_ms`：该批次 detector 总耗时 |
 | `detector_error` | detector `submit()` 或 `poll()` 抛出异常 | `frame`：发现异常的当前帧；`message`：`DetectorDiagnostics::error`，其中空白已替换为下划线。它是 detector 链路错误，不自动表示 NanoTrack 主链已经停止 |
+| `detector_candidate` | 完成批次产生候选诊断时，每个 `ControllerOutput::detector_candidate_diagnostics` 元素各打印一次 | `index`：批内顺序；`bbox/class_id/confidence`：adapter 经阈值和 NMS 后的候选；`center_ratio`：相对运动预测的位置距离；`source_frame/age_ms`：异步批次来源帧与当前消费年龄；`eligible/position_pass/queued/candidate_id/rejection`：控制器已作出的原始筛选结论。事件直接消费控制器诊断，不在日志层重算门限 |
+| `occlusion_hold_enter` | `occlusion_hold_triggered=true` 的触发帧 | `remaining`：配置的完整等待帧数；`reference`：可靠历史中位数宽高；`width_ratio/height_ratio`：触发观测相对参考尺度；`tracker_skipped`：触发帧仍已推理，所以通常为 0；`detector_suppressed`：该帧是否已经按 HOLD 跳过 detector 提交 |
+| `occlusion_hold_tick` | 完整 HOLD 帧，即输出状态为 `OCCLUSION_HOLD` 且不是触发帧 | `remaining`：本帧开始时剩余数；`motion`：继续预测中心、冻结宽高的框；`tracker_skipped=1` 与 `detector_suppressed=1` 表示有意跳过，而非推理故障 |
+| `occlusion_hold_exit` | 上一输出为 HOLD、本帧恢复其他状态 | `next_state`：按累计丢失时间进入的下一状态；`loss_duration_ms`：DebugTelemetry 从本次连续 `control_valid=0` 首帧到退出帧观察到的时长，属于日志观测值，不改变控制器状态 |
 | `detector_verify` | 当前 `SearchPlan::hypothesis_source` 为 `DETECTOR`，即正在用 NanoTrack 验证一个 detector 候选或其已锁定位置 | 字段详见下一小节；事件出现只证明“正在验证”，不证明重捕成功 |
 | `reacquired` | `ControllerOutput::reacquired=true` | `frame`：确认成功帧；`source`：本次恢复来自 `MOTION` 还是 `DETECTOR` 假设；`candidate_id`：detector 恢复时的内部候选 ID，否则可为 `none`；`confirmation`：命中数/尝试数；`control_valid`：恢复后控制授权；`bbox`：最终接受框 |
 | `template_action` | `ControllerOutput::template_action` 不是 `NONE` | `frame`：动作所在帧；`action`：`STAGE_RECENT`、`COMMIT_RECENT` 或 `ROLLBACK_RECENT`。动作由控制器决定，实际模板操作随后由 `LongTermRuntime` 调用短时跟踪器执行 |
@@ -693,7 +697,13 @@ DEBUG_EVENT event=<事件名> key=value key=value ...
 | `INVALID` | 批次存在，但没有尺寸、坐标和置信度均合法的候选 |
 | `POSITION_REJECTED` | 至少存在一个尺寸、坐标和置信度合法的候选，但全部超过 `detector_candidate_max_center_ratio`，没有候选入队 |
 
-### 20.4 `detector_verify` 字段与安全判读
+### 20.4 Detector 全候选、`detector_verify` 与安全判读
+
+`detector_candidate` 中的 `PASS` 只表示合法候选通过位置硬门。最终 top-N 容量、批次
+身份/过期、HOLD generation 作废等仍可能令 `queued=0`。`source_frame` 是 detector
+真正处理的源帧，`age_ms` 是结果到达当前帧时的年龄；异步框叠加在当前画面只用于
+诊断，不能当作当前帧精确位置。`INVALID` 候选只打印深红文字，不将非有限或非法几何
+送入 OpenCV 的 `lround`/`Rect`。
 
 示例格式：
 
@@ -738,7 +748,7 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 | 字段 | 含义和来源 |
 |---|---|
 | `frame` | `ControllerOutput::frame_id` |
-| `mode` | 当前长时状态：`TRACKING`、`UNCERTAIN`、`LOCAL_RECOVERY`、`ASSISTED_RECOVERY` 或 `LOST` |
+| `mode` | 当前长时状态：`TRACKING`、`UNCERTAIN`、`LOCAL_RECOVERY`、`OCCLUSION_HOLD`、`ASSISTED_RECOVERY` 或 `LOST` |
 | `quality` | 当前选中观测的 `RELIABLE`、`WEAK` 或 `REJECTED` 分类 |
 | `control_valid` | 当前控制授权，`LOST` 时必须为 0 |
 | `accepted` | 本帧是否接受 NanoTrack 观测并提交框；它描述算法接受动作，`control_valid` 才是控制安全字段 |
@@ -748,7 +758,7 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 | `psr` | 峰旁比，来自 NanoTrack 响应图质量计算 |
 | `apce` | 平均峰值相关能量，来自 NanoTrack 响应图质量计算 |
 | `peak_margin` | 第一峰与次峰的差值，来自 NanoTrack 响应图质量计算 |
-| `tracker_ms` | `ShortTermTracker::infer()` 的耗时，仅包含本帧 NanoTrack 推理段 |
+| `tracker_ms` | `ShortTermTracker::infer()` 的耗时，仅包含本帧 NanoTrack 推理段；HOLD 完整跳过帧为 0，并由 `tracker_skipped=1` 明确区分，汇总均值排除这些零值 |
 | `runtime_ms` | `LongTermRuntime::process_frame()` 总耗时，包含计划、detector 非阻塞 submit/poll、NanoTrack、控制器和模板动作，不包含显示与视频写出 |
 | `pipeline_ms` | `main.cpp` 从调用 `capture.read()` 之前开始，到算法和可选视频写出完成的主循环耗时；包含该帧视频读取/解码，不包含等待按键、CSV 写出和 Debug 日志生成 |
 
@@ -760,7 +770,7 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 
 | 字段 | 可能值 | 说明 |
 |---|---|---|
-| `mode` / `from` / `to` | `TRACKING`、`UNCERTAIN`、`LOCAL_RECOVERY`、`ASSISTED_RECOVERY`、`LOST` | 与第 9 节状态机一致 |
+| `mode` / `from` / `to` | `TRACKING`、`UNCERTAIN`、`LOCAL_RECOVERY`、`OCCLUSION_HOLD`、`ASSISTED_RECOVERY`、`LOST` | 与第 9 节状态机一致 |
 | `quality` | `RELIABLE`、`WEAK`、`REJECTED` | 可靠、弱、拒绝；不是 detector 置信度 |
 | `source` | `MOTION`、`DETECTOR` | 当前搜索假设来源 |
 | `detector_target_mode` | `FULL_OBJECT`、`SUBTARGET` | detector 框按完整目标使用，或生成局部子目标探针 |
@@ -774,8 +784,10 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 2. 检查 `command`、`target_initialized` 和 `frame`，确认单步/连续播放、初始框和重新
    框选发生在预期原视频帧。
 3. 用 `state_change` 和 `control_change` 找到从可靠跟踪转为不可靠或恢复控制的准确帧。
-4. 发生遮挡后按 `detector_request → detector_batch → detector_verify` 检查请求、结果
-   新鲜度、候选数量、同类歧义、探针、锁定和确认数。
+4. 发生遮挡后先看 `occlusion_hold_enter → tick → exit`，确认等待期间中心运动、冻结尺度
+   和 tracker/detector 跳过符合预期；恢复检测后按
+   `detector_request → detector_batch → detector_candidate → detector_verify` 检查请求、
+   全候选筛选原因、结果新鲜度、同类歧义、探针、锁定和确认数。
 5. 只有出现 `reacquired` 才把该帧记为控制器确认的恢复；detector 路径还必须核对
    `source=DETECTOR control_valid=1`。
 6. 最后结合 `frame_status` 的响应质量和耗时判断是模型质量、阈值、异步 detector
@@ -789,16 +801,34 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 | 颜色（OpenCV BGR） | 标签 | 数据来源与含义 |
 |---|---|---|
 | 青色 `(255,255,0)` | `MOTION PRED` | `SearchPlan::motion_predicted_bbox`，detector 覆盖前的运动预测 |
-| 紫色 `(255,0,255)` | `DET CAND id/conf/d` | `detector_candidate_region/id/confidence/center_ratio`，只是原始活动候选 |
-| 橙色 `(0,165,255)` | `DET PROBE index` | `SearchPlan::predicted_bbox`，detector 路径实际送给 NanoTrack 的搜索假设 |
+| 紫色 `(255,0,255)` | `DET RAW[i] PASS cls/conf/d/src/age/queued/reason` | 通过位置门的原始 detector 假设；`PASS` 不等于已入队，需继续看 `queued` |
+| 灰色 `(128,128,128)` | `DET RAW[i] ... reason` | `REJECT_POS`、`CAPACITY`、`HOLD_INVALIDATED`、过期或帧不匹配等未获控制资格的原始假设 |
+| 深红色文字 `(0,0,139)` | `DET RAW[i] INVALID ...` | 非有限、越界或尺寸/置信度非法；只显示文字，不绘制框 |
+| 橙色 `(0,165,255)` | `DET CAND id/conf/d` 与 `DET PROBE index` | 当前实际送入 NanoTrack 验证的活动候选及探针；仍不是控制框 |
 | 蓝色 `(255,0,0)` | `NT ANCHOR score` | anchor `TrackerObservation::bbox/raw_score` |
 | 黄色 `(0,255,255)` | `NT RECENT score` | recent `TrackerObservation::bbox/raw_score` |
 | 绿色 `(0,255,0)` | `ACCEPTED CTRL` | 仅当 `accepted=true` 且 `control_valid=true` 时绘制的最终输出框 |
 | 红色 `(0,0,255)` | `REJECTED NO_CTRL` | 顶部状态提示；不伪造一条红色“结果框” |
 
-`FULL_OBJECT` 模式下紫色候选框和橙色 probe 可能完全重合；两类标签仍同时保留。
+候选较多时标签按列排布，不静默丢弃；完整字段同时保留在 `detector_candidate` 事件。
+`FULL_OBJECT` 模式下原始候选、活动候选和橙色 probe 可能完全重合；标签仍分别保留。
 紫色、橙色、蓝色或黄色框出现只说明相应假设/观测存在，不能据此判定跟踪有效。
 只有绿色 `ACCEPTED CTRL` 和日志中的 `control_valid=1` 才代表控制器授权。
+
+### 20.9 schema 7 新增 CSV 字段
+
+| 字段 | 意义与来源 |
+|---|---|
+| `occlusion_hold_triggered` | 本帧是否触发 HOLD，来自 `ControllerOutput::occlusion_hold_triggered` |
+| `occlusion_hold_remaining_frames` | 触发帧或 HOLD 帧开始时剩余完整等待帧数，来自控制器输出 |
+| `occlusion_reference_width/height` | 最近可靠框窗口的中位数宽高；HOLD 中为冻结尺度 |
+| `occlusion_width_ratio/height_ratio` | 触发候选宽高除以可靠参考宽高；无候选/无完整参考时为空 |
+| `tracker_skipped` | `LongTermRuntime` 是否因 `run_tracker=false` 跳过 NanoTrack；为 1 时允许 `tracker_ms=0` |
+| `detector_suppressed_by_hold` | 本帧处于 HOLD 且跳过 tracker/detector 提交；在途 detector 仍可 poll 并仅作诊断 |
+
+schema 7 行仍记录正的 `runtime_ms` 和 `pipeline_ms`。初始化行使用默认零/空值。板端校验只在
+`tracker_skipped=1` 时接受 `tracker_ms=0`；其他帧零值仍判为错误。会话 metadata 的
+`schema_version` 同步为 7，避免旧解析器静默误读新增列。
 
 ## 21. 当前实现的已知限制
 

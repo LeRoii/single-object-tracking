@@ -9,6 +9,8 @@ namespace nanotrack {
 
 enum class DebugBoxKind {
   kMotionPrediction,
+  kDetectorCandidatePass,
+  kDetectorCandidateRejected,
   kDetectorCandidate,
   kDetectorProbe,
   kNanoTrackAnchor,
@@ -23,8 +25,13 @@ struct DebugBoxDescriptor {
   int line_thickness = 2;
 };
 
+struct DebugTextDescriptor {
+  std::string label;
+};
+
 struct InteractiveDebugOverlay {
   std::vector<DebugBoxDescriptor> boxes;
+  std::vector<DebugTextDescriptor> texts;
   std::string status_label = "REJECTED NO_CTRL";
   bool control_valid = false;
 };

@@ -1,5 +1,6 @@
 #include "debug_telemetry.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <iomanip>
 #include <locale>
@@ -38,6 +39,30 @@ std::string optional_ratio(const std::optional<float>& value) {
   return stream.str();
 }
 
+std::string bbox_value(const BBox& bbox) {
+  std::ostringstream stream;
+  stream.imbue(std::locale::classic());
+  stream << std::fixed << std::setprecision(2) << bbox.x << ',' << bbox.y
+         << ',' << bbox.width << ',' << bbox.height;
+  return stream.str();
+}
+
+const char* rejection_name(DetectorCandidateRejection rejection) {
+  switch (rejection) {
+    case DetectorCandidateRejection::kNone: return "NONE";
+    case DetectorCandidateRejection::kInvalid: return "INVALID";
+    case DetectorCandidateRejection::kFrameMismatch: return "FRAME_MISMATCH";
+    case DetectorCandidateRejection::kStale: return "STALE";
+    case DetectorCandidateRejection::kHoldInvalidated:
+      return "HOLD_INVALIDATED";
+    case DetectorCandidateRejection::kPositionRejected:
+      return "POSITION_REJECTED";
+    case DetectorCandidateRejection::kCapacityRejected:
+      return "CAPACITY_REJECTED";
+  }
+  return "UNKNOWN";
+}
+
 std::string sanitized_value(const std::string& value) {
   std::string sanitized;
   sanitized.reserve(value.size());
@@ -61,6 +86,7 @@ void DebugTelemetry::reset() {
   has_previous_state_ = false;
   previous_mode_ = TrackingMode::kTracking;
   previous_control_valid_ = false;
+  loss_start_timestamp_ms_.reset();
 }
 
 std::vector<std::string> DebugTelemetry::frame_events(
@@ -69,6 +95,11 @@ std::vector<std::string> DebugTelemetry::frame_events(
     bool force_heartbeat) {
   std::vector<std::string> events;
   ++observed_frames_;
+  const bool was_hold = has_previous_state_ &&
+                        previous_mode_ == TrackingMode::kOcclusionHold;
+  if (!result.output.control_valid && !loss_start_timestamp_ms_) {
+    loss_start_timestamp_ms_ = result.output.timestamp_ms;
+  }
 
   if (!has_previous_state_ || result.output.mode != previous_mode_) {
     std::ostringstream stream = event_stream("state_change");
@@ -90,6 +121,73 @@ std::vector<std::string> DebugTelemetry::frame_events(
   has_previous_state_ = true;
   previous_mode_ = result.output.mode;
   previous_control_valid_ = result.output.control_valid;
+
+  const bool detector_suppressed = result.tracker_skipped &&
+                                   !result.plan.request_detector;
+  if (result.output.occlusion_hold_triggered) {
+    std::ostringstream stream = event_stream("occlusion_hold_enter");
+    stream << " frame=" << result.output.frame_id
+           << " remaining=" << result.output.occlusion_hold_remaining_frames
+           << " reference=" << std::setprecision(2)
+           << result.output.occlusion_reference_width.value_or(0.0F) << ','
+           << result.output.occlusion_reference_height.value_or(0.0F)
+           << std::setprecision(3)
+           << " width_ratio="
+           << optional_ratio(result.output.occlusion_width_ratio)
+           << " height_ratio="
+           << optional_ratio(result.output.occlusion_height_ratio)
+           << " tracker_skipped=" << (result.tracker_skipped ? 1 : 0)
+           << " detector_suppressed=" << (detector_suppressed ? 1 : 0);
+    events.push_back(stream.str());
+  }
+  if (result.output.mode == TrackingMode::kOcclusionHold &&
+      !result.output.occlusion_hold_triggered) {
+    std::ostringstream stream = event_stream("occlusion_hold_tick");
+    stream << " frame=" << result.output.frame_id
+           << " remaining=" << result.output.occlusion_hold_remaining_frames
+           << " motion=" << bbox_value(result.plan.motion_predicted_bbox)
+           << " tracker_skipped=" << (result.tracker_skipped ? 1 : 0)
+           << " detector_suppressed=" << (detector_suppressed ? 1 : 0);
+    events.push_back(stream.str());
+  }
+  if (was_hold && result.output.mode != TrackingMode::kOcclusionHold) {
+    const std::int64_t loss_duration = loss_start_timestamp_ms_
+        ? std::max<std::int64_t>(0, result.output.timestamp_ms -
+                                       *loss_start_timestamp_ms_)
+        : 0;
+    std::ostringstream stream = event_stream("occlusion_hold_exit");
+    stream << " frame=" << result.output.frame_id
+           << " next_state=" << to_string(result.output.mode)
+           << " loss_duration_ms=" << loss_duration;
+    events.push_back(stream.str());
+  }
+
+  for (std::size_t index = 0;
+       index < result.output.detector_candidate_diagnostics.size(); ++index) {
+    const DetectorCandidateDiagnostic& diagnostic =
+        result.output.detector_candidate_diagnostics[index];
+    std::ostringstream stream = event_stream("detector_candidate");
+    stream << " frame=" << result.output.frame_id
+           << " index=" << index
+           << " bbox=" << bbox_value(diagnostic.candidate.bbox)
+           << " class_id=" << diagnostic.candidate.class_id
+           << " confidence=" << diagnostic.candidate.confidence
+           << " center_ratio=" << optional_ratio(diagnostic.center_ratio)
+           << " source_frame="
+           << (result.detector.batch_received
+                   ? std::to_string(result.detector.batch_frame_id)
+                   : "none")
+           << " age_ms="
+           << (result.detector.batch_received
+                   ? std::to_string(result.detector.batch_age_ms)
+                   : "none")
+           << " eligible=" << (diagnostic.batch_eligible ? 1 : 0)
+           << " position_pass=" << (diagnostic.position_gate_pass ? 1 : 0)
+           << " queued=" << (diagnostic.queued ? 1 : 0)
+           << " candidate_id=" << optional_id(diagnostic.candidate_id)
+           << " rejection=" << rejection_name(diagnostic.rejection);
+    events.push_back(stream.str());
+  }
 
   if (result.detector.request_submitted) {
     std::ostringstream stream = event_stream("detector_request");
@@ -183,6 +281,8 @@ std::vector<std::string> DebugTelemetry::frame_events(
            << " pipeline_ms=" << pipeline_ms;
     events.push_back(stream.str());
   }
+
+  if (result.output.control_valid) loss_start_timestamp_ms_.reset();
 
   return events;
 }
