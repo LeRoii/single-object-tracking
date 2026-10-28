@@ -389,6 +389,20 @@ int main() {
   expect_true(!frozen_boundary.scale_frozen(),
               "initialization clears scale freeze state");
 
+  MotionEstimator freeze_clamped_velocity(motion_config);
+  freeze_clamped_velocity.initialize(
+      BBox{80.0F, 30.0F, 10.0F, 10.0F}, 0, 100, 80);
+  freeze_clamped_velocity.predict(100);
+  freeze_clamped_velocity.correct(
+      BBox{70.0F, 30.0F, 10.0F, 10.0F}, 100);
+  freeze_clamped_velocity.freeze_scale(80.0F, 30.0F);
+  const BBox freeze_clamped_prediction =
+      freeze_clamped_velocity.predict(200);
+  expect_near(freeze_clamped_prediction.x +
+                  0.5F * freeze_clamped_prediction.width,
+              55.0F, 1e-5F,
+              "freeze-induced boundary clamp preserves learned inward center velocity");
+
   MotionEstimator invalid_freeze(motion_config);
   invalid_freeze.initialize(BBox{10.0F, 10.0F, 20.0F, 20.0F}, 0, 100, 80);
   for (float invalid_width : {0.0F, -1.0F,

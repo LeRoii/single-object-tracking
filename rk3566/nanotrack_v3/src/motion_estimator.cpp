@@ -97,7 +97,11 @@ void MotionEstimator::freeze_scale(float width, float height) {
   velocity_width_ = 0.0F;
   velocity_height_ = 0.0F;
   scale_frozen_ = true;
+  const float preserved_velocity_x = velocity_x_;
+  const float preserved_velocity_y = velocity_y_;
   clamp_state_to_frame();
+  velocity_x_ = preserved_velocity_x;
+  velocity_y_ = preserved_velocity_y;
 }
 
 BBox MotionEstimator::state_to_bbox() const {
