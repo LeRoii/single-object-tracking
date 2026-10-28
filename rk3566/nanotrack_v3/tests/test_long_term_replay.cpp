@@ -279,8 +279,15 @@ int main() {
               "hold output remains explicitly invalid");
   SearchPlan resumed_plan = one_frame_hold.begin_frame(12, 480, false);
   expect_true(resumed_plan.mode == TrackingMode::kUncertain &&
-                  resumed_plan.run_tracker,
-              "the frame after N=1 resumes the timestamp-derived uncertain mode");
+                  resumed_plan.run_tracker &&
+                  resumed_plan.predicted_bbox.width == 20.0F &&
+                  resumed_plan.predicted_bbox.height == 20.0F,
+              "the frame after N=1 resumes recovery with frozen scale");
+  one_frame_hold.finish_frame(resumed_plan, {}, std::nullopt);
+  resumed_plan = one_frame_hold.begin_frame(13, 520, false);
+  expect_true(resumed_plan.predicted_bbox.width == 20.0F &&
+                  resumed_plan.predicted_bbox.height == 20.0F,
+              "scale remains frozen after hold exit until reacquisition");
   one_frame_hold.finish_frame(resumed_plan, {}, std::nullopt);
 
   ControllerConfig hold_twelve_config = hold_one_config;
@@ -307,8 +314,10 @@ int main() {
   }
   resumed_plan = twelve_frame_hold.begin_frame(23, 920, false);
   expect_true(resumed_plan.mode == TrackingMode::kLocalRecovery &&
-                  resumed_plan.run_tracker,
-              "the thirteenth frame resumes after exactly twelve hold frames");
+                  resumed_plan.run_tracker &&
+                  resumed_plan.predicted_bbox.width == 20.0F &&
+                  resumed_plan.predicted_bbox.height == 20.0F,
+              "the thirteenth frame resumes after twelve holds at frozen scale");
   twelve_frame_hold.finish_frame(resumed_plan, {}, std::nullopt);
 
   reject_shrunken(twelve_frame_hold, 24, 960, BBox{43, 33, 14, 14});

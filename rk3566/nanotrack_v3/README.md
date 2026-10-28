@@ -311,14 +311,16 @@ During `OCCLUSION_HOLD`, NanoTrack inference and detector submission are
 intentionally skipped, `tracker_ms=0`, and that zero is excluded from the
 reported mean tracker inference latency. `runtime_ms` and `pipeline_ms` remain
 positive. All post-NMS detector diagnostics are shown in interactive Debug:
-purple means the position gate passed, gray means a rejected/non-queued raw
-hypothesis, deep-red text means invalid geometry, and orange is the active
-NanoTrack verification probe. `PASS` does not imply `queued=1`, and no raw
-detector box can directly authorize `control_valid`.
+purple means a valid raw hypothesis with no rejection reason, gray means a
+position-, capacity-, stale-, frame-, or HOLD-rejected raw hypothesis,
+deep-red text means invalid geometry, and orange is the active NanoTrack
+verification probe. `PASS` does not imply `queued=1`, and no raw detector box
+can directly authorize `control_valid`.
 
 Only a row with `control_valid=1` may drive a gimbal or downstream control
-loop. `UNCERTAIN`, `LOCAL_RECOVERY`, `ASSISTED_RECOVERY`, and `LOST` rows can
-contain a predicted box for visualization while remaining invalid for control.
+loop. `UNCERTAIN`, `LOCAL_RECOVERY`, `OCCLUSION_HOLD`, `ASSISTED_RECOVERY`,
+and `LOST` rows can contain a predicted box for visualization while remaining
+invalid for control.
 
 If `--session-metadata` is omitted, metadata is written next to the CSV as
 `OUTPUT.csv.metadata.json`. It records the model manifest fingerprint, RKNN
@@ -370,7 +372,7 @@ recovery:
   path still needs memory investigation;
 - measured FPS values are observations without a performance pass threshold.
 
-Only schema-v5 rows with `control_valid=1` are valid control outputs. Detector
+Only schema-v7 rows with `control_valid=1` are valid control outputs. Detector
 confidence never directly authorizes control.
 
 The remaining data, calibration, board, and optional ReID work is tracked in

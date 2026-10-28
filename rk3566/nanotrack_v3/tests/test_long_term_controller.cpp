@@ -820,6 +820,122 @@ int main() {
                   fast_translation.mode() != TrackingMode::kOcclusionHold,
               "fast translation at stable scale does not trigger occlusion hold");
 
+  ControllerConfig verification_hold_config = hold_config;
+  verification_hold_config.uncertain_ms = 50;
+  verification_hold_config.local_recovery_ms = 100;
+  verification_hold_config.assisted_recovery_ms = 1000;
+  verification_hold_config.detector_candidate_max_center_ratio = 1.0F;
+  LongTermController detector_verification_no_hold(verification_hold_config);
+  detector_verification_no_hold.initialize(BBox{60, 40, 20, 20}, 0, 0,
+                                           FrameSize{240, 160});
+  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
+    feed_reliable_box(detector_verification_no_hold, frame,
+                      BBox{60, 40, 20, 20});
+  }
+  reject_frame(detector_verification_no_hold, 9, 360);
+  plan = detector_verification_no_hold.begin_frame(10, 500, true);
+  expect_true(plan.mode == TrackingMode::kAssistedRecovery &&
+                  plan.request_detector && plan.detector_request,
+              "detector-verification fixture reaches an assisted request");
+  DetectorBatch verification_batch;
+  verification_batch.source_frame_id = plan.frame_id;
+  verification_batch.source_timestamp_ms = plan.timestamp_ms;
+  verification_batch.generation = plan.detector_request->generation;
+  verification_batch.candidates = {{BBox{60, 40, 20, 20}, 0.95F, 0}};
+  detector_verification_no_hold.finish_frame(plan, {}, verification_batch);
+  plan = detector_verification_no_hold.begin_frame(11, 540, false);
+  expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                  plan.detector_candidate_id.has_value(),
+              "queued candidate is actively under NanoTrack verification");
+  output = detector_verification_no_hold.finish_frame(
+      plan, {weak_observation(plan, TemplateKind::kAnchor,
+                              BBox{63, 43, 14, 14}, 11)},
+      std::nullopt);
+  expect_true(!output.occlusion_hold_triggered &&
+                  output.mode == TrackingMode::kAssistedRecovery,
+              "active detector verification excludes occlusion-hold entry");
+
+  ControllerConfig clearing_config = verification_hold_config;
+  clearing_config.occlusion_hold_frames = 1;
+  LongTermController hold_clears_pending(clearing_config);
+  hold_clears_pending.initialize(BBox{60, 40, 20, 20}, 0, 0,
+                                 FrameSize{240, 160});
+  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
+    feed_reliable_box(hold_clears_pending, frame, BBox{60, 40, 20, 20});
+  }
+  reject_frame(hold_clears_pending, 9, 360);
+  plan = hold_clears_pending.begin_frame(10, 400, false);
+  const BBox conflicting_recent{75, 40, 20, 20};
+  output = hold_clears_pending.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor,
+                            plan.predicted_bbox, 10),
+       reliable_observation(plan, TemplateKind::kRecent,
+                            conflicting_recent, 10)},
+      std::nullopt);
+  expect_true(!output.accepted && !output.control_valid,
+              "pre-hold motion confirmation remains pending");
+  plan = hold_clears_pending.begin_frame(11, 500, true);
+  expect_true(plan.mode == TrackingMode::kAssistedRecovery &&
+                  plan.request_detector && plan.detector_request,
+              "fixture records a detector request before reacquisition");
+  output = hold_clears_pending.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor,
+                            plan.predicted_bbox, 11)},
+      std::nullopt);
+  expect_true(output.reacquired && output.control_valid,
+              "second motion confirmation reacquires while retaining request identity");
+  for (std::uint64_t frame = 12; frame <= 18; ++frame) {
+    const SearchPlan reliable_plan =
+        hold_clears_pending.begin_frame(frame, 489 + frame, false);
+    hold_clears_pending.finish_frame(
+        reliable_plan,
+        {reliable_observation(reliable_plan, TemplateKind::kAnchor,
+                              BBox{60, 40, 20, 20}, frame)},
+        std::nullopt);
+  }
+  plan = hold_clears_pending.begin_frame(19, 508, false);
+  output = hold_clears_pending.finish_frame(
+      plan, {weak_observation(plan, TemplateKind::kAnchor,
+                              BBox{63, 43, 14, 14}, 19)},
+      std::nullopt);
+  expect_true(!output.occlusion_hold_triggered,
+              "first shrunken observation starts the new loss episode");
+  plan = hold_clears_pending.begin_frame(20, 509, false);
+  DetectorBatch late_previous_request;
+  late_previous_request.source_frame_id = 11;
+  late_previous_request.source_timestamp_ms = 500;
+  late_previous_request.generation = plan.detector_request
+                                         ? plan.detector_request->generation
+                                         : 0;
+  late_previous_request.candidates = {{BBox{60, 40, 20, 20}, 0.95F, 0}};
+  output = hold_clears_pending.finish_frame(
+      plan, {weak_observation(plan, TemplateKind::kAnchor,
+                              BBox{63, 43, 14, 14}, 20)},
+      late_previous_request);
+  expect_true(output.occlusion_hold_triggered &&
+                  output.detector_status == DetectorBatchStatus::kAccepted &&
+                  output.detector_position_valid_count == 1 &&
+                  output.detector_candidates_queued == 0 &&
+                  output.detector_candidate_diagnostics.size() == 1 &&
+                  output.detector_candidate_diagnostics[0].rejection ==
+                      DetectorCandidateRejection::kHoldInvalidated &&
+                  !output.detector_candidate_diagnostics[0].queued,
+              "hold entry invalidates and clears a candidate ingested on its trigger frame");
+  plan = hold_clears_pending.begin_frame(21, 510, false);
+  hold_clears_pending.finish_frame(plan, {}, std::nullopt);
+  plan = hold_clears_pending.begin_frame(22, 2000, false);
+  expect_true(plan.hypothesis_source == HypothesisSource::kMotion &&
+                  !plan.detector_candidate_id.has_value(),
+              "hold entry clears candidates queued on its trigger frame");
+  output = hold_clears_pending.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kAnchor,
+                                  plan.predicted_bbox, 22)},
+      std::nullopt);
+  expect_true(!output.accepted && !output.control_valid,
+              "hold entry clears pre-hold motion confirmations as well");
+
   ControllerConfig diagnostic_config = hold_config;
   diagnostic_config.occlusion_reference_window = 3;
   diagnostic_config.occlusion_hold_frames = 1;

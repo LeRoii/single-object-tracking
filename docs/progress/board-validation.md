@@ -710,3 +710,54 @@ detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 
 
 协调对话暂不需要修改公共契约；待实现、主机测试和真实 RK3566 简单验证形成提交后，
 再请求集成新的 Debug 源码候选。Detector 直接控制禁令和人工吊舱边界保持不变。
+
+## 2026-10-28 OCCLUSION_HOLD 整体审查与板前主机门
+
+- 时间：`2026-10-28T23:27:15+08:00`；工作树/分支为
+  `/home/u20/single-object-tracking/.worktrees/debug-runtime-config` /
+  `codex/debug-runtime-config`，审查和修正基线为
+  `6e533c2785b1389c3613be38788468554f4133e4`。本节与相关测试、README
+  修正同一提交，结果提交可用
+  `git log -1 --format=%H -- docs/progress/board-validation.md` 查询。
+- 整体功能审查范围为 `4f1a046..6e533c2`；审查门结论为没有未解决的
+  Critical/Important 项。三个测试覆盖类 Minor 与三个 README 文案类 Minor 已在
+  板端同步前处理，未因审查修改生产控制逻辑。
+- 新增直接回归覆盖：HOLD 退出而尚未重捕时运动预测宽高仍保持冻结；活动 detector
+  候选正在 NanoTrack 验证时不能进入 HOLD；HOLD 触发会清除旧 motion 确认及在触发帧
+  到达、通过位置门的晚到 detector 候选。最后一项使用公开状态机构造可达场景，不读取
+  控制器私有状态。
+- README 同步把控制无效状态列表补入 `OCCLUSION_HOLD`，把遗留
+  `schema-v5` 改为当前 `schema-v7`，并收窄颜色说明：只有无拒绝原因的合法原始假设为
+  紫色，位置/容量/stale/frame/HOLD 拒绝均为灰色，非法几何只显示深红文字。
+- TDD/聚焦证据：新增候选清理断言首次运行时发现测试错误地读取触发帧末尾队列为
+  `1`，实际设计语义是候选先经批次接收和位置门、随后由 HOLD 立即作废并把最终队列
+  清为 `0`；断言改为同时验证 `ACCEPTED` 批次、位置通过计数、
+  `HOLD_INVALIDATED` 诊断和最终零队列。随后
+  `ctest -R '^(long_term_controller|long_term_replay)$'` 为 `2/2` 通过。
+- 主机命令：
+
+  ```bash
+  cmake -S rk3566/nanotrack_v3 \
+    -B /tmp/nanotrack-occlusion-hold-final-build \
+    -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF
+  cmake --build /tmp/nanotrack-occlusion-hold-final-build -- -j2
+  ctest --test-dir /tmp/nanotrack-occlusion-hold-final-build --output-on-failure
+  git diff --check 4f1a046..HEAD
+  git diff --check
+  ```
+
+  观察结果：配置和完整构建成功，完整主机 CTest 为 `15/15` 通过、`0` 失败，
+  总测试时间 `1.13 sec`；两项 whitespace 检查均无输出。
+- 证据边界：本节仅证明 x86_64 主机、`ENABLE_RKNN_RUNTIME=OFF` 的构建/测试及
+  源码审查状态；尚未连接 RK3566、未进行原生 RKNN 构建、模型加载、
+  `girl_dance` 流程观察、二进制/模型/视频哈希或资源测量。不得把本节表述为板端验证、
+  重捕性能、真实吊舱或发布门通过。
+- 安全边界保持不变：detector 原始候选、HOLD motion 框和 WEAK 观测都不能直接产生
+  `control_valid=true`；`latest_handoff.available=false`。板端仅允许同步本节对应的精确
+  已提交源码，必须保留板端用户配置、日志、模型、视频和构建目录。
+
+### Handoff
+
+当前不请求协调对话修改 `STATUS.md` 或 `integration-contract.yaml`。完成真实 RK3566
+原生构建、CTest 和有界 `girl_dance` 观察后，再在本文件追加板端工件身份、观察项、
+未观察项和最终 Debug 分支提交。
