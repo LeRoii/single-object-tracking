@@ -723,9 +723,10 @@ detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 
   Critical/Important 项。三个测试覆盖类 Minor 与三个 README 文案类 Minor 已在
   板端同步前处理，未因审查修改生产控制逻辑。
 - 新增直接回归覆盖：HOLD 退出而尚未重捕时运动预测宽高仍保持冻结；活动 detector
-  候选正在 NanoTrack 验证时不能进入 HOLD；HOLD 触发会清除旧 motion 确认及在触发帧
-  到达、通过位置门的晚到 detector 候选。最后一项使用公开状态机构造可达场景，不读取
-  控制器私有状态。
+  候选正在 NanoTrack 验证时不能进入 HOLD；HOLD 触发会清除在触发帧到达、通过位置门
+  的晚到 detector 候选。此提交当时关于“清除旧 motion 确认”的公开行为断言并不能
+  单独证明清理发生，因为固定 2/3 确认窗口会在 HOLD 结束前自然淘汰旧确认；该证据缺口
+  由下方 `2026-10-28 HOLD 确认清理测试证据修正` 补齐。
 - README 同步把控制无效状态列表补入 `OCCLUSION_HOLD`，把遗留
   `schema-v5` 改为当前 `schema-v7`，并收窄颜色说明：只有无拒绝原因的合法原始假设为
   紫色，位置/容量/stale/frame/HOLD 拒绝均为灰色，非法几何只显示深红文字。
@@ -866,3 +867,37 @@ detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 
 协调对话可采纳本节锁定的共享源码提交和板端工件身份，但不应把它发布为公共
 `latest_handoff`。公共契约需要协调者评估是否仅更新 Debug 源码候选；VisDrone9
 promotion hold、detector 直接控制禁令、交叉编译前板端门和人工吊舱边界均保持不变。
+
+## 2026-10-28 HOLD 确认清理测试证据修正
+
+- 时间：`2026-10-28T23:41:18+08:00`；修正基线为
+  `bc6103ddf1c327cc6c88b3121784de6a71fa31cc`。独立复核指出，上述旧测试在 HOLD 前
+  已通过重捕路径清空确认，不能证明 HOLD 入口自身执行了 `confirmations_.clear()`。
+- 新测试把 `occlusion_trigger_consecutive_unreliable` 设为 `3`：先以模板冲突留下恰好
+  一个 motion 确认，再输入两个 WEAK 缩小框，第二个 WEAK 触发 HOLD。测试在触发前验证
+  待确认数为 `1`，在 HOLD 入口后验证为 `0`；HOLD 结束后的第一个一致可靠观测只能建立
+  新的第一次确认，保持 `accepted=false`、`control_valid=false`。
+- 由于当前确认策略固定为 2/3，旧确认按帧号在 HOLD 结束前也会自然过期；仅验证退出后
+  未接受不足以证明入口清理。为验证新断言的敏感性，临时且仅在主机工作树中禁用 HOLD
+  入口的 `confirmations_.clear()`，重新构建运行 `test_long_term_controller`，观察到：
+
+  ```text
+  FAIL: HOLD entry clears the pending motion confirmation immediately
+  1 test(s) failed
+  ```
+
+  随后立即恢复原生产代码；`git diff -- src/long_term_controller.cpp` 无输出。恢复后聚焦
+  `long_term_controller|long_term_replay` 为 `2/2` 通过，完整主机 CTest 为 `15/15`
+  通过、`0` 失败、总时间 `0.55 sec`，`git diff --check` 无输出。
+- 本次提交只增加/修正测试与证据文档，不改变生产决策或板端二进制对应的生产源码。
+  真实 RK3566 构建和 307 帧视频观察发生在本测试补强之前，本轮没有重新同步、编译或
+  运行开发板；板端提交仍为 `7ba0da0e0359c1ead4bd00656366a4cfbd463d69`，此前二进制
+  SHA-256 `62fe954c00fd4cce96e55db62a1f1687e037b53c5045070eef333dc02cf2e3f2`
+  和全部板端证据边界不变，不能把新增主机测试表述为板端复测。
+- 安全与发布裁决不变：detector/HOLD/WEAK 不能直接授权控制，
+  `functional_pass_promotion_held` 与 `latest_handoff.available=false` 保持不变。
+
+### Handoff
+
+协调对话应采用本修正后的测试覆盖和证据措辞；公共契约无需因测试补强改变工件身份或
+发布裁决。若未来要求在板端执行这个新增测试，必须另行形成真实板端复测证据。

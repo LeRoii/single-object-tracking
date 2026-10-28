@@ -1,12 +1,21 @@
+#include "controller_config.hpp"
+#include "long_term_types.hpp"
+#include "motion_estimator.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <optional>
+#include <vector>
+
+#define private public
 #include "long_term_controller.hpp"
+#undef private
 
 #include <cmath>
-#include <cstdint>
 #include <iostream>
 #include <limits>
-#include <optional>
 #include <string>
-#include <vector>
 
 namespace {
 
@@ -934,7 +943,49 @@ int main() {
                                   plan.predicted_bbox, 22)},
       std::nullopt);
   expect_true(!output.accepted && !output.control_valid,
-              "hold entry clears pre-hold motion confirmations as well");
+              "post-hold reliable observation remains under confirmation");
+
+  ControllerConfig confirmation_clear_config = hold_config;
+  confirmation_clear_config.occlusion_hold_frames = 1;
+  confirmation_clear_config.occlusion_trigger_consecutive_unreliable = 3;
+  LongTermController hold_clears_confirmation(confirmation_clear_config);
+  hold_clears_confirmation.initialize(BBox{60, 40, 20, 20}, 0, 0,
+                                      FrameSize{240, 160});
+  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
+    feed_reliable_box(hold_clears_confirmation, frame,
+                      BBox{60, 40, 20, 20});
+  }
+  plan = hold_clears_confirmation.begin_frame(9, 360, false);
+  output = hold_clears_confirmation.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor,
+                            plan.predicted_bbox, 9),
+       reliable_observation(plan, TemplateKind::kRecent,
+                            BBox{75, 40, 20, 20}, 9)},
+      std::nullopt);
+  expect_true(!output.accepted &&
+                  hold_clears_confirmation.confirmations_.size() == 1,
+              "one motion confirmation is pending before two weak frames");
+  output = feed_weak_box(hold_clears_confirmation, 10,
+                         BBox{63, 43, 14, 14});
+  expect_true(!output.occlusion_hold_triggered &&
+                  hold_clears_confirmation.confirmations_.size() == 1,
+              "first weak frame preserves the pending confirmation");
+  output = feed_weak_box(hold_clears_confirmation, 11,
+                         BBox{63, 43, 14, 14});
+  expect_true(output.occlusion_hold_triggered &&
+                  hold_clears_confirmation.confirmations_.empty(),
+              "HOLD entry clears the pending motion confirmation immediately");
+  plan = hold_clears_confirmation.begin_frame(12, 480, false);
+  hold_clears_confirmation.finish_frame(plan, {}, std::nullopt);
+  plan = hold_clears_confirmation.begin_frame(13, 520, false);
+  output = hold_clears_confirmation.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kAnchor,
+                                  plan.predicted_bbox, 13)},
+      std::nullopt);
+  expect_true(!output.accepted && !output.control_valid &&
+                  hold_clears_confirmation.confirmations_.size() == 1,
+              "first reliable observation after HOLD starts a new confirmation");
 
   ControllerConfig diagnostic_config = hold_config;
   diagnostic_config.occlusion_reference_window = 3;
