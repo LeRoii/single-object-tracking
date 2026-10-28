@@ -698,6 +698,10 @@ detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 
   `docs/superpowers/specs/2026-10-28-occlusion-hold-detector-debug-design.md`。
   独立实现者审查已用于消除 HOLD 首尾帧、重复触发、晚到 detector batch 和现有
   motion/detector 重捕规则边界的歧义。
+- 用户批准设计后形成实施计划：
+  `docs/superpowers/plans/2026-10-28-occlusion-hold-detector-debug.md`。计划按配置/类型、
+  motion 尺度冻结、控制器状态、runtime 与 detector generation、全候选可视化/日志、
+  主机与开发板验证六个可独立审查的任务执行，全部要求先写失败测试。
 - 本次只形成设计，没有修改程序、编译开发板、运行视频或产生新的模型/二进制哈希。
   当前状态继续为 `functional_pass_promotion_held`，
   `development_board_validation.latest_handoff.available=false`。
