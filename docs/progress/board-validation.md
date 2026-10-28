@@ -679,3 +679,30 @@ detector 不能直接授权控制、VisDrone9 promotion hold 和 latest handoff 
 - 安全边界不变：detector 候选仍只是假设，不能直接产生 `control_valid=true`；
   NanoTrack 双模板、几何门和 2/3 确认规则均未绕过。任务状态仍为
   `functional_pass_promotion_held`，`latest_handoff.available=false`。
+
+## 2026-10-28 遮挡等待状态与 Detector 全候选显示设计
+
+- 时间：`2026-10-28T18:51:42+08:00`。
+- 分支/工作树：`codex/debug-runtime-config` /
+  `/home/u20/single-object-tracking/.worktrees/debug-runtime-config`；设计基线为
+  `afc5f4942a6020b50058ecccd349cf1dc87288c2`。
+- 与用户确认采用独立 `OCCLUSION_HOLD` 状态。默认触发条件为连续 2 帧非可靠且
+  宽或高相对最近可靠尺度中位数缩小到 `0.70` 以下；HOLD 帧数通过
+  `occlusion_hold_frames` 配置，默认 12。
+- 触发帧仍执行 NanoTrack；随后完整 N 帧不运行 tracker、不发起 detector，只以
+  冻结宽高的 motion 框预测中心且保持 `control_valid=false`。同一次 loss episode
+  只允许触发一次，仅在 `TRACKING/UNCERTAIN/LOCAL_RECOVERY` 早期阶段允许触发。
+- Detector batch 到达时计划显示全部经过类别阈值和 NMS 的候选，并区分位置门通过、
+  位置拒绝、非法、最终入队和活动候选；所有原始 detector 框仍不能直接授权控制。
+- 设计文档：
+  `docs/superpowers/specs/2026-10-28-occlusion-hold-detector-debug-design.md`。
+  独立实现者审查已用于消除 HOLD 首尾帧、重复触发、晚到 detector batch 和现有
+  motion/detector 重捕规则边界的歧义。
+- 本次只形成设计，没有修改程序、编译开发板、运行视频或产生新的模型/二进制哈希。
+  当前状态继续为 `functional_pass_promotion_held`，
+  `development_board_validation.latest_handoff.available=false`。
+
+### Handoff
+
+协调对话暂不需要修改公共契约；待实现、主机测试和真实 RK3566 简单验证形成提交后，
+再请求集成新的 Debug 源码候选。Detector 直接控制禁令和人工吊舱边界保持不变。
