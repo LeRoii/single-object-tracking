@@ -141,11 +141,15 @@ for index, row in enumerate(rows):
         raise SystemExit(f"non-positive box size at row {index}")
     if index > 0:
         tracker_ms = float(row["tracker_ms"])
+        runtime_ms = float(row["runtime_ms"])
+        pipeline_ms = float(row["pipeline_ms"])
+        if not all(math.isfinite(value) for value in
+                   (tracker_ms, runtime_ms, pipeline_ms)):
+            raise SystemExit(f"non-finite latency at row {index}")
         if ((row["tracker_skipped"] == "1" and tracker_ms != 0) or
                 (row["tracker_skipped"] == "0" and tracker_ms <= 0) or
-                float(row["runtime_ms"]) <= 0 or
-                float(row["pipeline_ms"]) <= 0):
-            raise SystemExit(f"non-positive latency at row {index}")
+                runtime_ms <= 0 or pipeline_ms <= 0):
+            raise SystemExit(f"invalid latency at row {index}")
     if values["x"] < 0 or values["y"] < 0:
         raise SystemExit(f"negative box origin at row {index}")
     if values["x"] + values["width"] > width + 1e-3:

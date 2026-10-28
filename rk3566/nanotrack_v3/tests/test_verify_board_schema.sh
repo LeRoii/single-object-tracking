@@ -131,25 +131,41 @@ ffmpeg -loglevel error -f lavfi -i color=size=16x16:rate=1 \
 
 bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16
 
-python3 - "$artifact_dir/bboxes.csv" <<'PY'
+cp "$artifact_dir/bboxes.csv" "$artifact_dir/bboxes.valid.csv"
+for invalid_case in unskipped_zero nan_tracker inf_runtime inf_pipeline skipped_nonzero; do
+  cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
+  python3 - "$artifact_dir/bboxes.csv" "$invalid_case" <<'PY'
 import csv
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
+invalid_case = sys.argv[2]
 with path.open(newline="") as stream:
     rows = list(csv.DictReader(stream))
     fields = list(rows[0])
-rows[1]["tracker_skipped"] = "0"
-rows[1]["tracker_ms"] = "0"
+if invalid_case == "unskipped_zero":
+    rows[1]["tracker_skipped"] = "0"
+    rows[1]["tracker_ms"] = "0"
+elif invalid_case == "nan_tracker":
+    rows[1]["tracker_skipped"] = "0"
+    rows[1]["tracker_ms"] = "nan"
+elif invalid_case == "inf_runtime":
+    rows[1]["runtime_ms"] = "inf"
+elif invalid_case == "inf_pipeline":
+    rows[1]["pipeline_ms"] = "+inf"
+elif invalid_case == "skipped_nonzero":
+    rows[2]["tracker_skipped"] = "1"
+    rows[2]["tracker_ms"] = "1"
 with path.open("w", newline="") as stream:
     writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
     writer.writerows(rows)
 PY
-if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 \
-    >/dev/null 2>&1; then
-  echo "verify_board accepted zero tracker latency without skip flag" >&2
-  exit 1
-fi
+  if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 \
+      >/dev/null 2>&1; then
+    echo "verify_board accepted invalid latency case: $invalid_case" >&2
+    exit 1
+  fi
+done
 

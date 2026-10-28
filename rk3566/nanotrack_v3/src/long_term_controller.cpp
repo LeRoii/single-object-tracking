@@ -793,6 +793,10 @@ ControllerOutput LongTermController::finish_frame(
     active_detector_candidate_.reset();
     output.occlusion_hold_triggered = true;
     output.occlusion_hold_remaining_frames = hold_remaining_frames_;
+    output.occlusion_consecutive_unreliable_frames =
+        static_cast<std::size_t>(consecutive_unreliable_frames_);
+    output.occlusion_observation_width = selected->observation.bbox.width;
+    output.occlusion_observation_height = selected->observation.bbox.height;
     output.bbox = motion_.current_bbox();
     mode_ = TrackingMode::kOcclusionHold;
     output.mode = mode_;

@@ -198,9 +198,12 @@ int main() {
   hold_enter.output.occlusion_reference_height = 100.0F;
   hold_enter.output.occlusion_width_ratio = 0.65F;
   hold_enter.output.occlusion_height_ratio = 0.90F;
+  hold_enter.output.occlusion_consecutive_unreliable_frames = 2;
+  hold_enter.output.occlusion_observation_width = 52.0F;
+  hold_enter.output.occlusion_observation_height = 90.0F;
   events = telemetry.frame_events(hold_enter, 9.0F, false);
   expect_true(contains(events,
-                       "event=occlusion_hold_enter frame=20 remaining=12 reference=80.00,100.00 width_ratio=0.650 height_ratio=0.900") &&
+                       "event=occlusion_hold_enter frame=20 remaining=12 consecutive_unreliable=2 reference=80.00,100.00 observation=52.00,90.00 width_ratio=0.650 height_ratio=0.900") &&
                   contains(events, "tracker_skipped=0 detector_suppressed=0"),
               "hold entry records canonical reference ratios and skip flags");
 

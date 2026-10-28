@@ -71,6 +71,9 @@ struct ControllerOutput {
   std::optional<float> occlusion_reference_height;
   std::optional<float> occlusion_width_ratio;
   std::optional<float> occlusion_height_ratio;
+  std::size_t occlusion_consecutive_unreliable_frames = 0;
+  std::optional<float> occlusion_observation_width;
+  std::optional<float> occlusion_observation_height;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
 };
 

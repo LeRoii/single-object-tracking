@@ -756,7 +756,12 @@ int main() {
                          BBox{71.95F, 56, 16.10F, 28.0F});
   expect_true(output.occlusion_hold_triggered &&
                   output.mode == TrackingMode::kOcclusionHold &&
-                  output.occlusion_hold_remaining_frames == 12,
+                  output.occlusion_hold_remaining_frames == 12 &&
+                  output.occlusion_consecutive_unreliable_frames == 2 &&
+                  output.occlusion_observation_width ==
+                      std::optional<float>(16.10F) &&
+                  output.occlusion_observation_height ==
+                      std::optional<float>(28.0F),
               "second unreliable observation at the inclusive ratio boundary triggers hold");
   expect_true(output.occlusion_reference_width.has_value() &&
                   output.occlusion_reference_height.has_value(),

@@ -128,9 +128,14 @@ std::vector<std::string> DebugTelemetry::frame_events(
     std::ostringstream stream = event_stream("occlusion_hold_enter");
     stream << " frame=" << result.output.frame_id
            << " remaining=" << result.output.occlusion_hold_remaining_frames
+           << " consecutive_unreliable="
+           << result.output.occlusion_consecutive_unreliable_frames
            << " reference=" << std::setprecision(2)
            << result.output.occlusion_reference_width.value_or(0.0F) << ','
            << result.output.occlusion_reference_height.value_or(0.0F)
+           << " observation="
+           << result.output.occlusion_observation_width.value_or(0.0F) << ','
+           << result.output.occlusion_observation_height.value_or(0.0F)
            << std::setprecision(3)
            << " width_ratio="
            << optional_ratio(result.output.occlusion_width_ratio)
