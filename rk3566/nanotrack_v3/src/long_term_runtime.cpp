@@ -1,4 +1,5 @@
 #include "long_term_runtime.hpp"
+#include "scoped_cleanup.hpp"
 #include "target_class.hpp"
 
 #include <chrono>
@@ -90,6 +91,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                                                   std::uint64_t frame_id,
                                                   std::int64_t timestamp_ms) {
   if (!initialized_) throw std::logic_error("long-term runtime is not initialized");
+  if (frame_open_) throw std::logic_error("previous runtime frame is unfinished");
   validate_image(image);
   const auto total_start = std::chrono::steady_clock::now();
   RuntimeFrameResult result;
@@ -99,6 +101,13 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.plan = controller_.begin_frame(frame_id, timestamp_ms,
                                         result.detector.ready);
   frame_open_ = true;
+  ScopedCleanup frame_cleanup(
+      [this]() noexcept {
+        controller_.abort_frame();
+        frame_open_ = false;
+        return 0;
+      },
+      [](int) noexcept {});
 
   if (result.plan.request_detector && result.plan.detector_request) {
     result.detector.request_frame_id =
@@ -142,7 +151,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   }
   result.output =
       controller_.finish_frame(result.plan, result.observations, detector_batch);
-  frame_open_ = false;
   if (result.output.accepted) tracker_.commit_bbox(result.output.bbox);
   switch (result.output.template_action) {
     case TemplateAction::kNone: break;

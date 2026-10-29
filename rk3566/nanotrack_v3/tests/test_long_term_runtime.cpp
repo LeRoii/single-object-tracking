@@ -39,9 +39,11 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
     const nanotrack::ResponseMetrics metrics = emit_weak
         ? nanotrack::ResponseMetrics{0.45F, 0.40F, 2.5F, 3.0F, 0.04F}
         : nanotrack::ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F};
-    const nanotrack::BBox bbox = emit_weak ? weak_bbox : plan.predicted_bbox;
+    const nanotrack::BBox bbox = emit_weak ? weak_bbox :
+        reliable_bbox.value_or(plan.predicted_bbox);
+    const auto observed_frame = invalid_observation ? plan.frame_id + 1 : plan.frame_id;
     return {
-        nanotrack::TrackerObservation{plan.frame_id, plan.timestamp_ms,
+        nanotrack::TrackerObservation{observed_frame, plan.timestamp_ms,
                                       bbox, metrics,
                                       nanotrack::TemplateKind::kAnchor,
                                       search_token},
@@ -55,17 +57,27 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
   void commit_bbox(const nanotrack::BBox& bbox) override {
     ++commit_calls;
     committed_bbox = bbox;
+    if (on_commit) on_commit();
   }
   void stage_recent(const nanotrack::ImageView&,
                     const nanotrack::BBox&) override {
     ++stage_calls;
+    if (on_stage) on_stage();
   }
-  void commit_recent() override { ++recent_commit_calls; }
-  void rollback_recent() override { ++rollback_calls; }
+  void commit_recent() override {
+    ++recent_commit_calls;
+    if (on_recent_commit) on_recent_commit();
+  }
+  void rollback_recent() override {
+    ++rollback_calls;
+    if (on_rollback) on_rollback();
+  }
 
   bool initialized = false;
   bool emit_reliable = true;
   bool emit_weak = false;
+  bool invalid_observation = false;
+  std::optional<nanotrack::BBox> reliable_bbox;
   nanotrack::BBox weak_bbox{43, 33, 14, 14};
   int infer_calls = 0;
   int initialize_calls = 0;
@@ -77,6 +89,10 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
   nanotrack::BBox committed_bbox{};
   std::function<void()> on_initialize;
   std::function<void()> on_infer;
+  std::function<void()> on_commit;
+  std::function<void()> on_stage;
+  std::function<void()> on_recent_commit;
+  std::function<void()> on_rollback;
 };
 
 class FakeDetector final : public nanotrack::DetectorAdapter {
@@ -137,6 +153,132 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
 
 bool same_bbox(const nanotrack::BBox& a, const nanotrack::BBox& b) {
   return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
+}
+
+void test_frame_lifetime(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const ControllerConfig config;
+  const TargetClassRuntimeConfig target_config{4, 9, {}};
+  const BBox roi{40, 30, 20, 20};
+  const BBox reselected_roi{80, 40, 10, 10};
+  NullDetectorAdapter detector;
+  FakeTracker tracker;
+  LongTermRuntime runtime(config, tracker, detector, target_config);
+  runtime.initialize(image, roi, 0, 0);
+  auto reject_reentrant_initialize = [&] {
+    const auto index = runtime.last_initialization().initialization_index;
+    const int calls = tracker.initialize_calls;
+    bool rejected = false;
+    try { runtime.initialize(image, reselected_roi, 1, 40); }
+    catch (const std::logic_error&) { rejected = true; }
+    expect_true(rejected && runtime.last_initialization().initialization_index == index &&
+                    tracker.initialize_calls == calls &&
+                    same_bbox(runtime.controller().current_bbox(), roi),
+                "tracker commit/template callback rejects reselect until process_frame returns");
+  };
+  tracker.on_commit = reject_reentrant_initialize;
+  runtime.process_frame(image, 1, 40);
+  tracker.on_commit = {};
+  expect_true(runtime.initialize(image, roi, 1, 100).initialization_index == 2,
+              "reselect becomes available after commit callback frame returns");
+
+  tracker.on_stage = reject_reentrant_initialize;
+  tracker.on_recent_commit = reject_reentrant_initialize;
+  for (std::uint64_t frame = 2; frame <= 19; ++frame) {
+    runtime.process_frame(image, frame, frame * 100);
+  }
+  expect_true(tracker.stage_calls == 1 && tracker.recent_commit_calls == 1,
+              "reentrant guards are exercised by reachable stage and recent-commit actions");
+  expect_true(runtime.initialize(image, roi, 19, 1900).initialization_index == 3,
+              "reselect becomes available after template commit frame returns");
+  for (std::uint64_t frame = 20; frame <= 34; ++frame) {
+    runtime.process_frame(image, frame, frame * 100);
+  }
+  tracker.on_rollback = reject_reentrant_initialize;
+  tracker.emit_reliable = false;
+  runtime.process_frame(image, 35, 3500);
+  expect_true(tracker.rollback_calls == 1,
+              "reentrant guard is exercised by a reachable template rollback");
+  expect_true(runtime.initialize(image, roi, 35, 3500).initialization_index == 4,
+              "reselect becomes available after template rollback frame returns");
+
+  FakeTracker nested_tracker;
+  LongTermRuntime nested_runtime(config, nested_tracker, detector, target_config);
+  nested_runtime.initialize(image, roi, 0, 0);
+  bool in_callback = false;
+  nested_tracker.on_commit = [&] {
+    if (in_callback) return;
+    in_callback = true;
+    bool rejected = false;
+    try { nested_runtime.process_frame(image, 2, 80); }
+    catch (const std::logic_error&) { rejected = true; }
+    in_callback = false;
+    expect_true(rejected, "commit callback cannot open a nested runtime frame");
+  };
+  nested_runtime.process_frame(image, 1, 40);
+  nested_tracker.on_commit = {};
+  expect_true(nested_runtime.process_frame(image, 2, 80).output.accepted,
+              "rejected nested frame leaves next outer frame identity available");
+
+  struct TrackerFailure { int id; };
+  FakeTracker infer_tracker;
+  LongTermRuntime infer_runtime(config, infer_tracker, detector, target_config);
+  infer_runtime.initialize(image, roi, 0, 0);
+  infer_tracker.on_infer = [] { throw TrackerFailure{71}; };
+  bool original_infer_error = false;
+  try { infer_runtime.process_frame(image, 1, 40); }
+  catch (const TrackerFailure& error) { original_infer_error = error.id == 71; }
+  infer_tracker.on_infer = {};
+  bool controller_abandoned = false;
+  try { controller_abandoned = infer_runtime.process_frame(image, 2, 80).output.accepted; }
+  catch (const std::exception&) {}
+  bool infer_reinitialized = false;
+  try { infer_reinitialized = infer_runtime.initialize(image, roi, 2, 80).initialization_index == 2; }
+  catch (const std::exception&) {}
+  expect_true(original_infer_error && controller_abandoned && infer_reinitialized,
+              "infer exception preserves original error and abandons runtime/controller frame");
+
+  FakeTracker finish_tracker;
+  LongTermRuntime finish_runtime(config, finish_tracker, detector, target_config);
+  finish_runtime.initialize(image, roi, 0, 0);
+  finish_tracker.invalid_observation = true;
+  bool finish_error = false;
+  try { finish_runtime.process_frame(image, 1, 40); }
+  catch (const std::invalid_argument& error) {
+    finish_error = std::string(error.what()) == "tracker observation frame identity mismatch";
+  }
+  finish_tracker.invalid_observation = false;
+  bool finish_reinitialized = false;
+  try { finish_reinitialized = finish_runtime.initialize(image, roi, 1, 40).initialization_index == 2; }
+  catch (const std::exception&) {}
+  expect_true(finish_error && finish_reinitialized && finish_tracker.commit_calls == 0,
+              "finish validation exception permits immediate reinitialize without tracker commit");
+
+  for (bool template_failure : {false, true}) {
+    FakeTracker action_tracker;
+    LongTermRuntime action_runtime(config, action_tracker, detector, target_config);
+    action_runtime.initialize(image, roi, 0, 0);
+    action_tracker.reliable_bbox = BBox{41, 30, 20, 20};
+    auto fail_action = [] { throw TrackerFailure{93}; };
+    if (template_failure) action_tracker.on_stage = fail_action;
+    else action_tracker.on_commit = fail_action;
+    bool original_action_error = false;
+    try {
+      for (std::uint64_t frame = 1; frame <= 15; ++frame) {
+        action_runtime.process_frame(image, frame, frame * 100);
+      }
+    } catch (const TrackerFailure& error) { original_action_error = error.id == 93; }
+    expect_true(original_action_error &&
+                    same_bbox(action_runtime.controller().current_bbox(), BBox{41, 30, 20, 20}),
+                "tracker action exception preserves the original error and committed controller bbox");
+    action_tracker.on_commit = {};
+    action_tracker.on_stage = {};
+    bool action_reinitialized = false;
+    try { action_reinitialized = action_runtime.initialize(image, roi, 15, 1500).initialization_index == 2; }
+    catch (const std::exception&) {}
+    expect_true(action_reinitialized && same_bbox(action_runtime.controller().current_bbox(), roi),
+                "tracker action exception releases runtime guard for manual reinitialization");
+  }
 }
 
 void test_target_class_initialization(const nanotrack::ImageView& image) {
@@ -371,6 +513,7 @@ int main() {
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_target_class_initialization(image);
+  test_frame_lifetime(image);
   ControllerConfig config;
   FakeTracker tracker;
   FakeDetector detector;

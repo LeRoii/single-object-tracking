@@ -94,6 +94,8 @@ class LongTermController {
       const SearchPlan& plan,
       const std::vector<TrackerObservation>& observations,
       const std::optional<DetectorBatch>& detector_batch);
+  // Abandon an unfinished frame. Already-finished controller state is retained.
+  void abort_frame() noexcept;
 
   TrackingMode mode() const { return mode_; }
   const BBox& current_bbox() const { return current_bbox_; }

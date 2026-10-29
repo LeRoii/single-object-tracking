@@ -269,6 +269,11 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   return plan;
 }
 
+void LongTermController::abort_frame() noexcept {
+  if (!frame_open_) return;
+  frame_open_ = false;
+}
+
 std::optional<LongTermController::ScaleReference>
 LongTermController::occlusion_scale_reference() const {
   if (reliable_scale_history_.size() !=
