@@ -1,7 +1,9 @@
 #include "long_term_runtime.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -21,14 +23,17 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
  public:
   void initialize(const nanotrack::ImageView&,
                   const nanotrack::BBox& bbox) override {
+    ++initialize_calls;
     initialized = true;
     committed_bbox = bbox;
+    if (on_initialize) on_initialize();
   }
 
   std::vector<nanotrack::TrackerObservation> infer(
       const nanotrack::ImageView&,
       const nanotrack::SearchPlan& plan) override {
     ++infer_calls;
+    if (on_infer) on_infer();
     ++search_token;
     if (!emit_reliable && !emit_weak) return {};
     const nanotrack::ResponseMetrics metrics = emit_weak
@@ -63,12 +68,15 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
   bool emit_weak = false;
   nanotrack::BBox weak_bbox{43, 33, 14, 14};
   int infer_calls = 0;
+  int initialize_calls = 0;
   int commit_calls = 0;
   int stage_calls = 0;
   int recent_commit_calls = 0;
   int rollback_calls = 0;
   std::uint64_t search_token = 0;
   nanotrack::BBox committed_bbox{};
+  std::function<void()> on_initialize;
+  std::function<void()> on_infer;
 };
 
 class FakeDetector final : public nanotrack::DetectorAdapter {
@@ -94,15 +102,266 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
     if (result) ready = true;
     return result;
   }
+  std::optional<nanotrack::DetectorBlockingResult> detect_blocking(
+      const nanotrack::ImageView&,
+      const nanotrack::DetectorRequest& request) override {
+    ++blocking_calls;
+    blocking_request = request;
+    // Model the adapter's quiesce/consume boundary; worker details have their
+    // own real-adapter tests. Nothing left here may leak into runtime polling.
+    next_batch.reset();
+    ready = true;
+    if (fail_blocking) throw std::runtime_error("initialization inference failed");
+    if (!enabled || !blocking_batch) return std::nullopt;
+    auto batch = *blocking_batch;
+    batch.source_frame_id = request.frame_id;
+    batch.source_timestamp_ms = request.timestamp_ms;
+    batch.generation = request.generation;
+    batch.request_id = next_request_id++;
+    return nanotrack::DetectorBlockingResult{batch.request_id, batch};
+  }
 
   bool enabled = false;
   bool ready = true;
   bool fail_next_poll = false;
   int submit_calls = 0;
   int poll_calls = 0;
+  int blocking_calls = 0;
+  bool fail_blocking = false;
+  std::uint64_t next_request_id = 9001;
   nanotrack::DetectorRequest last_request{};
+  nanotrack::DetectorRequest blocking_request{};
   std::optional<nanotrack::DetectorBatch> next_batch;
+  std::optional<nanotrack::DetectorBatch> blocking_batch;
 };
+
+bool same_bbox(const nanotrack::BBox& a, const nanotrack::BBox& b) {
+  return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
+}
+
+void test_target_class_initialization(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.uncertain_ms = 10;
+  config.local_recovery_ms = 20;
+  config.assisted_recovery_ms = 30;
+  config.detector_interval_ms = 20;
+  const BBox roi{43, 33, 10, 10};
+  TargetClassRuntimeConfig auto_config;
+  auto_config.class_count = 9;
+  FakeTracker tracker;
+  FakeDetector detector;
+  detector.enabled = true;
+  DetectorBatch batch;
+  batch.candidates = {{BBox{40, 30, 20, 20}, 0.9F, 2}};
+  batch.timing = DetectorTiming{1, 7, 2, 10};
+  batch.raw_candidate_count = 5;
+  batch.filtered_candidate_count = 1;
+  detector.blocking_batch = batch;
+  LongTermRuntime runtime(config, tracker, detector, auto_config);
+  tracker.on_initialize = [&] {
+    expect_true(same_bbox(runtime.controller().current_bbox(), roi),
+                "controller receives manual ROI before tracker initializes");
+  };
+  const TargetClassInitializationResult initialized = runtime.initialize(image, roi, 7, 280);
+  expect_true(initialized.initialization_index == 1 && initialized.frame_id == 7 &&
+                  initialized.timestamp_ms == 280 && initialized.request_id == 9001 &&
+                  initialized.batch && initialized.batch->request_id == 9001 &&
+                  initialized.detector_timing.total_ms == 10 &&
+                  initialized.detector_error.empty(),
+              "auto initialization retains its own identity, batch and timing");
+  expect_true(initialized.target_class.status == TargetClassStatus::kEstablished &&
+                  initialized.target_class.target_class_id == 2 &&
+                  initialized.target_class.target_class_allows_recovery &&
+                  initialized.target_class.candidates.size() == 1,
+              "unique initialization match establishes class with diagnostics");
+  expect_true(same_bbox(initialized.original_roi, roi) &&
+                  same_bbox(tracker.committed_bbox, roi) && tracker.commit_calls == 0 &&
+                  tracker.infer_calls == 0 && detector.submit_calls == 0,
+              "initialization never substitutes detector geometry or commits tracking");
+  expect_true(same_bbox(detector.blocking_request.roi, BBox{0, 0, 200, 120}) &&
+                  detector.blocking_request.max_candidates ==
+                      std::numeric_limits<std::size_t>::max() &&
+                  detector.blocking_request.generation == 0,
+              "class initialization requests every full-frame candidate independently of generation");
+  tracker.emit_reliable = false;
+  auto frame = runtime.process_frame(image, 8, 290);
+  expect_true(frame.target_class.target_class_id == 2 &&
+                  frame.output.target_class.target_class_id == 2 &&
+                  frame.output.detector_status == DetectorBatchStatus::kNone &&
+                  frame.output.detector_candidates_queued == 0 &&
+                  !frame.output.detector_candidate_id && !frame.output.control_valid &&
+                  !frame.output.accepted && !frame.initialization && tracker.commit_calls == 0,
+              "initialization batch never enters finish_frame or grants recovery identity");
+
+  // Leave a normal async completion behind, then reselect on the same frame/time.
+  const auto requested = runtime.process_frame(image, 9, 330);
+  expect_true(requested.detector.request_submitted &&
+                  detector.last_request.generation == 0,
+              "adapter request ID does not become controller generation");
+  DetectorBatch old_batch;
+  old_batch.source_frame_id = 9;
+  old_batch.source_timestamp_ms = 330;
+  old_batch.generation = 0;
+  old_batch.candidates = {{BBox{40, 30, 20, 20}, 0.9F, 2}};
+  detector.next_batch = old_batch;
+  detector.blocking_batch->candidates[0].class_id = 3;
+  const auto reselected = runtime.initialize(image, roi, 7, 280);
+  expect_true(reselected.initialization_index == 2 && reselected.request_id == 9002 &&
+                  reselected.target_class.target_class_id == 3 &&
+                  initialized.target_class.target_class_id == 2 &&
+                  runtime.last_initialization().request_id == 9002,
+              "same-frame reselect replaces class with distinct initialization identity");
+  frame = runtime.process_frame(image, 8, 290);
+  expect_true(!frame.detector.batch_received && !frame.output.detector_candidate_id &&
+                  frame.target_class.target_class_id == 3,
+              "blocking initialization consumes old async state outside the new session");
+  frame = runtime.process_frame(image, 9, 330);
+  expect_true(detector.last_request.generation == 1,
+              "same-frame reselect advances controller generation independently");
+  old_batch.candidates[0].class_id = 3;
+  detector.next_batch = old_batch;
+  frame = runtime.process_frame(image, 10, 340);
+  expect_true(frame.output.detector_status == DetectorBatchStatus::kInvalid &&
+                  frame.output.detector_candidates_queued == 0 &&
+                  frame.output.detector_candidate_diagnostics.size() == 1 &&
+                  !frame.output.detector_candidate_diagnostics[0].candidate_id &&
+                  frame.output.detector_candidate_diagnostics[0].rejection ==
+                      DetectorCandidateRejection::kGenerationInvalidated,
+              "old async generation cannot enter reselected recovery even with matching class");
+  DetectorBatch current_batch = old_batch;
+  current_batch.source_frame_id = 11;
+  current_batch.source_timestamp_ms = 350;
+  current_batch.generation = 1;
+  current_batch.candidates.push_back({BBox{40, 30, 20, 20}, 0.9F, 2});
+  detector.next_batch = current_batch;
+  frame = runtime.process_frame(image, 11, 350);
+  expect_true(frame.output.detector_candidates_queued == 1 &&
+                  frame.output.detector_candidate_diagnostics.size() == 2 &&
+                  frame.output.detector_candidate_diagnostics[0].queued &&
+                  frame.output.detector_candidate_diagnostics[1].rejection ==
+                      DetectorCandidateRejection::kClassMismatch &&
+                  !frame.output.accepted && !frame.output.control_valid &&
+                  tracker.commit_calls == 0,
+              "established runtime class gates later candidates without granting control");
+
+  struct UnknownCase { std::vector<DetectorCandidate> candidates; TargetClassReason reason; };
+  const std::vector<UnknownCase> unknown_cases{
+      {{{BBox{40, 30, 20, 20}, 0.9F, 2}, {BBox{40, 30, 20, 20}, 0.9F, 3}},
+       TargetClassReason::kAmbiguous},
+      {{{BBox{150, 80, 20, 20}, 0.9F, 2}}, TargetClassReason::kNoMatch}};
+  tracker.on_initialize = {};
+  for (const auto& test : unknown_cases) {
+    detector.blocking_batch->candidates = test.candidates;
+    const auto unknown = runtime.initialize(image, roi, 7, 280);
+    expect_true(unknown.target_class.status == TargetClassStatus::kUnknown &&
+                    unknown.target_class.reason == test.reason &&
+                    !unknown.target_class.target_class_allows_recovery &&
+                    !unknown.target_class.target_class_id &&
+                    same_bbox(tracker.committed_bbox, roi) &&
+                    same_bbox(runtime.controller().current_bbox(), roi),
+                "ambiguous and no-match initialization retain manual ROI with UNKNOWN");
+  }
+
+  detector.enabled = false;
+  const auto unavailable = runtime.initialize(image, roi, 7, 280);
+  expect_true(unavailable.target_class.reason == TargetClassReason::kDetectorUnavailable &&
+                  !unavailable.request_id && !unavailable.batch &&
+                  same_bbox(tracker.committed_bbox, roi),
+              "unavailable detector keeps tracker initialization working");
+  // A disabled adapter may still own an old async engine error; always consume
+  // the blocking boundary so unavailable() cannot mask DETECTOR_ERROR.
+  detector.fail_blocking = true;
+  const auto error = runtime.initialize(image, roi, 7, 280);
+  expect_true(error.target_class.reason == TargetClassReason::kDetectorError &&
+                  error.detector_error == "initialization inference failed" &&
+                  !error.target_class.target_class_allows_recovery &&
+                  same_bbox(tracker.committed_bbox, roi) && tracker.commit_calls == 0,
+              "engine error becomes UNKNOWN without stopping NanoTrack initialization");
+  detector.enabled = true;
+  expect_true(runtime.initialize(image, roi, 7, 280).target_class.reason ==
+                  TargetClassReason::kDetectorError,
+              "current initialization engine failure also becomes UNKNOWN");
+  frame = runtime.process_frame(image, 8, 290);
+  expect_true(frame.target_class.reason == TargetClassReason::kDetectorError &&
+                  tracker.infer_calls > 0,
+              "UNKNOWN error state propagates while normal tracker execution continues");
+
+  TargetClassRuntimeConfig fixed_config = auto_config;
+  fixed_config.requested_class_id = 4;
+  for (bool available : {false, true}) {
+    FakeTracker fixed_tracker;
+    FakeDetector fixed_detector;
+    fixed_detector.enabled = available;
+    LongTermRuntime fixed_runtime(config, fixed_tracker, fixed_detector, fixed_config);
+    const auto fixed = fixed_runtime.initialize(image, roi, 7, 280);
+    expect_true(fixed.target_class.status == TargetClassStatus::kFixed &&
+                    fixed.target_class.target_class_id == 4 &&
+                    fixed.target_class.target_class_allows_recovery == available &&
+                    fixed_detector.blocking_calls == 0 && !fixed.request_id && !fixed.batch &&
+                    same_bbox(fixed_tracker.committed_bbox, roi) &&
+                    same_bbox(fixed_runtime.controller().current_bbox(), roi) &&
+                    fixed_tracker.commit_calls == 0,
+                "fixed override skips detector inference and preserves original manual ROI");
+  }
+
+  FakeTracker legacy_tracker;
+  FakeDetector legacy_detector;
+  legacy_detector.enabled = true;
+  legacy_detector.blocking_batch = batch;
+  LongTermRuntime legacy_runtime(config, legacy_tracker, legacy_detector,
+                                TargetClassRuntimeConfig{});
+  const auto unconfigured = legacy_runtime.initialize(image, roi, 7, 280);
+  expect_true(unconfigured.target_class.reason == TargetClassReason::kDetectorUnavailable &&
+                  !unconfigured.target_class.target_class_allows_recovery &&
+                  legacy_detector.blocking_calls == 0,
+              "missing verified class count safely skips automatic inference");
+  NullDetectorAdapter null_detector;
+  LongTermRuntime null_runtime(config, legacy_tracker, null_detector, auto_config);
+  expect_true(null_runtime.initialize(image, roi, 7, 280).target_class.reason ==
+                  TargetClassReason::kDetectorUnavailable,
+              "null adapter explicitly yields detector unavailable");
+
+  FakeTracker strict_tracker;
+  FakeDetector strict_detector;
+  strict_detector.enabled = true;
+  strict_detector.blocking_batch = batch;
+  strict_detector.blocking_batch->candidates = {{BBox{45, 33, 10, 10}, 0.9F, 2}};
+  TargetClassRuntimeConfig strict_config = auto_config;
+  strict_config.match_config.min_roi_coverage = 0.99F;
+  strict_config.match_config.max_center_ratio = 0.01F;
+  LongTermRuntime strict_runtime(config, strict_tracker, strict_detector, strict_config);
+  expect_true(strict_runtime.initialize(image, roi, 7, 280).target_class.reason ==
+                  TargetClassReason::kNoMatch,
+              "runtime passes caller match thresholds to class establishment");
+
+  tracker.on_infer = [&] {
+    bool rejected = false;
+    const int calls_before = detector.blocking_calls;
+    const int tracker_calls_before = tracker.initialize_calls;
+    try { runtime.initialize(image, roi, 8, 290); }
+    catch (const std::logic_error&) { rejected = true; }
+    expect_true(rejected && detector.blocking_calls == calls_before &&
+                    tracker.initialize_calls == tracker_calls_before,
+                "open frame rejects initialization before detector or tracker mutation");
+  };
+  runtime.process_frame(image, 9, 330);
+  tracker.on_infer = {};
+  const auto index_before = runtime.last_initialization().initialization_index;
+  const int calls_before = detector.blocking_calls;
+  const int tracker_calls_before = tracker.initialize_calls;
+  for (const BBox invalid : {BBox{-1, 0, 10, 10}, BBox{0, 0, 0, 10}}) {
+    bool rejected = false;
+    try { runtime.initialize(image, invalid, 9, 330); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    expect_true(rejected && detector.blocking_calls == calls_before &&
+                    tracker.initialize_calls == tracker_calls_before &&
+                    runtime.last_initialization().initialization_index == index_before,
+                "invalid ROI fails before any initialization mutation");
+  }
+  expect_true(runtime.initialize(image, roi, 9, 330).initialization_index == index_before + 1,
+              "completed frame permits a subsequent initialization");
+}
 
 }  // namespace
 
@@ -111,6 +370,7 @@ int main() {
 
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  test_target_class_initialization(image);
   ControllerConfig config;
   FakeTracker tracker;
   FakeDetector detector;
@@ -288,7 +548,8 @@ int main() {
   FakeTracker hold_tracker;
   FakeDetector hold_detector;
   hold_detector.enabled = true;
-  LongTermRuntime hold_runtime(hold_config, hold_tracker, hold_detector);
+  const TargetClassRuntimeConfig hold_target_class{4, 9, {}};
+  LongTermRuntime hold_runtime(hold_config, hold_tracker, hold_detector, hold_target_class);
   hold_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
   for (std::uint64_t frame = 1; frame <= 3; ++frame) {
     hold_runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
@@ -307,6 +568,10 @@ int main() {
                   hold_one.observations.empty() && hold_two.observations.empty() &&
                   hold_tracker.infer_calls == 5,
               "every complete hold frame skips tracker inference");
+  expect_true(hold_one.target_class.target_class_id == 4 &&
+                  hold_two.target_class.target_class_id == 4 &&
+                  hold_two.output.target_class.target_class_id == 4,
+              "runtime preserves established session class through skipped HOLD frames");
   expect_true(hold_detector.submit_calls == 0 &&
                   hold_detector.poll_calls == polls_before_hold + 2,
               "hold suppresses detector submit while continuing one poll per frame");
