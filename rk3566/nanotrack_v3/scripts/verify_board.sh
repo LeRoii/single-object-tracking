@@ -60,7 +60,7 @@ height = int(sys.argv[5])
 detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
-EXPECTED_TRACKING_SCHEMA = 7
+EXPECTED_TRACKING_SCHEMA = 8
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 
 manifest = json.loads((artifact_dir / "manifest.json").read_text())
@@ -95,6 +95,8 @@ required = {
     "occlusion_reference_width", "occlusion_reference_height",
     "occlusion_width_ratio", "occlusion_height_ratio", "tracker_skipped",
     "detector_suppressed_by_hold",
+    "target_class_status", "target_class_id", "target_class_reason",
+    "detector_recovery_enabled",
 }
 missing = required - set(rows[0])
 if missing:

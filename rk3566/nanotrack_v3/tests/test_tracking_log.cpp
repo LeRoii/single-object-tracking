@@ -102,6 +102,10 @@ int main() {
   row.tracker_skipped = true;
   row.detector_suppressed_by_hold = true;
   row.pipeline_ms = 50.0F;
+  row.target_class.status = TargetClassStatus::kEstablished;
+  row.target_class.target_class_id = 2;
+  row.target_class.reason = TargetClassReason::kUniqueMatch;
+  row.target_class.target_class_allows_recovery = true;
   row.anchor_metrics = ResponseMetrics{0.8F, 0.7F, 8.0F, 9.0F, 0.1F};
   row.anchor_present = true;
   row.note = "detector, timeout \"late\"";
@@ -138,11 +142,15 @@ int main() {
         "occlusion_hold_triggered", "occlusion_hold_remaining_frames",
         "occlusion_reference_width", "occlusion_reference_height",
         "occlusion_width_ratio", "occlusion_height_ratio",
-        "tracker_skipped", "detector_suppressed_by_hold"}) {
+        "tracker_skipped", "detector_suppressed_by_hold",
+        "target_class_status", "target_class_id", "target_class_reason",
+        "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("7,", 0) == 0,
-              "tracking rows carry schema version 7 exactly once");
+  expect_true(encoded.rfind("8,", 0) == 0,
+              "tracking rows carry schema version 8 exactly once");
+  expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
+              "CSV writes established class and recovery gate");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
               "detector errors escape commas, newlines, and quotes");
   expect_true(encoded.find("\"detector, timeout \"\"late\"\"\"") !=
@@ -155,6 +163,19 @@ int main() {
               "initialization row explicitly records valid tracking state");
   expect_true(csv_columns(tracking_csv_row(initial)) == csv_columns(header),
               "initialization and tracking rows share one schema");
+  expect_true(contains(tracking_csv_row(initial), "UNKNOWN,,NO_MATCH,0"),
+              "default initial class is safely unknown with empty optional ID");
+  TargetClassState fixed;
+  fixed.status = TargetClassStatus::kFixed;
+  fixed.reason = TargetClassReason::kFixedOverride;
+  fixed.target_class_id = 4;
+  fixed.target_class_allows_recovery = true;
+  const TrackingLogRow fixed_initial = make_initial_log_row(
+      0, 0, BBox{10, 20, 30, 40}, true, true,
+      DetectorTargetMode::kSubtarget, fixed);
+  expect_true(contains(tracking_csv_row(fixed_initial),
+                       "FIXED,4,FIXED_OVERRIDE,1"),
+              "initial row serializes caller-provided class state");
   const TrackingLogRow detector_initial =
       make_initial_log_row(0, 0, BBox{10, 20, 30, 40}, true, true,
                            DetectorTargetMode::kSubtarget);
@@ -220,6 +241,7 @@ int main() {
   runtime.detector.raw_candidate_count = 9;
   runtime.detector.filtered_candidate_count = 3;
   runtime.detector.timing = DetectorTiming{1.0F, 4.0F, 2.0F, 7.0F};
+  runtime.target_class = row.target_class;
   const TrackingLogRow mapped = make_tracking_log_row(runtime);
   expect_true(mapped.detector_configured && mapped.detector_ready &&
                   mapped.detector_requested &&
@@ -256,6 +278,10 @@ int main() {
                   mapped.tracker_skipped && mapped.detector_suppressed_by_hold &&
                   mapped.detector_timing.total_ms == 7.0F,
               "runtime detector diagnostics and verified candidate are mapped");
+  expect_true(mapped.target_class.target_class_id == std::optional<int>(2) &&
+                  contains(tracking_csv_row(mapped),
+                           "ESTABLISHED,2,UNIQUE_MATCH,1"),
+              "ordinary frame row preserves runtime class state");
 
   TrackingSessionMetadata metadata;
   metadata.video = "input,video.mp4";
@@ -295,8 +321,112 @@ int main() {
   metadata.detector.complete_count = 7;
   metadata.detector.reject_count = 2;
   metadata.detector.error_count = 1;
+  metadata.requested_target_class_id = -1;
+  metadata.engine_class_filter = -1;
+  metadata.target_class_match_config = TargetClassMatchConfig{0.6F, 0.7F, 0.2F};
+  TargetClassInitializationResult first;
+  first.initialization_index = 1;
+  first.frame_id = 42;
+  first.timestamp_ms = 1386;
+  first.original_roi = BBox{10, 20, 30, 40};
+  first.requested_class_id = -1;
+  first.request_id = 91;
+  first.batch = DetectorBatch{};
+  first.batch->request_id = 91;
+  first.batch->source_frame_id = 42;
+  first.batch->raw_candidate_count = 2;
+  first.batch->filtered_candidate_count = 1;
+  first.detector_ms = 15.0F;
+  first.detector_timing = DetectorTiming{1.0F, 10.0F, 2.0F, 13.0F};
+  first.target_class = row.target_class;
+  first.target_class.best_class_id = 2;
+  first.target_class.best_score = 0.9F;
+  first.target_class.runner_up_class_id = 3;
+  first.target_class.runner_up_score = 0.5F;
+  TargetClassCandidateMatch match;
+  match.original_index = 4;
+  match.candidate = DetectorCandidate{BBox{8, 18, 35, 44}, 0.8F, 2};
+  match.clipped_bbox = match.candidate.bbox;
+  match.roi_coverage = 0.9F;
+  match.iou = 0.7F;
+  match.center_ratio = 0.1F;
+  match.score = 0.9F;
+  match.eligible = true;
+  first.target_class.selected_candidate = match;
+  first.target_class.candidates.push_back(match);
+  TargetClassCandidateMatch rejected = match;
+  rejected.original_index = 5;
+  rejected.candidate.confidence = std::numeric_limits<float>::quiet_NaN();
+  rejected.eligible = false;
+  rejected.rejection = TargetClassCandidateRejection::kInvalidConfidence;
+  first.target_class.candidates.push_back(rejected);
+  record_target_class_initialization(metadata, first);
+  TargetClassInitializationResult second;
+  second.initialization_index = 2;
+  second.frame_id = 42;
+  second.timestamp_ms = 1386;
+  second.original_roi = BBox{20, 30, 40, 50};
+  second.requested_class_id = -1;
+  second.request_id = 92;
+  second.detector_error = "worker, stopped\nretry \"disabled\"";
+  second.detector_ms = 5.0F;
+  second.target_class.status = TargetClassStatus::kUnknown;
+  second.target_class.reason = TargetClassReason::kDetectorError;
+  record_target_class_initialization(metadata, second);
+  TargetClassInitializationResult unavailable;
+  unavailable.initialization_index = 3;
+  unavailable.frame_id = 42;
+  unavailable.target_class.reason = TargetClassReason::kDetectorUnavailable;
+  unavailable.detector_ms = 9.0F;
+  record_target_class_initialization(metadata, unavailable);
+  TargetClassInitializationResult error_without_id;
+  error_without_id.initialization_index = 4;
+  error_without_id.frame_id = 42;
+  error_without_id.detector_error = "blocking call failed before request ID";
+  error_without_id.detector_ms = 4.0F;
+  error_without_id.target_class.reason = TargetClassReason::kDetectorError;
+  record_target_class_initialization(metadata, error_without_id);
+  expect_true(metadata.initialization_detector.request_count == 3 &&
+                  metadata.initialization_detector.complete_count == 1 &&
+                  metadata.initialization_detector.error_count == 2 &&
+                  metadata.initialization_detector.total_detector_ms == 24.0F &&
+                  metadata.detector.request_count == 8 &&
+                  metadata.latency.mean_runtime_ms == 0.0F,
+              "initialization requests and latency stay separate from frame counters");
   const std::string json = tracking_session_metadata_json(metadata);
-  expect_true(contains(json, "\"schema_version\": 7") &&
+  expect_true(contains(json, "\"requested_target_class_mode\": \"AUTO\"") &&
+                  contains(json, "\"requested_target_class_id\": -1") &&
+                  contains(json, "\"engine_class_filter\": -1") &&
+                  contains(json, "\"target_class_match_config\": {\"calibrated\": false") &&
+                  contains(json, "\"min_roi_coverage\": 0.600000") &&
+                  contains(json, "\"max_center_ratio\": 0.700000") &&
+                  contains(json, "\"ambiguity_margin\": 0.200000") &&
+                  contains(json, "\"mean_detector_ms\": 8.000000") &&
+                  contains(json, "\"request_count\": 3") &&
+                  contains(json, "\"complete_count\": 1") &&
+                  contains(json, "\"error_count\": 2"),
+              "metadata records requested mode, match settings, and distinct initialization counters");
+  const auto history = json.find("\"target_class_initializations\": [");
+  const auto first_index = json.find("\"initialization_index\": 1", history);
+  const auto second_index = json.find("\"initialization_index\": 2", history);
+  const auto third_index = json.find("\"initialization_index\": 3", history);
+  const auto fourth_index = json.find("\"initialization_index\": 4", history);
+  expect_true(history != std::string::npos && first_index < second_index &&
+                  second_index < third_index && third_index < fourth_index &&
+                  contains(json, "\"request_id\": 91") &&
+                  contains(json, "\"request_id\": 92") &&
+                  contains(json, "\"request_id\": null") &&
+                  contains(json, "\"target_class_id\": null") &&
+                  contains(json, "\"best_class_id\": null, \"best_score\": null") &&
+                  contains(json, "\"runner_up_class_id\": null, \"runner_up_score\": null") &&
+                  contains(json, "\"runner_up_class_id\": 3") &&
+                  contains(json, "\"original_index\": 4") &&
+                  contains(json, "\"original_index\": 5") &&
+                  contains(json, "\"confidence\": null") &&
+                  contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
+                  contains(json, "\"detector_ms\": 15.000000"),
+              "same-frame initialization history retains order, result diagnostics and null optionals");
+  expect_true(contains(json, "\"schema_version\": 8") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&
@@ -323,7 +453,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v7 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
+              "schema-v8 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

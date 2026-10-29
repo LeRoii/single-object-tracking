@@ -59,6 +59,118 @@ std::string optional_number(const std::optional<float>& value) {
   return value ? number(*value) : "";
 }
 
+template <typename Value>
+void append_json_optional(std::ostream& stream, const std::optional<Value>& value) {
+  if (value) stream << *value;
+  else stream << "null";
+}
+
+void append_json_number(std::ostream& stream, float value) {
+  if (std::isfinite(value)) stream << value;
+  else stream << "null";
+}
+
+void append_json_bbox(std::ostream& stream, const BBox& bbox) {
+  stream << "{\"x\": ";
+  append_json_number(stream, bbox.x);
+  stream << ", \"y\": ";
+  append_json_number(stream, bbox.y);
+  stream << ", \"width\": ";
+  append_json_number(stream, bbox.width);
+  stream << ", \"height\": ";
+  append_json_number(stream, bbox.height);
+  stream << '}';
+}
+
+void append_json_candidate(std::ostream& stream,
+                           const TargetClassCandidateMatch& candidate) {
+  stream << "{\"original_index\": " << candidate.original_index
+         << ", \"class_id\": " << candidate.candidate.class_id
+         << ", \"bbox\": ";
+  append_json_bbox(stream, candidate.candidate.bbox);
+  stream << ", \"clipped_bbox\": ";
+  append_json_bbox(stream, candidate.clipped_bbox);
+  stream << ", \"confidence\": ";
+  append_json_number(stream, candidate.candidate.confidence);
+  stream << ", \"roi_coverage\": ";
+  append_json_number(stream, candidate.roi_coverage);
+  stream << ", \"iou\": ";
+  append_json_number(stream, candidate.iou);
+  stream << ", \"center_ratio\": ";
+  append_json_number(stream, candidate.center_ratio);
+  stream << ", \"score\": ";
+  append_json_number(stream, candidate.score);
+  stream << ", \"eligible\": " << (candidate.eligible ? "true" : "false")
+         << ", \"rejection\": \"" << to_string(candidate.rejection) << "\"}";
+}
+
+void append_json_initialization(std::ostream& stream,
+                                const TargetClassInitializationResult& result) {
+  stream << "    {\"initialization_index\": " << result.initialization_index
+         << ", \"frame_id\": " << result.frame_id
+         << ", \"timestamp_ms\": " << result.timestamp_ms
+         << ", \"original_roi\": ";
+  append_json_bbox(stream, result.original_roi);
+  stream << ", \"requested_class_id\": " << result.requested_class_id
+         << ", \"request_id\": ";
+  append_json_optional(stream, result.request_id);
+  stream << ", \"status\": \"" << to_string(result.target_class.status)
+         << "\", \"target_class_id\": ";
+  append_json_optional(stream, result.target_class.target_class_id);
+  stream << ", \"reason\": \"" << to_string(result.target_class.reason)
+         << "\", \"detector_recovery_enabled\": "
+         << (result.target_class.target_class_allows_recovery ? "true" : "false")
+         << ", \"best_class_id\": ";
+  append_json_optional(stream, result.target_class.best_class_id);
+  stream << ", \"best_score\": ";
+  if (result.target_class.best_class_id) {
+    append_json_number(stream, result.target_class.best_score);
+  }
+  else stream << "null";
+  stream << ", \"runner_up_class_id\": ";
+  append_json_optional(stream, result.target_class.runner_up_class_id);
+  stream << ", \"runner_up_score\": ";
+  if (result.target_class.runner_up_class_id) {
+    append_json_number(stream, result.target_class.runner_up_score);
+  } else {
+    stream << "null";
+  }
+  stream << ", \"selected_candidate\": ";
+  if (result.target_class.selected_candidate) {
+    append_json_candidate(stream, *result.target_class.selected_candidate);
+  } else {
+    stream << "null";
+  }
+  stream << ", \"candidates\": [";
+  for (std::size_t index = 0; index < result.target_class.candidates.size(); ++index) {
+    if (index) stream << ", ";
+    append_json_candidate(stream, result.target_class.candidates[index]);
+  }
+  stream << "], \"batch\": ";
+  if (result.batch) {
+    stream << "{\"request_id\": " << result.batch->request_id
+           << ", \"source_frame_id\": " << result.batch->source_frame_id
+           << ", \"source_timestamp_ms\": " << result.batch->source_timestamp_ms
+           << ", \"raw_candidate_count\": " << result.batch->raw_candidate_count
+           << ", \"filtered_candidate_count\": "
+           << result.batch->filtered_candidate_count << '}';
+  } else {
+    stream << "null";
+  }
+  stream << ", \"detector_timing\": {\"preprocess_ms\": ";
+  append_json_number(stream, result.detector_timing.preprocess_ms);
+  stream << ", \"inference_ms\": ";
+  append_json_number(stream, result.detector_timing.inference_ms);
+  stream << ", \"postprocess_ms\": ";
+  append_json_number(stream, result.detector_timing.postprocess_ms);
+  stream << ", \"total_ms\": ";
+  append_json_number(stream, result.detector_timing.total_ms);
+  stream << "}, \"detector_ms\": ";
+  append_json_number(stream, result.detector_ms);
+  stream << ", \"detector_error\": \"" << json_escape(result.detector_error)
+         << "\"}";
+}
+
 void append_metrics(std::vector<std::string>& fields,
                     bool present,
                     const ResponseMetrics& metrics) {
@@ -134,7 +246,8 @@ std::string tracking_csv_header() {
          "occlusion_hold_triggered,occlusion_hold_remaining_frames,"
          "occlusion_reference_width,occlusion_reference_height,"
          "occlusion_width_ratio,occlusion_height_ratio,tracker_skipped,"
-         "detector_suppressed_by_hold";
+         "detector_suppressed_by_hold,target_class_status,target_class_id,"
+         "target_class_reason,detector_recovery_enabled";
 }
 
 std::string tracking_csv_row(const TrackingLogRow& row) {
@@ -208,7 +321,11 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                  optional_number(row.occlusion_width_ratio),
                  optional_number(row.occlusion_height_ratio),
                  row.tracker_skipped ? "1" : "0",
-                 row.detector_suppressed_by_hold ? "1" : "0"});
+                 row.detector_suppressed_by_hold ? "1" : "0",
+                 to_string(row.target_class.status),
+                 optional_integer(row.target_class.target_class_id),
+                 to_string(row.target_class.reason),
+                 row.target_class.target_class_allows_recovery ? "1" : "0"});
   return join(fields);
 }
 
@@ -217,7 +334,8 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     const BBox& bbox,
                                     bool detector_configured,
                                     bool detector_ready,
-                                    DetectorTargetMode detector_target_mode) {
+                                    DetectorTargetMode detector_target_mode,
+                                    const TargetClassState& target_class) {
   TrackingLogRow row;
   row.frame_id = frame_id;
   row.timestamp_ms = timestamp_ms;
@@ -234,6 +352,7 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.detector_configured = detector_configured;
   row.detector_ready = detector_ready;
   row.detector_target_mode = detector_target_mode;
+  row.target_class = target_class;
   row.detector_worker_status = !detector_configured
                                    ? "disabled"
                                    : (detector_ready ? "ready" : "busy");
@@ -335,6 +454,7 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.detector_suppressed_by_hold =
       result.tracker_skipped &&
       result.plan.mode == TrackingMode::kOcclusionHold;
+  row.target_class = result.target_class;
   row.tracker_ms = result.tracker_ms;
   row.runtime_ms = result.runtime_ms;
   row.note = note;
@@ -373,6 +493,21 @@ LatencySummary summarize_latencies(const std::vector<float>& runtime_ms,
   return summary;
 }
 
+void record_target_class_initialization(
+    TrackingSessionMetadata& metadata,
+    const TargetClassInitializationResult& initialization) {
+  metadata.target_class_initializations.push_back(initialization);
+  InitializationDetectorSummary& summary = metadata.initialization_detector;
+  const bool requested = initialization.request_id.has_value() ||
+                         !initialization.detector_error.empty();
+  if (requested) {
+    ++summary.request_count;
+    summary.total_detector_ms += initialization.detector_ms;
+  }
+  if (initialization.batch) ++summary.complete_count;
+  if (!initialization.detector_error.empty()) ++summary.error_count;
+}
+
 std::string tracking_session_metadata_json(
     const TrackingSessionMetadata& metadata) {
   const double numeric_values[] = {
@@ -393,6 +528,10 @@ std::string tracking_session_metadata_json(
       metadata.latency.end_to_end_fps,
       metadata.detector.confidence_threshold,
       metadata.detector.nms_threshold,
+      metadata.target_class_match_config.min_roi_coverage,
+      metadata.target_class_match_config.max_center_ratio,
+      metadata.target_class_match_config.ambiguity_margin,
+      metadata.initialization_detector.total_detector_ms,
   };
   for (const double value : numeric_values) {
     if (!std::isfinite(value)) {
@@ -420,6 +559,39 @@ std::string tracking_session_metadata_json(
          << "  \"sensor\": \"" << json_escape(metadata.sensor) << "\",\n"
          << "  \"calibrated\": " << (metadata.calibrated ? "true" : "false")
          << ",\n"
+         << "  \"requested_target_class_mode\": \""
+         << (metadata.requested_target_class_id < 0 ? "AUTO" : "FIXED")
+         << "\",\n"
+         << "  \"requested_target_class_id\": "
+         << metadata.requested_target_class_id << ",\n"
+         << "  \"engine_class_filter\": " << metadata.engine_class_filter
+         << ",\n"
+         << "  \"target_class_match_config\": {\"calibrated\": false, \"min_roi_coverage\": "
+         << metadata.target_class_match_config.min_roi_coverage
+         << ", \"max_center_ratio\": "
+         << metadata.target_class_match_config.max_center_ratio
+         << ", \"ambiguity_margin\": "
+         << metadata.target_class_match_config.ambiguity_margin << "},\n"
+         << "  \"initialization_detector\": {\"request_count\": "
+         << metadata.initialization_detector.request_count
+         << ", \"complete_count\": "
+         << metadata.initialization_detector.complete_count
+         << ", \"error_count\": "
+         << metadata.initialization_detector.error_count
+         << ", \"total_detector_ms\": "
+         << metadata.initialization_detector.total_detector_ms
+         << ", \"mean_detector_ms\": "
+         << (metadata.initialization_detector.request_count == 0 ? 0.0F :
+             metadata.initialization_detector.total_detector_ms /
+             static_cast<float>(metadata.initialization_detector.request_count))
+         << "},\n"
+         << "  \"target_class_initializations\": [\n";
+  for (std::size_t index = 0;
+       index < metadata.target_class_initializations.size(); ++index) {
+    if (index) stream << ",\n";
+    append_json_initialization(stream, metadata.target_class_initializations[index]);
+  }
+  stream << "\n  ],\n"
          << "  \"detector_target_mode\": \""
          << to_string(metadata.detector_target_mode) << "\",\n"
          << "  \"detector_candidate_max_center_ratio\": "

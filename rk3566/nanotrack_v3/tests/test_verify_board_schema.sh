@@ -51,6 +51,8 @@ header = [
     "occlusion_reference_height", "occlusion_width_ratio",
     "occlusion_height_ratio", "tracker_skipped",
     "detector_suppressed_by_hold",
+    "target_class_status", "target_class_id", "target_class_reason",
+    "detector_recovery_enabled",
 ]
 with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
     writer = csv.DictWriter(stream, fieldnames=header)
@@ -58,7 +60,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
     for frame_id, timestamp_ms in ((0, 0), (1, 33), (2, 66)):
         row = {key: "" for key in header}
         row.update({
-            "schema_version": "7", "frame_id": frame_id,
+            "schema_version": "8", "frame_id": frame_id,
             "timestamp_ms": timestamp_ms, "state": "TRACKING",
             "quality": "RELIABLE", "control_valid": "1", "accepted": "1",
             "reacquired": "0", "x": "1", "y": "1", "width": "4",
@@ -77,6 +79,9 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
             "occlusion_hold_remaining_frames": "0",
             "tracker_skipped": "0",
             "detector_suppressed_by_hold": "0",
+            "target_class_status": "UNKNOWN", "target_class_id": "",
+            "target_class_reason": "DETECTOR_UNAVAILABLE",
+            "detector_recovery_enabled": "0",
             "tracker_ms": "1",
             "runtime_ms": "2", "pipeline_ms": "3",
         })
@@ -94,7 +99,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
         writer.writerow(row)
 
 metadata = {
-    "schema_version": 7, "manifest_hash": "hash",
+    "schema_version": 8, "manifest_hash": "hash",
     "controller_config_hash": "config", "sensor": "visible",
     "calibrated": False, "detector_target_mode": "FULL_OBJECT",
     "occlusion_hold_frames": 12,
