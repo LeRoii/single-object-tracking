@@ -16,6 +16,7 @@ struct SearchPlan {
   std::uint64_t frame_id = 0;
   std::int64_t timestamp_ms = 0;
   TrackingMode mode = TrackingMode::kTracking;
+  BBox motion_predicted_bbox{};
   BBox predicted_bbox{};
   float search_scale = 1.0F;
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
@@ -24,12 +25,15 @@ struct SearchPlan {
   std::optional<BBox> detector_candidate_region;
   std::optional<int> detector_candidate_class_id;
   std::optional<float> detector_candidate_confidence;
+  std::optional<float> detector_candidate_center_ratio;
   std::size_t detector_same_class_candidates = 0;
   bool detector_same_class_ambiguous = false;
   bool detector_candidate_locked = false;
   std::size_t detector_probe_index = 0;
   bool request_detector = false;
   std::optional<DetectorRequest> detector_request;
+  bool run_tracker = true;
+  std::size_t hold_remaining_frames = 0;
 };
 
 struct ControllerOutput {
@@ -52,6 +56,8 @@ struct ControllerOutput {
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
   DetectorBatchStatus detector_status = DetectorBatchStatus::kNone;
   std::size_t detector_candidates_queued = 0;
+  std::size_t detector_position_valid_count = 0;
+  std::size_t detector_position_rejected_count = 0;
   std::optional<std::uint64_t> detector_candidate_id;
   std::size_t detector_same_class_candidates = 0;
   bool detector_same_class_ambiguous = false;
@@ -59,6 +65,17 @@ struct ControllerOutput {
   std::size_t detector_probe_index = 0;
   std::size_t detector_confirmation_attempts = 0;
   std::size_t detector_confirmation_hits = 0;
+  bool occlusion_hold_triggered = false;
+  std::size_t occlusion_hold_remaining_frames = 0;
+  std::optional<float> occlusion_reference_width;
+  std::optional<float> occlusion_reference_height;
+  std::optional<float> occlusion_width_ratio;
+  std::optional<float> occlusion_height_ratio;
+  std::size_t occlusion_consecutive_unreliable_frames = 0;
+  std::optional<float> occlusion_observation_width;
+  std::optional<float> occlusion_observation_height;
+  std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
+  TargetClassState target_class{};
 };
 
 class LongTermController {
@@ -68,7 +85,8 @@ class LongTermController {
   void initialize(const BBox& initial_bbox,
                   std::uint64_t frame_id,
                   std::int64_t timestamp_ms,
-                  FrameSize frame_size);
+                  FrameSize frame_size,
+                  const TargetClassState& target_class = TargetClassState{});
   SearchPlan begin_frame(std::uint64_t frame_id,
                          std::int64_t timestamp_ms,
                          bool detector_ready);
@@ -76,6 +94,8 @@ class LongTermController {
       const SearchPlan& plan,
       const std::vector<TrackerObservation>& observations,
       const std::optional<DetectorBatch>& detector_batch);
+  // Abandon an unfinished frame. Already-finished controller state is retained.
+  void abort_frame() noexcept;
 
   TrackingMode mode() const { return mode_; }
   const BBox& current_bbox() const { return current_bbox_; }
@@ -98,6 +118,7 @@ class LongTermController {
   struct QueuedDetectorCandidate {
     std::uint64_t id = 0;
     DetectorCandidate candidate{};
+    float center_ratio = 0.0F;
     std::vector<BBox> probes;
     std::size_t same_class_candidates = 0;
   };
@@ -112,6 +133,18 @@ class LongTermController {
     std::vector<BBox> confirmation_boxes;
   };
 
+  struct DetectorIngestResult {
+    DetectorBatchStatus status = DetectorBatchStatus::kNone;
+    std::size_t position_valid_count = 0;
+    std::size_t position_rejected_count = 0;
+    std::vector<DetectorCandidateDiagnostic> diagnostics;
+  };
+
+  struct ScaleReference {
+    float width = 0.0F;
+    float height = 0.0F;
+  };
+
   TrackingMode mode_for_timestamp(std::int64_t timestamp_ms) const;
   float search_scale_for(TrackingMode mode, std::int64_t timestamp_ms) const;
   EvaluatedObservation evaluate(const TrackerObservation& observation,
@@ -122,14 +155,17 @@ class LongTermController {
   bool detector_geometry_consistent(const BBox& reference,
                                     const BBox& bbox) const;
   bool detector_confirmation_consistent(const BBox& bbox) const;
-  DetectorBatchStatus ingest_detector_batch(
+  DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
+  std::optional<ScaleReference> occlusion_scale_reference() const;
+  void record_reliable_scale(const BBox& bbox);
 
   ControllerConfig config_;
   MotionEstimator motion_;
   FrameSize frame_size_{};
   BBox current_bbox_{};
+  TargetClassState target_class_{};
   TrackingMode mode_ = TrackingMode::kTracking;
   std::optional<std::int64_t> loss_start_ms_;
   std::optional<std::int64_t> last_detector_request_ms_;
@@ -145,6 +181,12 @@ class LongTermController {
   std::int64_t last_recent_update_ms_ = 0;
   bool recent_probation_ = false;
   int probation_reliable_frames_ = 0;
+  std::deque<BBox> reliable_scale_history_;
+  int consecutive_unreliable_frames_ = 0;
+  std::size_t hold_remaining_frames_ = 0;
+  bool hold_used_for_loss_ = false;
+  std::optional<ScaleReference> frozen_scale_reference_;
+  std::uint64_t detector_eligibility_generation_ = 0;
   bool initialized_ = false;
   bool frame_open_ = false;
 };

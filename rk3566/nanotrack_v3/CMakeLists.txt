@@ -14,7 +14,7 @@ add_library(nanotrack_math src/tracker_math.cpp)
 target_include_directories(nanotrack_math PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(nanotrack_math PRIVATE -Wall -Wextra -Wpedantic)
 
-add_library(nanotrack_cli src/cli.cpp)
+add_library(nanotrack_cli src/cli.cpp src/runtime_config.cpp)
 target_include_directories(nanotrack_cli PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(nanotrack_cli PUBLIC nanotrack_math)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
@@ -22,17 +22,34 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_L
 endif()
 target_compile_options(nanotrack_cli PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(nanotrack_interactive_control src/interactive_control.cpp)
+target_include_directories(nanotrack_interactive_control
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_options(nanotrack_interactive_control PRIVATE -Wall -Wextra -Wpedantic)
+
 add_library(nanotrack_controller_support
   src/controller_config.cpp
   src/long_term_controller.cpp
   src/long_term_runtime.cpp
   src/long_term_types.cpp
+  src/target_class.cpp
   src/motion_estimator.cpp
   src/tracking_log.cpp
 )
 target_include_directories(nanotrack_controller_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(nanotrack_controller_support PUBLIC nanotrack_math)
 target_compile_options(nanotrack_controller_support PRIVATE -Wall -Wextra -Wpedantic)
+
+add_library(nanotrack_debug_telemetry
+  src/debug_telemetry.cpp
+  src/interactive_debug_overlay.cpp
+)
+target_include_directories(nanotrack_debug_telemetry
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(nanotrack_debug_telemetry PUBLIC nanotrack_controller_support)
+target_compile_options(nanotrack_debug_telemetry PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(nanotrack_detector_adapter src/yolo_detector_adapter.cpp)
 target_include_directories(nanotrack_detector_adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -49,13 +66,24 @@ target_include_directories(nanotrack_sha256 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_compile_options(nanotrack_sha256 PRIVATE -Wall -Wextra -Wpedantic)
 
 if(BUILD_TESTING)
+  add_executable(test_target_class tests/test_target_class.cpp)
+  target_link_libraries(test_target_class PRIVATE nanotrack_controller_support)
+  add_test(NAME target_class COMMAND test_target_class)
+
   add_executable(test_tracker_math tests/test_tracker_math.cpp)
   target_link_libraries(test_tracker_math PRIVATE nanotrack_math)
   add_test(NAME tracker_math COMMAND test_tracker_math)
 
   add_executable(test_cli tests/test_cli.cpp)
   target_link_libraries(test_cli PRIVATE nanotrack_cli)
+  target_compile_definitions(test_cli
+    PRIVATE NANOTRACK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  )
   add_test(NAME cli COMMAND test_cli)
+
+  add_executable(test_interactive_control tests/test_interactive_control.cpp)
+  target_link_libraries(test_interactive_control PRIVATE nanotrack_interactive_control)
+  add_test(NAME interactive_control COMMAND test_interactive_control)
 
   add_executable(test_controller_support tests/test_controller_support.cpp)
   target_link_libraries(test_controller_support PRIVATE nanotrack_controller_support)
@@ -72,6 +100,18 @@ if(BUILD_TESTING)
   add_executable(test_tracking_log tests/test_tracking_log.cpp)
   target_link_libraries(test_tracking_log PRIVATE nanotrack_controller_support)
   add_test(NAME tracking_log COMMAND test_tracking_log)
+
+  add_executable(test_debug_telemetry tests/test_debug_telemetry.cpp)
+  target_link_libraries(test_debug_telemetry PRIVATE nanotrack_debug_telemetry)
+  add_test(NAME debug_telemetry COMMAND test_debug_telemetry)
+
+  add_executable(test_interactive_debug_overlay
+    tests/test_interactive_debug_overlay.cpp
+  )
+  target_link_libraries(test_interactive_debug_overlay
+    PRIVATE nanotrack_debug_telemetry
+  )
+  add_test(NAME interactive_debug_overlay COMMAND test_interactive_debug_overlay)
 
   add_executable(test_long_term_replay tests/test_long_term_replay.cpp)
   target_link_libraries(test_long_term_replay PRIVATE nanotrack_controller_support)
@@ -107,7 +147,7 @@ if(ENABLE_RKNN_RUNTIME)
   if(NOT DEFINED RKNN_INCLUDE_DIR OR NOT DEFINED RKNN_LIBRARY)
     message(FATAL_ERROR "Set RKNN_INCLUDE_DIR and RKNN_LIBRARY")
   endif()
-  find_package(OpenCV REQUIRED)
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio highgui)
   add_library(nanotrack_runtime
     src/rknn_model.cpp
     src/nanotrack_v3.cpp
@@ -134,7 +174,8 @@ if(ENABLE_RKNN_RUNTIME)
   add_executable(nanotrack_v3 src/main.cpp)
   target_link_libraries(nanotrack_v3
     PRIVATE nanotrack_cli nanotrack_runtime nanotrack_yolo_detector
-            nanotrack_detector_adapter ${OpenCV_LIBS}
+            nanotrack_detector_adapter nanotrack_interactive_control
+            nanotrack_debug_telemetry ${OpenCV_LIBS}
   )
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
     target_link_libraries(nanotrack_v3 PRIVATE stdc++fs)

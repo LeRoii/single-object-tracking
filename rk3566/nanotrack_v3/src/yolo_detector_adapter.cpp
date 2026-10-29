@@ -23,11 +23,13 @@ YoloDetectorAdapter::YoloDetectorAdapter(
 
 YoloDetectorAdapter::~YoloDetectorAdapter() {
   {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
     stopping_ = true;
     pending_.reset();
+    changed_.notify_all();
+    // Waiters must leave before their condition variable and mutex are destroyed.
+    changed_.wait(lock, [&] { return blocking_callers_ == 0; });
   }
-  changed_.notify_one();
   if (worker_.joinable()) worker_.join();
 }
 
@@ -38,7 +40,15 @@ bool YoloDetectorAdapter::available() const {
 
 bool YoloDetectorAdapter::can_submit_locked() const {
   return !stopping_ && !disabled_ && !pending_error_ && !pending_ &&
-         !in_flight_ && !completed_;
+         !in_flight_ && !completed_ && !initialization_exclusive_;
+}
+
+YoloDetectorAdapter::RequestIdentity YoloDetectorAdapter::next_identity_locked(
+    RequestKind kind) {
+  if (next_request_id_ == 0) {
+    throw std::overflow_error("detector request ID exhausted");
+  }
+  return RequestIdentity{next_request_id_++, kind};
 }
 
 bool YoloDetectorAdapter::can_submit() const {
@@ -97,9 +107,11 @@ void YoloDetectorAdapter::submit(const ImageView& image,
     if (!can_submit_locked()) {
       throw std::logic_error("detector adapter is busy or unavailable");
     }
-    pending_ = copy_work(image, request);
+    OwnedWork work = copy_work(image, request);
+    work.identity = next_identity_locked(RequestKind::kAsync);
+    pending_ = std::move(work);
   }
-  changed_.notify_one();
+  changed_.notify_all();
 }
 
 std::optional<DetectorBatch> YoloDetectorAdapter::poll() {
@@ -107,17 +119,84 @@ std::optional<DetectorBatch> YoloDetectorAdapter::poll() {
   std::optional<DetectorBatch> batch;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (pending_error_) {
-      error = pending_error_;
-      pending_error_ = nullptr;
-      disabled_ = true;
-    } else if (completed_) {
-      batch = std::move(completed_);
+    if (initialization_exclusive_) return std::nullopt;
+    if (pending_error_ && pending_error_->identity.kind == RequestKind::kAsync) {
+      error = pending_error_->error;
+      pending_error_.reset();
+      changed_.notify_all();
+    } else if (completed_ && completed_->identity.kind == RequestKind::kAsync) {
+      batch = std::move(completed_->batch);
       completed_.reset();
+      changed_.notify_all();
     }
   }
   if (error) std::rethrow_exception(error);
   return batch;
+}
+
+std::optional<DetectorBlockingResult> YoloDetectorAdapter::detect_blocking(
+    const ImageView& image, const DetectorRequest& request) {
+  std::unique_lock<std::mutex> lock(mutex_);
+  ++blocking_callers_;
+  changed_.notify_all();
+  bool owns_initialization = false;
+  const auto leave = [&] {
+    if (owns_initialization) initialization_exclusive_ = false;
+    --blocking_callers_;
+    changed_.notify_all();
+  };
+  try {
+    auto result = [&]() -> std::optional<DetectorBlockingResult> {
+      changed_.wait(lock, [&] { return stopping_ || !initialization_exclusive_; });
+      if (stopping_) return std::nullopt;
+      initialization_exclusive_ = true;
+      owns_initialization = true;
+      pending_.reset();
+      changed_.notify_all();
+      changed_.wait(lock, [&] { return stopping_ || !in_flight_; });
+      if (stopping_) return std::nullopt;
+      completed_.reset();
+      changed_.notify_all();
+      // Quiescing an old request must not hide an unhealthy engine.
+      if (pending_error_) {
+        auto error = pending_error_->error;
+        pending_error_.reset();
+        changed_.notify_all();
+        std::rethrow_exception(error);
+      }
+      if (disabled_) return std::nullopt;
+
+      OwnedWork work = copy_work(image, request);
+      work.identity = next_identity_locked(RequestKind::kInitialization);
+      const RequestIdentity identity = work.identity;
+      pending_ = std::move(work);
+      changed_.notify_all();
+      const auto matches = [&](const RequestIdentity& other) {
+        return other.request_id == identity.request_id &&
+               other.kind == identity.kind;
+      };
+      changed_.wait(lock, [&] {
+        return stopping_ || (completed_ && matches(completed_->identity)) ||
+               (pending_error_ && matches(pending_error_->identity));
+      });
+      if (stopping_) return std::nullopt;
+      if (pending_error_ && matches(pending_error_->identity)) {
+        auto error = pending_error_->error;
+        pending_error_.reset();
+        changed_.notify_all();
+        std::rethrow_exception(error);
+      }
+      DetectorBlockingResult found{identity.request_id, std::move(completed_->batch)};
+      completed_.reset();
+      changed_.notify_all();
+      return found;
+    }();
+    leave();
+    return result;
+  } catch (...) {
+    leave();
+    throw;
+  }
 }
 
 void YoloDetectorAdapter::worker_loop() {
@@ -129,7 +208,8 @@ void YoloDetectorAdapter::worker_loop() {
       if (stopping_) return;
       work = std::move(*pending_);
       pending_.reset();
-      in_flight_ = true;
+      in_flight_ = work.identity;
+      changed_.notify_all();
     }
 
     try {
@@ -137,19 +217,26 @@ void YoloDetectorAdapter::worker_loop() {
       DetectorBatch batch;
       batch.source_frame_id = work.request.frame_id;
       batch.source_timestamp_ms = work.request.timestamp_ms;
+      batch.generation = work.request.generation;
+      batch.request_id = work.identity.request_id;
       batch.candidates = std::move(engine_result.candidates);
       batch.raw_candidate_count = engine_result.raw_candidate_count;
       batch.filtered_candidate_count = engine_result.filtered_candidate_count;
       batch.timing = engine_result.timing;
       std::lock_guard<std::mutex> lock(mutex_);
-      in_flight_ = false;
+      in_flight_.reset();
+      changed_.notify_all();
       if (stopping_) return;
-      completed_ = std::move(batch);
+      completed_ = CompletedWork{work.identity, std::move(batch)};
+      changed_.notify_all();
     } catch (...) {
       std::lock_guard<std::mutex> lock(mutex_);
-      in_flight_ = false;
+      in_flight_.reset();
+      disabled_ = true;
+      changed_.notify_all();
       if (stopping_) return;
-      pending_error_ = std::current_exception();
+      pending_error_ = FailedWork{work.identity, std::current_exception()};
+      changed_.notify_all();
     }
   }
 }

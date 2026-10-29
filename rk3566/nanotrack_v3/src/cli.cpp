@@ -1,4 +1,5 @@
 #include "cli.hpp"
+#include "runtime_config.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -71,18 +72,36 @@ float parse_open_unit(const std::string& text, const char* option) {
   return value;
 }
 
+float parse_target_class_threshold(const std::string& text, const char* option,
+                                   float maximum, bool allow_zero) {
+  std::size_t consumed = 0;
+  const float value = std::stof(text, &consumed);
+  if (consumed != text.size() || !std::isfinite(value) ||
+      (allow_zero ? value < 0.0F : value <= 0.0F) || value > maximum) {
+    throw std::invalid_argument(std::string(option) + " must be finite and in " +
+                                (allow_zero ? "[0," : "(0,") +
+                                std::to_string(maximum) + "]");
+  }
+  return value;
+}
+
 }  // namespace
 
 std::string usage() {
   return
-      "Usage: nanotrack_v3 --video VIDEO --bbox X,Y,W,H --model-dir DIR "
-      "--output-video OUTPUT.avi --output-boxes OUTPUT.csv [--max-frames N] "
+      "Usage: nanotrack_v3 [--config FILE] [--video VIDEO] "
+      "[--bbox X,Y,W,H] [--model-dir DIR] "
+      "[--output-video OUTPUT.avi] [--output-boxes OUTPUT.csv] [--max-frames N] "
       "[--start-frame N --end-frame N] [--output-size WIDTHxHEIGHT] "
+      "[--interactive] "
       "[--sensor visible|infrared] [--controller-config FILE] "
       "[--session-metadata FILE] "
       "[--detector-model MODEL.rknn --detector-manifest MANIFEST.json "
       "--detector-labels LABELS.txt] [--detector-class-id ID] "
-      "[--detector-conf FLOAT] [--detector-nms FLOAT]\n";
+      "[--detector-conf FLOAT] [--detector-nms FLOAT] "
+      "[--target-class-min-roi-coverage FLOAT] "
+      "[--target-class-max-center-ratio FLOAT] "
+      "[--target-class-ambiguity-margin FLOAT]\n";
 }
 
 Options parse_options(const std::vector<std::string>& arguments) {
@@ -91,13 +110,25 @@ Options parse_options(const std::vector<std::string>& arguments) {
     options.help = true;
     return options;
   }
-  std::unordered_map<std::string, std::string> values;
+  std::unordered_map<std::string, std::string> cli_values;
+  bool interactive_seen = false;
+  std::string runtime_config_path;
   for (std::size_t index = 1; index < arguments.size();) {
     const std::string& option = arguments[index];
     if (option == "--help") {
       throw std::invalid_argument("--help must be used alone");
     }
-    if (option != "--video" && option != "--bbox" && option != "--model-dir" &&
+    if (option == "--interactive") {
+      if (interactive_seen) {
+        throw std::invalid_argument("duplicate option: --interactive");
+      }
+      interactive_seen = true;
+      options.interactive = true;
+      ++index;
+      continue;
+    }
+    if (option != "--config" && option != "--video" &&
+        option != "--bbox" && option != "--model-dir" &&
         option != "--output-video" && option != "--output-boxes" &&
         option != "--max-frames" && option != "--start-frame" &&
         option != "--end-frame" && option != "--output-size" &&
@@ -105,30 +136,68 @@ Options parse_options(const std::vector<std::string>& arguments) {
         option != "--session-metadata" && option != "--detector-model" &&
         option != "--detector-manifest" && option != "--detector-labels" &&
         option != "--detector-class-id" && option != "--detector-conf" &&
-        option != "--detector-nms") {
+        option != "--detector-nms" &&
+        option != "--target-class-min-roi-coverage" &&
+        option != "--target-class-max-center-ratio" &&
+        option != "--target-class-ambiguity-margin") {
       throw std::invalid_argument("unknown option: " + option);
     }
     if (index + 1 >= arguments.size()) {
       throw std::invalid_argument("missing value for option: " + option);
     }
-    if (!values.emplace(option, arguments[index + 1]).second) {
+    if (option == "--config") {
+      if (!runtime_config_path.empty()) {
+        throw std::invalid_argument("duplicate option: --config");
+      }
+      runtime_config_path = arguments[index + 1];
+      index += 2;
+      continue;
+    }
+    if (!cli_values.emplace(option, arguments[index + 1]).second) {
       throw std::invalid_argument("duplicate option: " + option);
     }
     index += 2;
   }
 
-  const char* required[] = {"--video", "--bbox", "--model-dir", "--output-video",
-                            "--output-boxes"};
+  std::unordered_map<std::string, std::string> values;
+  if (!runtime_config_path.empty()) {
+    const RuntimeConfig config = load_runtime_config(runtime_config_path);
+    values = config.option_values;
+    if (config.has_interactive) options.interactive = config.interactive;
+  }
+  for (const auto& value : cli_values) values[value.first] = value.second;
+  if (interactive_seen) options.interactive = true;
+
+  const char* required[] = {"--video", "--model-dir"};
   for (const char* option : required) {
     if (values.find(option) == values.end()) {
       throw std::invalid_argument(std::string("missing required option: ") + option);
     }
   }
+  if (!options.interactive && values.find("--bbox") == values.end()) {
+    throw std::invalid_argument("missing required option: --bbox");
+  }
+  if (!options.interactive && values.find("--output-video") == values.end()) {
+    throw std::invalid_argument("missing required option: --output-video");
+  }
+  if (!options.interactive && values.find("--output-boxes") == values.end()) {
+    throw std::invalid_argument("missing required option: --output-boxes");
+  }
   options.video = values.at("--video");
-  options.bbox = parse_bbox(values.at("--bbox"));
+  const auto bbox = values.find("--bbox");
+  if (bbox != values.end()) {
+    options.bbox = parse_bbox(bbox->second);
+    options.has_bbox = true;
+  }
   options.model_dir = values.at("--model-dir");
-  options.output_video = values.at("--output-video");
-  options.output_boxes = values.at("--output-boxes");
+  const auto output_video = values.find("--output-video");
+  if (output_video != values.end()) {
+    options.output_video = output_video->second;
+  }
+  const auto output_boxes = values.find("--output-boxes");
+  if (output_boxes != values.end()) {
+    options.output_boxes = output_boxes->second;
+  }
   const auto max_frames = values.find("--max-frames");
   if (max_frames != values.end()) {
     options.max_frames = parse_positive_size(max_frames->second);
@@ -191,6 +260,21 @@ Options parse_options(const std::vector<std::string>& arguments) {
   const auto detector_nms = values.find("--detector-nms");
   if (detector_nms != values.end()) {
     options.detector_nms = parse_open_unit(detector_nms->second, "--detector-nms");
+  }
+  const auto coverage = values.find("--target-class-min-roi-coverage");
+  if (coverage != values.end()) {
+    options.target_class_min_roi_coverage = parse_target_class_threshold(
+        coverage->second, "--target-class-min-roi-coverage", 1.0F, false);
+  }
+  const auto center = values.find("--target-class-max-center-ratio");
+  if (center != values.end()) {
+    options.target_class_max_center_ratio = parse_target_class_threshold(
+        center->second, "--target-class-max-center-ratio", 2.0F, false);
+  }
+  const auto ambiguity = values.find("--target-class-ambiguity-margin");
+  if (ambiguity != values.end()) {
+    options.target_class_ambiguity_margin = parse_target_class_threshold(
+        ambiguity->second, "--target-class-ambiguity-margin", 1.0F, true);
   }
   return options;
 }

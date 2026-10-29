@@ -8,6 +8,8 @@
 namespace nanotrack {
 namespace {
 
+constexpr float kPositionGateEpsilon = 1e-6F;
+
 bool finite_bbox(const BBox& bbox) {
   return std::isfinite(bbox.x) && std::isfinite(bbox.y) &&
          std::isfinite(bbox.width) && std::isfinite(bbox.height);
@@ -30,6 +32,20 @@ float normalized_center_distance(const BBox& first, const BBox& second) {
   const float second_y = second.y + 0.5F * second.height;
   const float scale = std::sqrt(std::max(1.0F, second.width * second.height));
   return std::hypot(first_x - second_x, first_y - second_y) / scale;
+}
+
+float frame_normalized_center_distance(const BBox& first,
+                                       const BBox& second,
+                                       FrameSize frame_size) {
+  const float first_x = first.x + 0.5F * first.width;
+  const float first_y = first.y + 0.5F * first.height;
+  const float second_x = second.x + 0.5F * second.width;
+  const float second_y = second.y + 0.5F * second.height;
+  const float frame_diagonal = std::hypot(
+      static_cast<float>(frame_size.width),
+      static_cast<float>(frame_size.height));
+  return std::hypot(first_x - second_x, first_y - second_y) /
+         frame_diagonal;
 }
 
 float area_log_delta(const BBox& first, const BBox& second) {
@@ -88,12 +104,15 @@ LongTermController::LongTermController(const ControllerConfig& config)
 void LongTermController::initialize(const BBox& initial_bbox,
                                     std::uint64_t frame_id,
                                     std::int64_t timestamp_ms,
-                                    FrameSize frame_size) {
+                                    FrameSize frame_size,
+                                    const TargetClassState& target_class) {
   if (frame_size.width <= 0 || frame_size.height <= 0) {
     throw std::invalid_argument("controller frame size must be positive");
   }
   validate_bbox(initial_bbox, frame_size.width, frame_size.height);
+  if (initialized_) ++detector_eligibility_generation_;
   frame_size_ = frame_size;
+  target_class_ = target_class;
   current_bbox_ = initial_bbox;
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   mode_ = TrackingMode::kTracking;
@@ -110,6 +129,11 @@ void LongTermController::initialize(const BBox& initial_bbox,
   last_recent_update_ms_ = timestamp_ms;
   recent_probation_ = false;
   probation_reliable_frames_ = 0;
+  reliable_scale_history_.clear();
+  consecutive_unreliable_frames_ = 0;
+  hold_remaining_frames_ = 0;
+  hold_used_for_loss_ = false;
+  frozen_scale_reference_.reset();
   initialized_ = true;
   frame_open_ = false;
 }
@@ -140,6 +164,7 @@ float LongTermController::search_scale_for(TrackingMode mode,
     }
     case TrackingMode::kAssistedRecovery: return config_.search_assisted;
     case TrackingMode::kLost: return config_.search_lost;
+    case TrackingMode::kOcclusionHold: return config_.search_local_initial;
   }
   return config_.search_lost;
 }
@@ -156,8 +181,28 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     throw std::invalid_argument("frame timestamp must be strictly increasing");
   }
 
-  mode_ = mode_for_timestamp(timestamp_ms);
-  BBox predicted = motion_.predict(timestamp_ms);
+  const TrackingMode timestamp_mode = mode_for_timestamp(timestamp_ms);
+  const BBox motion_predicted = motion_.predict(timestamp_ms);
+  if (hold_remaining_frames_ > 0) {
+    mode_ = TrackingMode::kOcclusionHold;
+    SearchPlan plan;
+    plan.frame_id = frame_id;
+    plan.timestamp_ms = timestamp_ms;
+    plan.mode = mode_;
+    plan.motion_predicted_bbox = motion_predicted;
+    plan.predicted_bbox = motion_predicted;
+    plan.search_scale = search_scale_for(timestamp_mode, timestamp_ms);
+    plan.hypothesis_source = HypothesisSource::kMotion;
+    plan.detector_target_mode = config_.detector_target_mode;
+    plan.run_tracker = false;
+    plan.hold_remaining_frames = hold_remaining_frames_;
+    active_plan_ = plan;
+    frame_open_ = true;
+    return plan;
+  }
+
+  mode_ = timestamp_mode;
+  BBox predicted = motion_predicted;
   HypothesisSource source = HypothesisSource::kMotion;
   const bool recovery_uses_detector =
       mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost;
@@ -182,6 +227,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.frame_id = frame_id;
   plan.timestamp_ms = timestamp_ms;
   plan.mode = mode_;
+  plan.motion_predicted_bbox = motion_predicted;
   plan.predicted_bbox = predicted;
   plan.search_scale = source == HypothesisSource::kDetector
                           ? config_.detector_search_scale
@@ -194,6 +240,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.detector_candidate_region = active.queued.candidate.bbox;
     plan.detector_candidate_class_id = active.queued.candidate.class_id;
     plan.detector_candidate_confidence = active.queued.candidate.confidence;
+    plan.detector_candidate_center_ratio = active.queued.center_ratio;
     plan.detector_same_class_candidates =
         active.queued.same_class_candidates;
     plan.detector_same_class_ambiguous =
@@ -212,13 +259,49 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
         timestamp_ms,
         BBox{0.0F, 0.0F, static_cast<float>(frame_size_.width),
              static_cast<float>(frame_size_.height)},
-        config_.detector_max_candidates};
+        std::numeric_limits<std::size_t>::max(),
+        detector_eligibility_generation_};
     last_detector_request_ms_ = timestamp_ms;
     last_detector_request_frame_ = frame_id;
   }
   active_plan_ = plan;
   frame_open_ = true;
   return plan;
+}
+
+void LongTermController::abort_frame() noexcept {
+  if (!frame_open_) return;
+  frame_open_ = false;
+}
+
+std::optional<LongTermController::ScaleReference>
+LongTermController::occlusion_scale_reference() const {
+  if (reliable_scale_history_.size() !=
+      static_cast<std::size_t>(config_.occlusion_reference_window)) {
+    return std::nullopt;
+  }
+  std::vector<float> widths;
+  std::vector<float> heights;
+  widths.reserve(reliable_scale_history_.size());
+  heights.reserve(reliable_scale_history_.size());
+  for (const BBox& bbox : reliable_scale_history_) {
+    widths.push_back(bbox.width);
+    heights.push_back(bbox.height);
+  }
+  std::sort(widths.begin(), widths.end());
+  std::sort(heights.begin(), heights.end());
+  const std::size_t upper = widths.size() / 2;
+  const std::size_t lower = (widths.size() - 1) / 2;
+  return ScaleReference{0.5F * (widths[lower] + widths[upper]),
+                        0.5F * (heights[lower] + heights[upper])};
+}
+
+void LongTermController::record_reliable_scale(const BBox& bbox) {
+  reliable_scale_history_.push_back(bbox);
+  while (reliable_scale_history_.size() >
+         static_cast<std::size_t>(config_.occlusion_reference_window)) {
+    reliable_scale_history_.pop_front();
+  }
 }
 
 LongTermController::EvaluatedObservation LongTermController::evaluate(
@@ -346,47 +429,157 @@ bool LongTermController::detector_geometry_consistent(
              config_.detector_confirmation_max_aspect_log_change;
 }
 
-DetectorBatchStatus LongTermController::ingest_detector_batch(
+LongTermController::DetectorIngestResult
+LongTermController::ingest_detector_batch(
     const SearchPlan& plan,
     const std::optional<DetectorBatch>& batch) {
-  if (!batch) return DetectorBatchStatus::kNone;
+  DetectorIngestResult result;
+  if (!batch) return result;
+
+  result.diagnostics.reserve(batch->candidates.size());
+  for (const DetectorCandidate& candidate : batch->candidates) {
+    DetectorCandidateDiagnostic diagnostic;
+    diagnostic.candidate = candidate;
+    diagnostic.drawable = valid_candidate(candidate, frame_size_);
+    if (candidate.class_id < 0) {
+      diagnostic.class_disposition = DetectorClassDisposition::kInvalidClass;
+    } else if (target_class_.status == TargetClassStatus::kUnknown ||
+               !target_class_.target_class_allows_recovery ||
+               !target_class_.target_class_id || *target_class_.target_class_id < 0) {
+      diagnostic.class_disposition = DetectorClassDisposition::kTargetUnknown;
+    } else {
+      diagnostic.class_disposition = candidate.class_id == *target_class_.target_class_id
+          ? DetectorClassDisposition::kMatch : DetectorClassDisposition::kMismatch;
+    }
+    if (!diagnostic.drawable || candidate.class_id < 0) {
+      diagnostic.rejection = DetectorCandidateRejection::kInvalid;
+    }
+    result.diagnostics.push_back(diagnostic);
+  }
+
+  const auto reject_eligible_candidates =
+      [&](DetectorCandidateRejection rejection) {
+        for (DetectorCandidateDiagnostic& diagnostic : result.diagnostics) {
+          if (diagnostic.rejection != DetectorCandidateRejection::kInvalid) {
+            diagnostic.rejection = rejection;
+          }
+        }
+      };
+
+  if (batch->generation != detector_eligibility_generation_) {
+    reject_eligible_candidates(DetectorCandidateRejection::kGenerationInvalidated);
+    result.status = DetectorBatchStatus::kInvalid;
+    return result;
+  }
   if (!last_detector_request_frame_ || !last_detector_request_ms_ ||
       batch->source_frame_id != *last_detector_request_frame_ ||
       batch->source_timestamp_ms != *last_detector_request_ms_) {
-    return DetectorBatchStatus::kFrameMismatch;
+    reject_eligible_candidates(DetectorCandidateRejection::kFrameMismatch);
+    result.status = DetectorBatchStatus::kFrameMismatch;
+    return result;
   }
   const std::int64_t age = plan.timestamp_ms - batch->source_timestamp_ms;
   if (age < 0 || age > config_.detector_stale_ms) {
-    return DetectorBatchStatus::kStale;
+    reject_eligible_candidates(DetectorCandidateRejection::kStale);
+    result.status = DetectorBatchStatus::kStale;
+    return result;
   }
-  std::vector<DetectorCandidate> valid;
-  valid.reserve(batch->candidates.size());
-  for (const DetectorCandidate& candidate : batch->candidates) {
-    if (valid_candidate(candidate, frame_size_)) valid.push_back(candidate);
+  if (plan.mode == TrackingMode::kOcclusionHold) {
+    reject_eligible_candidates(DetectorCandidateRejection::kHoldInvalidated);
+    result.status = DetectorBatchStatus::kInvalid;
+    return result;
   }
-  if (valid.empty()) return DetectorBatchStatus::kInvalid;
-  std::sort(valid.begin(), valid.end(), [](const DetectorCandidate& first,
-                                           const DetectorCandidate& second) {
-    return first.confidence > second.confidence;
+  struct PositionedCandidate {
+    std::size_t diagnostic_index = 0;
+    float center_ratio = 0.0F;
+  };
+  std::vector<PositionedCandidate> positioned;
+  std::size_t geometry_valid_count = 0;
+  std::size_t class_valid_count = 0;
+  positioned.reserve(batch->candidates.size());
+  for (std::size_t index = 0; index < batch->candidates.size(); ++index) {
+    const DetectorCandidate& candidate = batch->candidates[index];
+    DetectorCandidateDiagnostic& diagnostic = result.diagnostics[index];
+    if (diagnostic.rejection == DetectorCandidateRejection::kInvalid) continue;
+    ++geometry_valid_count;
+    diagnostic.batch_eligible = true;
+    if (diagnostic.class_disposition == DetectorClassDisposition::kTargetUnknown) {
+      diagnostic.rejection = DetectorCandidateRejection::kTargetClassUnknown;
+      continue;
+    }
+    if (diagnostic.class_disposition == DetectorClassDisposition::kMismatch) {
+      diagnostic.rejection = DetectorCandidateRejection::kClassMismatch;
+      continue;
+    }
+    ++class_valid_count;
+    const float center_ratio = frame_normalized_center_distance(
+        candidate.bbox, plan.motion_predicted_bbox, frame_size_);
+    diagnostic.center_ratio = center_ratio;
+    if (center_ratio <=
+        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
+      diagnostic.position_gate_pass = true;
+      positioned.push_back(PositionedCandidate{index, center_ratio});
+    } else {
+      diagnostic.rejection = DetectorCandidateRejection::kPositionRejected;
+      ++result.position_rejected_count;
+    }
+  }
+  if (geometry_valid_count == 0) {
+    result.status = DetectorBatchStatus::kInvalid;
+    return result;
+  }
+  if (class_valid_count == 0) {
+    result.status = DetectorBatchStatus::kAccepted;
+    return result;
+  }
+  result.position_valid_count = positioned.size();
+  if (positioned.empty()) {
+    result.status = DetectorBatchStatus::kPositionRejected;
+    return result;
+  }
+  std::sort(positioned.begin(), positioned.end(),
+            [&](const PositionedCandidate& first,
+                const PositionedCandidate& second) {
+    if (first.center_ratio != second.center_ratio) {
+      return first.center_ratio < second.center_ratio;
+    }
+    return result.diagnostics[first.diagnostic_index].candidate.confidence >
+           result.diagnostics[second.diagnostic_index].candidate.confidence;
   });
-  if (valid.size() > config_.detector_max_candidates) {
-    valid.resize(config_.detector_max_candidates);
+  if (positioned.size() > config_.detector_max_candidates) {
+    for (std::size_t index = config_.detector_max_candidates;
+         index < positioned.size(); ++index) {
+      result.diagnostics[positioned[index].diagnostic_index].rejection =
+          DetectorCandidateRejection::kCapacityRejected;
+    }
+    positioned.resize(config_.detector_max_candidates);
   }
   detector_candidates_.clear();
-  for (const DetectorCandidate& candidate : valid) {
+  for (const PositionedCandidate& positioned_candidate : positioned) {
+    DetectorCandidateDiagnostic& diagnostic =
+        result.diagnostics[positioned_candidate.diagnostic_index];
+    const DetectorCandidate& candidate = diagnostic.candidate;
     QueuedDetectorCandidate queued;
     queued.id = next_detector_candidate_id_++;
     queued.candidate = candidate;
+    queued.center_ratio = positioned_candidate.center_ratio;
     queued.same_class_candidates = static_cast<std::size_t>(std::count_if(
-        valid.begin(), valid.end(), [&](const DetectorCandidate& other) {
-          return other.class_id == candidate.class_id;
+        positioned.begin(), positioned.end(),
+        [&](const PositionedCandidate& other) {
+          return result.diagnostics[other.diagnostic_index]
+                     .candidate.class_id == candidate.class_id;
         }));
     queued.probes = detector_probes(candidate);
     if (!queued.probes.empty()) {
+      diagnostic.candidate_id = queued.id;
+      diagnostic.queued = true;
       detector_candidates_.push_back(std::move(queued));
+    } else {
+      diagnostic.rejection = DetectorCandidateRejection::kCapacityRejected;
     }
   }
-  return DetectorBatchStatus::kAccepted;
+  result.status = DetectorBatchStatus::kAccepted;
+  return result;
 }
 
 ControllerOutput LongTermController::finish_frame(
@@ -401,6 +594,7 @@ ControllerOutput LongTermController::finish_frame(
 
   ControllerOutput output;
   output.frame_id = plan.frame_id;
+  output.target_class = target_class_;
   output.timestamp_ms = plan.timestamp_ms;
   output.mode = plan.mode;
   output.bbox = plan.predicted_bbox;
@@ -413,7 +607,32 @@ ControllerOutput LongTermController::finish_frame(
       plan.detector_same_class_ambiguous;
   output.detector_candidate_locked = plan.detector_candidate_locked;
   output.detector_probe_index = plan.detector_probe_index;
-  output.detector_status = ingest_detector_batch(plan, detector_batch);
+
+  const DetectorIngestResult ingest_result =
+      ingest_detector_batch(plan, detector_batch);
+  output.detector_status = ingest_result.status;
+  output.detector_position_valid_count =
+      ingest_result.position_valid_count;
+  output.detector_position_rejected_count =
+      ingest_result.position_rejected_count;
+  output.detector_candidate_diagnostics = ingest_result.diagnostics;
+
+  if (plan.mode == TrackingMode::kOcclusionHold) {
+    output.quality = QualityLevel::kRejected;
+    output.control_valid = false;
+    output.accepted = false;
+    output.occlusion_hold_remaining_frames = plan.hold_remaining_frames;
+    if (frozen_scale_reference_) {
+      output.occlusion_reference_width = frozen_scale_reference_->width;
+      output.occlusion_reference_height = frozen_scale_reference_->height;
+    }
+    if (hold_remaining_frames_ > 0) --hold_remaining_frames_;
+    mode_ = hold_remaining_frames_ > 0 ? TrackingMode::kOcclusionHold
+                                      : mode_for_timestamp(plan.timestamp_ms);
+    last_frame_id_ = plan.frame_id;
+    last_timestamp_ms_ = plan.timestamp_ms;
+    return output;
+  }
 
   std::optional<EvaluatedObservation> anchor;
   std::optional<EvaluatedObservation> recent;
@@ -467,6 +686,18 @@ ControllerOutput LongTermController::finish_frame(
 
   bool accepted = false;
   bool reacquired = false;
+  const std::optional<ScaleReference> scale_reference =
+      occlusion_scale_reference();
+  if (scale_reference) {
+    output.occlusion_reference_width = scale_reference->width;
+    output.occlusion_reference_height = scale_reference->height;
+    if (selected) {
+      output.occlusion_width_ratio =
+          selected->observation.bbox.width / scale_reference->width;
+      output.occlusion_height_ratio =
+          selected->observation.bbox.height / scale_reference->height;
+    }
+  }
   if (selected) {
     output.quality = selected->quality;
     output.selected_template = selected->observation.template_kind;
@@ -555,13 +786,68 @@ ControllerOutput LongTermController::finish_frame(
     mode_ = TrackingMode::kTracking;
     output.mode = mode_;
     ++stable_frames_;
+    consecutive_unreliable_frames_ = 0;
+    if (reacquired) {
+      hold_used_for_loss_ = false;
+      hold_remaining_frames_ = 0;
+      frozen_scale_reference_.reset();
+      reliable_scale_history_.clear();
+    }
+    record_reliable_scale(output.bbox);
   } else {
+    ++consecutive_unreliable_frames_;
     if (!loss_start_ms_) loss_start_ms_ = plan.timestamp_ms;
     mode_ = mode_for_timestamp(plan.timestamp_ms);
     output.mode = mode_;
     output.control_valid = false;
     output.accepted = false;
     stable_frames_ = 0;
+  }
+
+  const bool hold_source_mode =
+      plan.mode == TrackingMode::kTracking ||
+      plan.mode == TrackingMode::kUncertain ||
+      plan.mode == TrackingMode::kLocalRecovery;
+  const bool selected_non_reliable =
+      selected && (selected->quality == QualityLevel::kWeak ||
+                   selected->quality == QualityLevel::kRejected);
+  const bool detector_verification_active =
+      plan.hypothesis_source == HypothesisSource::kDetector ||
+      active_detector_candidate_.has_value();
+  if (!accepted && hold_source_mode && !detector_verification_active &&
+      !hold_used_for_loss_ && scale_reference && selected_non_reliable &&
+      consecutive_unreliable_frames_ >=
+          config_.occlusion_trigger_consecutive_unreliable &&
+      output.occlusion_width_ratio && output.occlusion_height_ratio &&
+      std::min(*output.occlusion_width_ratio, *output.occlusion_height_ratio) <=
+          config_.occlusion_trigger_min_dimension_ratio) {
+    motion_.freeze_scale(scale_reference->width, scale_reference->height);
+    frozen_scale_reference_ = scale_reference;
+    hold_remaining_frames_ =
+        static_cast<std::size_t>(config_.occlusion_hold_frames);
+    ++detector_eligibility_generation_;
+    hold_used_for_loss_ = true;
+    confirmations_.clear();
+    detector_candidates_.clear();
+    active_detector_candidate_.reset();
+    output.occlusion_hold_triggered = true;
+    output.occlusion_hold_remaining_frames = hold_remaining_frames_;
+    output.occlusion_consecutive_unreliable_frames =
+        static_cast<std::size_t>(consecutive_unreliable_frames_);
+    output.occlusion_observation_width = selected->observation.bbox.width;
+    output.occlusion_observation_height = selected->observation.bbox.height;
+    output.bbox = motion_.current_bbox();
+    mode_ = TrackingMode::kOcclusionHold;
+    output.mode = mode_;
+    for (DetectorCandidateDiagnostic& diagnostic :
+         output.detector_candidate_diagnostics) {
+      if (!diagnostic.batch_eligible) continue;
+      diagnostic.batch_eligible = false;
+      diagnostic.position_gate_pass = false;
+      diagnostic.queued = false;
+      diagnostic.candidate_id.reset();
+      diagnostic.rejection = DetectorCandidateRejection::kHoldInvalidated;
+    }
   }
 
   if (!accepted && discard_active_detector) {

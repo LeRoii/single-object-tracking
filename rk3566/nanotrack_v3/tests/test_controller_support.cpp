@@ -5,6 +5,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -41,12 +42,26 @@ void write_file(const std::string& path, const std::string& contents) {
   stream << contents;
 }
 
+void expect_occlusion_defaults(const nanotrack::ControllerConfig& config,
+                               const std::string& context) {
+  expect_true(config.occlusion_hold_frames == 12,
+              context + " defaults to twelve hold frames");
+  expect_true(config.occlusion_trigger_consecutive_unreliable == 2,
+              context + " defaults to two consecutive unreliable frames");
+  expect_near(config.occlusion_trigger_min_dimension_ratio, 0.70F, 1e-6F,
+              context + " defaults to a 0.70 dimension ratio");
+  expect_true(config.occlusion_reference_window == 8,
+              context + " defaults to eight reference observations");
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
 
   const ControllerConfig default_visible = default_controller_config("visible");
+  expect_occlusion_defaults(ControllerConfig{}, "structure");
+  expect_occlusion_defaults(default_visible, "visible defaults");
   expect_true(default_visible.detector_target_mode ==
                   DetectorTargetMode::kFullObject,
               "whole-object detector hypotheses remain the default");
@@ -54,18 +69,45 @@ int main() {
               "visible bring-up default accepts observed RKNN PSR range");
   expect_near(default_visible.reliable_peak_margin, 0.06F, 1e-6F,
               "visible bring-up default accepts observed RKNN peak margin");
+  expect_near(default_visible.detector_candidate_max_center_ratio, 0.15F,
+              1e-6F,
+              "visible default strictly limits detector center jumps");
   const ControllerConfig default_infrared =
       default_controller_config("infrared");
+  expect_occlusion_defaults(default_infrared, "infrared defaults");
   expect_near(default_infrared.reliable_psr, 8.0F, 1e-6F,
               "visible evidence does not alter infrared PSR default");
   expect_near(default_infrared.reliable_peak_margin, 0.10F, 1e-6F,
               "visible evidence does not alter infrared peak-margin default");
+  expect_near(default_infrared.detector_candidate_max_center_ratio, 0.15F,
+              1e-6F,
+              "infrared default uses the same strict detector position gate");
+
+  const std::string source_file = __FILE__;
+  const std::string source_dir = source_file.substr(
+      0, source_file.find_last_of("/\\"));
+  const std::string config_dir = source_dir + "/../config/";
+  expect_occlusion_defaults(
+      load_controller_config(config_dir + "visible-default.conf"),
+      "shipped visible configuration");
+  expect_occlusion_defaults(
+      load_controller_config(config_dir + "infrared-default.conf"),
+      "shipped infrared configuration");
+  expect_near(load_controller_config(config_dir + "visible-default.conf")
+                  .detector_candidate_max_center_ratio,
+              0.15F, 1e-6F,
+              "shipped visible config enables the strict detector gate");
+  expect_near(load_controller_config(config_dir + "infrared-default.conf")
+                  .detector_candidate_max_center_ratio,
+              0.15F, 1e-6F,
+              "shipped infrared config enables the strict detector gate");
 
   const std::string visible_path = "/tmp/nanotrack_visible_test.conf";
   write_file(visible_path,
              "sensor=visible\n"
              "calibrated=false\n"
              "detector_target_mode=subtarget\n"
+             "detector_candidate_max_center_ratio=0.15\n"
              "detector_search_scale=1.6\n"
              "detector_subtarget_max_probes=7\n"
              "detector_confirmation_iou=0.55\n"
@@ -82,6 +124,7 @@ int main() {
              "motion_beta=0.5\n"
              "motion_max_dt_ms=200\n");
   const ControllerConfig visible = load_controller_config(visible_path);
+  expect_occlusion_defaults(visible, "legacy configuration with missing keys");
   expect_true(visible.sensor == "visible" && !visible.calibrated,
               "visible config identity and calibration marker");
   expect_true(visible.detector_target_mode == DetectorTargetMode::kSubtarget,
@@ -92,6 +135,8 @@ int main() {
               "subtarget probe budget override");
   expect_near(visible.detector_confirmation_iou, 0.55F, 1e-6F,
               "detector confirmation IoU override");
+  expect_near(visible.detector_candidate_max_center_ratio, 0.15F, 1e-6F,
+              "detector center ratio parses at the boundary");
   expect_near(visible.reliable_score, 0.82F, 1e-6F,
               "visible reliable score override");
   expect_true(visible.uncertain_ms == 200 &&
@@ -121,6 +166,27 @@ int main() {
   write_file(invalid_path, "sensor=visible\nreliable_score=nan\n");
   expect_throws([&] { load_controller_config(invalid_path); },
                 "non-finite config values must fail");
+  const std::string invalid_detector_ratio_nan_path =
+      "/tmp/nanotrack_invalid_detector_ratio_nan_test.conf";
+  write_file(invalid_detector_ratio_nan_path,
+             "sensor=visible\ndetector_candidate_max_center_ratio=nan\n");
+  expect_throws(
+      [&] { load_controller_config(invalid_detector_ratio_nan_path); },
+      "non-finite detector center ratio must fail");
+  const std::string invalid_detector_ratio_negative_path =
+      "/tmp/nanotrack_invalid_detector_ratio_negative_test.conf";
+  write_file(invalid_detector_ratio_negative_path,
+             "sensor=visible\ndetector_candidate_max_center_ratio=-0.01\n");
+  expect_throws(
+      [&] { load_controller_config(invalid_detector_ratio_negative_path); },
+      "negative detector center ratio must fail");
+  const std::string invalid_detector_ratio_large_path =
+      "/tmp/nanotrack_invalid_detector_ratio_large_test.conf";
+  write_file(invalid_detector_ratio_large_path,
+             "sensor=visible\ndetector_candidate_max_center_ratio=1.01\n");
+  expect_throws(
+      [&] { load_controller_config(invalid_detector_ratio_large_path); },
+      "detector center ratio above one must fail");
   const std::string timing_path = "/tmp/nanotrack_timing_test.conf";
   write_file(timing_path,
              "sensor=visible\nuncertain_ms=1000\nlocal_recovery_ms=500\n");
@@ -144,6 +210,76 @@ int main() {
   unsafe_confirmation.confirmation_required = 1;
   expect_throws([&] { validate_controller_config(unsafe_confirmation); },
                 "recovery confirmation policy must remain two of three");
+
+  const std::string occlusion_path = "/tmp/nanotrack_occlusion_test.conf";
+  write_file(occlusion_path,
+             "occlusion_hold_frames=24\n"
+             "occlusion_trigger_consecutive_unreliable=4\n"
+             "occlusion_trigger_min_dimension_ratio=0.55\n"
+             "occlusion_reference_window=16\n");
+  const ControllerConfig occlusion = load_controller_config(occlusion_path);
+  expect_true(occlusion.occlusion_hold_frames == 24 &&
+                  occlusion.occlusion_trigger_consecutive_unreliable == 4 &&
+                  occlusion.occlusion_reference_window == 16,
+              "occlusion count overrides parse independently");
+  expect_near(occlusion.occlusion_trigger_min_dimension_ratio, 0.55F, 1e-6F,
+              "occlusion dimension ratio override parses");
+
+  struct CountLimit {
+    const char* key;
+    int ControllerConfig::*field;
+    int minimum;
+    int maximum;
+  };
+  const CountLimit occlusion_counts[] = {
+      {"occlusion_hold_frames", &ControllerConfig::occlusion_hold_frames, 1, 300},
+      {"occlusion_trigger_consecutive_unreliable",
+       &ControllerConfig::occlusion_trigger_consecutive_unreliable, 1, 10},
+      {"occlusion_reference_window", &ControllerConfig::occlusion_reference_window,
+       3, 60},
+  };
+  for (const CountLimit& limit : occlusion_counts) {
+    for (int value : {limit.minimum, limit.maximum}) {
+      write_file(occlusion_path,
+                 std::string(limit.key) + "=" + std::to_string(value) + "\n");
+      expect_true(load_controller_config(occlusion_path).*(limit.field) == value,
+                  std::string(limit.key) + " accepts both inclusive limits");
+    }
+    for (int value : {limit.minimum - 1, limit.maximum + 1}) {
+      ControllerConfig invalid = default_visible;
+      invalid.*(limit.field) = value;
+      expect_throws([&] { validate_controller_config(invalid); },
+                    std::string(limit.key) + " rejects values outside limits");
+      write_file(occlusion_path,
+                 std::string(limit.key) + "=" + std::to_string(value) + "\n");
+      expect_throws([&] { load_controller_config(occlusion_path); },
+                    std::string(limit.key) + " rejects invalid file values");
+    }
+    for (const std::string& value : {"1.5", "2147483648"}) {
+      write_file(occlusion_path, std::string(limit.key) + "=" + value + "\n");
+      expect_throws([&] { load_controller_config(occlusion_path); },
+                    std::string(limit.key) + " requires an in-range integer");
+    }
+  }
+  for (float ratio : {0.01F, 1.0F}) {
+    write_file(occlusion_path, "occlusion_trigger_min_dimension_ratio=" +
+                                   std::to_string(ratio) + "\n");
+    expect_near(load_controller_config(occlusion_path)
+                    .occlusion_trigger_min_dimension_ratio,
+                ratio, 1e-6F, "occlusion ratio accepts (0,1] values");
+  }
+  for (float ratio : {-0.01F, 0.0F, 1.01F,
+                      std::numeric_limits<float>::quiet_NaN(),
+                      std::numeric_limits<float>::infinity()}) {
+    ControllerConfig invalid = default_visible;
+    invalid.occlusion_trigger_min_dimension_ratio = ratio;
+    expect_throws([&] { validate_controller_config(invalid); },
+                  "occlusion ratio rejects out-of-range or non-finite values");
+    write_file(occlusion_path, "occlusion_trigger_min_dimension_ratio=" +
+                                   std::to_string(ratio) + "\n");
+    expect_throws([&] { load_controller_config(occlusion_path); },
+                  "occlusion ratio rejects invalid file values");
+  }
 
   ControllerConfig motion_config;
   motion_config.motion_alpha = 1.0F;
@@ -209,6 +345,80 @@ int main() {
   }
   expect_true(fractional_edges_are_valid,
               "floating-point edge projection remains strictly inside frame");
+
+  MotionEstimator frozen_scale(motion_config);
+  frozen_scale.initialize(BBox{100.0F, 100.0F, 80.0F, 60.0F}, 0, 500, 400);
+  frozen_scale.predict(100);
+  frozen_scale.correct(BBox{120.0F, 115.0F, 60.0F, 40.0F}, 100);
+  frozen_scale.freeze_scale(40.0F, 30.0F);
+  expect_true(frozen_scale.scale_frozen(),
+              "explicit scale freeze reports active state");
+  const BBox first_frozen_prediction = frozen_scale.predict(200);
+  expect_near(first_frozen_prediction.x + 0.5F * first_frozen_prediction.width,
+              155.0F, 1e-5F,
+              "scale freeze preserves learned horizontal center velocity");
+  expect_near(first_frozen_prediction.y + 0.5F * first_frozen_prediction.height,
+              137.5F, 1e-5F,
+              "scale freeze preserves learned vertical center velocity");
+  expect_near(first_frozen_prediction.width, 40.0F, 1e-6F,
+              "first frozen prediction retains requested width");
+  expect_near(first_frozen_prediction.height, 30.0F, 1e-6F,
+              "first frozen prediction retains requested height");
+  frozen_scale.correct(BBox{145.0F, 130.0F, 20.0F, 10.0F}, 200);
+  const BBox second_frozen_prediction = frozen_scale.predict(300);
+  expect_true(second_frozen_prediction.x +
+                      0.5F * second_frozen_prediction.width >
+                  first_frozen_prediction.x +
+                      0.5F * first_frozen_prediction.width,
+              "frozen scale does not stop corrected center motion");
+  expect_near(second_frozen_prediction.width, 40.0F, 1e-6F,
+              "correction cannot reintroduce frozen width motion");
+  expect_near(second_frozen_prediction.height, 30.0F, 1e-6F,
+              "correction cannot reintroduce frozen height motion");
+
+  MotionEstimator frozen_boundary(motion_config);
+  frozen_boundary.initialize(BBox{90.0F, 70.0F, 10.0F, 10.0F}, 0, 100, 80);
+  frozen_boundary.freeze_scale(40.0F, 30.0F);
+  const BBox frozen_boundary_prediction = frozen_boundary.predict(100);
+  validate_bbox(frozen_boundary_prediction, 100, 80);
+  expect_near(frozen_boundary_prediction.x, 60.0F, 1e-6F,
+              "frozen scale clamps horizontal center to frame");
+  expect_near(frozen_boundary_prediction.y, 50.0F, 1e-6F,
+              "frozen scale clamps vertical center to frame");
+  frozen_boundary.initialize(BBox{10.0F, 10.0F, 20.0F, 20.0F}, 200, 100, 80);
+  expect_true(!frozen_boundary.scale_frozen(),
+              "initialization clears scale freeze state");
+
+  MotionEstimator freeze_clamped_velocity(motion_config);
+  freeze_clamped_velocity.initialize(
+      BBox{80.0F, 30.0F, 10.0F, 10.0F}, 0, 100, 80);
+  freeze_clamped_velocity.predict(100);
+  freeze_clamped_velocity.correct(
+      BBox{70.0F, 30.0F, 10.0F, 10.0F}, 100);
+  freeze_clamped_velocity.freeze_scale(80.0F, 30.0F);
+  const BBox freeze_clamped_prediction =
+      freeze_clamped_velocity.predict(200);
+  expect_near(freeze_clamped_prediction.x +
+                  0.5F * freeze_clamped_prediction.width,
+              55.0F, 1e-5F,
+              "freeze-induced boundary clamp preserves learned inward center velocity");
+
+  MotionEstimator invalid_freeze(motion_config);
+  invalid_freeze.initialize(BBox{10.0F, 10.0F, 20.0F, 20.0F}, 0, 100, 80);
+  for (float invalid_width : {0.0F, -1.0F,
+                              std::numeric_limits<float>::quiet_NaN(),
+                              std::numeric_limits<float>::infinity()}) {
+    expect_throws([&] { invalid_freeze.freeze_scale(invalid_width, 20.0F); },
+                  "scale freeze rejects invalid width");
+  }
+  for (float invalid_height : {0.0F, -1.0F,
+                               std::numeric_limits<float>::quiet_NaN(),
+                               std::numeric_limits<float>::infinity()}) {
+    expect_throws([&] { invalid_freeze.freeze_scale(20.0F, invalid_height); },
+                  "scale freeze rejects invalid height");
+  }
+  expect_true(!invalid_freeze.scale_frozen(),
+              "rejected dimensions do not activate scale freeze");
 
   NullDetectorAdapter detector;
   expect_true(!detector.available(), "null detector reports unavailable");

@@ -9,7 +9,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 5;
+constexpr int kTrackingSchemaVersion = 8;
 
 class MonotonicVideoClock {
  public:
@@ -45,6 +45,7 @@ struct TrackingLogRow {
   float aspect_log_change = 0.0F;
   float search_scale = 1.0F;
   HypothesisSource hypothesis_source = HypothesisSource::kMotion;
+  BBox motion_predicted_bbox{};
   bool detector_configured = false;
   bool detector_ready = false;
   bool detector_requested = false;
@@ -57,6 +58,7 @@ struct TrackingLogRow {
   std::size_t detector_filtered_candidate_count = 0;
   std::optional<int> detector_verified_class_id;
   std::optional<float> detector_verified_confidence;
+  std::optional<float> detector_candidate_center_ratio;
   DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
   std::optional<std::uint64_t> detector_candidate_id;
   std::optional<BBox> detector_candidate_region;
@@ -69,6 +71,17 @@ struct TrackingLogRow {
   DetectorTiming detector_timing{};
   DetectorBatchStatus detector_status = DetectorBatchStatus::kNone;
   std::size_t detector_candidates_queued = 0;
+  std::size_t detector_position_valid_count = 0;
+  std::size_t detector_position_rejected_count = 0;
+  bool occlusion_hold_triggered = false;
+  std::size_t occlusion_hold_remaining_frames = 0;
+  std::optional<float> occlusion_reference_width;
+  std::optional<float> occlusion_reference_height;
+  std::optional<float> occlusion_width_ratio;
+  std::optional<float> occlusion_height_ratio;
+  bool tracker_skipped = false;
+  bool detector_suppressed_by_hold = false;
+  TargetClassState target_class{};
   float tracker_ms = 0.0F;
   float runtime_ms = 0.0F;
   float pipeline_ms = 0.0F;
@@ -108,6 +121,13 @@ struct DetectorSessionMetadata {
   std::size_t error_count = 0;
 };
 
+struct InitializationDetectorSummary {
+  std::size_t request_count = 0;
+  std::size_t complete_count = 0;
+  std::size_t error_count = 0;
+  float total_detector_ms = 0.0F;
+};
+
 struct TrackingSessionMetadata {
   std::string video;
   std::string model_dir;
@@ -118,7 +138,17 @@ struct TrackingSessionMetadata {
   std::string controller_config_hash;
   std::string sensor;
   bool calibrated = false;
+  int requested_target_class_id = -1;
+  int engine_class_filter = -1;
+  TargetClassMatchConfig target_class_match_config{};
+  std::vector<TargetClassInitializationResult> target_class_initializations;
+  InitializationDetectorSummary initialization_detector{};
   DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
+  float detector_candidate_max_center_ratio = 0.15F;
+  int occlusion_hold_frames = 12;
+  int occlusion_trigger_consecutive_unreliable = 2;
+  float occlusion_trigger_min_dimension_ratio = 0.70F;
+  int occlusion_reference_window = 8;
   std::string rknn_api_version;
   std::string rknn_driver_version;
   double source_fps = 0.0;
@@ -144,11 +174,16 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     bool detector_configured = false,
                                     bool detector_ready = false,
                                     DetectorTargetMode detector_target_mode =
-                                        DetectorTargetMode::kFullObject);
+                                        DetectorTargetMode::kFullObject,
+                                    const TargetClassState& target_class =
+                                        TargetClassState{});
 TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
                                      const std::string& note = "");
 LatencySummary summarize_latencies(const std::vector<float>& runtime_ms,
                                    const std::vector<float>& pipeline_ms);
+void record_target_class_initialization(
+    TrackingSessionMetadata& metadata,
+    const TargetClassInitializationResult& initialization);
 std::string tracking_session_metadata_json(
     const TrackingSessionMetadata& metadata);
 

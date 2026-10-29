@@ -145,6 +145,79 @@ configuration-explicit run is:
 `--sensor infrared` must be paired with an infrared config. The program fails
 if the CLI modality and config modality disagree.
 
+## RK3566 interactive debug run
+
+The interactive mode is intended for a development board with a local desktop,
+display, keyboard, and mouse. It requires an OpenCV build with the `highgui`
+component and a valid GUI environment such as `DISPLAY=:0`. The headless mode
+above is unchanged.
+
+The shipped profile contains the video, NanoTrack model, controller and
+detector candidate paths. Start it with one program argument:
+
+```bash
+export DISPLAY=:0
+./build/nanotrack_v3 --config config/interactive-debug.conf
+```
+
+Runtime config files use strict `key=value` syntax. Blank lines and comments
+beginning with `#` are ignored. The supported keys correspond to the CLI
+options, using underscores instead of hyphens: `video`, `bbox`, `model_dir`,
+`output_video`, `output_boxes`, `max_frames`, `start_frame`, `end_frame`,
+`output_size`, `interactive`, `sensor`, `controller_config`,
+`session_metadata`, `detector_model`, `detector_manifest`, `detector_labels`,
+`detector_class_id`, `detector_conf`, and `detector_nms`. `interactive` accepts
+only `true` or `false`.
+
+Paths in a config file are resolved relative to that file, so the command does
+not depend on the shell's working directory. Explicit CLI values override the
+file for one-off experiments, for example:
+
+```bash
+./build/nanotrack_v3 --config config/interactive-debug.conf \
+  --video /tmp/another-test.mp4 --start-frame 300
+```
+
+Unknown or duplicate config keys, malformed values, and partial detector file
+sets fail before model startup. Existing CLI-only commands remain supported.
+The shipped profile omits `bbox`, pauses on its first frame, and waits for a
+mouse selection.
+
+The controls are:
+
+- `N` or Right Arrow: decode and process exactly one next frame, then remain
+  paused;
+- `Space`: toggle continuous playback at the fastest processing rate, using a
+  1 ms GUI event wait between frames;
+- `R`: pause and select an ROI on the currently displayed source frame;
+- `Q` or `Esc`: quit. While the ROI selector is active, `Esc` or `C` cancels
+  that selection and returns to the paused player; `Enter` or `Space` confirms
+  the drawn ROI.
+
+Interactive mode does not save video, CSV, or metadata by default, so software
+MJPEG encoding cannot stall the GUI. Add `--output-video`, `--output-boxes`, or
+`--session-metadata` explicitly to save the corresponding artifact. Before the
+first ROI is accepted, video navigation does not invoke NanoTrack. The first
+accepted ROI initializes the tracker. Pressing `R` again resets the
+anchor/recent templates, motion state, recovery state, and detector
+confirmation state at the current frame. A reset is printed as an
+`INITIALIZED` console line; when outputs are enabled, it does not duplicate the
+already-written source frame. The following frame is tracked from the new ROI.
+
+Supplying both `--interactive` and `--bbox X,Y,W,H` initializes immediately at
+`--start-frame`, while retaining pause, step, play, and re-selection controls.
+Manually selected boxes are explicit operator initialization; detector boxes
+remain provisional hypotheses and still cannot directly produce
+`control_valid=1`.
+
+The interactive window draws each stage separately. Cyan is the motion
+prediction, magenta is the raw detector candidate, orange is the detector
+probe actually searched by NanoTrack, blue/yellow are anchor/recent NanoTrack
+observations, green is an accepted control box, and red is the
+`REJECTED NO_CTRL` status. These overlays are Debug evidence only; seeing a
+magenta or orange box never authorizes control. Saved non-interactive output
+keeps the existing single-box rendering.
+
 To enable detector-assisted recovery, supply the model, manifest, and labels as
 one all-or-none set. The thresholds below are uncalibrated bring-up defaults:
 
@@ -178,6 +251,14 @@ Detector recovery has two explicit controller modes:
   `detector_subtarget_max_probes` bounded locations are checked while retaining
   the last accepted subtarget width and height.
 
+Before either mode queues a detector candidate, its center distance from the
+same-frame motion prediction is divided by the frame diagonal. The result must
+be no greater than `detector_candidate_max_center_ratio` (default `0.15`).
+Candidates that pass are ordered by distance first and confidence second;
+the hard limit is not relaxed in `LOST`. A batch whose otherwise-valid boxes
+all fail this gate reports `POSITION_REJECTED`. This strict bring-up policy
+prevents large jumps but intentionally sacrifices far-away reacquisition.
+
 Once a candidate produces agreeing NanoTrack evidence, its generated candidate
 id is locked for the three-frame confirmation window. Pending candidates and
 new detector batches cannot contribute confirmations to that lock.
@@ -187,7 +268,7 @@ from entering the lock. This conservative rule prefers continued
 `control_valid=false` over an identity switch until target-specific appearance
 or ReID evidence is available.
 
-For a retained run, verify source-coordinate boxes, schema-v5 metadata, model
+For a retained run, verify source-coordinate boxes, schema-v7 metadata, model
 hashes, detector state and output frame count with:
 
 ```bash
@@ -204,7 +285,7 @@ refer to the source/CSV coordinate system, not a downscaled preview video.
 
 ## Outputs and safety contract
 
-The schema-v5 CSV contains one row for initialization and one row for each
+The schema-v7 CSV contains one row for initialization and one row for each
 processed frame. It records:
 
 - monotonic timestamp, controller state, quality, `control_valid`, horizontal
@@ -219,17 +300,33 @@ processed frame. It records:
 - detector target mode, candidate id and region, same-class candidate count and
   ambiguity state, probe index, lock state, and confirmation attempt/hit
   counts;
+- the independent motion-predicted box, active detector candidate center
+  ratio, and per-batch position-valid/position-rejected counts;
+- occlusion-HOLD trigger/remaining count, frozen reference size, observed size
+  ratios, and explicit tracker/detector skip flags;
 - tracker/runtime latency and full video-pipeline latency (decode, tracking,
   overlay, and encode).
 
+During `OCCLUSION_HOLD`, NanoTrack inference and detector submission are
+intentionally skipped, `tracker_ms=0`, and that zero is excluded from the
+reported mean tracker inference latency. `runtime_ms` and `pipeline_ms` remain
+positive. All post-NMS detector diagnostics are shown in interactive Debug:
+purple means a valid raw hypothesis with no rejection reason, gray means a
+position-, capacity-, stale-, frame-, or HOLD-rejected raw hypothesis,
+deep-red text means invalid geometry, and orange is the active NanoTrack
+verification probe. `PASS` does not imply `queued=1`, and no raw detector box
+can directly authorize `control_valid`.
+
 Only a row with `control_valid=1` may drive a gimbal or downstream control
-loop. `UNCERTAIN`, `LOCAL_RECOVERY`, `ASSISTED_RECOVERY`, and `LOST` rows can
-contain a predicted box for visualization while remaining invalid for control.
+loop. `UNCERTAIN`, `LOCAL_RECOVERY`, `OCCLUSION_HOLD`, `ASSISTED_RECOVERY`,
+and `LOST` rows can contain a predicted box for visualization while remaining
+invalid for control.
 
 If `--session-metadata` is omitted, metadata is written next to the CSV as
 `OUTPUT.csv.metadata.json`. It records the model manifest fingerprint, RKNN
 API/driver versions, timing fallback, threshold identity, calibration marker,
-and latency summary. Schema-v5 metadata also records the detector target mode
+and latency summary. Schema-v7 metadata also records the detector target mode,
+`detector_candidate_max_center_ratio`,
 and has a detector section containing
 artifact paths and SHA-256 identities, tensor descriptions, detector RKNN
 API/driver versions, thresholds, `calibrated=false`, and request/completion/
@@ -275,7 +372,7 @@ recovery:
   path still needs memory investigation;
 - measured FPS values are observations without a performance pass threshold.
 
-Only schema-v5 rows with `control_valid=1` are valid control outputs. Detector
+Only schema-v7 rows with `control_valid=1` are valid control outputs. Detector
 confidence never directly authorizes control.
 
 The remaining data, calibration, board, and optional ReID work is tracked in
