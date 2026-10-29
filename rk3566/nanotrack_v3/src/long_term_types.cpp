@@ -2,6 +2,33 @@
 
 namespace nanotrack {
 
+const char* to_string(DetectorClassDisposition value) {
+  switch (value) {
+    case DetectorClassDisposition::kUnchecked: return "UNCHECKED";
+    case DetectorClassDisposition::kMatch: return "MATCH";
+    case DetectorClassDisposition::kMismatch: return "MISMATCH";
+    case DetectorClassDisposition::kTargetUnknown: return "TARGET_UNKNOWN";
+    case DetectorClassDisposition::kInvalidClass: return "INVALID_CLASS";
+  }
+  return "UNKNOWN";
+}
+
+const char* to_string(DetectorCandidateRejection value) {
+  switch (value) {
+    case DetectorCandidateRejection::kNone: return "NONE";
+    case DetectorCandidateRejection::kInvalid: return "INVALID";
+    case DetectorCandidateRejection::kGenerationInvalidated: return "GENERATION_INVALIDATED";
+    case DetectorCandidateRejection::kFrameMismatch: return "FRAME_MISMATCH";
+    case DetectorCandidateRejection::kStale: return "STALE";
+    case DetectorCandidateRejection::kHoldInvalidated: return "HOLD_INVALIDATED";
+    case DetectorCandidateRejection::kTargetClassUnknown: return "TARGET_CLASS_UNKNOWN";
+    case DetectorCandidateRejection::kClassMismatch: return "CLASS_MISMATCH";
+    case DetectorCandidateRejection::kPositionRejected: return "POSITION_REJECTED";
+    case DetectorCandidateRejection::kCapacityRejected: return "CAPACITY_REJECTED";
+  }
+  return "UNKNOWN";
+}
+
 const char* to_string(TargetClassStatus value) {
   switch (value) {
     case TargetClassStatus::kFixed: return "FIXED";

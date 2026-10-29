@@ -4,6 +4,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -141,6 +142,17 @@ int main() {
       expect_true(box.label.find("ACCEPTED CTRL") == std::string::npos,
                   "raw detector and probe descriptors never claim control acceptance");
     }
+  }
+
+  for (const auto& item : {
+           std::pair{DetectorCandidateRejection::kGenerationInvalidated, "GENERATION_INVALIDATED"},
+           std::pair{DetectorCandidateRejection::kTargetClassUnknown, "TARGET_CLASS_UNKNOWN"},
+           std::pair{DetectorCandidateRejection::kClassMismatch, "CLASS_MISMATCH"}}) {
+    RuntimeFrameResult diagnostic = complete_result();
+    diagnostic.output.detector_candidate_diagnostics[0].rejection = item.first;
+    const auto diagnostic_overlay = make_interactive_debug_overlay(diagnostic);
+    expect_true(diagnostic_overlay.boxes[1].label.find(item.second) != std::string::npos,
+                "extended controller rejection reaches the raw-candidate label");
   }
 
   RuntimeFrameResult rejected = complete_result();

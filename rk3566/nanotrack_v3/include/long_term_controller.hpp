@@ -75,6 +75,7 @@ struct ControllerOutput {
   std::optional<float> occlusion_observation_width;
   std::optional<float> occlusion_observation_height;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
+  TargetClassState target_class{};
 };
 
 class LongTermController {
@@ -84,7 +85,8 @@ class LongTermController {
   void initialize(const BBox& initial_bbox,
                   std::uint64_t frame_id,
                   std::int64_t timestamp_ms,
-                  FrameSize frame_size);
+                  FrameSize frame_size,
+                  const TargetClassState& target_class = TargetClassState{});
   SearchPlan begin_frame(std::uint64_t frame_id,
                          std::int64_t timestamp_ms,
                          bool detector_ready);
@@ -161,6 +163,7 @@ class LongTermController {
   MotionEstimator motion_;
   FrameSize frame_size_{};
   BBox current_bbox_{};
+  TargetClassState target_class_{};
   TrackingMode mode_ = TrackingMode::kTracking;
   std::optional<std::int64_t> loss_start_ms_;
   std::optional<std::int64_t> last_detector_request_ms_;

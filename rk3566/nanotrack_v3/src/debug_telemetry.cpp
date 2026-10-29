@@ -51,10 +51,16 @@ const char* rejection_name(DetectorCandidateRejection rejection) {
   switch (rejection) {
     case DetectorCandidateRejection::kNone: return "NONE";
     case DetectorCandidateRejection::kInvalid: return "INVALID";
+    case DetectorCandidateRejection::kGenerationInvalidated:
+      return "GENERATION_INVALIDATED";
     case DetectorCandidateRejection::kFrameMismatch: return "FRAME_MISMATCH";
     case DetectorCandidateRejection::kStale: return "STALE";
     case DetectorCandidateRejection::kHoldInvalidated:
       return "HOLD_INVALIDATED";
+    case DetectorCandidateRejection::kTargetClassUnknown:
+      return "TARGET_CLASS_UNKNOWN";
+    case DetectorCandidateRejection::kClassMismatch:
+      return "CLASS_MISMATCH";
     case DetectorCandidateRejection::kPositionRejected:
       return "POSITION_REJECTED";
     case DetectorCandidateRejection::kCapacityRejected:

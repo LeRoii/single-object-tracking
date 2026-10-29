@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -249,6 +250,16 @@ int main() {
                   contains(events, "index=1 bbox=3.00,4.00,31.00,41.00") &&
                   contains(events, "rejection=POSITION_REJECTED"),
               "each canonical detector diagnostic produces one complete event");
+
+  for (const auto& item : {
+           std::pair{DetectorCandidateRejection::kGenerationInvalidated, "GENERATION_INVALIDATED"},
+           std::pair{DetectorCandidateRejection::kTargetClassUnknown, "TARGET_CLASS_UNKNOWN"},
+           std::pair{DetectorCandidateRejection::kClassMismatch, "CLASS_MISMATCH"}}) {
+    diagnostics.output.detector_candidate_diagnostics[0].rejection = item.first;
+    events = telemetry.frame_events(diagnostics, 8.0F, false);
+    expect_true(contains(events, std::string("rejection=") + item.second),
+                "extended controller rejection reaches structured telemetry");
+  }
 
   telemetry.reset();
   RuntimeFrameResult after_reset = frame_result(11);

@@ -1,6 +1,7 @@
 #include "controller_config.hpp"
 #include "long_term_types.hpp"
 #include "motion_estimator.hpp"
+#include "target_class.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -96,10 +97,211 @@ nanotrack::ControllerOutput reject_frame(nanotrack::LongTermController& controll
   return controller.finish_frame(plan, {}, std::nullopt);
 }
 
+// These cases catch class-gate bypasses, mutable session state, and rejection
+// precedence changes without relying on detector or rendering test doubles.
+void test_target_class_gate() {
+  using namespace nanotrack;
+  const BBox roi{40, 30, 20, 20};
+  const FrameSize frame{200, 120};
+  ControllerConfig config;
+  config.detector_max_candidates = 1;
+  const TargetClassState unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  const TargetClassState fixed = make_fixed_target_class(2, true);
+  TargetClassState established = fixed;
+  established.status = TargetClassStatus::kEstablished;
+  established.reason = TargetClassReason::kUniqueMatch;
+  for (const TargetClassState& state : {unknown, fixed, established,
+                                       make_fixed_target_class(2, false)}) {
+    LongTermController controller(config);
+    controller.initialize(roi, 0, 0, frame, state);
+    reject_frame(controller, 1, 100);
+    const SearchPlan plan = controller.begin_frame(2, 1100, true);
+    expect_true(plan.request_detector && plan.hypothesis_source == HypothesisSource::kMotion,
+                "UNKNOWN and known classes retain diagnostic detector scheduling");
+    DetectorBatch batch{2, 1100, {{roi, 0.9F, 2}, {roi, 0.99F, 3},
+                                  {roi, 0.8F, -1}}};
+    batch.generation = plan.detector_request->generation;
+    batch.request_id = 9001;  // Adapter identity is independent of generation.
+    const ControllerOutput output = controller.finish_frame(plan, {}, batch);
+    const bool enabled = state.target_class_allows_recovery;
+    expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                    output.detector_candidates_queued == (enabled ? 1U : 0U) &&
+                    !output.accepted && !output.reacquired && !output.control_valid &&
+                    output.hypothesis_source == HypothesisSource::kMotion &&
+                    !output.detector_candidate_id,
+                "batch reception and class matching never authorize control or a current-frame probe");
+    expect_true(output.target_class.status == state.status &&
+                    output.target_class.target_class_id == state.target_class_id &&
+                    output.target_class.target_class_allows_recovery == enabled,
+                "every output carries the immutable initialization class");
+    const auto& match = output.detector_candidate_diagnostics[0];
+    const auto& mismatch = output.detector_candidate_diagnostics[1];
+    const auto& invalid = output.detector_candidate_diagnostics[2];
+    expect_true(match.class_disposition == (enabled ? DetectorClassDisposition::kMatch
+                                                   : DetectorClassDisposition::kTargetUnknown) &&
+                    match.queued == enabled &&
+                    match.rejection == (enabled ? DetectorCandidateRejection::kNone
+                                                : DetectorCandidateRejection::kTargetClassUnknown),
+                "only a permitted matching class enters the queue");
+    expect_true(mismatch.class_disposition == (enabled ? DetectorClassDisposition::kMismatch
+                                                      : DetectorClassDisposition::kTargetUnknown) &&
+                    !mismatch.queued && !mismatch.candidate_id && mismatch.drawable &&
+                    mismatch.rejection == (enabled ? DetectorCandidateRejection::kClassMismatch
+                                                   : DetectorCandidateRejection::kTargetClassUnknown),
+                "mismatch or UNKNOWN remains drawable and cannot acquire a candidate identity");
+    expect_true(invalid.class_disposition == DetectorClassDisposition::kInvalidClass &&
+                    invalid.rejection == DetectorCandidateRejection::kInvalid &&
+                    !invalid.queued && !invalid.batch_eligible && invalid.drawable,
+                "negative class remains drawable geometry but is structurally invalid");
+    const SearchPlan next = controller.begin_frame(3, 1140, false);
+    expect_true((next.hypothesis_source == HypothesisSource::kDetector) == enabled,
+                "UNKNOWN and mismatched classes never become detector probes");
+    controller.finish_frame(next, {}, std::nullopt);
+  }
+
+  for (const TargetClassState& state : {unknown, fixed, established}) {
+    LongTermController controller(config);
+    controller.initialize(roi, 0, 0, frame, state);
+    reject_frame(controller, 1, 100);
+    const auto plan = controller.begin_frame(2, 1100, true);
+    DetectorBatch batch{2, 1100, {{roi, 0.99F, 3}}};
+    batch.generation = plan.detector_request->generation;
+    const auto output = controller.finish_frame(plan, {}, batch);
+    expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                    output.detector_candidates_queued == 0 &&
+                    !output.accepted && !output.control_valid,
+                "all-class-suppressed batch is accepted with zero queued candidates");
+    const auto next = controller.begin_frame(3, 1140, false);
+    expect_true(next.hypothesis_source == HypothesisSource::kMotion &&
+                    !next.detector_candidate_id &&
+                    output.target_class.target_class_id == state.target_class_id,
+                "all mismatches cannot create a probe or change the session class");
+    controller.finish_frame(next, {}, std::nullopt);
+  }
+
+  // Every structural rejection must dominate class/position/capacity failures;
+  // class disposition must still be available even when the batch is rejected.
+  for (const TargetClassState& state : {unknown, fixed}) {
+    for (int stage = 0; stage < 6; ++stage) {
+      LongTermController controller(config);
+      controller.initialize(roi, 0, 0, frame, state);
+      reject_frame(controller, 1, 100);
+      SearchPlan request = controller.begin_frame(2, 1100, true);
+      controller.finish_frame(request, {}, std::nullopt);
+      SearchPlan plan = controller.begin_frame(3, stage <= 2 ? 1300 : 1140, false);
+      DetectorBatch batch{2, 1100, {{BBox{160, 70, 20, 20}, 0.9F, 3},
+                                    {BBox{-1, 0, 20, 20}, 0.9F, 2},
+                                    {roi, 0.9F, -1}}};
+      batch.generation = request.detector_request->generation;
+      if (stage == 0) --batch.generation;
+      if (stage <= 1) batch.source_frame_id = 999;
+      // Inject HOLD at this public boundary to exercise simultaneous causes;
+      // reachable HOLD entry/exit is covered independently below and in replay.
+      if (stage <= 3) plan.mode = TrackingMode::kOcclusionHold;
+      if (stage == 5) batch.candidates[0].class_id = 2;
+      const auto output = controller.finish_frame(plan, {}, batch);
+      const DetectorCandidateRejection expected[] = {
+          DetectorCandidateRejection::kGenerationInvalidated,
+          DetectorCandidateRejection::kFrameMismatch,
+          DetectorCandidateRejection::kStale,
+          DetectorCandidateRejection::kHoldInvalidated,
+          state.target_class_allows_recovery ? DetectorCandidateRejection::kClassMismatch
+                                            : DetectorCandidateRejection::kTargetClassUnknown,
+          state.target_class_allows_recovery ? DetectorCandidateRejection::kPositionRejected
+                                            : DetectorCandidateRejection::kTargetClassUnknown};
+      const auto& candidate = output.detector_candidate_diagnostics[0];
+      expect_true(candidate.rejection == expected[stage] && !candidate.queued &&
+                      !output.control_valid,
+                  "structural, HOLD, class and position rejection priority stage " + std::to_string(stage));
+      expect_true(candidate.class_disposition == (!state.target_class_allows_recovery
+                      ? DetectorClassDisposition::kTargetUnknown
+                      : stage == 5 ? DetectorClassDisposition::kMatch
+                                   : DetectorClassDisposition::kMismatch),
+                  "class disposition stays orthogonal to structural rejection");
+      expect_true(output.detector_candidate_diagnostics[1].rejection ==
+                      DetectorCandidateRejection::kInvalid &&
+                      output.detector_candidate_diagnostics[2].rejection ==
+                          DetectorCandidateRejection::kInvalid &&
+                      output.detector_candidate_diagnostics[2].class_disposition ==
+                          DetectorClassDisposition::kInvalidClass,
+                  "invalid geometry and class outrank all other rejection causes");
+    }
+  }
+
+  LongTermController controller(config);
+  TargetClassState caller_state = fixed;
+  controller.initialize(roi, 0, 0, frame, caller_state);
+  caller_state.target_class_id = 3;
+  reject_frame(controller, 1, 100);
+  auto plan = controller.begin_frame(2, 1100, true);
+  DetectorBatch batch{2, 1100, {{roi, 0.9F, 2}, {BBox{41, 30, 20, 20}, 0.8F, 2}}};
+  batch.generation = plan.detector_request->generation;
+  auto output = controller.finish_frame(plan, {}, batch);
+  expect_true(output.target_class.target_class_id == 2 &&
+                  output.detector_candidates_queued == 1 &&
+                  output.detector_candidate_diagnostics[1].class_disposition == DetectorClassDisposition::kMatch &&
+                  output.detector_candidate_diagnostics[1].rejection == DetectorCandidateRejection::kCapacityRejected,
+              "controller copies class state and applies capacity only after class/position");
+  plan = controller.begin_frame(3, 1140, false);
+  output = controller.finish_frame(plan, reliable_pair(plan, plan.predicted_bbox, 3), std::nullopt);
+  expect_true(output.detector_candidate_locked && output.detector_confirmation_hits == 1 &&
+                  !output.control_valid,
+              "matching class still requires anchor/recent and a second confirmation");
+  const auto generation = batch.generation;
+  controller.initialize(roi, 3, 1140, frame, unknown);
+  controller.initialize(roi, 3, 1140, frame, unknown);
+  expect_true(controller.confirmations_.empty() && !controller.active_detector_candidate_ &&
+                  controller.detector_candidates_.empty(),
+              "same-frame reinitialize atomically clears all recovery state");
+  reject_frame(controller, 4, 1180);
+  plan = controller.begin_frame(5, 2180, true);
+  expect_true(plan.detector_request->generation == generation + 2 &&
+                  plan.hypothesis_source == HypothesisSource::kMotion,
+              "each same-frame reinitialize advances eligibility generation");
+  batch.source_frame_id = 5;
+  batch.source_timestamp_ms = 2180;
+  output = controller.finish_frame(plan, {}, batch);
+  expect_true(output.target_class.status == TargetClassStatus::kUnknown &&
+                  output.detector_candidate_diagnostics[0].rejection == DetectorCandidateRejection::kGenerationInvalidated &&
+                  output.detector_candidate_diagnostics[0].class_disposition == DetectorClassDisposition::kTargetUnknown &&
+                  !output.control_valid && output.detector_candidates_queued == 0,
+              "old generation cannot re-enter a newly UNKNOWN session");
+
+  ControllerConfig hold_config = config;
+  hold_config.occlusion_reference_window = 3;
+  for (const auto& state : {unknown, fixed}) {
+    LongTermController holding(hold_config);
+    holding.initialize(roi, 0, 0, frame, state);
+    for (std::uint64_t id = 1; id <= 3; ++id) {
+      const auto reliable_plan = holding.begin_frame(id, id * 40, false);
+      holding.finish_frame(reliable_plan, reliable_pair(reliable_plan, roi, id), std::nullopt);
+    }
+    auto trigger_plan = holding.begin_frame(4, 160, false);
+    holding.finish_frame(trigger_plan,
+        {weak_observation(trigger_plan, TemplateKind::kAnchor, BBox{43, 33, 14, 14})},
+        std::nullopt);
+    trigger_plan = holding.begin_frame(5, 200, false);
+    DetectorBatch old_batch{1, 40, {{roi, 0.9F, 3}}};
+    old_batch.generation = std::numeric_limits<std::uint64_t>::max();
+    const auto trigger = holding.finish_frame(trigger_plan,
+        {weak_observation(trigger_plan, TemplateKind::kAnchor, BBox{43, 33, 14, 14})}, old_batch);
+    expect_true(trigger.occlusion_hold_triggered &&
+                    trigger.detector_candidate_diagnostics[0].rejection ==
+                        DetectorCandidateRejection::kGenerationInvalidated &&
+                    trigger.detector_candidate_diagnostics[0].class_disposition ==
+                        (state.target_class_allows_recovery ? DetectorClassDisposition::kMismatch
+                                                           : DetectorClassDisposition::kTargetUnknown) &&
+                    !trigger.control_valid,
+                "same-frame HOLD preserves earlier structural rejection and class disposition");
+  }
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
+
+  test_target_class_gate();
 
   expect_true(std::string(to_string(TrackingMode::kOcclusionHold)) ==
                   "OCCLUSION_HOLD",
@@ -174,7 +376,8 @@ int main() {
 
   ControllerConfig config;
   LongTermController boundaries(config);
-  boundaries.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120});
+  boundaries.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   ControllerOutput output = reject_frame(boundaries, 1, 100);
   expect_true(output.mode == TrackingMode::kUncertain && !output.control_valid,
               "first rejected frame enters uncertain with invalid control");
@@ -214,7 +417,8 @@ int main() {
   boundaries.finish_frame(plan, {}, std::nullopt);
 
   LongTermController normal(config);
-  normal.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120});
+  normal.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   plan = normal.begin_frame(1, 40, false);
   output = normal.finish_frame(
       plan, {reliable_observation(plan, TemplateKind::kAnchor, plan.predicted_bbox)},
@@ -240,7 +444,8 @@ int main() {
               "second consistent candidate in three frames reacquires");
 
   LongTermController conflict(config);
-  conflict.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120});
+  conflict.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   plan = conflict.begin_frame(1, 40, false);
   const BBox anchor_box = plan.predicted_bbox;
   const BBox recent_box{anchor_box.x + 15.0F, anchor_box.y,
@@ -257,7 +462,8 @@ int main() {
               "template conflict reports low IoU");
 
   LongTermController recent_only(config);
-  recent_only.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120});
+  recent_only.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   plan = recent_only.begin_frame(1, 40, false);
   output = recent_only.finish_frame(
       plan,
@@ -268,8 +474,8 @@ int main() {
               "recent-only reliable response cannot directly control");
 
   LongTermController detector_controller(config);
-  detector_controller.initialize(BBox{40, 30, 20, 20}, 0, 0,
-                                 FrameSize{200, 120});
+  detector_controller.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(1, true));
   reject_frame(detector_controller, 1, 100);
   plan = detector_controller.begin_frame(2, 1100, true);
   expect_true(plan.request_detector,
@@ -292,8 +498,8 @@ int main() {
   ControllerConfig lock_config = config;
   lock_config.detector_candidate_max_center_ratio = 1.0F;
   LongTermController candidate_lock(lock_config);
-  candidate_lock.initialize(BBox{40, 30, 20, 20}, 0, 0,
-                            FrameSize{200, 120});
+  candidate_lock.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(0, true));
   reject_frame(candidate_lock, 1, 100);
   plan = candidate_lock.begin_frame(2, 1100, true);
   DetectorBatch lock_batch{
@@ -301,8 +507,9 @@ int main() {
       {{BBox{20, 20, 30, 40}, 0.95F, 0},
        {BBox{120, 20, 30, 40}, 0.90F, 1}}};
   output = candidate_lock.finish_frame(plan, {}, lock_batch);
-  expect_true(output.detector_candidates_queued == 2,
-              "whole-object candidates are queued before verification");
+  expect_true(output.detector_candidates_queued == 1 &&
+                  output.detector_candidate_diagnostics[1].rejection == DetectorCandidateRejection::kClassMismatch,
+              "only matching whole-object candidates queue before verification");
 
   plan = candidate_lock.begin_frame(3, 1140, false);
   const std::optional<std::uint64_t> locked_id = plan.detector_candidate_id;
@@ -343,8 +550,8 @@ int main() {
               "two agreeing hits in three locked frames reacquire");
 
   LongTermController same_class_ambiguity(lock_config);
-  same_class_ambiguity.initialize(BBox{40, 30, 20, 20}, 0, 0,
-                                  FrameSize{200, 120});
+  same_class_ambiguity.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(0, true));
   reject_frame(same_class_ambiguity, 1, 100);
   plan = same_class_ambiguity.begin_frame(2, 1100, true);
   DetectorBatch ambiguous_batch{
@@ -370,7 +577,8 @@ int main() {
   subtarget_config.detector_target_mode = DetectorTargetMode::kSubtarget;
   subtarget_config.detector_candidate_max_center_ratio = 1.0F;
   LongTermController subtarget(subtarget_config);
-  subtarget.initialize(BBox{40, 30, 20, 10}, 0, 0, FrameSize{200, 120});
+  subtarget.initialize(BBox{40, 30, 20, 10}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(0, true));
   reject_frame(subtarget, 1, 100);
   plan = subtarget.begin_frame(2, 1100, true);
   DetectorBatch region_batch{
@@ -402,8 +610,8 @@ int main() {
   subtarget.finish_frame(plan, {}, std::nullopt);
 
   LongTermController edge_subtarget(subtarget_config);
-  edge_subtarget.initialize(BBox{40, 30, 20, 10}, 0, 0,
-                            FrameSize{200, 120});
+  edge_subtarget.initialize(BBox{40, 30, 20, 10}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(0, true));
   reject_frame(edge_subtarget, 1, 100);
   plan = edge_subtarget.begin_frame(2, 1100, true);
   DetectorBatch edge_region_batch{
@@ -425,8 +633,8 @@ int main() {
   edge_subtarget.finish_frame(plan, {}, std::nullopt);
 
   LongTermController opposite_edge_subtarget(subtarget_config);
-  opposite_edge_subtarget.initialize(BBox{40, 30, 20, 30}, 0, 0,
-                                     FrameSize{200, 120});
+  opposite_edge_subtarget.initialize(BBox{40, 30, 20, 30}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(0, true));
   reject_frame(opposite_edge_subtarget, 1, 100);
   plan = opposite_edge_subtarget.begin_frame(2, 1100, true);
   DetectorBatch opposite_edge_batch{
@@ -455,8 +663,8 @@ int main() {
   opposite_edge_subtarget.finish_frame(plan, {}, std::nullopt);
 
   LongTermController strict_initial_geometry(lock_config);
-  strict_initial_geometry.initialize(BBox{40, 30, 20, 20}, 0, 0,
-                                     FrameSize{200, 120});
+  strict_initial_geometry.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(0, true));
   reject_frame(strict_initial_geometry, 1, 100);
   plan = strict_initial_geometry.begin_frame(2, 1100, true);
   DetectorBatch strict_initial_batch{
@@ -472,8 +680,8 @@ int main() {
               "excess geometry drift cannot establish the first detector lock");
 
   LongTermController strict_geometry(lock_config);
-  strict_geometry.initialize(BBox{40, 30, 20, 20}, 0, 0,
-                             FrameSize{200, 120});
+  strict_geometry.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(0, true));
   reject_frame(strict_geometry, 1, 100);
   plan = strict_geometry.begin_frame(2, 1100, true);
   DetectorBatch strict_batch{
@@ -495,8 +703,8 @@ int main() {
               "excess detector-origin area drift cannot count as confirmation");
 
   LongTermController detector_identity(config);
-  detector_identity.initialize(BBox{40, 30, 20, 20}, 0, 0,
-                               FrameSize{200, 120});
+  detector_identity.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_fixed_target_class(0, true));
   reject_frame(detector_identity, 1, 100);
   plan = detector_identity.begin_frame(2, 1100, true);
   expect_true(plan.request_detector,
@@ -546,7 +754,8 @@ int main() {
       static_cast<float>(gate_frame.height));
 
   LongTermController boundary_gate(config);
-  boundary_gate.initialize(gate_initial, 0, 0, gate_frame);
+  boundary_gate.initialize(gate_initial, 0, 0, gate_frame,
+      make_fixed_target_class(0, true));
   reject_frame(boundary_gate, 1, 100);
   plan = boundary_gate.begin_frame(2, 1100, true);
   const BBox exact_boundary{
@@ -569,7 +778,8 @@ int main() {
   boundary_gate.finish_frame(plan, {}, std::nullopt);
 
   LongTermController rejected_gate(config);
-  rejected_gate.initialize(gate_initial, 0, 0, gate_frame);
+  rejected_gate.initialize(gate_initial, 0, 0, gate_frame,
+      make_fixed_target_class(0, true));
   reject_frame(rejected_gate, 1, 100);
   plan = rejected_gate.begin_frame(2, 1100, true);
   const BBox just_over_boundary{
@@ -596,7 +806,8 @@ int main() {
   rejected_gate.finish_frame(plan, {}, std::nullopt);
 
   LongTermController mixed_gate(config);
-  mixed_gate.initialize(gate_initial, 0, 0, gate_frame);
+  mixed_gate.initialize(gate_initial, 0, 0, gate_frame,
+      make_fixed_target_class(0, true));
   reject_frame(mixed_gate, 1, 100);
   plan = mixed_gate.begin_frame(2, 1100, true);
   DetectorBatch mixed_batch{
@@ -619,7 +830,8 @@ int main() {
   mixed_gate.finish_frame(plan, {}, std::nullopt);
 
   LongTermController lost_gate(config);
-  lost_gate.initialize(gate_initial, 0, 0, gate_frame);
+  lost_gate.initialize(gate_initial, 0, 0, gate_frame,
+      make_fixed_target_class(0, true));
   reject_frame(lost_gate, 1, 100);
   plan = lost_gate.begin_frame(2, 3100, true);
   expect_true(plan.mode == TrackingMode::kLost,
@@ -635,7 +847,8 @@ int main() {
 
   ControllerConfig template_config = config;
   LongTermController templates(template_config);
-  templates.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120});
+  templates.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (int index = 1; index <= 15; ++index) {
     plan = templates.begin_frame(static_cast<std::uint64_t>(index), index * 100,
                                  false);
@@ -661,7 +874,8 @@ int main() {
               "three reliable probation frames commit recent template");
 
   LongTermController rollback(config);
-  rollback.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120});
+  rollback.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (int index = 1; index <= 15; ++index) {
     plan = rollback.begin_frame(static_cast<std::uint64_t>(index), index * 100,
                                 false);
@@ -675,8 +889,8 @@ int main() {
               "loss during probation rolls recent template back");
 
   LongTermController degraded_recent(config);
-  degraded_recent.initialize(BBox{40, 30, 20, 20}, 0, 0,
-                             FrameSize{200, 120});
+  degraded_recent.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (int index = 1; index <= 15; ++index) {
     plan = degraded_recent.begin_frame(static_cast<std::uint64_t>(index),
                                        index * 100, false);
@@ -695,7 +909,8 @@ int main() {
               "probation rolls back when staged recent degrades despite reliable anchor");
 
   LongTermController bounded(config);
-  bounded.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120});
+  bounded.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   reject_frame(bounded, 1, 40);
   for (int index = 2; index <= 10001; ++index) {
     plan = bounded.begin_frame(static_cast<std::uint64_t>(index), index * 40,
@@ -734,8 +949,8 @@ int main() {
   hold_config.assisted_recovery_ms = 3000;
 
   LongTermController incomplete_reference(hold_config);
-  incomplete_reference.initialize(BBox{60, 40, 20, 20}, 0, 0,
-                                  FrameSize{240, 160});
+  incomplete_reference.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 7; ++frame) {
     expect_true(feed_reliable_box(incomplete_reference, frame,
                                   BBox{60, 40, 20, 20})
@@ -749,8 +964,8 @@ int main() {
               "fewer than a full reliable reference window cannot trigger hold");
 
   LongTermController median_boundary(hold_config);
-  median_boundary.initialize(BBox{70, 50, 20, 40}, 0, 0,
-                             FrameSize{300, 220});
+  median_boundary.initialize(BBox{70, 50, 20, 40}, 0, 0, FrameSize{300, 220},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   const float reference_widths[] = {16, 18, 20, 22, 24, 26, 28, 30};
   for (std::uint64_t index = 0; index < 8; ++index) {
     const float width = reference_widths[index];
@@ -791,8 +1006,8 @@ int main() {
   }
 
   LongTermController above_boundary(hold_config);
-  above_boundary.initialize(BBox{60, 40, 20, 20}, 0, 0,
-                            FrameSize{240, 160});
+  above_boundary.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     feed_reliable_box(above_boundary, frame, BBox{60, 40, 20, 20});
   }
@@ -804,8 +1019,8 @@ int main() {
               "a minimum dimension ratio of 0.7001 does not trigger hold");
 
   LongTermController no_observation_counter(hold_config);
-  no_observation_counter.initialize(BBox{60, 40, 20, 20}, 0, 0,
-                                    FrameSize{240, 160});
+  no_observation_counter.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     feed_reliable_box(no_observation_counter, frame, BBox{60, 40, 20, 20});
   }
@@ -818,8 +1033,8 @@ int main() {
               "a no-observation frame still counts toward consecutive unreliability");
 
   LongTermController fast_translation(hold_config);
-  fast_translation.initialize(BBox{60, 40, 20, 20}, 0, 0,
-                              FrameSize{240, 160});
+  fast_translation.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     feed_reliable_box(fast_translation, frame, BBox{60, 40, 20, 20});
   }
@@ -835,8 +1050,8 @@ int main() {
   verification_hold_config.assisted_recovery_ms = 1000;
   verification_hold_config.detector_candidate_max_center_ratio = 1.0F;
   LongTermController detector_verification_no_hold(verification_hold_config);
-  detector_verification_no_hold.initialize(BBox{60, 40, 20, 20}, 0, 0,
-                                           FrameSize{240, 160});
+  detector_verification_no_hold.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
+      make_fixed_target_class(0, true));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     feed_reliable_box(detector_verification_no_hold, frame,
                       BBox{60, 40, 20, 20});
@@ -867,8 +1082,8 @@ int main() {
   ControllerConfig clearing_config = verification_hold_config;
   clearing_config.occlusion_hold_frames = 1;
   LongTermController hold_clears_pending(clearing_config);
-  hold_clears_pending.initialize(BBox{60, 40, 20, 20}, 0, 0,
-                                 FrameSize{240, 160});
+  hold_clears_pending.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
+      make_fixed_target_class(0, true));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     feed_reliable_box(hold_clears_pending, frame, BBox{60, 40, 20, 20});
   }
@@ -949,8 +1164,8 @@ int main() {
   confirmation_clear_config.occlusion_hold_frames = 1;
   confirmation_clear_config.occlusion_trigger_consecutive_unreliable = 3;
   LongTermController hold_clears_confirmation(confirmation_clear_config);
-  hold_clears_confirmation.initialize(BBox{60, 40, 20, 20}, 0, 0,
-                                      FrameSize{240, 160});
+  hold_clears_confirmation.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     feed_reliable_box(hold_clears_confirmation, frame,
                       BBox{60, 40, 20, 20});
@@ -996,7 +1211,8 @@ int main() {
   diagnostic_config.detector_max_candidates = 1;
   diagnostic_config.detector_candidate_max_center_ratio = 0.20F;
   LongTermController diagnostics(diagnostic_config);
-  diagnostics.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160});
+  diagnostics.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
+      make_fixed_target_class(0, true));
   for (std::uint64_t frame = 1; frame <= 3; ++frame) {
     feed_reliable_box(diagnostics, frame, BBox{60, 40, 20, 20});
   }
@@ -1015,7 +1231,7 @@ int main() {
               "single configured complete hold frame is explicit");
   expect_true(output.detector_candidate_diagnostics.size() == 1 &&
                   output.detector_candidate_diagnostics[0].rejection ==
-                      DetectorCandidateRejection::kHoldInvalidated &&
+                      DetectorCandidateRejection::kGenerationInvalidated &&
                   !output.detector_candidate_diagnostics[0].queued &&
                   !output.control_valid,
               "late pre-hold batch is drained for diagnostics during hold only");
@@ -1033,7 +1249,7 @@ int main() {
                   !output.detector_candidate_diagnostics[0].queued &&
                   output.detector_candidate_diagnostics[0].drawable &&
                   output.detector_candidate_diagnostics[0].rejection ==
-                      DetectorCandidateRejection::kHoldInvalidated &&
+                      DetectorCandidateRejection::kGenerationInvalidated &&
                   !output.control_valid,
               "pre-hold generation remains diagnostic-only after hold exits");
 
@@ -1047,7 +1263,7 @@ int main() {
   mixed_diagnostics.candidates = {
       {BBox{61, 41, 20, 20}, 0.90F, 0},
       {BBox{200, 120, 20, 20}, 0.80F, 0},
-      {BBox{70, 45, 20, 20}, 0.70F, 1},
+      {BBox{70, 45, 20, 20}, 0.70F, 0},
       {BBox{std::numeric_limits<float>::quiet_NaN(), 0, 20, 20}, 0.60F, 0},
   };
   output = diagnostics.finish_frame(plan, {}, mixed_diagnostics);

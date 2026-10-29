@@ -101,8 +101,13 @@ struct TargetClassState {
   std::vector<TargetClassCandidateMatch> candidates;
 };
 
+enum class DetectorClassDisposition {
+  kUnchecked, kMatch, kMismatch, kTargetUnknown, kInvalidClass
+};
+
 enum class DetectorCandidateRejection {
-  kNone, kInvalid, kFrameMismatch, kStale, kHoldInvalidated,
+  kNone, kInvalid, kGenerationInvalidated, kFrameMismatch, kStale,
+  kHoldInvalidated, kTargetClassUnknown, kClassMismatch,
   kPositionRejected, kCapacityRejected
 };
 
@@ -115,6 +120,7 @@ struct DetectorCandidateDiagnostic {
   bool queued = false;
   bool drawable = false;
   DetectorCandidateRejection rejection = DetectorCandidateRejection::kNone;
+  DetectorClassDisposition class_disposition = DetectorClassDisposition::kUnchecked;
 };
 
 struct DetectorRequest {
@@ -172,5 +178,7 @@ const char* to_string(DetectorBatchStatus value);
 const char* to_string(TargetClassStatus value);
 const char* to_string(TargetClassReason value);
 const char* to_string(TargetClassCandidateRejection value);
+const char* to_string(DetectorClassDisposition value);
+const char* to_string(DetectorCandidateRejection value);
 
 }  // namespace nanotrack

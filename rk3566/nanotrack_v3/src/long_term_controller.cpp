@@ -104,13 +104,15 @@ LongTermController::LongTermController(const ControllerConfig& config)
 void LongTermController::initialize(const BBox& initial_bbox,
                                     std::uint64_t frame_id,
                                     std::int64_t timestamp_ms,
-                                    FrameSize frame_size) {
+                                    FrameSize frame_size,
+                                    const TargetClassState& target_class) {
   if (frame_size.width <= 0 || frame_size.height <= 0) {
     throw std::invalid_argument("controller frame size must be positive");
   }
   validate_bbox(initial_bbox, frame_size.width, frame_size.height);
   if (initialized_) ++detector_eligibility_generation_;
   frame_size_ = frame_size;
+  target_class_ = target_class;
   current_bbox_ = initial_bbox;
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   mode_ = TrackingMode::kTracking;
@@ -434,7 +436,17 @@ LongTermController::ingest_detector_batch(
     DetectorCandidateDiagnostic diagnostic;
     diagnostic.candidate = candidate;
     diagnostic.drawable = valid_candidate(candidate, frame_size_);
-    if (!diagnostic.drawable) {
+    if (candidate.class_id < 0) {
+      diagnostic.class_disposition = DetectorClassDisposition::kInvalidClass;
+    } else if (target_class_.status == TargetClassStatus::kUnknown ||
+               !target_class_.target_class_allows_recovery ||
+               !target_class_.target_class_id || *target_class_.target_class_id < 0) {
+      diagnostic.class_disposition = DetectorClassDisposition::kTargetUnknown;
+    } else {
+      diagnostic.class_disposition = candidate.class_id == *target_class_.target_class_id
+          ? DetectorClassDisposition::kMatch : DetectorClassDisposition::kMismatch;
+    }
+    if (!diagnostic.drawable || candidate.class_id < 0) {
       diagnostic.rejection = DetectorCandidateRejection::kInvalid;
     }
     result.diagnostics.push_back(diagnostic);
@@ -443,12 +455,14 @@ LongTermController::ingest_detector_batch(
   const auto reject_eligible_candidates =
       [&](DetectorCandidateRejection rejection) {
         for (DetectorCandidateDiagnostic& diagnostic : result.diagnostics) {
-          if (diagnostic.drawable) diagnostic.rejection = rejection;
+          if (diagnostic.rejection != DetectorCandidateRejection::kInvalid) {
+            diagnostic.rejection = rejection;
+          }
         }
       };
 
   if (batch->generation != detector_eligibility_generation_) {
-    reject_eligible_candidates(DetectorCandidateRejection::kHoldInvalidated);
+    reject_eligible_candidates(DetectorCandidateRejection::kGenerationInvalidated);
     result.status = DetectorBatchStatus::kInvalid;
     return result;
   }
@@ -465,19 +479,34 @@ LongTermController::ingest_detector_batch(
     result.status = DetectorBatchStatus::kStale;
     return result;
   }
+  if (plan.mode == TrackingMode::kOcclusionHold) {
+    reject_eligible_candidates(DetectorCandidateRejection::kHoldInvalidated);
+    result.status = DetectorBatchStatus::kInvalid;
+    return result;
+  }
   struct PositionedCandidate {
     std::size_t diagnostic_index = 0;
     float center_ratio = 0.0F;
   };
   std::vector<PositionedCandidate> positioned;
   std::size_t geometry_valid_count = 0;
+  std::size_t class_valid_count = 0;
   positioned.reserve(batch->candidates.size());
   for (std::size_t index = 0; index < batch->candidates.size(); ++index) {
     const DetectorCandidate& candidate = batch->candidates[index];
     DetectorCandidateDiagnostic& diagnostic = result.diagnostics[index];
-    if (!diagnostic.drawable) continue;
+    if (diagnostic.rejection == DetectorCandidateRejection::kInvalid) continue;
     ++geometry_valid_count;
     diagnostic.batch_eligible = true;
+    if (diagnostic.class_disposition == DetectorClassDisposition::kTargetUnknown) {
+      diagnostic.rejection = DetectorCandidateRejection::kTargetClassUnknown;
+      continue;
+    }
+    if (diagnostic.class_disposition == DetectorClassDisposition::kMismatch) {
+      diagnostic.rejection = DetectorCandidateRejection::kClassMismatch;
+      continue;
+    }
+    ++class_valid_count;
     const float center_ratio = frame_normalized_center_distance(
         candidate.bbox, plan.motion_predicted_bbox, frame_size_);
     diagnostic.center_ratio = center_ratio;
@@ -492,6 +521,10 @@ LongTermController::ingest_detector_batch(
   }
   if (geometry_valid_count == 0) {
     result.status = DetectorBatchStatus::kInvalid;
+    return result;
+  }
+  if (class_valid_count == 0) {
+    result.status = DetectorBatchStatus::kAccepted;
     return result;
   }
   result.position_valid_count = positioned.size();
@@ -556,6 +589,7 @@ ControllerOutput LongTermController::finish_frame(
 
   ControllerOutput output;
   output.frame_id = plan.frame_id;
+  output.target_class = target_class_;
   output.timestamp_ms = plan.timestamp_ms;
   output.mode = plan.mode;
   output.bbox = plan.predicted_bbox;
@@ -802,7 +836,7 @@ ControllerOutput LongTermController::finish_frame(
     output.mode = mode_;
     for (DetectorCandidateDiagnostic& diagnostic :
          output.detector_candidate_diagnostics) {
-      if (!diagnostic.drawable) continue;
+      if (!diagnostic.batch_eligible) continue;
       diagnostic.batch_eligible = false;
       diagnostic.position_gate_pass = false;
       diagnostic.queued = false;

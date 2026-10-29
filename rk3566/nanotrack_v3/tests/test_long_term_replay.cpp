@@ -1,4 +1,5 @@
 #include "long_term_controller.hpp"
+#include "target_class.hpp"
 
 #include <cstdint>
 #include <iostream>
@@ -74,7 +75,8 @@ int main() {
   ControllerConfig config;
 
   LongTermController normal(config);
-  normal.initialize(initial, 0, 0, frame_size);
+  normal.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   ControllerOutput output;
   for (int frame = 1; frame <= 10; ++frame) {
     output = step(normal, frame, frame * 40, initial);
@@ -93,7 +95,8 @@ int main() {
               "short occlusion recovers after two consistent frames");
 
   LongTermController assisted(config);
-  assisted.initialize(initial, 0, 0, frame_size);
+  assisted.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   step(assisted, 1, 100, std::nullopt);
   output = step(assisted, 2, 1100, std::nullopt);
   expect_true(output.mode == TrackingMode::kAssistedRecovery,
@@ -106,7 +109,8 @@ int main() {
               "template-only assisted recovery can reacquire");
 
   LongTermController permanent(config);
-  permanent.initialize(initial, 0, 0, frame_size);
+  permanent.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   step(permanent, 1, 40, std::nullopt);
   for (int frame = 2; frame <= 100; ++frame) {
     output = step(permanent, frame, frame * 40, std::nullopt);
@@ -115,7 +119,8 @@ int main() {
               "permanent loss stays invalid without detector");
 
   LongTermController single_detector(config);
-  single_detector.initialize(initial, 0, 0, frame_size);
+  single_detector.initialize(initial, 0, 0, frame_size,
+      make_fixed_target_class(0, true));
   step(single_detector, 1, 100, std::nullopt);
   SearchPlan detector_plan = single_detector.begin_frame(2, 1100, true);
   DetectorBatch single_batch{
@@ -137,7 +142,8 @@ int main() {
               "one high-confidence candidate plus one reliable verification cannot reacquire");
 
   LongTermController confirmed_detector(config);
-  confirmed_detector.initialize(initial, 0, 0, frame_size);
+  confirmed_detector.initialize(initial, 0, 0, frame_size,
+      make_fixed_target_class(0, true));
   step(confirmed_detector, 1, 100, std::nullopt);
   detector_plan = confirmed_detector.begin_frame(2, 1100, true);
   const BBox recovered{70, 40, 20, 20};
@@ -161,7 +167,8 @@ int main() {
               "two spatially consistent verifications in three frames reacquire");
 
   LongTermController filtered_detector(config);
-  filtered_detector.initialize(initial, 0, 0, frame_size);
+  filtered_detector.initialize(initial, 0, 0, frame_size,
+      make_fixed_target_class(0, true));
   step(filtered_detector, 1, 100, std::nullopt);
   detector_plan = filtered_detector.begin_frame(2, 1100, true);
   DetectorBatch empty_after_class_filter{2, 1100, {}};
@@ -173,7 +180,8 @@ int main() {
               "wrong-class detections filtered by the engine cannot enter recovery");
 
   LongTermController invalid_detector(config);
-  invalid_detector.initialize(initial, 0, 0, frame_size);
+  invalid_detector.initialize(initial, 0, 0, frame_size,
+      make_fixed_target_class(0, true));
   step(invalid_detector, 1, 100, std::nullopt);
   detector_plan = invalid_detector.begin_frame(2, 1100, true);
   DetectorBatch invalid_batch{
@@ -184,7 +192,8 @@ int main() {
               "invalid detector geometry is discarded");
 
   LongTermController same_class_distractor(config);
-  same_class_distractor.initialize(initial, 0, 0, frame_size);
+  same_class_distractor.initialize(initial, 0, 0, frame_size,
+      make_fixed_target_class(0, true));
   step(same_class_distractor, 1, 100, std::nullopt);
   detector_plan = same_class_distractor.begin_frame(2, 1100, true);
   const BBox distractor_box{180, 100, 20, 20};
@@ -212,14 +221,16 @@ int main() {
               "position rejection cannot bypass recovery confirmation");
 
   LongTermController deformation(config);
-  deformation.initialize(initial, 0, 0, frame_size);
+  deformation.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   const BBox deformed{35, 32, 30, 16};
   output = step(deformation, 1, 40, deformed);
   expect_true(output.accepted && output.control_valid,
               "bounded target deformation remains trackable");
 
   LongTermController distractor(config);
-  distractor.initialize(initial, 0, 0, frame_size);
+  distractor.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   const BBox far_distractor{180, 30, 20, 20};
   output = step(distractor, 1, 40, far_distractor);
   expect_true(!output.accepted && !output.control_valid &&
@@ -251,7 +262,8 @@ int main() {
   hold_one_config.local_recovery_ms = 1000;
   hold_one_config.assisted_recovery_ms = 3000;
   LongTermController one_frame_hold(hold_one_config);
-  one_frame_hold.initialize(initial, 0, 0, frame_size);
+  one_frame_hold.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     accept_reliable(one_frame_hold, frame, frame * 40, initial);
   }
@@ -293,7 +305,8 @@ int main() {
   ControllerConfig hold_twelve_config = hold_one_config;
   hold_twelve_config.occlusion_hold_frames = 12;
   LongTermController twelve_frame_hold(hold_twelve_config);
-  twelve_frame_hold.initialize(initial, 0, 0, frame_size);
+  twelve_frame_hold.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     accept_reliable(twelve_frame_hold, frame, frame * 40, initial);
   }
@@ -328,7 +341,8 @@ int main() {
               "one loss episode cannot enter hold twice");
 
   LongTermController assisted_no_hold(hold_one_config);
-  assisted_no_hold.initialize(initial, 0, 0, frame_size);
+  assisted_no_hold.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     accept_reliable(assisted_no_hold, frame, frame * 40, initial);
   }
@@ -350,7 +364,8 @@ int main() {
               "assisted recovery cannot first enter occlusion hold");
 
   LongTermController lost_no_hold(hold_one_config);
-  lost_no_hold.initialize(initial, 0, 0, frame_size);
+  lost_no_hold.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     accept_reliable(lost_no_hold, frame, frame * 40, initial);
   }
@@ -372,7 +387,8 @@ int main() {
               "lost cannot first enter occlusion hold");
 
   LongTermController rearmed(hold_one_config);
-  rearmed.initialize(initial, 0, 0, frame_size);
+  rearmed.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 1; frame <= 8; ++frame) {
     accept_reliable(rearmed, frame, frame * 40, initial);
   }
@@ -400,7 +416,8 @@ int main() {
   expect_true(output.occlusion_hold_triggered,
               "reacquisition seeds a fresh reference window and permits a later hold");
 
-  rearmed.initialize(initial, 30, 1200, frame_size);
+  rearmed.initialize(initial, 30, 1200, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
   for (std::uint64_t frame = 31; frame <= 38; ++frame) {
     accept_reliable(rearmed, frame, frame * 40, initial);
   }
