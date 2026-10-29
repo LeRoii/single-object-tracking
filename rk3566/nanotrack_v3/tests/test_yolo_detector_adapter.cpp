@@ -14,6 +14,58 @@
 #include <thread>
 #include <vector>
 
+namespace nanotrack {
+
+// Establish otherwise fleeting worker states without adding public test APIs.
+class YoloDetectorAdapterTestPeer {
+ public:
+  static void seed_pending(YoloDetectorAdapter& adapter, const ImageView& image,
+                           const DetectorRequest& request) {
+    // Park the idle worker to make pending cancellation deterministic, even if
+    // the operating system would otherwise schedule the worker immediately.
+    {
+      std::lock_guard<std::mutex> lock(adapter.mutex_);
+      adapter.stopping_ = true;
+      adapter.changed_.notify_all();
+    }
+    adapter.worker_.join();
+    std::lock_guard<std::mutex> lock(adapter.mutex_);
+    adapter.stopping_ = false;
+    auto work = adapter.copy_work(image, request);
+    work.identity = {adapter.next_request_id_++,
+                     YoloDetectorAdapter::RequestKind::kAsync};
+    adapter.pending_ = std::move(work);
+  }
+
+  static void resume_worker(YoloDetectorAdapter& adapter) {
+    adapter.worker_ = std::thread(&YoloDetectorAdapter::worker_loop, &adapter);
+  }
+
+  static bool wait_exclusive(YoloDetectorAdapter& adapter) {
+    std::unique_lock<std::mutex> lock(adapter.mutex_);
+    return adapter.changed_.wait_for(lock, std::chrono::seconds(1), [&] {
+      return adapter.initialization_exclusive_;
+    });
+  }
+
+  static bool wait_completed(YoloDetectorAdapter& adapter) {
+    std::unique_lock<std::mutex> lock(adapter.mutex_);
+    return adapter.changed_.wait_for(lock, std::chrono::seconds(1), [&] {
+      return adapter.completed_.has_value() || adapter.pending_error_.has_value();
+    });
+  }
+
+  static bool wait_blocking_callers(YoloDetectorAdapter& adapter,
+                                    std::size_t count) {
+    std::unique_lock<std::mutex> lock(adapter.mutex_);
+    return adapter.changed_.wait_for(lock, std::chrono::seconds(1), [&] {
+      return adapter.blocking_callers_ >= count;
+    });
+  }
+};
+
+}  // namespace nanotrack
+
 namespace {
 
 int failures = 0;
@@ -135,6 +187,208 @@ std::optional<nanotrack::DetectorBatch> poll_until_batch(
   return std::nullopt;
 }
 
+void test_blocking_protocol(const nanotrack::ImageView& image,
+                            const nanotrack::DetectorRequest& request) {
+  using namespace nanotrack;
+  NullDetectorAdapter null_adapter;
+  expect_true(!null_adapter.detect_blocking(image, request),
+              "null detector has no blocking result");
+  auto state = std::make_shared<EngineState>();
+  YoloDetectorAdapter adapter(std::make_unique<FakeEngine>(state));
+  adapter.submit(image, request);
+  auto first = poll_until_batch(adapter);
+  auto second = adapter.detect_blocking(image, request);
+  auto third = adapter.detect_blocking(image, request);
+  adapter.submit(image, request);
+  auto fourth = poll_until_batch(adapter);
+  expect_true(first && second && third && fourth,
+              "mixed asynchronous and blocking requests complete");
+  if (first && second && third && fourth) {
+    expect_true(first->request_id == 1 && second->request_id == 2 &&
+                    third->request_id == 3 && fourth->request_id == 4,
+                "adapter assigns increasing unique IDs independent of generation");
+    expect_true(second->batch.request_id == second->request_id &&
+                    third->batch.request_id == third->request_id &&
+                    second->batch.source_frame_id == 42 &&
+                    third->batch.source_frame_id == 42 &&
+                    second->batch.source_timestamp_ms == 1200 &&
+                    second->batch.generation == 17,
+                "same-frame reinitializations consume their exact request identity");
+  }
+  expect_true(!adapter.poll(), "blocking result is consumed only once");
+  const ImageView invalid{nullptr, 2, 2, 6, 3};
+  expect_throws([&] { adapter.detect_blocking(invalid, request); }, "BGR8",
+                "blocking validation rejects invalid input");
+  expect_true(adapter.can_submit(),
+              "validation exception releases initialization exclusivity");
+
+  adapter.submit(image, DetectorRequest{90, 2000, request.roi, 3, 200});
+  expect_true(YoloDetectorAdapterTestPeer::wait_completed(adapter),
+              "old asynchronous result reaches completed state");
+  auto replacement = adapter.detect_blocking(image, request);
+  expect_true(replacement && replacement->batch.source_frame_id == 42 &&
+                  replacement->request_id == 6 && !adapter.poll(),
+              "blocking initialization discards an old completed result");
+
+  auto pending_state = std::make_shared<EngineState>();
+  YoloDetectorAdapter pending(std::make_unique<FakeEngine>(pending_state));
+  YoloDetectorAdapterTestPeer::seed_pending(pending, image,
+                                          DetectorRequest{91, 2100, request.roi, 3, 201});
+  auto pending_call = std::async(std::launch::async, [&] {
+    return pending.detect_blocking(image, request);
+  });
+  expect_true(YoloDetectorAdapterTestPeer::wait_exclusive(pending),
+              "blocking caller cancels pending work while the worker is parked");
+  YoloDetectorAdapterTestPeer::resume_worker(pending);
+  auto pending_result = pending_call.get();
+  expect_true(pending_result && pending_result->request_id == 2 &&
+                  pending_result->batch.source_frame_id == 42,
+              "unclaimed pending request is cancelled without ID reuse");
+  {
+    std::lock_guard<std::mutex> lock(pending_state->mutex);
+    expect_true(pending_state->calls == 1 && pending_state->request.frame_id == 42,
+                "cancelled pending work never enters inference");
+  }
+}
+
+void test_inflight_exclusivity(const nanotrack::ImageView& image,
+                              const nanotrack::DetectorRequest& request) {
+  using namespace nanotrack;
+  auto state = std::make_shared<EngineState>();
+  state->release = false;
+  YoloDetectorAdapter adapter(std::make_unique<FakeEngine>(state));
+  adapter.submit(image, DetectorRequest{90, 2000, request.roi, 3, 200});
+  expect_true(wait_for(state, &EngineState::entered), "old request is in flight");
+  auto initialization = std::async(std::launch::async, [&] {
+    return adapter.detect_blocking(image, request);
+  });
+  expect_true(YoloDetectorAdapterTestPeer::wait_exclusive(adapter),
+              "initialization obtains exclusivity while waiting for old inference");
+  expect_true(!adapter.can_submit() && !adapter.poll(),
+              "async operations cannot access initialization-owned state");
+  expect_throws([&] { adapter.submit(image, request); }, "busy",
+                "async submit cannot race initialization");
+  expect_true(initialization.wait_for(std::chrono::milliseconds(20)) ==
+                  std::future_status::timeout,
+              "initialization waits for existing inference");
+  release_engine(state);
+  expect_true(initialization.wait_for(std::chrono::seconds(1)) ==
+                  std::future_status::ready,
+              "old inference completion wakes initialization without deadlock");
+  auto result = initialization.get();
+  expect_true(result && result->request_id == 2 &&
+                  result->batch.source_frame_id == 42 && !adapter.poll(),
+              "old in-flight result cannot contaminate initialization");
+
+  // Poll continuously across initialization success/error publication.
+  for (bool fail : {false, true}) {
+    auto isolated_state = std::make_shared<EngineState>();
+    isolated_state->release = false;
+    isolated_state->throw_error = fail;
+    YoloDetectorAdapter isolated(std::make_unique<FakeEngine>(isolated_state));
+    auto blocking = std::async(std::launch::async, [&] {
+      try {
+        auto found = isolated.detect_blocking(image, request);
+        return !fail && found && found->request_id == 1;
+      } catch (const std::exception& error) {
+        return fail && std::string(error.what()).find("inference stage failed") !=
+                           std::string::npos;
+      }
+    });
+    expect_true(wait_for(isolated_state, &EngineState::entered),
+                "initialization inference starts");
+    auto concurrent = std::async(std::launch::async, [&] {
+      return isolated.detect_blocking(image, request);
+    });
+    release_engine(isolated_state);
+    bool poll_stole = false;
+    while (blocking.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+      try { poll_stole = isolated.poll().has_value() || poll_stole; }
+      catch (...) { poll_stole = true; }
+      std::this_thread::yield();
+    }
+    expect_true(blocking.get() && !poll_stole,
+                "poll cannot consume initialization result or error");
+    auto next = concurrent.get();
+    expect_true(fail ? !next : (next && next->request_id == 2),
+                "concurrent initialization calls serialize and honor disabled state");
+    if (fail) {
+      expect_true(!isolated.available() && !isolated.can_submit() &&
+                      !isolated.detect_blocking(image, request),
+                  "initialization engine error permanently disables detector");
+      expect_throws([&] { isolated.submit(image, request); }, "unavailable",
+                    "initialization engine error rejects later async submit");
+    }
+  }
+}
+
+void test_failure_and_stop(const nanotrack::ImageView& image,
+                           const nanotrack::DetectorRequest& request) {
+  using namespace nanotrack;
+  auto state = std::make_shared<EngineState>();
+  state->release = false;
+  state->throw_error = true;
+  YoloDetectorAdapter adapter(std::make_unique<FakeEngine>(state));
+  adapter.submit(image, request);
+  expect_true(wait_for(state, &EngineState::entered), "failing async inference starts");
+  auto blocking = std::async(std::launch::async, [&] {
+    try { adapter.detect_blocking(image, request); }
+    catch (const std::exception& error) {
+      return std::string(error.what()).find("inference stage failed") != std::string::npos;
+    }
+    return false;
+  });
+  expect_true(YoloDetectorAdapterTestPeer::wait_exclusive(adapter),
+              "initialization waits for failing old request");
+  release_engine(state);
+  expect_true(blocking.get(), "old engine failure propagates through initialization");
+  expect_true(!adapter.available() && !adapter.can_submit() &&
+                  !adapter.detect_blocking(image, request) && !adapter.poll(),
+              "old engine error is consumed once and permanently disables detector");
+  expect_throws([&] { adapter.submit(image, request); }, "unavailable",
+                "disabled adapter rejects subsequent async work");
+
+  auto completed_error_state = std::make_shared<EngineState>();
+  completed_error_state->throw_error = true;
+  YoloDetectorAdapter completed_error(std::make_unique<FakeEngine>(completed_error_state));
+  completed_error.submit(image, request);
+  expect_true(YoloDetectorAdapterTestPeer::wait_completed(completed_error),
+              "async failure reaches stored-error state");
+  expect_true(!completed_error.available() && !completed_error.can_submit(),
+              "engine failure disables adapter before any error consumer runs");
+  expect_throws([&] { completed_error.detect_blocking(image, request); },
+                "inference stage failed", "blocking call propagates already-stored async error");
+  expect_true(!completed_error.detect_blocking(image, request) && !completed_error.poll(),
+              "already-stored async error is surfaced exactly once");
+
+  auto stop_state = std::make_shared<EngineState>();
+  stop_state->release = false;
+  auto owned = std::make_unique<YoloDetectorAdapter>(std::make_unique<FakeEngine>(stop_state));
+  auto* raw = owned.get();
+  auto waiting = std::async(std::launch::async, [&] {
+    return raw->detect_blocking(image, request);
+  });
+  expect_true(wait_for(stop_state, &EngineState::entered), "stopping initialization enters inference");
+  auto queued = std::async(std::launch::async, [&] {
+    return raw->detect_blocking(image, request);
+  });
+  expect_true(YoloDetectorAdapterTestPeer::wait_blocking_callers(*raw, 2),
+              "second initialization waits for exclusive owner");
+  auto destruction = std::async(std::launch::async, [&] { owned.reset(); });
+  expect_true(waiting.wait_for(std::chrono::seconds(1)) == std::future_status::ready,
+              "destructor wakes blocking caller before inference finishes");
+  expect_true(!waiting.get(), "stopped blocking request has no result");
+  expect_true(queued.wait_for(std::chrono::seconds(1)) == std::future_status::ready &&
+                  !queued.get(),
+              "destructor wakes caller waiting for initialization exclusivity");
+  expect_true(destruction.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout,
+              "destructor still joins engine after waking caller");
+  release_engine(stop_state);
+  expect_true(destruction.wait_for(std::chrono::seconds(1)) == std::future_status::ready,
+              "destructor finishes after inference and blocking callers leave");
+  destruction.get();
+}
+
 }  // namespace
 
 int main() {
@@ -214,6 +468,9 @@ int main() {
       std::make_unique<FakeEngine>(error_state));
   std::vector<std::uint8_t> image_bytes(12, 9);
   const ImageView image{image_bytes.data(), 2, 2, 6, 3};
+  test_blocking_protocol(image, request);
+  test_inflight_exclusivity(image, request);
+  test_failure_and_stop(image, request);
   error_adapter.submit(image, request);
   expect_true(wait_for(error_state, &EngineState::finished),
               "throwing fake engine finishes within timeout");

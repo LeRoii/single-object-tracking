@@ -13,6 +13,8 @@ class DetectorAdapter {
   virtual bool can_submit() const = 0;
   virtual void submit(const ImageView& image, const DetectorRequest& request) = 0;
   virtual std::optional<DetectorBatch> poll() = 0;
+  virtual std::optional<DetectorBlockingResult> detect_blocking(
+      const ImageView&, const DetectorRequest&) { return std::nullopt; }
 };
 
 class NullDetectorAdapter final : public DetectorAdapter {
@@ -21,6 +23,8 @@ class NullDetectorAdapter final : public DetectorAdapter {
   bool can_submit() const override { return false; }
   void submit(const ImageView&, const DetectorRequest&) override {}
   std::optional<DetectorBatch> poll() override { return std::nullopt; }
+  std::optional<DetectorBlockingResult> detect_blocking(
+      const ImageView&, const DetectorRequest&) override { return std::nullopt; }
 };
 
 }  // namespace nanotrack

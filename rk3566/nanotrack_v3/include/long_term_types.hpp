@@ -140,6 +140,12 @@ struct DetectorBatch {
   std::size_t filtered_candidate_count = 0;
   DetectorTiming timing{};
   std::uint64_t generation = 0;
+  std::uint64_t request_id = 0;
+};
+
+struct DetectorBlockingResult {
+  std::uint64_t request_id = 0;
+  DetectorBatch batch{};
 };
 
 struct DetectorDiagnostics {
