@@ -901,3 +901,154 @@ promotion hold、detector 直接控制禁令、交叉编译前板端门和人工
 
 协调对话应采用本修正后的测试覆盖和证据措辞；公共契约无需因测试补强改变工件身份或
 发布裁决。若未来要求在板端执行这个新增测试，必须另行形成真实板端复测证据。
+
+## 2026-10-30T01:34:14+08:00 目标类别初始化 RK3566 板端验证
+
+- 共享分支/工作树：`codex/debug-target-class-init` /
+  `/home/u20/single-object-tracking/.worktrees/debug-target-class-init`；输入源码
+  `85c7ba592577915576be018093524a8711915ce2`。本节结果提交可用
+  `git log -1 --format=%H -- docs/progress/board-validation.md` 查询，不在提交前虚构自身哈希。
+- 独立板端工作树 `/home/cat/Project/SOT/nanotrack_v3_longterm-target-class-85c7ba5`
+  位于 `75d44431887f29f6813329a8acb102c9d9bed594`，复核时 tracked/untracked
+  状态均干净。共享源码补丁 `/tmp/nanotrack-target-class-85c7ba5.patch` 的 SHA-256
+  为 `93467e875b3def3ba4aedfc0062f6c482681892083e14101bea6956881acd64d`；
+  前序部署核对的构建相关对象指纹匹配，本轮又复核了补丁哈希与板端 HEAD。
+- 板卡为 LubanCat RK3566/AArch64、Debian 10、Linux `4.19.232`、GCC `8.3.0`、
+  CMake `3.13.4`，OpenCV `4.10.0`；实际运行日志报告 RKNN API
+  `2.3.2 (429f97ae6b@2025-04-09T09:09:27)`、driver `0.8.2`。
+  `ldd` 指向 `/home/cat/ThirdParty/OpenCV4100/lib/libopencv_world.so.410` 和
+  `/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so`，没有缺失依赖。
+
+### 输入与输出身份
+
+路径均在板端。`A=/home/cat/Project/SOT/nanotrack_v3_longterm`，
+`B=/home/cat/Project/SOT/nanotrack_v3_longterm-target-class-85c7ba5`，
+`R=$A/releases/yolov8n-visdrone9-rk3566-fp16-v1/models`。
+
+| 工件 | 路径 | SHA-256 |
+| --- | --- | --- |
+| 原生可执行文件 | `$B/build-board-target-class-85c7ba5/nanotrack_v3` | `28ffadf45d023ea66bb99ec30e7a7b7efb755d6d0ad1edc4336940b19368d243` |
+| NanoTrack template | `$A/models/template_backbone.rknn` | `38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709` |
+| NanoTrack search | `$A/models/search_backbone.rknn` | `92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a` |
+| NanoTrack head | `$A/models/head.rknn` | `2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600` |
+| NanoTrack manifest | `$A/models/manifest.json` | `441e93f2092afe94bac663f27adb1fe99848357356efd67c7473b0b506f854b2` |
+| VisDrone9 detector RKNN | `$R/yolov8n-visdrone9-rk3566-fp16.rknn` | `3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0` |
+| Detector manifest | `$R/detector-manifest.json` | `05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e` |
+| Detector labels | `$R/visdrone9.txt` | `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992` |
+| 输入视频 | `$A/data/girl_dance.mp4` | `8090fcd5090adb62f21e79e799f0b0871d9c610d8cf8087b9fcdd3c7e9c2e9b9` |
+| Debug 配置 | `$B/config/interactive-debug.conf` | `e3fe5f927ba3a47d2829dce600c01634f7f2f405576865c2edea22e0256493f8` |
+| 可见光控制配置 | `$B/config/visible-default.conf` | `b9a128b78063056173626af1c7c7d2c580a59b295c45a4afc0ef8e2e04bff95b` |
+
+### 原生构建、CTest 与场景命令
+
+前序代理在新的板端构建目录执行以下原生配置/构建；保留原始日志为
+`/tmp/nanotrack-target-class-configure.log`、`/tmp/nanotrack-target-class-build.log`、
+`/tmp/nanotrack-target-class-ctest.log`，其 SHA-256 分别为
+`68557c3c81af073eac3527862eeb766f15c4d3b8a8f0d948ed2a426219296984`、
+`6cb11a61d3fa9938bc957421b752fc65379022ef44622c9e5c49b842b563a947`、
+`34604e9e286bbf61537d176b305b5dfe9db1f4755294382d766ce403b60d06fc`。
+
+```bash
+cmake -S "$B" -B "$B/build-board-target-class-85c7ba5" \
+  -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON \
+  -DOpenCV_DIR=/home/cat/ThirdParty/OpenCV4100/lib/cmake/opencv4 \
+  -DRKNN_INCLUDE_DIR=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/include \
+  -DRKNN_LIBRARY=/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/aarch64/librknnrt.so
+cmake --build "$B/build-board-target-class-85c7ba5" -- -j2
+(cd "$B/build-board-target-class-85c7ba5" && ctest --output-on-failure)
+```
+
+配置/构建完成，原始 CTest `16/16` 通过、`5.18 s`；本轮从构建目录重跑
+`ctest --output-on-failure`，`16/16` 通过、`5.10 s`。板端 CTest 3.13 不支持
+`--test-dir`；一次从 `/home/cat` 使用该参数得到 `No tests were found`，未计入测试结果。
+
+场景脚本 `/tmp/target_class_board_scenarios.py` SHA-256
+`9153936f9c06fd14bebb9c210ba1681623119558c0fc0eb8dc0e1a53c2ff3dcb`，
+GUI 辅助脚本 `/tmp/target_class_board_gui.py` SHA-256
+`3558a257d7863e0a03b0acc38f0301274393d67c1b657504925b37955c2b47ac`。
+实际命令为 `python3 /tmp/target_class_board_scenarios.py {full,local,background,reselect}`；
+脚本启动上述可执行文件，传入 `--config $B/config/interactive-debug.conf`、
+`--video $A/data/girl_dance.mp4`、`--model-dir $A/models`、
+`--controller-config $B/config/visible-default.conf` 和三个 `$R` detector 工件；
+各场景完整命令保留在
+`/home/cat/Project/SOT/validation-target-class-85c7ba5/{full,local,background,reselect}.command`。
+前三个命令使用 `--max-frames 3` 并通过 GUI 单帧步进，重选命令使用
+`--max-frames 210`；脚本对等待和进程退出设有上限。所有场景 exit 0。
+
+| 场景 | ROI（原视频坐标） | 板端观察 |
+| --- | --- | --- |
+| 人物全身大框 | `196,160,184,310` | `UNKNOWN/NO_MATCH`，仅一个 car 候选，非 person；恢复关闭 |
+| 人物局部框 | `244,161,74,70` | `UNKNOWN/NO_MATCH`，仍仅 car 候选；恢复关闭 |
+| 背景框 | `30,70,100,100` | `UNKNOWN/NO_MATCH`；恢复关闭 |
+| 同进程重选 | 全身→局部→背景→全身 | 初始化与 request ID 均为 1–4，四次完成、零错误；四次均 UNKNOWN，随后跟踪 210 帧 |
+
+在默认 detector confidence `0.25` 下，初始化 batch 原始数 `6`，过滤后仅一框：
+`car(2)`、confidence `0.363`、bbox `484.21,163.14,98.73,175.73`，
+与左侧人物全身 ROI 的覆盖率 `0`。用于诊断的有界命令额外覆盖
+`--detector-conf 0.05`，日志 `$E/full-conf005.log`（`E` 为下述证据目录）记录左侧
+人物对应的 `truck(4)` 候选 confidence `0.162` 被选中、右侧有两个低置信度 person
+候选；`timeout --signal=INT 12s` 退出码 `124`，没有 metadata 文件。
+这既不是默认配置结果，也不是正确的 person 确立或阈值优化通过。
+
+诊断命令（`E=/home/cat/Project/SOT/validation-target-class-85c7ba5`）：
+
+```bash
+timeout --signal=INT 12s env DISPLAY=:0 stdbuf -oL -eL \
+  "$B/build-board-target-class-85c7ba5/nanotrack_v3" \
+  --config "$B/config/interactive-debug.conf" --video "$A/data/girl_dance.mp4" \
+  --bbox 196,160,184,310 --model-dir "$A/models" \
+  --controller-config "$B/config/visible-default.conf" \
+  --detector-model "$R/yolov8n-visdrone9-rk3566-fp16.rknn" \
+  --detector-manifest "$R/detector-manifest.json" --detector-labels "$R/visdrone9.txt" \
+  --detector-conf 0.05 --max-frames 1 --session-metadata "$E/full-conf005.json" \
+  > "$E/full-conf005.log" 2>&1
+```
+
+证据目录为 `/home/cat/Project/SOT/validation-target-class-85c7ba5`。
+`full/local/background/reselect.log` SHA-256 依次为
+`db5581161e5f7dde8736b7f732b7af96dbeca725237717cd8900fbbdef7fc9c`、
+`3a23962e92eb971a26c6ec7c1a0a686550473069279f131ebab2643339e160bc`、
+`5e12cea76d00490fecd7cb327241a454b27d91ca49e5d5c0357be8d77edf339f`、
+`1a79b7b7e209f908f14c037f465b5440d8ba3e9a785930380821cdfb720b3e97`；
+对应 `.json/.csv/.xwd` 也保留。`reselect.csv` 为 212 行（表头、唯一 frame 0、
+210 跟踪帧），未重复写入初始化帧；`reselect.json` 的初始化 detector
+`request_count=4, complete_count=4, error_count=0`，恢复 detector
+`request_count=0, complete_count=0`。跟踪期出现 `control_valid=1` 的记录来自
+NanoTrack `MOTION` 路径，未观察到 detector-only 控制授权；没有实际触发 detector
+辅助恢复，也没有可观察的旧 batch 污染或新 eligibility generation 遥测。
+
+另一次无预置 bbox 的 GUI 运行使用 `timeout --signal=INT 45s`，在
+`interactive_ready initialized=0` 时截取 `prepaint-before-roi.xwd`，随后选取
+`196,160,184,310` 并截取 `prepaint-after-roi.xwd`。前者可见首帧、操作提示及
+`NO_TARGET`；后者可见 `UNKNOWN — DET RECOVERY OFF`、灰色拒绝 car 候选和绿色
+tracker 控制框。白色初始化框的边缘被绿色框覆盖，无法从此截图独立确认白框层叠
+效果；未观察到成功选择的候选。两个截图 SHA-256 分别为
+`39e2ca4cf221fc9c05fdf88ffafe278b464dfe7f4c561506b68b31e5e51548f5`、
+`3ac57070626ead0ab19a1c38d03b10ab31bdfa1eff26823ea1bb012e64f9d95e`；
+`prepaint.log` SHA-256 为
+`134037f819800ccba563b261cdb83cce2fa1fb2ab87f17994a64c037f465b544`。
+GUI 启动命令与场景命令使用相同输入，使用
+`timeout --signal=INT 45s`、不传 `--bbox`，显式设置
+`--max-frames 1 --output-boxes $E/prepaint.csv --session-metadata $E/prepaint.json`。
+随后依次运行
+`python3 /tmp/target_class_board_gui.py capture $E/prepaint-before-roi.xwd`、
+`python3 /tmp/target_class_board_gui.py roi 196,160,184,310`、
+`python3 /tmp/target_class_board_gui.py capture $E/prepaint-after-roi.xwd`、
+`python3 /tmp/target_class_board_gui.py key q` 并等待正常退出。
+
+### 裁决、边界与 Handoff
+
+本轮 **原生构建、板端 schema/CTest、模型加载和实际初始化推理路径通过**；
+`girl_dance` 正例目标类别确立 **失败**：人物全身/局部均 UNKNOWN，默认阈值下
+仅检出 car，降低阈值会把左侧人物误判为 truck。UNKNOWN 时恢复关闭、同进程
+request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_dance` 与
+`sot-v1` 系列视频，未确认合法车辆样本，车辆全身/局部场景记为 **未观察**。
+没有成功确立 person 或 vehicle，detector 辅助恢复未开启/未触发，不能以
+`control_valid=1` 的 tracker 帧替代该门槛；亦无长稳、性能晋级或真实吊舱验收。
+总体任务状态仍为 `functional_pass_promotion_held`，公共契约中的
+`development_board_validation.latest_handoff.available=false` 必须保持。
+
+请求协调对话采纳本证据提交，保持交叉编译 handoff 不可用，并决定后续 detector
+类别误判/样本覆盖的独立修复与重测；不得把本次原生编译成功写成 target-class
+功能通过或生产交付批准。完整任务报告在工作树
+`.superpowers/sdd/2026-10-29-target-class-establishment/task-9-report.md`（不纳入 Git）。
