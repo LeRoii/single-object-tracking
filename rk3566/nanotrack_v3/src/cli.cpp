@@ -72,6 +72,19 @@ float parse_open_unit(const std::string& text, const char* option) {
   return value;
 }
 
+float parse_target_class_threshold(const std::string& text, const char* option,
+                                   float maximum, bool allow_zero) {
+  std::size_t consumed = 0;
+  const float value = std::stof(text, &consumed);
+  if (consumed != text.size() || !std::isfinite(value) ||
+      (allow_zero ? value < 0.0F : value <= 0.0F) || value > maximum) {
+    throw std::invalid_argument(std::string(option) + " must be finite and in " +
+                                (allow_zero ? "[0," : "(0,") +
+                                std::to_string(maximum) + "]");
+  }
+  return value;
+}
+
 }  // namespace
 
 std::string usage() {
@@ -85,7 +98,10 @@ std::string usage() {
       "[--session-metadata FILE] "
       "[--detector-model MODEL.rknn --detector-manifest MANIFEST.json "
       "--detector-labels LABELS.txt] [--detector-class-id ID] "
-      "[--detector-conf FLOAT] [--detector-nms FLOAT]\n";
+      "[--detector-conf FLOAT] [--detector-nms FLOAT] "
+      "[--target-class-min-roi-coverage FLOAT] "
+      "[--target-class-max-center-ratio FLOAT] "
+      "[--target-class-ambiguity-margin FLOAT]\n";
 }
 
 Options parse_options(const std::vector<std::string>& arguments) {
@@ -120,7 +136,10 @@ Options parse_options(const std::vector<std::string>& arguments) {
         option != "--session-metadata" && option != "--detector-model" &&
         option != "--detector-manifest" && option != "--detector-labels" &&
         option != "--detector-class-id" && option != "--detector-conf" &&
-        option != "--detector-nms") {
+        option != "--detector-nms" &&
+        option != "--target-class-min-roi-coverage" &&
+        option != "--target-class-max-center-ratio" &&
+        option != "--target-class-ambiguity-margin") {
       throw std::invalid_argument("unknown option: " + option);
     }
     if (index + 1 >= arguments.size()) {
@@ -241,6 +260,21 @@ Options parse_options(const std::vector<std::string>& arguments) {
   const auto detector_nms = values.find("--detector-nms");
   if (detector_nms != values.end()) {
     options.detector_nms = parse_open_unit(detector_nms->second, "--detector-nms");
+  }
+  const auto coverage = values.find("--target-class-min-roi-coverage");
+  if (coverage != values.end()) {
+    options.target_class_min_roi_coverage = parse_target_class_threshold(
+        coverage->second, "--target-class-min-roi-coverage", 1.0F, false);
+  }
+  const auto center = values.find("--target-class-max-center-ratio");
+  if (center != values.end()) {
+    options.target_class_max_center_ratio = parse_target_class_threshold(
+        center->second, "--target-class-max-center-ratio", 2.0F, false);
+  }
+  const auto ambiguity = values.find("--target-class-ambiguity-margin");
+  if (ambiguity != values.end()) {
+    options.target_class_ambiguity_margin = parse_target_class_threshold(
+        ambiguity->second, "--target-class-ambiguity-margin", 1.0F, true);
   }
   return options;
 }

@@ -48,6 +48,9 @@ const std::unordered_map<std::string, std::string>& option_names() {
       {"detector_class_id", "--detector-class-id"},
       {"detector_conf", "--detector-conf"},
       {"detector_nms", "--detector-nms"},
+      {"target_class_min_roi_coverage", "--target-class-min-roi-coverage"},
+      {"target_class_max_center_ratio", "--target-class-max-center-ratio"},
+      {"target_class_ambiguity_margin", "--target-class-ambiguity-margin"},
   };
   return names;
 }

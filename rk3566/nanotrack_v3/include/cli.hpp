@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tracker_math.hpp"
+#include "long_term_types.hpp"
 
 #include <cstddef>
 #include <limits>
@@ -24,6 +25,9 @@ struct Options {
   int detector_class_id = -1;
   float detector_confidence = 0.25F;
   float detector_nms = 0.45F;
+  float target_class_min_roi_coverage = TargetClassMatchConfig{}.min_roi_coverage;
+  float target_class_max_center_ratio = TargetClassMatchConfig{}.max_center_ratio;
+  float target_class_ambiguity_margin = TargetClassMatchConfig{}.ambiguity_margin;
   std::size_t max_frames = 0;
   std::size_t start_frame = 0;
   std::size_t end_frame = std::numeric_limits<std::size_t>::max();

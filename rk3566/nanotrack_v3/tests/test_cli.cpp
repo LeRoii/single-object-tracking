@@ -59,6 +59,25 @@ int main() {
               "inclusive frame range arguments");
   expect_true(options.output_width == 1920 && options.output_height == 1080,
               "output-size argument");
+  expect_true(options.target_class_min_roi_coverage == 0.50F &&
+                  options.target_class_max_center_ratio == 0.60F &&
+                  options.target_class_ambiguity_margin == 0.10F,
+              "omitted target class settings use uncalibrated match defaults");
+
+  for (const auto& setting : std::vector<std::pair<std::string, std::string>>{
+           {"--target-class-min-roi-coverage", "1"},
+           {"--target-class-max-center-ratio", "2"},
+           {"--target-class-ambiguity-margin", "0"},
+           {"--target-class-ambiguity-margin", "1"}}) {
+    auto command = valid;
+    command.insert(command.end(), {setting.first, setting.second});
+    try {
+      parse_options(command);
+    } catch (const std::exception& error) {
+      expect_true(false, setting.first + " accepts boundary " + setting.second +
+                             ": " + error.what());
+    }
+  }
 
   std::vector<std::string> interactive = valid;
   const auto bbox_position =
@@ -174,9 +193,24 @@ int main() {
       "detector_labels=../detector/labels.txt\n"
       "detector_class_id=0\n"
       "detector_conf=0.30\n"
-      "detector_nms=0.50\n");
+      "detector_nms=0.50\n"
+      "target_class_min_roi_coverage=0.7\n"
+      "target_class_max_center_ratio=1.2\n"
+      "target_class_ambiguity_margin=0.2\n");
   const Options configured =
       parse_options({"nanotrack_v3", "--config", full_config.string()});
+  expect_true(configured.target_class_min_roi_coverage == 0.7F &&
+                  configured.target_class_max_center_ratio == 1.2F &&
+                  configured.target_class_ambiguity_margin == 0.2F,
+              "all target class thresholds map from config as numbers");
+  const Options class_overrides = parse_options(
+      {"nanotrack_v3", "--target-class-min-roi-coverage", "0.8",
+       "--target-class-max-center-ratio", "1.5", "--config", full_config.string(),
+       "--target-class-ambiguity-margin", "0.3"});
+  expect_true(class_overrides.target_class_min_roi_coverage == 0.8F &&
+                  class_overrides.target_class_max_center_ratio == 1.5F &&
+                  class_overrides.target_class_ambiguity_margin == 0.3F,
+              "CLI thresholds override config regardless of argument order");
   expect_true(configured.video ==
                   (config_root / "videos/input sample.mp4").string(),
               "config video is relative to the config directory");
@@ -297,8 +331,60 @@ int main() {
                   shipped.session_metadata.empty(),
               "shipped debug config disables output persistence by default");
   expect_true(!shipped.detector_model.empty() &&
-                  shipped.detector_class_id == 0,
-              "shipped debug config enables the person detector candidate");
+                  shipped.detector_class_id == -1,
+              "shipped debug config enables automatic target class selection");
+  expect_true(shipped.target_class_min_roi_coverage == 0.50F &&
+                  shipped.target_class_max_center_ratio == 0.60F &&
+                  shipped.target_class_ambiguity_margin == 0.10F,
+              "shipped debug thresholds retain uncalibrated defaults");
+
+  struct ThresholdCase {
+    const char* key;
+    float Options::*field;
+    std::vector<std::string> accepted;
+    std::vector<std::string> rejected;
+  };
+  const std::vector<ThresholdCase> thresholds{
+      {"target_class_min_roi_coverage", &Options::target_class_min_roi_coverage,
+       {"0.0001", "0.5", "1"}, {"0", "-0.1", "1.0001"}},
+      {"target_class_max_center_ratio", &Options::target_class_max_center_ratio,
+       {"0.0001", "0.6", "2"}, {"0", "-0.1", "2.0001"}},
+      {"target_class_ambiguity_margin", &Options::target_class_ambiguity_margin,
+       {"0", "0.1", "1"}, {"-0.0001", "1.0001"}}};
+  const auto threshold_config = config_dir / "threshold.conf";
+  for (const auto& threshold : thresholds) {
+    std::string flag = std::string("--") + threshold.key;
+    std::replace(flag.begin(), flag.end(), '_', '-');
+    expect_true(usage().find(flag) != std::string::npos,
+                "usage documents " + flag);
+    for (const auto& value : threshold.accepted) {
+      auto command = valid;
+      command.insert(command.end(), {flag, value});
+      expect_true(parse_options(command).*threshold.field == std::stof(value),
+                  flag + " preserves accepted CLI value " + value);
+      write_text_file(threshold_config, std::string(threshold.key) + "=" + value + "\n");
+      command = valid;
+      command.insert(command.end(), {"--config", threshold_config.string()});
+      expect_true(parse_options(command).*threshold.field == std::stof(value),
+                  flag + " preserves accepted config value " + value);
+    }
+    auto rejected = threshold.rejected;
+    rejected.insert(rejected.end(), {"nan", "inf", "-inf", "bad", "0.5junk"});
+    for (const auto& value : rejected) {
+      auto command = valid;
+      command.insert(command.end(), {flag, value});
+      expect_throws([&] { parse_options(command); },
+                    flag + " rejects CLI value " + value);
+      write_text_file(threshold_config, std::string(threshold.key) + "=" + value + "\n");
+      command = valid;
+      command.insert(command.end(), {"--config", threshold_config.string()});
+      expect_throws([&] { parse_options(command); },
+                    flag + " rejects config value " + value);
+    }
+    auto duplicate = valid;
+    duplicate.insert(duplicate.end(), {flag, "0.5", flag, "0.7"});
+    expect_throws([&] { parse_options(duplicate); }, flag + " rejects duplicates");
+  }
 
   const std::vector<std::pair<std::string, std::string>> detector_files{
       {"--detector-model", "/tmp/yolov8.rknn"},
