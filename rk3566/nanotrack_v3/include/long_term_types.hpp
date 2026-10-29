@@ -61,6 +61,46 @@ struct DetectorCandidate {
   int class_id = -1;
 };
 
+enum class TargetClassStatus { kFixed, kEstablished, kUnknown };
+enum class TargetClassReason {
+  kFixedOverride, kUniqueMatch, kNoMatch, kAmbiguous,
+  kDetectorUnavailable, kDetectorError
+};
+enum class TargetClassCandidateRejection {
+  kNone, kInvalidBox, kInvalidClass, kInvalidConfidence, kNoMatch
+};
+
+struct TargetClassMatchConfig {
+  float min_roi_coverage = 0.50F;
+  float max_center_ratio = 0.60F;
+  float ambiguity_margin = 0.10F;
+};
+
+struct TargetClassCandidateMatch {
+  std::size_t original_index = 0;
+  DetectorCandidate candidate{};
+  BBox clipped_bbox{};
+  float roi_coverage = 0.0F;
+  float iou = 0.0F;
+  float center_ratio = 0.0F;
+  float score = 0.0F;
+  bool eligible = false;
+  TargetClassCandidateRejection rejection = TargetClassCandidateRejection::kNone;
+};
+
+struct TargetClassState {
+  TargetClassStatus status = TargetClassStatus::kUnknown;
+  TargetClassReason reason = TargetClassReason::kNoMatch;
+  std::optional<int> target_class_id;
+  bool target_class_allows_recovery = false;
+  std::optional<int> best_class_id;
+  float best_score = 0.0F;
+  std::optional<int> runner_up_class_id;
+  float runner_up_score = 0.0F;
+  std::optional<TargetClassCandidateMatch> selected_candidate;
+  std::vector<TargetClassCandidateMatch> candidates;
+};
+
 enum class DetectorCandidateRejection {
   kNone, kInvalid, kFrameMismatch, kStale, kHoldInvalidated,
   kPositionRejected, kCapacityRejected
@@ -123,5 +163,8 @@ const char* to_string(TemplateAction value);
 const char* to_string(HypothesisSource value);
 const char* to_string(DetectorTargetMode value);
 const char* to_string(DetectorBatchStatus value);
+const char* to_string(TargetClassStatus value);
+const char* to_string(TargetClassReason value);
+const char* to_string(TargetClassCandidateRejection value);
 
 }  // namespace nanotrack

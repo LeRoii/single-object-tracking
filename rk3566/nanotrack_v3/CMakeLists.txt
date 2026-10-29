@@ -33,6 +33,7 @@ add_library(nanotrack_controller_support
   src/long_term_controller.cpp
   src/long_term_runtime.cpp
   src/long_term_types.cpp
+  src/target_class.cpp
   src/motion_estimator.cpp
   src/tracking_log.cpp
 )
@@ -65,6 +66,10 @@ target_include_directories(nanotrack_sha256 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_compile_options(nanotrack_sha256 PRIVATE -Wall -Wextra -Wpedantic)
 
 if(BUILD_TESTING)
+  add_executable(test_target_class tests/test_target_class.cpp)
+  target_link_libraries(test_target_class PRIVATE nanotrack_controller_support)
+  add_test(NAME target_class COMMAND test_target_class)
+
   add_executable(test_tracker_math tests/test_tracker_math.cpp)
   target_link_libraries(test_tracker_math PRIVATE nanotrack_math)
   add_test(NAME tracker_math COMMAND test_tracker_math)

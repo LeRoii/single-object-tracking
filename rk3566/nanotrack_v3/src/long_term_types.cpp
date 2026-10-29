@@ -2,6 +2,38 @@
 
 namespace nanotrack {
 
+const char* to_string(TargetClassStatus value) {
+  switch (value) {
+    case TargetClassStatus::kFixed: return "FIXED";
+    case TargetClassStatus::kEstablished: return "ESTABLISHED";
+    case TargetClassStatus::kUnknown: return "UNKNOWN";
+  }
+  return "UNKNOWN";
+}
+
+const char* to_string(TargetClassReason value) {
+  switch (value) {
+    case TargetClassReason::kFixedOverride: return "FIXED_OVERRIDE";
+    case TargetClassReason::kUniqueMatch: return "UNIQUE_MATCH";
+    case TargetClassReason::kNoMatch: return "NO_MATCH";
+    case TargetClassReason::kAmbiguous: return "AMBIGUOUS";
+    case TargetClassReason::kDetectorUnavailable: return "DETECTOR_UNAVAILABLE";
+    case TargetClassReason::kDetectorError: return "DETECTOR_ERROR";
+  }
+  return "UNKNOWN";
+}
+
+const char* to_string(TargetClassCandidateRejection value) {
+  switch (value) {
+    case TargetClassCandidateRejection::kNone: return "NONE";
+    case TargetClassCandidateRejection::kInvalidBox: return "INVALID_BOX";
+    case TargetClassCandidateRejection::kInvalidClass: return "INVALID_CLASS";
+    case TargetClassCandidateRejection::kInvalidConfidence: return "INVALID_CONFIDENCE";
+    case TargetClassCandidateRejection::kNoMatch: return "NO_MATCH";
+  }
+  return "UNKNOWN";
+}
+
 const char* to_string(TrackingMode value) {
   switch (value) {
     case TrackingMode::kTracking: return "TRACKING";
