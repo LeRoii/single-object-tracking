@@ -1,6 +1,6 @@
 # RK3566 NanoTrack V3 长时目标跟踪工程代码流程
 
-本文用于快速理解 `rk3566/nanotrack_v3` 原始算法工程，以及该算法移植到 ViewLink 工程 `ai_alg` 后的实际运行流程。文档基于 2026-10-16 的源码状态编写，并于 2026-10-23 补充交互式 Debug 日志说明。
+本文用于快速理解 `rk3566/nanotrack_v3` 原始算法工程，以及该算法移植到 ViewLink 工程 `ai_alg` 后的实际运行流程。文档基于 2026-10-16 的源码状态编写，2026-10-23 补充交互式 Debug 日志说明，2026-10-29 补充独立 Debug 程序的目标类别建立与 schema 8。新 Debug 流程不表示 ViewLink 生产适配层已同步，也不构成板端运行证据。
 
 ## 1. 先看结论：整个系统做了什么
 
@@ -610,6 +610,7 @@ A6 交叉工具链
 
 本节只描述 `rk3566/nanotrack_v3` 独立程序在交互模式
 （`interactive=true` 或命令行 `--interactive`）下写到标准输出的结构化日志。
+第 20.10 节的目标类别初始化事件在独立程序的非交互模式中也输出。
 这些日志由 `src/main.cpp` 和 `src/debug_telemetry.cpp` 产生。ViewLink 生产版
 `ai_alg` 没有编译独立程序的 `main.cpp`、键鼠交互和 `DebugTelemetry`，因此不能根据
 本节推断生产程序已经输出相同日志。
@@ -644,7 +645,7 @@ DEBUG_EVENT event=<事件名> key=value key=value ...
 |---|---|---|
 | `startup` | 输入路径与 controller 配置校验完成、打开视频之前 | `video`：`nanotrack::Options::video`；`controller_config`：实际配置路径，未指定时为 `builtin-defaults`；`sensor`、`start_frame`、`end_frame`、`max_frames`：最终 CLI/运行配置值 |
 | `video_opened` | 视频成功打开并读到起始帧 | `width/height`：首帧 `cv::Mat` 尺寸；`fps`：`VideoCapture::CAP_PROP_FPS`；`output_width/output_height`：显式输出尺寸，否则取输入帧尺寸 |
-| `runtime_ready` | NanoTrack、可选 detector 和 `LongTermRuntime` 构造成功 | `model_dir`：三模型目录；`detector`：是否提供 detector 模型；`detector_model`：模型路径或 `none`；`detector_class_id`：类别过滤值；`detector_target_mode`、`calibrated`：`ControllerConfig` 的实际值 |
+| `runtime_ready` | NanoTrack、可选 detector 和 `LongTermRuntime` 构造成功 | `model_dir`：三模型目录；`detector`：是否提供 detector 模型；`detector_model`：模型路径或 `none`；`detector_class_id`：用户请求的目标类别，`-1` 为自动；`engine_class_filter=-1`：引擎始终输出全部类别；`detector_target_mode`、`calibrated`：`ControllerConfig` 的实际值 |
 | `outputs` | 运行时构造完成 | `video`：是否配置输出视频；`boxes`：是否配置 CSV；`metadata`：是否配置会话元数据，或因 CSV 输出启用了默认元数据；这里只说明写出开关，不代表文件已经成功写完 |
 | `target_initialized` | CLI 初始框或鼠标框选成功并调用 `LongTermRuntime::initialize()` | `frame`：初始化所在源帧；`bbox`：实际初始化框；`reinitialize`：此前是否已经初始化；`count`：本次进程内累计初始化次数。重新框选会重置控制器、模板和 Debug 状态历史，但不会把源视频帧号退回 0 |
 | `interactive_ready` | HighGUI 窗口创建完成 | `playing=0`：初始为暂停；`initialized`：此时是否已有 CLI 初始框 |
@@ -807,6 +808,7 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 | 橙色 `(0,165,255)` | `DET CAND id/conf/d` 与 `DET PROBE index` | 当前实际送入 NanoTrack 验证的活动候选及探针；仍不是控制框 |
 | 蓝色 `(255,0,0)` | `NT ANCHOR score` | anchor `TrackerObservation::bbox/raw_score` |
 | 黄色 `(0,255,255)` | `NT RECENT score` | recent `TrackerObservation::bbox/raw_score` |
+| 白色 `(255,255,255)` | `TARGET CLS INIT[i] SELECTED` | 暂停初始化帧上用于建立类别的 detector 候选，仅为类别诊断，不是控制框 |
 | 绿色 `(0,255,0)` | `ACCEPTED CTRL` | 仅当 `accepted=true` 且 `control_valid=true` 时绘制的最终输出框 |
 | 红色 `(0,0,255)` | `REJECTED NO_CTRL` | 顶部状态提示；不伪造一条红色“结果框” |
 
@@ -826,9 +828,95 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 | `tracker_skipped` | `LongTermRuntime` 是否因 `run_tracker=false` 跳过 NanoTrack；为 1 时允许 `tracker_ms=0` |
 | `detector_suppressed_by_hold` | 本帧处于 HOLD 且跳过 tracker/detector 提交；在途 detector 仍可 poll 并仅作诊断 |
 
-schema 7 行仍记录正的 `runtime_ms` 和 `pipeline_ms`。初始化行使用默认零/空值。板端校验只在
+schema 7 引入的这些字段在 schema 8 中继续保留。普通跟踪行仍记录正的 `runtime_ms` 和 `pipeline_ms`。初始化行的耗时使用默认零/空值。板端校验只在
 `tracker_skipped=1` 时接受 `tracker_ms=0`；其他帧零值仍判为错误。会话 metadata 的
-`schema_version` 同步为 7，避免旧解析器静默误读新增列。
+`schema_version` 当前为 8，避免旧解析器静默误读新增列。
+
+### 20.10 人工初始化时建立目标类别（schema 8）
+
+独立 Debug 默认 `detector_class_id=-1`，表示自动建立类别。每次确认 ROI，包括同帧重新框选，
+主程序先向窗口提交 `ESTABLISHING TARGET CLASS...` 提示，然后调用
+`LongTermRuntime::initialize()`。此处不额外调用 `waitKeyEx/pollKey`、不解码新视频帧，也不修改
+播放状态；HighGUI 后端是否在阻塞推理前实际绘制提示，需要板端 GUI 观察，Host 测试未覆盖。
+重新框选沿用现有交互暂停规则，等待检测本身不会开始播放或执行一次单步。
+
+自动模式的初始化顺序为：adapter 取消尚未开始的旧请求，等待已在运行的旧请求并丢弃其结果，
+清理旧完成结果，再使用同一模型、同一 worker 执行初始化帧的全类别阻塞检测。这里的“全部”
+指置信度门限和 NMS 后的候选，不是网络阈值前 raw proposals。匹配仅用于确定类别；controller、
+NanoTrack 和运动模型仍收到原人工 ROI。初始化 batch 不传入 `finish_frame()`，不分配恢复
+candidate ID，不调用 `commit_bbox()`，也不产生 detector 重捕控制授权。手动 ROI 的初始有效
+状态不代表 detector 验证成功。
+
+底层 `YoloRknnEngineConfig.class_id` 始终为 `-1`。配置 `detector_class_id>=0` 时跳过初始化
+检测；若已配置 detector，必须用 engine 校验过的 `labels.size()` 验证 ID 严格小于类别数，越界
+是启动错误。未配置 detector 时允许保留固定 ID，但 detector 恢复始终关闭。`-1` 以外的负值
+非法。类别名称只来自已验证 labels，缺失时显示 `cls=<id>`，不猜测名称。
+
+先将 ROI `R` 和候选 `D` 裁剪到图像范围，再计算：
+
+```text
+coverage = area(R intersection D) / area(R)
+iou = area(R intersection D) / area(R union D)
+center_ratio = distance(center(R), center(D)) / diagonal(D)
+eligible = (center(R) inside D AND center_ratio <= max_center_ratio)
+           OR coverage >= min_roi_coverage
+score = 0.55 * coverage
+      + 0.20 * clamp(1 - center_ratio / max_center_ratio, 0, 1)
+      + 0.10 * iou + 0.15 * detector_confidence
+```
+
+默认门限为 `target_class_min_roi_coverage=0.50`、`target_class_max_center_ratio=0.60`、
+`target_class_ambiguity_margin=0.10`，均为未标定工程参数；命令行/配置可覆盖，metadata 保存实际值。
+同类只取最佳候选，同分时依次按 confidence、面积、原索引决胜。不同类别最佳分差小于
+ambiguity margin 则歧义；分差等于门限可通过，跨类同分始终歧义（即使 margin 为零），
+class ID 只用于稳定显示顺序。覆盖率和中心比等于门限可通过，比较统一使用 epsilon。
+
+| 状态 / 原因 | detector 恢复资格 |
+|---|---|
+| `FIXED / FIXED_OVERRIDE` | 固定类别；仅 detector 可用时允许后续同类候选进入既有验证链 |
+| `ESTABLISHED / UNIQUE_MATCH` | 初始化得到唯一类别，后续同类候选仍需完整验证 |
+| `UNKNOWN / NO_MATCH`、`AMBIGUOUS`、`DETECTOR_UNAVAILABLE`、`DETECTOR_ERROR` | 禁止 detector 候选入队或形成 probe；NanoTrack 与运动预测继续工作 |
+
+类别资格由 `target_class_allows_recovery` 表示，与 worker 是否 ready/健康分开。UNKNOWN 不停止
+`ASSISTED_RECOVERY/LOST` 下按既有节流执行的全类别诊断检测；原始结果仍可显示。
+类别只在下一次人工初始化时替换，同时清空候选/确认并推进 eligibility generation。
+adapter `request_id` 标识每次 worker 请求，初始化和普通异步请求均单调唯一；controller 的
+`detector_eligibility_generation` 标识恢复结果的会话/HOLD 资格。两者独立，不能互换；同一
+frame ID/timestamp 连续重新框选也获得新初始化序号、新 request ID（若执行检测）和新 generation。
+
+每个逐帧候选有两个正交诊断：`class_disposition` 为
+`UNCHECKED/MATCH/MISMATCH/TARGET_UNKNOWN/INVALID_CLASS`，最终拒绝在日志中写作 `rejection`
+（overlay 的 `reason`）。优先级为非法输入 → generation → frame identity → stale → HOLD →
+UNKNOWN/类别不匹配 → position → capacity；类别判断不覆盖此前结构性拒绝。因类别全部被抑制
+而零入队的有效 batch 仍可为 `ACCEPTED`。灰色候选表示无恢复资格；只有已入验证链的候选
+可显示橙色活动 probe。任何原始、初始化或活动 detector 框都不能直接恢复控制；丢失后必须经
+NanoTrack anchor/recent、几何一致性及既有同候选 2/3 确认才能重新 `control_valid=true`。
+
+每次初始化都输出以下事件；当前实现是在初始化返回后按顺序输出完整事件组，因此
+`target_class_init_start` 是该次尝试的上下文记录，不是推理前的实时通知：
+
+| 事件 | 关键字段 |
+|---|---|
+| `target_class_init_start` | `initialization_index/frame/timestamp_ms/request_id/roi/mode/requested_class_id` |
+| `target_class_candidate` | 每个候选的 `index/class_id/class_name/bbox/clipped_bbox/confidence/roi_coverage/center_ratio/iou/score/eligible/selected/rejection` |
+| `target_class_init_result` | 状态、原因、类别及名称、最佳/次佳类别和分数、恢复资格、request ID、检测分段及等待耗时、错误 |
+
+暂停帧的 `RuntimeFrameResult.initialization` 保存全部初始化匹配诊断，白色框标记选中候选；
+状态栏显示 `TARGET CLS <name>(id) AUTO/FIXED` 或 `TARGET CLS UNKNOWN - DET RECOVERY OFF`。
+初始 `RuntimeFrameResult`、`ControllerOutput` 和后续帧共用同一目标类别状态。
+
+schema 8 在初始行和普通跟踪行均填写 `target_class_status`、`target_class_id`、
+`target_class_reason`、`detector_recovery_enabled`（来自 `target_class_allows_recovery`）。CSV 仍保持每个实际写出帧一行；第一次初始化
+写初始行，重新框选不重复写当前 frame ID，改变通过事件与 metadata history 表达。
+会话 metadata 的 `target_class_initializations` 按 `initialization_index` 保留每次结果，不以帧号
+去重；并保存 requested mode/ID、`engine_class_filter=-1`、实际匹配门限和 detector
+模型/manifest/labels 哈希。`detector.class_id=-1` 仅表示引擎输出过滤，不表示用户目标类别。
+独立 `initialization_detector` 汇总 request/complete/error 与 detector 等待耗时；它们不进入
+逐帧 detector 计数或 tracker/runtime/pipeline 延迟。初始帧零耗时也不代表初始化推理无耗时。
+
+Host `ENABLE_RKNN_RUNTIME=OFF` 的测试覆盖匹配、配置校验、adapter/runtime/controller、显示描述、
+事件和序列化；不会编译或执行 OpenCV/RKNN 主程序。主程序集成、窗口绘制、模型推理和板端
+控制安全仍须绑定实际工件在 RK3566 上验证，不能由 Host CTest 通过推导。
 
 ## 21. 当前实现的已知限制
 

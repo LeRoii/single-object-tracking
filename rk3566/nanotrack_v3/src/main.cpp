@@ -6,6 +6,7 @@
 #include "interactive_debug_overlay.hpp"
 #include "long_term_runtime.hpp"
 #include "nanotrack_v3.hpp"
+#include "target_class_session.hpp"
 #include "tracker_math.hpp"
 #include "tracking_log.hpp"
 #include "yolo_detector_adapter.hpp"
@@ -89,11 +90,12 @@ cv::Mat render_annotated(const cv::Mat& source,
 cv::Mat render_interactive(const cv::Mat& source,
                            const std::optional<nanotrack::RuntimeFrameResult>& result,
                            std::size_t frame_id,
-                           bool playing) {
+                           bool playing,
+                           const std::vector<std::string>& labels) {
   cv::Mat rendered = source.clone();
   std::optional<nanotrack::InteractiveDebugOverlay> overlay;
   if (result) {
-    overlay = nanotrack::make_interactive_debug_overlay(*result);
+    overlay = nanotrack::make_interactive_debug_overlay(*result, labels);
     const auto box_color = [](nanotrack::DebugBoxKind kind) {
       switch (kind) {
         case nanotrack::DebugBoxKind::kMotionPrediction:
@@ -112,6 +114,8 @@ cv::Mat render_interactive(const cv::Mat& source,
           return cv::Scalar(0, 255, 255);
         case nanotrack::DebugBoxKind::kAcceptedControl:
           return cv::Scalar(0, 255, 0);
+        case nanotrack::DebugBoxKind::kTargetClassInitializationSelected:
+          return cv::Scalar(255, 255, 255);
       }
       return cv::Scalar(0, 0, 255);
     };
@@ -202,7 +206,7 @@ cv::Mat render_interactive(const cv::Mat& source,
               cv::Point(8, legend_top + 16), cv::FONT_HERSHEY_SIMPLEX, 0.38,
               cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   cv::putText(rendered,
-              "DARKRED InvalidText  BLUE Anchor  YELLOW Recent  GREEN Ctrl",
+              "DARKRED InvalidText  BLUE Anchor  YELLOW Recent  GREEN Ctrl  WHITE Init",
               cv::Point(8, legend_top + 34), cv::FONT_HERSHEY_SIMPLEX, 0.38,
               cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   return rendered;
@@ -346,7 +350,8 @@ void write_session_metadata(const std::string& path,
                             double source_fps,
                             std::size_t tracked_frames,
                             const nanotrack::LatencySummary& latency,
-                            const nanotrack::DetectorSessionMetadata& detector) {
+                            const nanotrack::DetectorSessionMetadata& detector,
+                            nanotrack::TrackingSessionMetadata& metadata) {
   std::ofstream stream(path);
   if (!stream) throw std::runtime_error("cannot open session metadata: " + path);
   const std::filesystem::path manifest =
@@ -357,7 +362,6 @@ void write_session_metadata(const std::string& path,
           : fnv1a64_file(options.controller_config);
   const double finite_source_fps =
       std::isfinite(source_fps) && source_fps > 0.0 ? source_fps : 0.0;
-  nanotrack::TrackingSessionMetadata metadata;
   metadata.video = options.video;
   metadata.model_dir = options.model_dir;
   metadata.manifest_hash_algorithm = "fnv1a64";
@@ -472,7 +476,8 @@ int main(int argc, char** argv) {
       detector_config.model_path = options.detector_model;
       detector_config.manifest_path = options.detector_manifest;
       detector_config.labels_path = options.detector_labels;
-      detector_config.class_id = options.detector_class_id;
+      // The requested target class gates controller recovery, never engine output.
+      detector_config.class_id = -1;
       detector_config.confidence_threshold = options.detector_confidence;
       detector_config.nms_threshold = options.detector_nms;
       auto engine =
@@ -481,7 +486,18 @@ int main(int argc, char** argv) {
       detector = std::make_unique<nanotrack::YoloDetectorAdapter>(
           std::move(engine));
     }
-    nanotrack::LongTermRuntime runtime(controller_config, tracker, *detector);
+    const std::vector<std::string> no_detector_labels;
+    const auto& detector_labels =
+        yolo_engine ? yolo_engine->labels() : no_detector_labels;
+    const nanotrack::TargetClassRuntimeConfig target_class_config =
+        nanotrack::make_target_class_runtime_config(
+            options, yolo_engine ? &detector_labels : nullptr);
+    nanotrack::LongTermRuntime runtime(controller_config, tracker, *detector,
+                                     target_class_config);
+    nanotrack::TrackingSessionMetadata session_metadata;
+    session_metadata.requested_target_class_id = options.detector_class_id;
+    session_metadata.engine_class_filter = -1;
+    session_metadata.target_class_match_config = target_class_config.match_config;
     if (options.interactive) {
       std::cout << "DEBUG_EVENT event=runtime_ready model_dir="
                 << std::quoted(options.model_dir)
@@ -492,6 +508,7 @@ int main(int argc, char** argv) {
                                    ? "none"
                                    : options.detector_model)
                 << " detector_class_id=" << options.detector_class_id
+                << " engine_class_filter=-1"
                 << " detector_target_mode="
                 << nanotrack::to_string(controller_config.detector_target_mode)
                 << " calibrated=" << (controller_config.calibrated ? 1 : 0)
@@ -521,9 +538,28 @@ int main(int argc, char** argv) {
     bool initialized = false;
     std::optional<nanotrack::RuntimeFrameResult> displayed_result;
     nanotrack::DebugTelemetry debug_telemetry(30);
+    constexpr const char* kInteractiveWindow = "NanoTrack V3 RK3566 Debug";
+    nanotrack::InteractivePlayback playback;
+    if (options.interactive) {
+      cv::namedWindow(kInteractiveWindow, cv::WINDOW_NORMAL);
+      cv::resizeWindow(kInteractiveWindow, nanotrack::kInteractiveWindowWidth,
+                       nanotrack::kInteractiveWindowHeight);
+    }
     const auto initialize_target = [&](const nanotrack::BBox& bbox) {
       const bool reinitializing = initialized;
-      runtime.initialize(image_view(frame), bbox, source_frame, timestamp_ms);
+      if (options.interactive) {
+        cv::Mat establishing = render_interactive(
+            frame, std::nullopt, source_frame, playback.playing(), detector_labels);
+        cv::putText(establishing, "ESTABLISHING TARGET CLASS...", cv::Point(12, 80),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.60, cv::Scalar(255, 255, 255),
+                    2, cv::LINE_AA);
+        cv::imshow(kInteractiveWindow, establishing);
+        // Do not pump keys here: initialization must not advance playback.
+        // Actual HighGUI paint timing is a board/backend observation boundary.
+      }
+      const nanotrack::TargetClassInitializationResult initialization =
+          runtime.initialize(image_view(frame), bbox, source_frame, timestamp_ms);
+      nanotrack::record_target_class_initialization(session_metadata, initialization);
       debug_telemetry.reset();
       nanotrack::ControllerOutput initial_output;
       initial_output.frame_id = source_frame;
@@ -533,12 +569,16 @@ int main(int argc, char** argv) {
       initial_output.bbox = bbox;
       initial_output.control_valid = true;
       initial_output.accepted = true;
+      initial_output.target_class = initialization.target_class;
       nanotrack::RuntimeFrameResult initial_result;
       initial_result.plan.frame_id = source_frame;
       initial_result.plan.timestamp_ms = timestamp_ms;
       initial_result.plan.motion_predicted_bbox = bbox;
       initial_result.plan.predicted_bbox = bbox;
+      initial_result.plan.detector_target_mode = controller_config.detector_target_mode;
       initial_result.output = initial_output;
+      initial_result.target_class = initialization.target_class;
+      initial_result.initialization = initialization;
       displayed_result = initial_result;
       if (!initialized) {
         if (!options.output_video.empty()) {
@@ -558,7 +598,8 @@ int main(int argc, char** argv) {
           boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
                        source_frame, timestamp_ms, bbox, detector->available(),
                        detector->available() && detector->can_submit(),
-                       controller_config.detector_target_mode))
+                       controller_config.detector_target_mode,
+                       initialization.target_class))
                 << '\n';
         }
       }
@@ -567,6 +608,10 @@ int main(int argc, char** argv) {
       std::cout << "INITIALIZED frame=" << source_frame << " bbox=" << bbox.x
                 << ',' << bbox.y << ',' << bbox.width << ',' << bbox.height
                 << " count=" << initialization_count << '\n';
+      for (const std::string& event :
+           debug_telemetry.initialization_events(initialization, detector_labels)) {
+        std::cout << event << '\n';
+      }
       if (options.interactive) {
         std::cout << "DEBUG_EVENT event=target_initialized frame="
                   << source_frame << " bbox=" << bbox.x << ',' << bbox.y << ','
@@ -578,12 +623,7 @@ int main(int argc, char** argv) {
 
     if (options.has_bbox) initialize_target(options.bbox);
 
-    constexpr const char* kInteractiveWindow = "NanoTrack V3 RK3566 Debug";
-    nanotrack::InteractivePlayback playback;
     if (options.interactive) {
-      cv::namedWindow(kInteractiveWindow, cv::WINDOW_NORMAL);
-      cv::resizeWindow(kInteractiveWindow, nanotrack::kInteractiveWindowWidth,
-                       nanotrack::kInteractiveWindowHeight);
       std::cout << "INTERACTIVE keys=N/Right(step), Space(play/pause), "
                    "R(select/reset), Q/Esc(quit)\n";
       std::cout << "DEBUG_EVENT event=interactive_ready playing=0 initialized="
@@ -600,7 +640,7 @@ int main(int argc, char** argv) {
       if (options.interactive) {
         cv::imshow(kInteractiveWindow,
                    render_interactive(frame, displayed_result, source_frame,
-                                      playback.playing()));
+                                      playback.playing(), detector_labels));
         const int key = cv::waitKeyEx(playback.playing() ? 1 : 0);
         const nanotrack::InteractiveCommand command =
             nanotrack::decode_interactive_key(key);
@@ -753,7 +793,7 @@ int main(int argc, char** argv) {
     detector_metadata.model_path = options.detector_model;
     detector_metadata.manifest_path = options.detector_manifest;
     detector_metadata.labels_path = options.detector_labels;
-    detector_metadata.class_id = options.detector_class_id;
+    detector_metadata.class_id = -1;
     detector_metadata.confidence_threshold = options.detector_confidence;
     detector_metadata.nms_threshold = options.detector_nms;
     detector_metadata.request_count = detector_request_count;
@@ -779,7 +819,7 @@ int main(int argc, char** argv) {
     if (!metadata_path.empty()) {
       write_session_metadata(metadata_path, options, controller_config, tracker,
                              video_clock, source_fps, tracked_count, latency,
-                             detector_metadata);
+                             detector_metadata, session_metadata);
     }
     std::cout << std::fixed << std::setprecision(3)
               << "SUMMARY tracked_frames=" << tracked_count

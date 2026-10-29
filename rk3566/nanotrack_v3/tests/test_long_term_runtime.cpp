@@ -1,4 +1,5 @@
 #include "long_term_runtime.hpp"
+#include "target_class_session.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -289,8 +290,9 @@ void test_target_class_initialization(const nanotrack::ImageView& image) {
   config.assisted_recovery_ms = 30;
   config.detector_interval_ms = 20;
   const BBox roi{43, 33, 10, 10};
-  TargetClassRuntimeConfig auto_config;
-  auto_config.class_count = 9;
+  const std::vector<std::string> verified_labels{
+      "person", "bicycle", "car", "van", "truck", "bus", "motor", "tricycle", "awning"};
+  const auto auto_config = make_target_class_runtime_config(Options{}, &verified_labels);
   FakeTracker tracker;
   FakeDetector detector;
   detector.enabled = true;
@@ -403,7 +405,30 @@ void test_target_class_initialization(const nanotrack::ImageView& image) {
                     same_bbox(tracker.committed_bbox, roi) &&
                     same_bbox(runtime.controller().current_bbox(), roi),
                 "ambiguous and no-match initialization retain manual ROI with UNKNOWN");
+    tracker.emit_reliable = false;
+    runtime.process_frame(image, 8, 300);
+    const auto diagnostic_request = runtime.process_frame(image, 9, 400);
+    expect_true(diagnostic_request.detector.request_submitted &&
+                    diagnostic_request.plan.hypothesis_source == HypothesisSource::kMotion &&
+                    !diagnostic_request.output.control_valid,
+                "UNKNOWN initialization still schedules diagnostic detector requests");
+    DetectorBatch diagnostic_batch;
+    diagnostic_batch.source_frame_id = detector.last_request.frame_id;
+    diagnostic_batch.source_timestamp_ms = detector.last_request.timestamp_ms;
+    diagnostic_batch.generation = detector.last_request.generation;
+    diagnostic_batch.candidates = {{roi, 0.99F, 2}};
+    detector.next_batch = diagnostic_batch;
+    const auto received = runtime.process_frame(image, 10, 410);
+    const auto next = runtime.process_frame(image, 11, 420);
+    expect_true(received.detector.batch_received &&
+                    received.output.detector_status == DetectorBatchStatus::kAccepted &&
+                    received.output.detector_candidates_queued == 0 &&
+                    !received.output.control_valid && !received.output.accepted &&
+                    next.plan.hypothesis_source == HypothesisSource::kMotion &&
+                    !next.plan.detector_candidate_id && tracker.commit_calls == 0,
+                "UNKNOWN full runtime diagnostics cannot create a probe or authorize control");
   }
+  tracker.emit_reliable = true;
 
   detector.enabled = false;
   const auto unavailable = runtime.initialize(image, roi, 7, 280);
@@ -505,6 +530,54 @@ void test_target_class_initialization(const nanotrack::ImageView& image) {
               "completed frame permits a subsequent initialization");
 }
 
+// These fixtures catch accepting a fixed class equal to labels.size(), losing
+// caller thresholds, and accidentally requiring labels with a disabled detector.
+void test_target_class_session_config(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const std::vector<std::string> labels{"person", "car", "bus"};
+  Options options;
+  options.target_class_min_roi_coverage = 0.65F;
+  options.target_class_max_center_ratio = 0.8F;
+  options.target_class_ambiguity_margin = 0.25F;
+  const auto automatic = make_target_class_runtime_config(options, &labels);
+  expect_true(automatic.requested_class_id == -1 && automatic.class_count == 3 &&
+                  automatic.match_config.min_roi_coverage == 0.65F &&
+                  automatic.match_config.max_center_ratio == 0.8F &&
+                  automatic.match_config.ambiguity_margin == 0.25F,
+              "verified label count and CLI thresholds reach automatic runtime config");
+  options.detector_class_id = 2;
+  expect_true(make_target_class_runtime_config(options, &labels).requested_class_id == 2,
+              "last verified label is a valid fixed target class");
+  const std::vector<std::string> empty_labels;
+  for (const auto* verified : {&labels, &empty_labels}) {
+    options.detector_class_id = static_cast<int>(verified->size());
+    bool rejected = false;
+    try { (void)make_target_class_runtime_config(options, verified); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    expect_true(rejected, "fixed target class at verified label count is rejected");
+  }
+  for (const auto* verified : {&labels, static_cast<const std::vector<std::string>*>(nullptr)}) {
+    options.detector_class_id = -2;
+    bool rejected = false;
+    try { (void)make_target_class_runtime_config(options, verified); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    expect_true(rejected, "negative target class other than automatic -1 is rejected");
+  }
+  options.detector_class_id = 80;
+  const auto disabled = make_target_class_runtime_config(options);
+  expect_true(disabled.requested_class_id == 80 && disabled.class_count == 0,
+              "unconfigured detector preserves fixed semantics without verified classes");
+  FakeTracker tracker;
+  NullDetectorAdapter detector;
+  LongTermRuntime runtime(ControllerConfig{}, tracker, detector, disabled);
+  const auto initialization = runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  expect_true(initialization.target_class.status == TargetClassStatus::kFixed &&
+                  initialization.target_class.target_class_id == 80 &&
+                  !initialization.target_class.target_class_allows_recovery &&
+                  !initialization.request_id && !initialization.batch,
+              "fixed target with no detector initializes NanoTrack without detector recovery");
+}
+
 }  // namespace
 
 int main() {
@@ -513,6 +586,7 @@ int main() {
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_target_class_initialization(image);
+  test_target_class_session_config(image);
   test_frame_lifetime(image);
   ControllerConfig config;
   FakeTracker tracker;
