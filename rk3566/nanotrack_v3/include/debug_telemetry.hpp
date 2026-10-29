@@ -15,6 +15,10 @@ class DebugTelemetry {
   explicit DebugTelemetry(std::size_t heartbeat_interval = 30);
 
   void reset();
+  // Initialization diagnostics do not change frame-event state or cadence.
+  std::vector<std::string> initialization_events(
+      const TargetClassInitializationResult& result,
+      const std::vector<std::string>& labels) const;
   std::vector<std::string> frame_events(const RuntimeFrameResult& result,
                                         float pipeline_ms,
                                         bool force_heartbeat);

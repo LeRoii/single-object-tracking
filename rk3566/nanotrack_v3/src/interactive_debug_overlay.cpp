@@ -30,6 +30,43 @@ bool drawable_bbox(const BBox& bbox) {
          bbox.height > 0.0F;
 }
 
+std::string class_label(int class_id, const std::vector<std::string>& labels) {
+  if (class_id >= 0 && static_cast<std::size_t>(class_id) < labels.size() &&
+      !labels[class_id].empty()) {
+    return labels[class_id] + '(' + std::to_string(class_id) + ')';
+  }
+  return "cls=" + std::to_string(class_id);
+}
+
+std::string target_class_label(const TargetClassState& state,
+                               const std::vector<std::string>& labels) {
+  if (state.status == TargetClassStatus::kUnknown || !state.target_class_id) {
+    return "TARGET CLS UNKNOWN - DET RECOVERY OFF";
+  }
+  return "TARGET CLS " + class_label(*state.target_class_id, labels) +
+         (state.status == TargetClassStatus::kFixed ? " FIXED" : " AUTO") +
+         (state.target_class_allows_recovery ? "" : " - DET RECOVERY OFF");
+}
+
+std::string initialization_label(const TargetClassCandidateMatch& match,
+                                 bool selected,
+                                 const std::vector<std::string>& labels) {
+  std::ostringstream stream;
+  stream.imbue(std::locale::classic());
+  stream << std::fixed << std::setprecision(3)
+         << "TARGET CLS INIT[" << match.original_index << "] "
+         << (selected ? "SELECTED " : "")
+         << class_label(match.candidate.class_id, labels)
+         << " conf=" << match.candidate.confidence
+         << " coverage=" << match.roi_coverage
+         << " iou=" << match.iou
+         << " d=" << match.center_ratio
+         << " score=" << match.score
+         << " eligible=" << (match.eligible ? 1 : 0)
+         << " reason=" << to_string(match.rejection);
+  return stream.str();
+}
+
 const char* rejection_label(DetectorCandidateRejection rejection) {
   switch (rejection) {
     case DetectorCandidateRejection::kNone: return "PASS";
@@ -52,7 +89,8 @@ const char* rejection_label(DetectorCandidateRejection rejection) {
 
 std::string diagnostic_label(const DetectorCandidateDiagnostic& diagnostic,
                              std::size_t index,
-                             const DetectorDiagnostics& batch) {
+                             const DetectorDiagnostics& batch,
+                             const std::vector<std::string>& labels) {
   std::ostringstream stream;
   stream.imbue(std::locale::classic());
   stream << std::fixed << std::setprecision(3)
@@ -68,14 +106,17 @@ std::string diagnostic_label(const DetectorCandidateDiagnostic& diagnostic,
          << (batch.batch_received ? std::to_string(batch.batch_age_ms)
                                   : "none")
          << " queued=" << (diagnostic.queued ? 1 : 0)
-         << " reason=" << rejection_label(diagnostic.rejection);
+         << " reason=" << rejection_label(diagnostic.rejection)
+         << " class=" << to_string(diagnostic.class_disposition)
+         << " name=" << class_label(diagnostic.candidate.class_id, labels);
   return stream.str();
 }
 
 }  // namespace
 
 InteractiveDebugOverlay make_interactive_debug_overlay(
-    const RuntimeFrameResult& result) {
+    const RuntimeFrameResult& result,
+    const std::vector<std::string>& labels) {
   InteractiveDebugOverlay overlay;
   overlay.boxes.push_back(DebugBoxDescriptor{
       DebugBoxKind::kMotionPrediction,
@@ -83,19 +124,37 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
       "MOTION PRED",
       2});
 
+  if (result.initialization) {
+    const auto& state = result.initialization->target_class;
+    for (const auto& match : state.candidates) {
+      const bool selected = state.selected_candidate &&
+          match.original_index == state.selected_candidate->original_index;
+      const std::string label = initialization_label(match, selected, labels);
+      if (!drawable_bbox(match.clipped_bbox)) {
+        overlay.texts.push_back(DebugTextDescriptor{label});
+        continue;
+      }
+      overlay.boxes.push_back(DebugBoxDescriptor{
+          selected ? DebugBoxKind::kTargetClassInitializationSelected
+                   : DebugBoxKind::kDetectorCandidateRejected,
+          match.clipped_bbox, label, selected ? 3 : 2});
+    }
+  }
+
   for (std::size_t index = 0;
        index < result.output.detector_candidate_diagnostics.size(); ++index) {
     const DetectorCandidateDiagnostic& diagnostic =
         result.output.detector_candidate_diagnostics[index];
     const std::string label = diagnostic_label(diagnostic, index,
-                                               result.detector);
+                                               result.detector, labels);
     if (!diagnostic.drawable || !drawable_bbox(diagnostic.candidate.bbox)) {
       overlay.texts.push_back(DebugTextDescriptor{label});
       continue;
     }
     overlay.boxes.push_back(DebugBoxDescriptor{
         diagnostic.rejection == DetectorCandidateRejection::kNone &&
-                diagnostic.position_gate_pass
+                diagnostic.position_gate_pass &&
+                diagnostic.class_disposition == DetectorClassDisposition::kMatch
             ? DebugBoxKind::kDetectorCandidatePass
             : DebugBoxKind::kDetectorCandidateRejected,
         diagnostic.candidate.bbox,
@@ -160,6 +219,8 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
   } else {
     overlay.status_label = "REJECTED NO_CTRL";
   }
+  overlay.texts.push_back(DebugTextDescriptor{
+      target_class_label(result.target_class, labels)});
   return overlay;
 }
 

@@ -16,6 +16,7 @@ enum class DebugBoxKind {
   kNanoTrackAnchor,
   kNanoTrackRecent,
   kAcceptedControl,
+  kTargetClassInitializationSelected,
 };
 
 struct DebugBoxDescriptor {
@@ -36,7 +37,9 @@ struct InteractiveDebugOverlay {
   bool control_valid = false;
 };
 
+// Names come from the caller's verified label list; absent entries use cls=<id>.
 InteractiveDebugOverlay make_interactive_debug_overlay(
-    const RuntimeFrameResult& result);
+    const RuntimeFrameResult& result,
+    const std::vector<std::string>& labels = {});
 
 }  // namespace nanotrack

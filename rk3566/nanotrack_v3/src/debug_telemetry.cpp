@@ -78,6 +78,20 @@ std::string sanitized_value(const std::string& value) {
   return sanitized.empty() ? "none" : sanitized;
 }
 
+std::string optional_class_id(const std::optional<int>& value) {
+  return value ? std::to_string(*value) : "none";
+}
+
+std::string class_name(const std::optional<int>& class_id,
+                       const std::vector<std::string>& labels) {
+  if (!class_id) return "none";
+  if (*class_id >= 0 && static_cast<std::size_t>(*class_id) < labels.size() &&
+      !labels[*class_id].empty()) {
+    return sanitized_value(labels[*class_id]);
+  }
+  return "cls=" + std::to_string(*class_id);
+}
+
 }  // namespace
 
 DebugTelemetry::DebugTelemetry(std::size_t heartbeat_interval)
@@ -93,6 +107,70 @@ void DebugTelemetry::reset() {
   previous_mode_ = TrackingMode::kTracking;
   previous_control_valid_ = false;
   loss_start_timestamp_ms_.reset();
+}
+
+std::vector<std::string> DebugTelemetry::initialization_events(
+    const TargetClassInitializationResult& result,
+    const std::vector<std::string>& labels) const {
+  std::vector<std::string> events;
+  const TargetClassState& state = result.target_class;
+  std::ostringstream start = event_stream("target_class_init_start");
+  start << " frame=" << result.frame_id
+        << " timestamp_ms=" << result.timestamp_ms
+        << " initialization_index=" << result.initialization_index
+        << " request_id=" << optional_id(result.request_id)
+        << " roi=" << bbox_value(result.original_roi)
+        << " mode=" << (result.requested_class_id == -1 ? "AUTO" : "FIXED")
+        << " requested_class_id=" << result.requested_class_id
+        << " candidate_count=" << state.candidates.size();
+  events.push_back(start.str());
+
+  for (const TargetClassCandidateMatch& match : state.candidates) {
+    const bool selected = state.selected_candidate &&
+        state.selected_candidate->original_index == match.original_index;
+    std::ostringstream candidate = event_stream("target_class_candidate");
+    candidate << " frame=" << result.frame_id
+              << " initialization_index=" << result.initialization_index
+              << " request_id=" << optional_id(result.request_id)
+              << " index=" << match.original_index
+              << " class_id=" << match.candidate.class_id
+              << " class_name=" << class_name(match.candidate.class_id, labels)
+              << " bbox=" << bbox_value(match.candidate.bbox)
+              << " clipped_bbox=" << bbox_value(match.clipped_bbox)
+              << " confidence=" << match.candidate.confidence
+              << " roi_coverage=" << match.roi_coverage
+              << " center_ratio=" << match.center_ratio
+              << " iou=" << match.iou
+              << " score=" << match.score
+              << " eligible=" << (match.eligible ? 1 : 0)
+              << " selected=" << (selected ? 1 : 0)
+              << " rejection=" << to_string(match.rejection);
+    events.push_back(candidate.str());
+  }
+
+  std::ostringstream summary = event_stream("target_class_init_result");
+  summary << " frame=" << result.frame_id
+          << " initialization_index=" << result.initialization_index
+          << " request_id=" << optional_id(result.request_id)
+          << " status=" << to_string(state.status)
+          << " class_id=" << optional_class_id(state.target_class_id)
+          << " class_name=" << class_name(state.target_class_id, labels)
+          << " reason=" << to_string(state.reason)
+          << " candidate_count=" << state.candidates.size()
+          << " best_class_id=" << optional_class_id(state.best_class_id)
+          << " best_score=" << state.best_score
+          << " runner_up_class_id=" << optional_class_id(state.runner_up_class_id)
+          << " runner_up_score=" << state.runner_up_score
+          << " target_class_allows_recovery="
+          << (state.target_class_allows_recovery ? 1 : 0)
+          << " detector_ms=" << result.detector_ms
+          << " preprocess_ms=" << result.detector_timing.preprocess_ms
+          << " inference_ms=" << result.detector_timing.inference_ms
+          << " postprocess_ms=" << result.detector_timing.postprocess_ms
+          << " total_ms=" << result.detector_timing.total_ms
+          << " error=" << sanitized_value(result.detector_error);
+  events.push_back(summary.str());
+  return events;
 }
 
 std::vector<std::string> DebugTelemetry::frame_events(
@@ -196,7 +274,9 @@ std::vector<std::string> DebugTelemetry::frame_events(
            << " position_pass=" << (diagnostic.position_gate_pass ? 1 : 0)
            << " queued=" << (diagnostic.queued ? 1 : 0)
            << " candidate_id=" << optional_id(diagnostic.candidate_id)
-           << " rejection=" << rejection_name(diagnostic.rejection);
+           << " rejection=" << rejection_name(diagnostic.rejection)
+           << " class_disposition=" << to_string(diagnostic.class_disposition)
+           << " final_rejection=" << rejection_name(diagnostic.rejection);
     events.push_back(stream.str());
   }
 

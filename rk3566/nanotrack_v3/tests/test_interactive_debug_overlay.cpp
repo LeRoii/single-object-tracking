@@ -75,7 +75,118 @@ nanotrack::RuntimeFrameResult complete_result() {
           std::nullopt, std::nullopt, false, false, false, false,
           DetectorCandidateRejection::kInvalid},
   };
+  result.output.detector_candidate_diagnostics[0].class_disposition =
+      DetectorClassDisposition::kMatch;
   return result;
+}
+
+bool has_text(const nanotrack::InteractiveDebugOverlay& overlay,
+              const std::string& text) {
+  for (const auto& descriptor : overlay.texts) {
+    if (descriptor.label == text) return true;
+  }
+  return false;
+}
+
+void test_target_class_presentation() {
+  using namespace nanotrack;
+  const std::vector<std::string> labels{"person", "bicycle", "car"};
+  RuntimeFrameResult result = complete_result();
+  result.target_class.status = TargetClassStatus::kEstablished;
+  result.target_class.reason = TargetClassReason::kUniqueMatch;
+  result.target_class.target_class_id = 2;
+  result.target_class.target_class_allows_recovery = true;
+  auto overlay = make_interactive_debug_overlay(result, labels);
+  expect_true(has_text(overlay, "TARGET CLS car(2) AUTO") &&
+                  overlay.status_label == "ACCEPTED CTRL" &&
+                  overlay.boxes.back().kind == DebugBoxKind::kAcceptedControl,
+              "established shared class does not change accepted-control rendering");
+  // The raw candidate is class 0; it must never replace the shared class 2.
+  expect_true(has_text(make_interactive_debug_overlay(result, {}),
+                       "TARGET CLS cls=2 AUTO"),
+              "unavailable verified names use the numeric fallback");
+  result.target_class.target_class_id = 7;
+  expect_true(has_text(make_interactive_debug_overlay(result, labels),
+                       "TARGET CLS cls=7 AUTO"),
+              "out-of-range class names safely use the numeric fallback");
+  result.target_class.target_class_id = 1;
+  expect_true(has_text(make_interactive_debug_overlay(result, {"person", ""}),
+                       "TARGET CLS cls=1 AUTO"),
+              "empty label entries use the numeric fallback");
+  result.target_class.status = TargetClassStatus::kFixed;
+  result.target_class.target_class_id = 2;
+  result.target_class.target_class_allows_recovery = false;
+  expect_true(has_text(make_interactive_debug_overlay(result, labels),
+                       "TARGET CLS car(2) FIXED - DET RECOVERY OFF"),
+              "fixed override and disabled recovery are both explicit");
+  result.target_class = TargetClassState{};
+  expect_true(has_text(make_interactive_debug_overlay(result, labels),
+                       "TARGET CLS UNKNOWN - DET RECOVERY OFF"),
+              "unknown target class visibly disables detector recovery");
+
+  for (const auto disposition : {DetectorClassDisposition::kMismatch,
+                                  DetectorClassDisposition::kTargetUnknown,
+                                  DetectorClassDisposition::kUnchecked}) {
+    auto& diagnostic = result.output.detector_candidate_diagnostics[0];
+    diagnostic.class_disposition = disposition;
+    // Deliberately leave the other pass flags set: disposition is authoritative.
+    diagnostic.rejection = DetectorCandidateRejection::kNone;
+    overlay = make_interactive_debug_overlay(result, labels);
+    expect_true(overlay.boxes[1].kind == DebugBoxKind::kDetectorCandidateRejected &&
+                    overlay.boxes[1].label.find(std::string("class=") +
+                        to_string(disposition)) != std::string::npos,
+                "nonmatching and diagnostic-only candidates stay gray with shared disposition");
+  }
+  auto& stale = result.output.detector_candidate_diagnostics[0];
+  stale.class_disposition = DetectorClassDisposition::kMismatch;
+  stale.rejection = DetectorCandidateRejection::kStale;
+  overlay = make_interactive_debug_overlay(result, labels);
+  expect_true(overlay.boxes[1].label.find("class=MISMATCH") != std::string::npos &&
+                  overlay.boxes[1].label.find("reason=STALE") != std::string::npos,
+              "class disposition and higher-priority final rejection remain independent");
+
+  RuntimeFrameResult initialization;
+  initialization.initialization.emplace();
+  auto& state = initialization.initialization->target_class;
+  TargetClassCandidateMatch selected;
+  selected.original_index = 5;
+  selected.candidate = DetectorCandidate{BBox{1, 2, 30, 40}, 0.9F, 2};
+  selected.clipped_bbox = BBox{1, 2, 30, 40};
+  selected.roi_coverage = 0.8F;
+  selected.iou = 0.7F;
+  selected.center_ratio = 0.1F;
+  selected.score = 0.85F;
+  selected.eligible = true;
+  TargetClassCandidateMatch other = selected;
+  other.original_index = 9;
+  other.candidate.class_id = 0;
+  other.score = 0.4F;
+  other.eligible = false;
+  other.rejection = TargetClassCandidateRejection::kNoMatch;
+  TargetClassCandidateMatch invalid = other;
+  invalid.original_index = 11;
+  invalid.clipped_bbox = BBox{};
+  invalid.rejection = TargetClassCandidateRejection::kInvalidBox;
+  state.candidates = {other, selected, invalid};
+  state.selected_candidate = selected;
+  state.status = TargetClassStatus::kEstablished;
+  state.target_class_id = 2;
+  state.target_class_allows_recovery = true;
+  initialization.target_class = state;
+  overlay = make_interactive_debug_overlay(initialization, labels);
+  expect_true(overlay.boxes.size() == 3 &&
+                  overlay.boxes[1].kind == DebugBoxKind::kDetectorCandidateRejected &&
+                  overlay.boxes[2].kind == DebugBoxKind::kTargetClassInitializationSelected &&
+                  same_bbox(overlay.boxes[2].bbox, selected.clipped_bbox),
+              "initialization selected index uses a distinct box kind and others are gray");
+  expect_true(overlay.boxes[2].label.find("SELECTED car(2)") != std::string::npos &&
+                  overlay.boxes[2].label.find("score=0.850 eligible=1 reason=NONE") != std::string::npos &&
+                  overlay.boxes[1].label.find("score=0.400 eligible=0 reason=NO_MATCH") != std::string::npos,
+              "initialization labels expose shared selection score eligibility and rejection");
+  expect_true(overlay.texts.size() == 2 &&
+                  overlay.texts[0].label.find("reason=INVALID_BOX") != std::string::npos &&
+                  !overlay.control_valid && overlay.status_label == "REJECTED NO_CTRL",
+              "invalid initialization geometry stays text-only and selection never grants control");
 }
 
 }  // namespace
@@ -116,7 +227,7 @@ int main() {
                   overlay.boxes[3].label.find("CAPACITY") != std::string::npos &&
                   overlay.boxes[4].label.find("HOLD_INVALIDATED") != std::string::npos,
               "raw detector labels expose class confidence distance provenance queue and reason");
-  expect_true(overlay.texts.size() == 1 &&
+  expect_true(overlay.texts.size() == 2 &&
                   overlay.texts[0].label.find("DET RAW[4] INVALID") != std::string::npos,
               "invalid geometry is retained as text only");
   expect_true(same_bbox(overlay.boxes[6].bbox, result.plan.predicted_bbox) &&
@@ -197,6 +308,8 @@ int main() {
                   same_bbox(hold_overlay.boxes.front().bbox,
                             hold.plan.motion_predicted_bbox),
               "hold renders only frozen motion with explicit remaining count and no control");
+
+  test_target_class_presentation();
 
   if (failures != 0) {
     std::cerr << failures << " overlay test(s) failed\n";

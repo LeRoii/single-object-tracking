@@ -55,6 +55,95 @@ nanotrack::RuntimeFrameResult frame_result(std::uint64_t frame_id) {
   return result;
 }
 
+void test_initialization_events() {
+  using namespace nanotrack;
+  DebugTelemetry telemetry(2);
+  TargetClassInitializationResult initialization;
+  initialization.initialization_index = 3;
+  initialization.frame_id = 42;
+  initialization.timestamp_ms = 1386;
+  initialization.original_roi = BBox{1, 2, 30, 40};
+  initialization.request_id = 91;
+  initialization.detector_ms = 15.5F;
+  initialization.detector_timing = DetectorTiming{1, 10, 2, 13};
+  auto& state = initialization.target_class;
+  state.status = TargetClassStatus::kEstablished;
+  state.reason = TargetClassReason::kUniqueMatch;
+  state.target_class_id = 2;
+  state.target_class_allows_recovery = true;
+  state.best_class_id = 2;
+  state.best_score = 0.9F;
+  state.runner_up_class_id = 0;
+  state.runner_up_score = 0.6F;
+  TargetClassCandidateMatch match;
+  match.original_index = 4;
+  match.candidate = DetectorCandidate{BBox{0, 1, 50, 60}, 0.8F, 2};
+  match.clipped_bbox = BBox{0, 1, 50, 60};
+  match.roi_coverage = 0.95F;
+  match.center_ratio = 0.125F;
+  match.iou = 0.4F;
+  match.score = 0.9F;
+  match.eligible = true;
+  state.selected_candidate = match;
+  state.candidates.push_back(match);
+  match.original_index = 7;
+  match.candidate.class_id = 0;
+  match.score = 0.6F;
+  match.eligible = false;
+  match.rejection = TargetClassCandidateRejection::kNoMatch;
+  state.candidates.push_back(match);
+  const auto events = telemetry.initialization_events(initialization,
+                                                      {"person", "bicycle", "car"});
+  expect_true(events.size() == 4 &&
+                  events.front() == "DEBUG_EVENT event=target_class_init_start frame=42 timestamp_ms=1386 initialization_index=3 request_id=91 roi=1.00,2.00,30.00,40.00 mode=AUTO requested_class_id=-1 candidate_count=2",
+              "initialization start binds the exact ROI mode request and sequence identity");
+  expect_true(events[1] == "DEBUG_EVENT event=target_class_candidate frame=42 initialization_index=3 request_id=91 index=4 class_id=2 class_name=car bbox=0.00,1.00,50.00,60.00 clipped_bbox=0.00,1.00,50.00,60.00 confidence=0.800 roi_coverage=0.950 center_ratio=0.125 iou=0.400 score=0.900 eligible=1 selected=1 rejection=NONE" &&
+                  contains(events, "index=7 class_id=0 class_name=person") &&
+                  contains(events, "score=0.600 eligible=0 selected=0 rejection=NO_MATCH"),
+              "each initialization candidate retains canonical metrics rejection and selected identity");
+  expect_true(events.back() == "DEBUG_EVENT event=target_class_init_result frame=42 initialization_index=3 request_id=91 status=ESTABLISHED class_id=2 class_name=car reason=UNIQUE_MATCH candidate_count=2 best_class_id=2 best_score=0.900 runner_up_class_id=0 runner_up_score=0.600 target_class_allows_recovery=1 detector_ms=15.500 preprocess_ms=1.000 inference_ms=10.000 postprocess_ms=2.000 total_ms=13.000 error=none",
+              "initialization result records state best and runner-up evidence and timing");
+  expect_true(!contains(events, "event=detector_") &&
+                  !contains(events, "control_valid=") &&
+                  !contains(events, "event=reacquired"),
+              "initialization candidate evidence cannot masquerade as detector recovery events");
+  RuntimeFrameResult frame = frame_result(42);
+  frame.initialization = initialization;
+  auto frame_events = telemetry.frame_events(frame, 1.0F, false);
+  expect_true(!contains(frame_events, "event=target_class_") &&
+                  !contains(frame_events, "event=detector_") &&
+                  !contains(frame_events, "event=frame_status"),
+              "initialization events stay separate and do not consume heartbeat cadence");
+  frame_events = telemetry.frame_events(frame_result(43), 1.0F, false);
+  expect_true(event_count(frame_events, "frame_status") == 1,
+              "initialization event emission does not change frame telemetry cadence");
+
+  initialization.requested_class_id = 9;
+  initialization.request_id.reset();
+  initialization.target_class = TargetClassState{};
+  initialization.target_class.status = TargetClassStatus::kFixed;
+  initialization.target_class.reason = TargetClassReason::kFixedOverride;
+  initialization.target_class.target_class_id = 9;
+  auto fixed = telemetry.initialization_events(initialization, {"person"});
+  expect_true(fixed.size() == 2 &&
+                  contains(fixed, "request_id=none roi=1.00,2.00,30.00,40.00 mode=FIXED requested_class_id=9 candidate_count=0") &&
+                  contains(fixed, "class_id=9 class_name=cls=9 reason=FIXED_OVERRIDE") &&
+                  contains(fixed, "best_class_id=none best_score=0.000 runner_up_class_id=none runner_up_score=0.000 target_class_allows_recovery=0"),
+              "fixed mode without initialization detection retains explicit missing fields and fallback name");
+  initialization.requested_class_id = -1;
+  initialization.target_class = TargetClassState{};
+  initialization.target_class.reason = TargetClassReason::kDetectorError;
+  initialization.detector_error = "inference failed\nretry";
+  auto unknown = telemetry.initialization_events(initialization, {});
+  expect_true(contains(unknown, "status=UNKNOWN class_id=none class_name=none reason=DETECTOR_ERROR") &&
+                  contains(unknown, "error=inference_failed_retry"),
+              "unknown detector errors retain no invented class and stay single-line");
+  initialization.target_class.target_class_id = 0;
+  auto named = telemetry.initialization_events(initialization, {"traffic light"});
+  expect_true(contains(named, "class_name=traffic_light"),
+              "verified multiword class labels remain one structured field");
+}
+
 }  // namespace
 
 int main() {
@@ -260,6 +349,17 @@ int main() {
     expect_true(contains(events, std::string("rejection=") + item.second),
                 "extended controller rejection reaches structured telemetry");
   }
+
+  diagnostics.output.detector_candidate_diagnostics[0].class_disposition =
+      DetectorClassDisposition::kMismatch;
+  diagnostics.output.detector_candidate_diagnostics[0].rejection =
+      DetectorCandidateRejection::kStale;
+  events = telemetry.frame_events(diagnostics, 8.0F, false);
+  expect_true(contains(events,
+                       "rejection=STALE class_disposition=MISMATCH final_rejection=STALE"),
+              "candidate telemetry preserves independent class disposition and priority rejection");
+
+  test_initialization_events();
 
   telemetry.reset();
   RuntimeFrameResult after_reset = frame_result(11);
