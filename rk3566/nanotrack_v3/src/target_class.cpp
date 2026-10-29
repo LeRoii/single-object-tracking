@@ -121,13 +121,21 @@ TargetClassState establish_target_class(
   for (const auto& entry : class_winners) {
     const auto index = entry.second;
     if (!best || better_class(state.candidates[index], state.candidates[*best])) {
-      runner = best;
       best = index;
-    } else if (!runner || better_class(state.candidates[index], state.candidates[*runner])) {
-      runner = index;
     }
   }
   if (!best) return state;
+  // Compare the final winner with the numerically strongest competing class.
+  // Epsilon ties are not transitive: carrying the previous best as runner can
+  // discard a closer competitor and incorrectly authorize recovery.
+  // Exact runner-score ties retain the lower class ID from map iteration.
+  for (const auto& entry : class_winners) {
+    const auto index = entry.second;
+    if (index != *best &&
+        (!runner || state.candidates[index].score > state.candidates[*runner].score)) {
+      runner = index;
+    }
+  }
   const auto& chosen = state.candidates[*best];
   state.best_class_id = chosen.candidate.class_id;
   state.best_score = chosen.score;

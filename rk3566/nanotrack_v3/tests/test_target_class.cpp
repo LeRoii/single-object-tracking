@@ -82,6 +82,19 @@ void cross_class_winner_and_ambiguity() {
       {{20, 20, 20, 20}, 1, 2}, {{20, 20, 20, 20}, 1, 1}}, {0.5F, 0.6F, 0}),
       TargetClassReason::kAmbiguous, "exact cross-class ties remain ambiguous at zero margin");
 }
+void three_class_epsilon_chain_preserves_strongest_competitor() {
+  const auto state = match({20, 20, 20, 20}, {
+      {{20, 20, 20, 20}, 0.5F, 0},
+      {{20, 20, 20, 20}, 0.500005F, 1},
+      {{20, 20, 20, 20}, 0.500010F, 2}}, {0.5F, 0.6F, 0});
+  unknown(state, TargetClassReason::kAmbiguous, "three-class epsilon chain");
+  expect(state.best_class_id == 2 && state.runner_up_class_id == 1,
+         "epsilon chain retains strongest competing class");
+  near(state.best_score, 0.925001502F, "epsilon chain best score");
+  near(state.runner_up_score, 0.9250007272F, "epsilon chain runner score");
+  expect(state.best_score - state.runner_up_score <= 1e-6F,
+         "strongest competitor is within ambiguity epsilon");
+}
 void clipped_boxes_and_invalid_candidates() {
   const auto clipped = match({-10, -10, 20, 20}, {{{-20, -20, 30, 30}, 1, 0}});
   established(clipped, 0, 0, "clipped boxes");
@@ -159,6 +172,7 @@ void construction_and_invalid_roi() {
 int main() {
   full_object_and_arbitrary_local_roi(); no_match_and_same_class_duplicates();
   cross_class_winner_and_ambiguity(); clipped_boxes_and_invalid_candidates();
+  three_class_epsilon_chain_preserves_strongest_competitor();
   deterministic_same_class_ties(); equality_at_all_three_thresholds();
   construction_and_invalid_roi();
   if (failures) return 1;
