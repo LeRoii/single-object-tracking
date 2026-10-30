@@ -92,7 +92,16 @@ void two_clean_frames_clear_suspicion() {
   decision = tracker.observe(sample(103));
   near(decision.reference_width, 102);
   require(decision.reference_source == OcclusionReferenceSource::kPartialStableMedian,
-          "both clean samples must be retained chronologically");
+          "both clean samples must be retained");
+  // Nine samples since clearing: chronological eviction removes 101 first.
+  // Reversing the clean pair instead removes 102, yielding median 101.5.
+  for (float width : {101.0F, 101.0F, 101.0F, 102.0F, 102.0F, 102.0F}) {
+    decision = tracker.observe(sample(width));
+  }
+  require(decision.reference_source == OcclusionReferenceSource::kFullStableMedian &&
+              !decision.suspicion_active,
+          "clean reseed continues into the rolling stable window");
+  near(decision.reference_width, 102);
 }
 
 void single_noise_band_change_does_not_start_suspicion() {
@@ -221,6 +230,24 @@ void normal_motion_and_uniform_scaling_do_not_trigger() {
     auto decision = tracker.observe(input);
     require(!decision.triggered && !decision.suspicion_active &&
                 decision.motion_residual_evidence, "translation alone cannot freeze or trigger");
+  }
+}
+
+void peak_reason_precedes_motion_when_both_auxiliaries_fire() {
+  for (bool width : {true, false}) {
+    OcclusionEvidenceTracker tracker(ControllerConfig{});
+    seed(tracker);
+    tracker.observe(width ? sample(95) : sample(100, 95));
+    auto input = width ? sample(85, 100, 0.06F) : sample(100, 85, 0.06F);
+    input.observation_bbox.x += 75;
+    const auto decision = tracker.observe(input);
+    require(!decision.template_evidence && decision.peak_margin_evidence &&
+                decision.motion_residual_evidence && decision.triggered,
+            "peak and motion evidence must both be active without template evidence");
+    require(decision.trigger_reason == (width
+                ? OcclusionTriggerReason::kGradualWidthPeak
+                : OcclusionTriggerReason::kGradualHeightPeak),
+            "peak reason precedes motion independently on each axis");
   }
 }
 
@@ -368,6 +395,7 @@ int main() {
       {"severe_threshold_is_inclusive_and_axis_specific", severe_threshold_is_inclusive_and_axis_specific},
       {"gradual_requires_full_reference_and_an_auxiliary_signal", gradual_requires_full_reference_and_an_auxiliary_signal},
       {"evidence_boundaries_and_reason_priority", evidence_boundaries_and_reason_priority},
+      {"peak_reason_precedes_motion_when_both_auxiliaries_fire", peak_reason_precedes_motion_when_both_auxiliaries_fire},
       {"normal_motion_and_uniform_scaling_do_not_trigger", normal_motion_and_uniform_scaling_do_not_trigger},
       {"detector_hypotheses_never_mutate_evidence", detector_hypotheses_never_mutate_evidence},
       {"invalid_inputs_throw_without_mutating_state", invalid_inputs_throw_without_mutating_state},
