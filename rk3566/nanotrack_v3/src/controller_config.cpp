@@ -82,6 +82,18 @@ void set_value(ControllerConfig& config,
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
   else if (key == "occlusion_reference_window") config.occlusion_reference_window = parse_int(key, value);
+  else if (key == "occlusion_probe_interval_frames") config.occlusion_probe_interval_frames = parse_int(key, value);
+  else if (key == "occlusion_gradual_dimension_ratio") config.occlusion_gradual_dimension_ratio = parse_float(key, value);
+  else if (key == "occlusion_gradual_consecutive_frames") config.occlusion_gradual_consecutive_frames = parse_int(key, value);
+  else if (key == "occlusion_min_reference_samples") config.occlusion_min_reference_samples = parse_int(key, value);
+  else if (key == "occlusion_shrink_step_ratio") config.occlusion_shrink_step_ratio = parse_float(key, value);
+  else if (key == "occlusion_suspicion_clear_frames") config.occlusion_suspicion_clear_frames = parse_int(key, value);
+  else if (key == "occlusion_peak_margin_drop") config.occlusion_peak_margin_drop = parse_float(key, value);
+  else if (key == "occlusion_motion_residual_threshold") config.occlusion_motion_residual_threshold = parse_float(key, value);
+  else if (key == "occlusion_confirmation_iou") config.occlusion_confirmation_iou = parse_float(key, value);
+  else if (key == "occlusion_confirmation_center_distance") config.occlusion_confirmation_center_distance = parse_float(key, value);
+  else if (key == "occlusion_confirmation_max_area_log_change") config.occlusion_confirmation_max_area_log_change = parse_float(key, value);
+  else if (key == "occlusion_confirmation_max_aspect_log_change") config.occlusion_confirmation_max_aspect_log_change = parse_float(key, value);
   else if (key == "detector_interval_ms") config.detector_interval_ms = parse_integer(key, value);
   else if (key == "detector_stale_ms") config.detector_stale_ms = parse_integer(key, value);
   else if (key == "detector_max_candidates") config.detector_max_candidates = static_cast<std::size_t>(parse_integer(key, value));
@@ -173,10 +185,42 @@ void validate_controller_config(const ControllerConfig& config) {
       config.occlusion_reference_window > 60) {
     throw std::invalid_argument("occlusion hold counts are invalid");
   }
-  if (!std::isfinite(config.occlusion_trigger_min_dimension_ratio) ||
-      config.occlusion_trigger_min_dimension_ratio <= 0.0F ||
-      config.occlusion_trigger_min_dimension_ratio > 1.0F) {
-    throw std::invalid_argument("occlusion dimension ratio must be in (0,1]");
+  if (config.occlusion_probe_interval_frames < 1 ||
+      config.occlusion_probe_interval_frames > 300) {
+    throw std::invalid_argument("occlusion probe interval must be in [1,300]");
+  }
+  const int occlusion_counts[] = {
+      config.occlusion_gradual_consecutive_frames,
+      config.occlusion_min_reference_samples,
+      config.occlusion_suspicion_clear_frames};
+  for (const int value : occlusion_counts) {
+    if (value < 1 || value > 60) {
+      throw std::invalid_argument("occlusion evidence counts must be in [1,60]");
+    }
+  }
+  const float occlusion_ratios[] = {
+      config.occlusion_trigger_min_dimension_ratio,
+      config.occlusion_gradual_dimension_ratio,
+      config.occlusion_shrink_step_ratio,
+      config.occlusion_confirmation_iou};
+  for (const float value : occlusion_ratios) {
+    if (!std::isfinite(value) || value <= 0.0F || value > 1.0F) {
+      throw std::invalid_argument("occlusion ratios must be in (0,1]");
+    }
+  }
+  if (!std::isfinite(config.occlusion_peak_margin_drop) ||
+      config.occlusion_peak_margin_drop < 0.0F) {
+    throw std::invalid_argument("occlusion peak margin drop must be finite and non-negative");
+  }
+  const float occlusion_positive[] = {
+      config.occlusion_motion_residual_threshold,
+      config.occlusion_confirmation_center_distance,
+      config.occlusion_confirmation_max_area_log_change,
+      config.occlusion_confirmation_max_aspect_log_change};
+  for (const float value : occlusion_positive) {
+    if (!std::isfinite(value) || value <= 0.0F) {
+      throw std::invalid_argument("occlusion residual and confirmation deltas must be finite and positive");
+    }
   }
   if (!std::isfinite(config.detector_search_scale) ||
       config.detector_search_scale < 1.0F ||

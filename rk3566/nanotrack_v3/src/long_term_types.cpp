@@ -2,6 +2,39 @@
 
 namespace nanotrack {
 
+const char* to_string(OcclusionReferenceSource value) {
+  switch (value) {
+    case OcclusionReferenceSource::kNone: return "NONE";
+    case OcclusionReferenceSource::kPartialStableMedian: return "PARTIAL_STABLE_MEDIAN";
+    case OcclusionReferenceSource::kFullStableMedian: return "FULL_STABLE_MEDIAN";
+  }
+  return "UNKNOWN";
+}
+
+const char* to_string(OcclusionTriggerReason value) {
+  switch (value) {
+    case OcclusionTriggerReason::kNone: return "NONE";
+    case OcclusionTriggerReason::kSevereWidth: return "SEVERE_WIDTH";
+    case OcclusionTriggerReason::kSevereHeight: return "SEVERE_HEIGHT";
+    case OcclusionTriggerReason::kGradualWidthTemplate: return "GRADUAL_WIDTH_TEMPLATE";
+    case OcclusionTriggerReason::kGradualWidthPeak: return "GRADUAL_WIDTH_PEAK";
+    case OcclusionTriggerReason::kGradualWidthMotion: return "GRADUAL_WIDTH_MOTION";
+    case OcclusionTriggerReason::kGradualHeightTemplate: return "GRADUAL_HEIGHT_TEMPLATE";
+    case OcclusionTriggerReason::kGradualHeightPeak: return "GRADUAL_HEIGHT_PEAK";
+    case OcclusionTriggerReason::kGradualHeightMotion: return "GRADUAL_HEIGHT_MOTION";
+  }
+  return "UNKNOWN";
+}
+
+const char* to_string(OcclusionProbeType value) {
+  switch (value) {
+    case OcclusionProbeType::kNone: return "NONE";
+    case OcclusionProbeType::kSearch: return "SEARCH";
+    case OcclusionProbeType::kConfirm: return "CONFIRM";
+  }
+  return "UNKNOWN";
+}
+
 const char* to_string(DetectorClassDisposition value) {
   switch (value) {
     case DetectorClassDisposition::kUnchecked: return "UNCHECKED";

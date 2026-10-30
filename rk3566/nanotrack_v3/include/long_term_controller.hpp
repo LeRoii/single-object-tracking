@@ -34,6 +34,9 @@ struct SearchPlan {
   std::optional<DetectorRequest> detector_request;
   bool run_tracker = true;
   std::size_t hold_remaining_frames = 0;
+  std::size_t occlusion_coast_age_frames = 0;
+  OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
+  bool motion_control_authorized = false;
 };
 
 struct ControllerOutput {
@@ -74,6 +77,25 @@ struct ControllerOutput {
   std::size_t occlusion_consecutive_unreliable_frames = 0;
   std::optional<float> occlusion_observation_width;
   std::optional<float> occlusion_observation_height;
+  OcclusionReferenceSource occlusion_reference_source = OcclusionReferenceSource::kNone;
+  bool occlusion_suspicion_active = false;
+  bool occlusion_suspicion_started = false;
+  bool occlusion_suspicion_cleared = false;
+  std::size_t occlusion_suspicion_frames = 0;
+  std::size_t occlusion_clean_frames = 0;
+  std::size_t occlusion_width_shrink_frames = 0;
+  std::size_t occlusion_height_shrink_frames = 0;
+  bool occlusion_severe_evidence = false;
+  bool occlusion_gradual_evidence = false;
+  bool occlusion_template_evidence = false;
+  bool occlusion_peak_margin_evidence = false;
+  bool occlusion_motion_residual_evidence = false;
+  OcclusionTriggerReason occlusion_trigger_reason = OcclusionTriggerReason::kNone;
+  std::size_t occlusion_coast_age_frames = 0;
+  OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
+  std::size_t occlusion_probe_confirmation_hits = 0;
+  std::size_t occlusion_probe_confirmation_required = 0;
+  bool motion_control_authorized = false;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};
 };

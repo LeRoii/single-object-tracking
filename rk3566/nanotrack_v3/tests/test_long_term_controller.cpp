@@ -303,6 +303,109 @@ int main() {
 
   test_target_class_gate();
 
+  const auto expect_enum_name = [](auto value, const char* expected) {
+    expect_true(std::string(to_string(value)) == expected,
+                std::string("stable coast enum name: ") + expected);
+  };
+  expect_enum_name(OcclusionReferenceSource::kNone, "NONE");
+  expect_enum_name(OcclusionReferenceSource::kPartialStableMedian,
+                   "PARTIAL_STABLE_MEDIAN");
+  expect_enum_name(OcclusionReferenceSource::kFullStableMedian,
+                   "FULL_STABLE_MEDIAN");
+  expect_enum_name(OcclusionTriggerReason::kNone, "NONE");
+  expect_enum_name(OcclusionTriggerReason::kSevereWidth, "SEVERE_WIDTH");
+  expect_enum_name(OcclusionTriggerReason::kSevereHeight, "SEVERE_HEIGHT");
+  expect_enum_name(OcclusionTriggerReason::kGradualWidthTemplate,
+                   "GRADUAL_WIDTH_TEMPLATE");
+  expect_enum_name(OcclusionTriggerReason::kGradualWidthPeak, "GRADUAL_WIDTH_PEAK");
+  expect_enum_name(OcclusionTriggerReason::kGradualWidthMotion,
+                   "GRADUAL_WIDTH_MOTION");
+  expect_enum_name(OcclusionTriggerReason::kGradualHeightTemplate,
+                   "GRADUAL_HEIGHT_TEMPLATE");
+  expect_enum_name(OcclusionTriggerReason::kGradualHeightPeak,
+                   "GRADUAL_HEIGHT_PEAK");
+  expect_enum_name(OcclusionTriggerReason::kGradualHeightMotion,
+                   "GRADUAL_HEIGHT_MOTION");
+  expect_enum_name(OcclusionProbeType::kNone, "NONE");
+  expect_enum_name(OcclusionProbeType::kSearch, "SEARCH");
+  expect_enum_name(OcclusionProbeType::kConfirm, "CONFIRM");
+
+  SearchPlan coast_plan;
+  expect_true(coast_plan.occlusion_coast_age_frames == 0 &&
+                  coast_plan.occlusion_probe_type == OcclusionProbeType::kNone &&
+                  !coast_plan.motion_control_authorized,
+              "unset coast plans do not authorize motion control or probes");
+  coast_plan.occlusion_coast_age_frames = 10;
+  coast_plan.occlusion_probe_type = OcclusionProbeType::kSearch;
+  coast_plan.motion_control_authorized = true;
+  const SearchPlan copied_coast_plan = coast_plan;
+  expect_true(copied_coast_plan.occlusion_coast_age_frames == 10 &&
+                  copied_coast_plan.occlusion_probe_type == OcclusionProbeType::kSearch &&
+                  copied_coast_plan.motion_control_authorized,
+              "search plan preserves coast age, probe and motion authorization");
+
+  ControllerOutput coast_output;
+  expect_true(coast_output.occlusion_reference_source == OcclusionReferenceSource::kNone &&
+                  !coast_output.occlusion_suspicion_active &&
+                  !coast_output.occlusion_suspicion_started &&
+                  !coast_output.occlusion_suspicion_cleared &&
+                  coast_output.occlusion_suspicion_frames == 0 &&
+                  coast_output.occlusion_clean_frames == 0 &&
+                  coast_output.occlusion_width_shrink_frames == 0 &&
+                  coast_output.occlusion_height_shrink_frames == 0 &&
+                  !coast_output.occlusion_severe_evidence &&
+                  !coast_output.occlusion_gradual_evidence &&
+                  !coast_output.occlusion_template_evidence &&
+                  !coast_output.occlusion_peak_margin_evidence &&
+                  !coast_output.occlusion_motion_residual_evidence &&
+                  coast_output.occlusion_trigger_reason == OcclusionTriggerReason::kNone &&
+                  coast_output.occlusion_coast_age_frames == 0 &&
+                  coast_output.occlusion_probe_type == OcclusionProbeType::kNone &&
+                  coast_output.occlusion_probe_confirmation_hits == 0 &&
+                  coast_output.occlusion_probe_confirmation_required == 0 &&
+                  !coast_output.motion_control_authorized,
+              "unset coast diagnostics have no evidence or control authority");
+  coast_output.occlusion_reference_source = OcclusionReferenceSource::kFullStableMedian;
+  coast_output.occlusion_suspicion_active = true;
+  coast_output.occlusion_suspicion_started = true;
+  coast_output.occlusion_suspicion_cleared = true;
+  coast_output.occlusion_suspicion_frames = 4;
+  coast_output.occlusion_clean_frames = 1;
+  coast_output.occlusion_width_shrink_frames = 2;
+  coast_output.occlusion_height_shrink_frames = 3;
+  coast_output.occlusion_severe_evidence = true;
+  coast_output.occlusion_gradual_evidence = true;
+  coast_output.occlusion_template_evidence = true;
+  coast_output.occlusion_peak_margin_evidence = true;
+  coast_output.occlusion_motion_residual_evidence = true;
+  coast_output.occlusion_trigger_reason = OcclusionTriggerReason::kGradualWidthMotion;
+  coast_output.occlusion_coast_age_frames = 11;
+  coast_output.occlusion_probe_type = OcclusionProbeType::kConfirm;
+  coast_output.occlusion_probe_confirmation_hits = 1;
+  coast_output.occlusion_probe_confirmation_required = 2;
+  coast_output.motion_control_authorized = true;
+  const ControllerOutput copied_coast_output = coast_output;
+  expect_true(copied_coast_output.occlusion_reference_source == OcclusionReferenceSource::kFullStableMedian &&
+                  copied_coast_output.occlusion_suspicion_active &&
+                  copied_coast_output.occlusion_suspicion_started &&
+                  copied_coast_output.occlusion_suspicion_cleared &&
+                  copied_coast_output.occlusion_suspicion_frames == 4 &&
+                  copied_coast_output.occlusion_clean_frames == 1 &&
+                  copied_coast_output.occlusion_width_shrink_frames == 2 &&
+                  copied_coast_output.occlusion_height_shrink_frames == 3 &&
+                  copied_coast_output.occlusion_severe_evidence &&
+                  copied_coast_output.occlusion_gradual_evidence &&
+                  copied_coast_output.occlusion_template_evidence &&
+                  copied_coast_output.occlusion_peak_margin_evidence &&
+                  copied_coast_output.occlusion_motion_residual_evidence &&
+                  copied_coast_output.occlusion_trigger_reason == OcclusionTriggerReason::kGradualWidthMotion &&
+                  copied_coast_output.occlusion_coast_age_frames == 11 &&
+                  copied_coast_output.occlusion_probe_type == OcclusionProbeType::kConfirm &&
+                  copied_coast_output.occlusion_probe_confirmation_hits == 1 &&
+                  copied_coast_output.occlusion_probe_confirmation_required == 2 &&
+                  copied_coast_output.motion_control_authorized,
+              "controller output preserves all explicit coast diagnostic values");
+
   expect_true(std::string(to_string(TrackingMode::kOcclusionHold)) ==
                   "OCCLUSION_HOLD",
               "occlusion hold has a stable external mode name");
