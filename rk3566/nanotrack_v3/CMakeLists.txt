@@ -10,6 +10,15 @@ find_package(Threads REQUIRED)
 
 option(ENABLE_RKNN_RUNTIME "Build the RK3566 RKNN/OpenCV executable" OFF)
 
+add_library(nanotrack_production_deployment_config src/production_deployment_config.cpp)
+target_include_directories(nanotrack_production_deployment_config
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+  target_link_libraries(nanotrack_production_deployment_config PUBLIC stdc++fs)
+endif()
+target_compile_options(nanotrack_production_deployment_config PRIVATE -Wall -Wextra -Wpedantic)
+
 add_library(nanotrack_math src/tracker_math.cpp)
 target_include_directories(nanotrack_math PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(nanotrack_math PRIVATE -Wall -Wextra -Wpedantic)
@@ -66,6 +75,10 @@ target_include_directories(nanotrack_sha256 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_compile_options(nanotrack_sha256 PRIVATE -Wall -Wextra -Wpedantic)
 
 if(BUILD_TESTING)
+  add_executable(test_production_deployment_config tests/test_production_deployment_config.cpp)
+  target_link_libraries(test_production_deployment_config PRIVATE nanotrack_production_deployment_config)
+  add_test(NAME production_deployment_config COMMAND test_production_deployment_config)
+
   add_executable(test_target_class tests/test_target_class.cpp)
   target_link_libraries(test_target_class PRIVATE nanotrack_controller_support)
   add_test(NAME target_class COMMAND test_target_class)

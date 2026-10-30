@@ -146,6 +146,24 @@ BUILD_JOBS=4 ./run.sh --platform A6
   - `yolov8n-rk3566-fp16.rknn`，manifest 声明 SHA-256 `4d53a9b1e12996556294be8e099fe2dc0815d5c9cfdc327edfe350832baf8cf6`。
 - 当前候选 binary 仍使用编译期绝对路径 `/app/model`，不会自动读取新目录下的 `model/`。在四个 RKNN 工件取得前不启动；取得后还需要在“重新编译为 `/app/nanotrack_b827_candidate/model`”和“将模型安装到既有 `/app/model`”之间确认部署方式。前者保持候选目录隔离且不影响现有模型，建议优先采用。
 
+## 2026-10-30 生产部署配置解析器（Task 1，仅主机验证）
+
+- 时间：`2026-10-30T18:39:38+08:00`。
+- 分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；输入基线 `28ac6307f698ae1abd0efac8f62de5e3cf5753b4`，开始时工作树干净。本节结果提交可用 `git log -1 --format=%H -- rk3566/nanotrack_v3/src/production_deployment_config.cpp` 查询。
+- 输入需求：`.superpowers/sdd/2026-10-30-rk3566-production-deployment-config/task-1-brief.md`。新增 `rk3566/nanotrack_v3/include/production_deployment_config.hpp`、`src/production_deployment_config.cpp` 和 `tests/test_production_deployment_config.cpp`，修改同目录 `CMakeLists.txt`。
+- 新接口要求恰好五个路径键，允许空行、`#` 注释和首尾空白，拒绝未知/重复/缺失/空值及非 `key=value` 行；加载时同时检查 tracker 三个 RKNN 文件和 controller/detector/manifest/labels 均为普通文件。相对路径按进程当前目录解释，无隐式默认路径。
+- 先写测试并实际执行 RED：下述 configure/build/focused 命令退出 `2`，原因是 `production_deployment_config.hpp` 尚不存在。实现后重复同一命令，退出 `0`、focused `1/1`；完整 CTest `17/17`、零失败。测试程序含 12 个行为用例，必需缺失键、空值、重复键和各缺失工件逐项覆盖；使用隔离临时目录及占位文件，不使用真实模型。
+
+```bash
+cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-deployment-config -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF && cmake --build /tmp/nanotrack-deployment-config -j4 && ctest --test-dir /tmp/nanotrack-deployment-config -R production_deployment_config --output-on-failure
+ctest --test-dir /tmp/nanotrack-deployment-config --output-on-failure
+git diff --check
+```
+
+- 主机测试输出 `/tmp/nanotrack-deployment-config/test_production_deployment_config` SHA-256：`6ea2a77c6021c29f8f2e75ce7853fb598f46fa3e63b704129732fff063227fce`；主机库 `/tmp/nanotrack-deployment-config/libnanotrack_production_deployment_config.a` SHA-256：`d85c18660bf862f22ae2d2b58eeb0b0e7ad45a353bc06f79518ca97139cf4a40`。生成物留在 Git 外。
+- 边界：本任务只验证配置语法和文件存在/类型，不验证模型内容、哈希或 runtime 兼容性；未交叉编译、未连接板卡、未启动模型或吊舱。公共契约 `latest_handoff.available=false` 和现有候选编译裁决保持不变。
+- Handoff：后续生产 adapter 应消费本提交的严格解析/验证接口；下一步按计划实现配置选择与 WSL adapter 集成。协调对话无需因本次主机测试调整板端批准状态。
+
 ## 完成条件
 
 - `development_board_validation.latest_handoff.available=true`；
