@@ -123,6 +123,56 @@ void advance_probe_coast(nanotrack::LongTermController& controller, int first, i
   }
 }
 
+void test_coast_generation_provenance() {
+  using namespace nanotrack;
+  LongTermController controller(ControllerConfig{});
+  start_probe_coast(controller);  // Generation 0 was invalidated by coast.
+  advance_probe_coast(controller, 2, 4);
+  auto plan = probe_plan(controller, 5);
+  controller.finish_frame(plan, reliable_pair(plan, {60, 40, 20, 20}, 13), std::nullopt);
+  plan = probe_plan(controller, 6);
+  expect_true(controller.finish_frame(plan, reliable_pair(plan, {60, 40, 20, 20}, 14),
+                                      std::nullopt).reacquired,
+              "provenance fixture recovers before a second coast");
+  for (int frame = 15; frame <= 22; ++frame) {
+    plan = controller.begin_frame(frame, frame * 40, false);
+    controller.finish_frame(plan, reliable_pair(plan, {60, 40, 20, 20}, frame), std::nullopt);
+  }
+  plan = controller.begin_frame(23, 920, false);
+  expect_true(controller.finish_frame(plan, reliable_pair(plan, {63, 40, 14, 20}, 23),
+                                      std::nullopt).occlusion_hold_triggered,
+              "second coast invalidates generation one without forgetting generation zero");
+  std::uint64_t frame = 24;
+  for (std::uint64_t generation : {0, 1, 99}) {
+    plan = controller.begin_frame(frame, frame * 40, false);
+    // Feed stale and forged identities: coast provenance must beat age/frame
+    // mismatch, while an unrelated future generation stays GENERATION_INVALIDATED.
+    DetectorBatch batch{1, 1, {{{60, 40, 20, 20}, 0.99F, 0}}};
+    batch.generation = generation;
+    const auto output = controller.finish_frame(plan, {}, batch);
+    expect_true(output.detector_candidate_diagnostics[0].rejection ==
+                    (generation == 99 ? DetectorCandidateRejection::kGenerationInvalidated :
+                                        DetectorCandidateRejection::kHoldInvalidated) &&
+                    output.detector_candidates_queued == 0,
+                "coast provenance survives earlier recovery and multiple coast generations: " +
+                    std::to_string(generation) + " got " +
+                    to_string(output.detector_candidate_diagnostics[0].rejection));
+    ++frame;
+  }
+  controller.initialize({60, 40, 20, 20}, 30, 1200, {240, 160},
+                        make_fixed_target_class(0, true));
+  for (std::uint64_t generation : {0, 1, 2}) {
+    plan = controller.begin_frame(31 + generation, 1240 + generation * 40, false);
+    DetectorBatch batch{1, 1, {{{60, 40, 20, 20}, 0.99F, 0}}};
+    batch.generation = generation;
+    const auto output = controller.finish_frame(plan, {}, batch);
+    expect_true(output.detector_candidate_diagnostics[0].rejection ==
+                    DetectorCandidateRejection::kGenerationInvalidated &&
+                    output.detector_candidates_queued == 0 && !output.control_valid,
+                "explicit reinitialize takes precedence over old coast provenance");
+  }
+}
+
 void test_coast_probe_schedule_and_isolation() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -646,6 +696,7 @@ void test_target_class_gate() {
 
 int main() {
   using namespace nanotrack;
+  test_coast_generation_provenance();
   test_coast_probe_schedule_and_isolation();
   test_coast_probe_gates_and_recovery();
   test_coast_probe_stale_identity_and_reset();
@@ -1677,7 +1728,7 @@ int main() {
   output = same_frame_batch.finish_frame(plan, {}, late_batch);
   expect_true(!output.control_valid && output.detector_candidates_queued == 0 &&
                   output.detector_candidate_diagnostics[0].rejection ==
-                      DetectorCandidateRejection::kGenerationInvalidated,
+                      DetectorCandidateRejection::kHoldInvalidated,
               "pre-coast generations remain ineligible after the coast budget expires");
 
   LongTermController abandoned(coast_config);

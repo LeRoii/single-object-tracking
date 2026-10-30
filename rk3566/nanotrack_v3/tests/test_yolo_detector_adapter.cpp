@@ -416,8 +416,16 @@ int main() {
                 "busy state is rejected before making another frame copy");
   expect_true(wait_for(copy_state, &EngineState::entered),
               "fake engine enters within timeout");
+  // A coast runtime keeps polling even while the old detector inference is
+  // blocked. Poll must not wait for that inference or consume its identity.
+  auto blocked_poll = std::async(std::launch::async, [&] { return adapter.poll(); });
+  const bool poll_ready = blocked_poll.wait_for(std::chrono::milliseconds(100)) ==
+      std::future_status::ready;
   std::fill(padded.begin(), padded.end(), 0);
   release_engine(copy_state);
+  const auto polled_while_blocked = blocked_poll.get();
+  expect_true(poll_ready && !polled_while_blocked,
+              "poll returns empty without waiting for an in-flight pre-coast request");
   expect_true(wait_for(copy_state, &EngineState::finished),
               "fake engine finishes within timeout");
   expect_throws([&] { adapter.submit(padded_view, request); }, "busy",

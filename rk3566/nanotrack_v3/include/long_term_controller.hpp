@@ -224,6 +224,10 @@ class LongTermController {
   bool hold_used_for_loss_ = false;
   std::optional<ScaleReference> frozen_scale_reference_;
   std::uint64_t detector_eligibility_generation_ = 0;
+  // Within one initialized session only coast entry advances eligibility.
+  // Keep that interval so late completions retain their invalidation reason
+  // after coast expiry/recovery, without retaining an unbounded generation set.
+  std::uint64_t detector_session_generation_ = 0;
   bool initialized_ = false;
   bool frame_open_ = false;
 };

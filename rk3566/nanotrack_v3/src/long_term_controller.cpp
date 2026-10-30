@@ -111,6 +111,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   }
   validate_bbox(initial_bbox, frame_size.width, frame_size.height);
   if (initialized_) ++detector_eligibility_generation_;
+  detector_session_generation_ = detector_eligibility_generation_;
   frame_size_ = frame_size;
   target_class_ = target_class;
   current_bbox_ = initial_bbox;
@@ -548,7 +549,12 @@ LongTermController::ingest_detector_batch(
       };
 
   if (batch->generation != detector_eligibility_generation_) {
-    reject_eligible_candidates(DetectorCandidateRejection::kGenerationInvalidated);
+    const bool invalidated_by_coast =
+        batch->generation >= detector_session_generation_ &&
+        batch->generation < detector_eligibility_generation_;
+    reject_eligible_candidates(invalidated_by_coast
+        ? DetectorCandidateRejection::kHoldInvalidated
+        : DetectorCandidateRejection::kGenerationInvalidated);
     result.status = DetectorBatchStatus::kInvalid;
     return result;
   }

@@ -34,8 +34,10 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
       const nanotrack::ImageView&,
       const nanotrack::SearchPlan& plan) override {
     ++infer_calls;
+    inferred_plans.push_back(plan);
     if (on_infer) on_infer();
     ++search_token;
+    if (observation_override) return *observation_override;
     if (!emit_reliable && !emit_weak) return {};
     const nanotrack::ResponseMetrics metrics = emit_weak
         ? nanotrack::ResponseMetrics{0.45F, 0.40F, 2.5F, 3.0F, 0.04F}
@@ -79,6 +81,8 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
   bool emit_weak = false;
   bool invalid_observation = false;
   std::optional<nanotrack::BBox> reliable_bbox;
+  std::optional<std::vector<nanotrack::TrackerObservation>> observation_override;
+  std::vector<nanotrack::SearchPlan> inferred_plans;
   nanotrack::BBox weak_bbox{43, 33, 14, 14};
   int infer_calls = 0;
   int initialize_calls = 0;
@@ -154,6 +158,228 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
 
 bool same_bbox(const nanotrack::BBox& a, const nanotrack::BBox& b) {
   return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
+}
+
+void seed_coast(nanotrack::LongTermRuntime& runtime, FakeTracker& tracker,
+                const nanotrack::ImageView& image) {
+  runtime.initialize(image, {40, 30, 20, 20}, 0, 0);
+  for (int frame = 1; frame <= 8; ++frame)
+    runtime.process_frame(image, frame, frame * 40);
+  tracker.reliable_bbox = nanotrack::BBox{43, 30, 14, 20};
+  const auto trigger = runtime.process_frame(image, 9, 360);
+  expect_true(trigger.output.occlusion_hold_triggered &&
+                  trigger.output.occlusion_coast_age_frames == 1 &&
+                  trigger.output.control_valid && !trigger.output.accepted &&
+                  tracker.commit_calls == 8 && !trigger.tracker_skipped,
+              "runtime trigger runs inference but never commits collapsed observation");
+  tracker.reliable_bbox.reset();
+}
+
+void test_adaptive_coast_execution(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  for (bool search_hits : {false, true}) {
+    FakeTracker tracker;
+    FakeDetector detector;
+    detector.enabled = true;
+    LongTermRuntime runtime(ControllerConfig{}, tracker, detector, {0, 1, {}});
+    seed_coast(runtime, tracker, image);
+    for (int age = 2; age <= 12; ++age) {
+      tracker.emit_reliable = search_hits && (age == 5 || age == 10);
+      const auto result = runtime.process_frame(image, 8 + age, 360 + age * 211);
+      const bool search = age == 5 || age == 10;
+      const bool confirm = search_hits && (age == 6 || age == 11);
+      expect_true(result.tracker_skipped == !(search || confirm) &&
+                      result.plan.run_tracker == (search || confirm) &&
+                      result.output.occlusion_probe_type == (search ? OcclusionProbeType::kSearch :
+                          confirm ? OcclusionProbeType::kConfirm : OcclusionProbeType::kNone),
+                  "runtime executes only controller search/confirm plans at age " + std::to_string(age));
+      expect_true(result.output.occlusion_coast_age_frames == static_cast<std::size_t>(age) &&
+                      result.output.control_valid && result.output.motion_control_authorized &&
+                      result.output.hypothesis_source == HypothesisSource::kMotion &&
+                      !result.output.accepted && !result.output.reacquired &&
+                      same_bbox(result.output.bbox, BBox{40, 30, 20, 20}) &&
+                      tracker.commit_calls == 8 && tracker.stage_calls == 0,
+                  "unconfirmed coast keeps frozen motion control without tracker/template commits");
+      expect_true(!result.plan.request_detector && !result.detector.request_submitted &&
+                      detector.submit_calls == 0 && detector.poll_calls == 8 + age,
+                  "coast polls once per processed frame and never submits detector work");
+    }
+    std::vector<std::uint64_t> actual;
+    for (const auto& plan : tracker.inferred_plans)
+      if (plan.frame_id >= 9) actual.push_back(plan.frame_id);
+    expect_true(actual == (search_hits ? std::vector<std::uint64_t>{9, 13, 14, 18, 19} :
+                                        std::vector<std::uint64_t>{9, 13, 18}),
+                "exact runtime inference sequence contains trigger, search 5/10 and immediate confirms only");
+    const auto expired = runtime.process_frame(image, 21, 4000);
+    expect_true(!expired.tracker_skipped && !expired.output.motion_control_authorized &&
+                    !expired.output.control_valid,
+                "runtime cannot emit a thirteenth motion-authorized coast frame");
+  }
+
+  for (int hit_age : {5, 10}) {
+    FakeTracker tracker;
+    FakeDetector detector;
+    detector.enabled = true;
+    LongTermRuntime runtime(ControllerConfig{}, tracker, detector, {0, 1, {}});
+    seed_coast(runtime, tracker, image);
+    RuntimeFrameResult result;
+    for (int age = 2; age <= hit_age + 1; ++age) {
+      tracker.emit_reliable = age >= hit_age;
+      result = runtime.process_frame(image, 8 + age, 360 + age * 40);
+    }
+    expect_true(result.plan.occlusion_probe_type == OcclusionProbeType::kConfirm &&
+                    result.output.mode == TrackingMode::kTracking && result.output.accepted &&
+                    result.output.reacquired && result.output.control_valid &&
+                    !result.output.motion_control_authorized && tracker.commit_calls == 9 &&
+                    detector.submit_calls == 0,
+                "runtime commits exactly once after successful immediate coast confirmation");
+  }
+}
+
+void test_uncertain_runtime_cadence(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.uncertain_ms = 10000;
+  config.local_recovery_ms = 20000;
+  config.assisted_recovery_ms = 30000;
+  FakeTracker tracker;
+  FakeDetector detector;
+  detector.enabled = true;
+  LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+  runtime.initialize(image, {40, 30, 20, 20}, 0, 0);
+  tracker.emit_reliable = false;
+  const std::vector<std::int64_t> timestamps{1, 7, 240, 241, 2000, 7000};
+  for (std::size_t i = 0; i < timestamps.size(); ++i) {
+    const auto result = runtime.process_frame(image, 1 + i * 13, timestamps[i]);
+    expect_true(result.output.mode == TrackingMode::kUncertain && !result.tracker_skipped &&
+                    result.plan.run_tracker && tracker.infer_calls == static_cast<int>(i + 1) &&
+                    detector.poll_calls == static_cast<int>(i + 1) && detector.submit_calls == 0,
+                "UNCERTAIN runs tracker and polls every processed frame despite irregular gaps");
+  }
+}
+
+void test_late_precoast_batches(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  for (int arrival_age : {5, 12, 13, 14}) {
+    FakeTracker tracker;
+    FakeDetector detector;
+    detector.enabled = true;
+    LongTermRuntime runtime(ControllerConfig{}, tracker, detector, {0, 1, {}});
+    runtime.initialize(image, {40, 30, 20, 20}, 0, 0);
+    tracker.emit_reliable = false;
+    runtime.process_frame(image, 1, 40);
+    runtime.process_frame(image, 2, 1100);
+    expect_true(detector.submit_calls == 1, "fixture owns a real pending pre-coast runtime request");
+    const auto request = detector.last_request;
+    tracker.emit_reliable = true;
+    for (int frame = 3; frame <= 11; ++frame)
+      runtime.process_frame(image, frame, 1080 + frame * 10);
+    tracker.reliable_bbox = BBox{43, 30, 14, 20};
+    expect_true(runtime.process_frame(image, 12, 1200).output.occlusion_hold_triggered,
+                "pending request survives accepted recovery until new coast invalidates it");
+    tracker.reliable_bbox.reset();
+    tracker.emit_reliable = false;
+    for (int age = 2; age <= arrival_age + 1; ++age) {
+      if (age == arrival_age) {
+        DetectorBatch batch{request.frame_id, request.timestamp_ms,
+                            {{BBox{40, 30, 20, 20}, 0.99F, 0}}};
+        batch.generation = request.generation;
+        batch.raw_candidate_count = 7;
+        batch.filtered_candidate_count = 1;
+        batch.timing = DetectorTiming{1, 2, 3, 6};
+        detector.next_batch = batch;
+      }
+      const auto result = runtime.process_frame(image, 11 + age, 1190 + age * 10);
+      expect_true(result.output.detector_candidates_queued == 0 &&
+                      !result.plan.detector_candidate_id &&
+                      !result.output.detector_candidate_locked && !result.output.reacquired &&
+                      !result.output.accepted && tracker.commit_calls == 8 &&
+                      result.output.hypothesis_source == HypothesisSource::kMotion,
+                  "pre-coast batch never queues, activates or authorizes recovery");
+      if (age == arrival_age) {
+        expect_true(result.detector.batch_received && result.detector.batch_frame_id == 2 &&
+                        result.detector.raw_candidate_count == 7 &&
+                        result.detector.filtered_candidate_count == 1 &&
+                        result.detector.timing.total_ms == 6 &&
+                        result.output.detector_candidate_diagnostics.size() == 1 &&
+                        result.output.detector_candidate_diagnostics[0].drawable &&
+                        !result.output.detector_candidate_diagnostics[0].batch_eligible &&
+                        !result.output.detector_candidate_diagnostics[0].queued &&
+                        result.output.detector_candidate_diagnostics[0].rejection ==
+                            DetectorCandidateRejection::kHoldInvalidated,
+                    "late pre-coast batch retains diagnostics and HOLD_INVALIDATED at age " +
+                        std::to_string(age));
+      }
+      expect_true(age <= 12 ? result.output.motion_control_authorized && result.output.control_valid :
+                             !result.output.motion_control_authorized && !result.output.control_valid,
+                  "late detector completion cannot change the coast control budget");
+    }
+    expect_true(detector.submit_calls == 1, "no extra detector submission occurs in UNCERTAIN or coast");
+  }
+}
+
+void test_probe_failure_and_same_frame_reselect(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  struct ProbeFailure { int age; };
+  for (int failed_age : {5, 6, 10, 11}) {
+    FakeTracker tracker;
+    FakeDetector detector;
+    detector.enabled = true;
+    LongTermRuntime runtime(ControllerConfig{}, tracker, detector, {0, 1, {}});
+    seed_coast(runtime, tracker, image);
+    for (int age = 2; age < failed_age; ++age) {
+      tracker.emit_reliable = age == failed_age - 1;
+      runtime.process_frame(image, 8 + age, 360 + age * 10);
+    }
+    tracker.on_infer = [=] { throw ProbeFailure{failed_age}; };
+    bool surfaced = false;
+    try { runtime.process_frame(image, 8 + failed_age, 360 + failed_age * 10); }
+    catch (const ProbeFailure& error) { surfaced = error.age == failed_age; }
+    tracker.on_infer = {};
+    tracker.emit_reliable = false;
+    const auto next = runtime.process_frame(image, 9 + failed_age, 370 + failed_age * 10);
+    expect_true(surfaced && !next.output.motion_control_authorized && !next.output.control_valid &&
+                    !next.output.reacquired && next.plan.occlusion_probe_type == OcclusionProbeType::kNone &&
+                    !next.plan.detector_candidate_id && next.output.occlusion_probe_confirmation_hits == 0 &&
+                    next.plan.run_tracker && !next.tracker_skipped && tracker.commit_calls == 8,
+                "search/confirm inference throw surfaces error and revokes coast/candidate without poisoning next frame");
+    expect_true(runtime.initialize(image, {80, 40, 10, 10}, 9 + failed_age,
+                                   370 + failed_age * 10).initialization_index == 2,
+                "caller can reselect cleanly after a failed probe and continuation");
+  }
+
+  FakeTracker tracker;
+  FakeDetector detector;
+  detector.enabled = true;
+  LongTermRuntime runtime(ControllerConfig{}, tracker, detector, {0, 1, {}});
+  seed_coast(runtime, tracker, image);
+  RuntimeFrameResult search;
+  for (int age = 2; age <= 5; ++age)
+    search = runtime.process_frame(image, 8 + age, 360 + age * 10);
+  expect_true(search.output.occlusion_probe_confirmation_hits == 1,
+              "same-frame reselect fixture has a pending successful search probe");
+  runtime.initialize(image, {80, 40, 10, 10}, 13, 410);
+  detector.next_batch = DetectorBatch{13, 410, {{BBox{40, 30, 20, 20}, 0.99F, 0}}};
+  tracker.emit_reliable = false;
+  const auto fresh = runtime.process_frame(image, 14, 420);
+  expect_true(fresh.plan.mode == TrackingMode::kTracking &&
+                  fresh.plan.occlusion_probe_type == OcclusionProbeType::kNone &&
+                  fresh.plan.occlusion_coast_age_frames == 0 &&
+                  !fresh.output.occlusion_reference_width && !fresh.output.reacquired &&
+                  !fresh.output.control_valid && fresh.output.detector_candidates_queued == 0 &&
+                  fresh.output.detector_candidate_diagnostics[0].rejection ==
+                      DetectorCandidateRejection::kGenerationInvalidated &&
+                  same_bbox(tracker.committed_bbox, BBox{80, 40, 10, 10}),
+              "same decoded-frame reselect clears old probe/reference and separately invalidates detector session");
+  tracker.observation_override = search.observations;
+  bool rejected = false;
+  try { runtime.process_frame(image, 15, 430); }
+  catch (const std::invalid_argument&) { rejected = true; }
+  tracker.observation_override.reset();
+  const auto continued = runtime.process_frame(image, 16, 440);
+  expect_true(rejected && !continued.output.reacquired && !continued.output.control_valid &&
+                  !continued.output.motion_control_authorized && tracker.commit_calls == 8,
+              "old-session probe observations fail identity validation without a stale confirm or tracker commit");
 }
 
 void test_frame_lifetime(const nanotrack::ImageView& image) {
@@ -588,6 +814,10 @@ int main() {
   test_target_class_initialization(image);
   test_target_class_session_config(image);
   test_frame_lifetime(image);
+  test_adaptive_coast_execution(image);
+  test_uncertain_runtime_cadence(image);
+  test_late_precoast_batches(image);
+  test_probe_failure_and_same_frame_reselect(image);
   ControllerConfig config;
   FakeTracker tracker;
   FakeDetector detector;
