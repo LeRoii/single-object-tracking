@@ -123,6 +123,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   active_detector_candidate_.reset();
   next_detector_candidate_id_ = 1;
   confirmations_.clear();
+  coast_probe_candidate_.reset();
   last_frame_id_ = frame_id;
   last_timestamp_ms_ = timestamp_ms;
   stable_frames_ = 0;
@@ -194,6 +195,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   } catch (...) {
     hold_remaining_frames_ = 0;
     occlusion_coast_age_frames_ = 0;
+    coast_probe_candidate_.reset();
     mode_ = timestamp_mode;
     throw;
   }
@@ -208,15 +210,26 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.search_scale = search_scale_for(timestamp_mode, timestamp_ms);
     plan.hypothesis_source = HypothesisSource::kMotion;
     plan.detector_target_mode = config_.detector_target_mode;
-    plan.run_tracker = false;
     plan.hold_remaining_frames = hold_remaining_frames_;
     plan.occlusion_coast_age_frames = occlusion_coast_age_frames_ + 1;
+    // Confirmation belongs to the immediately next processed frame. Decoded
+    // frame IDs and timestamps need not be consecutive.
+    if (coast_probe_candidate_ && coast_probe_candidate_->frame_id != last_frame_id_)
+      coast_probe_candidate_.reset();
+    if (coast_probe_candidate_) {
+      plan.occlusion_probe_type = OcclusionProbeType::kConfirm;
+    } else if (plan.occlusion_coast_age_frames %
+                   static_cast<std::size_t>(config_.occlusion_probe_interval_frames) == 0) {
+      plan.occlusion_probe_type = OcclusionProbeType::kSearch;
+    }
+    plan.run_tracker = plan.occlusion_probe_type != OcclusionProbeType::kNone;
     plan.motion_control_authorized = true;
     active_plan_ = plan;
     frame_open_ = true;
     return plan;
   }
 
+  coast_probe_candidate_.reset();
   mode_ = timestamp_mode;
   BBox predicted = motion_predicted;
   HypothesisSource source = HypothesisSource::kMotion;
@@ -291,6 +304,7 @@ void LongTermController::abort_frame() noexcept {
   if (active_plan_.mode == TrackingMode::kOcclusionHold) {
     hold_remaining_frames_ = 0;
     occlusion_coast_age_frames_ = 0;
+    coast_probe_candidate_.reset();
     mode_ = mode_for_timestamp(active_plan_.timestamp_ms);
   }
 }
@@ -442,6 +456,58 @@ bool LongTermController::detector_geometry_consistent(
              config_.detector_confirmation_max_area_log_change &&
          aspect_log_delta(bbox, reference) <=
              config_.detector_confirmation_max_aspect_log_change;
+}
+
+bool LongTermController::coast_confirmation_consistent(
+    const BBox& reference, const BBox& bbox) const {
+  return bbox_iou(reference, bbox) >= config_.occlusion_confirmation_iou &&
+         normalized_center_distance(bbox, reference) <=
+             config_.occlusion_confirmation_center_distance &&
+         area_log_delta(bbox, reference) <=
+             config_.occlusion_confirmation_max_area_log_change &&
+         aspect_log_delta(bbox, reference) <=
+             config_.occlusion_confirmation_max_aspect_log_change;
+}
+
+void LongTermController::accept_observation(
+    const SearchPlan& plan, const EvaluatedObservation& selected,
+    bool reacquired, ControllerOutput& output) {
+  output.bbox = selected.observation.bbox;
+  output.accepted = true;
+  output.control_valid = true;
+  output.reacquired = reacquired;
+  if (reacquired) {
+    motion_.initialize(output.bbox, plan.timestamp_ms, frame_size_.width,
+                       frame_size_.height);
+    hold_used_for_loss_ = false;
+    hold_remaining_frames_ = 0;
+    occlusion_coast_age_frames_ = 0;
+    coast_probe_candidate_.reset();
+    frozen_scale_reference_.reset();
+    occlusion_evidence_.reset();
+    occlusion_suspicion_frames_ = 0;
+    occlusion_decision_ = occlusion_evidence_.observe(OcclusionEvidenceInput{
+        output.bbox, output.bbox, selected.observation.metrics, true, false, false});
+  } else {
+    motion_.correct(output.bbox, plan.timestamp_ms);
+  }
+  current_bbox_ = output.bbox;
+  loss_start_ms_.reset();
+  confirmations_.clear();
+  active_detector_candidate_.reset();
+  detector_candidates_.clear();
+  mode_ = TrackingMode::kTracking;
+  output.mode = mode_;
+  ++stable_frames_;
+  consecutive_unreliable_frames_ = 0;
+  // As in ordinary recovery, an old staged recent template cannot be
+  // committed using evidence from a different tracking episode.
+  if (reacquired && recent_probation_) {
+    output.template_action = TemplateAction::kRollbackRecent;
+    recent_probation_ = false;
+    probation_reliable_frames_ = 0;
+    stable_frames_ = 0;
+  }
 }
 
 LongTermController::DetectorIngestResult
@@ -600,13 +666,15 @@ LongTermController::ingest_detector_batch(
 ControllerOutput LongTermController::finish_frame(
     const SearchPlan& plan,
     const std::vector<TrackerObservation>& observations,
-    const std::optional<DetectorBatch>& detector_batch) {
+    const std::optional<DetectorBatch>& detector_batch) try {
+  // Consume the candidate before validating input: stale plans or malformed
+  // template/frame identities must never retain a hit for a later confirm.
+  const auto pending_coast_candidate = coast_probe_candidate_;
+  coast_probe_candidate_.reset();
   if (!frame_open_ || plan.frame_id != active_plan_.frame_id ||
       plan.timestamp_ms != active_plan_.timestamp_ms) {
     throw std::logic_error("finish_frame does not match active search plan");
   }
-  frame_open_ = false;
-
   ControllerOutput output;
   output.frame_id = plan.frame_id;
   output.target_class = target_class_;
@@ -632,29 +700,12 @@ ControllerOutput LongTermController::finish_frame(
       ingest_result.position_rejected_count;
   output.detector_candidate_diagnostics = ingest_result.diagnostics;
 
-  if (plan.mode == TrackingMode::kOcclusionHold) {
-    output.quality = QualityLevel::kRejected;
-    output.motion_control_authorized = plan.motion_control_authorized;
-    output.control_valid = output.motion_control_authorized;
-    output.accepted = false;
-    output.occlusion_coast_age_frames = plan.occlusion_coast_age_frames;
-    output.occlusion_hold_remaining_frames = plan.hold_remaining_frames;
-    publish_occlusion_evidence(output);
-    output.occlusion_suspicion_started = false;
-    output.occlusion_suspicion_cleared = false;
-    occlusion_coast_age_frames_ = plan.occlusion_coast_age_frames;
-    if (hold_remaining_frames_ > 0) --hold_remaining_frames_;
-    mode_ = hold_remaining_frames_ > 0 ? TrackingMode::kOcclusionHold
-                                      : mode_for_timestamp(plan.timestamp_ms);
-    last_frame_id_ = plan.frame_id;
-    last_timestamp_ms_ = plan.timestamp_ms;
-    return output;
-  }
-
   std::optional<EvaluatedObservation> anchor;
   std::optional<EvaluatedObservation> recent;
   std::optional<std::uint64_t> token;
   for (const TrackerObservation& observation : observations) {
+    // Skipped coast frames retain their existing observation-isolation contract.
+    if (plan.mode == TrackingMode::kOcclusionHold && !plan.run_tracker) break;
     if (token && observation.search_token != *token) {
       throw std::invalid_argument("template observations must share one search token");
     }
@@ -701,6 +752,59 @@ ControllerOutput LongTermController::finish_frame(
     if (recent->quality == QualityLevel::kReliable) force_confirmation = true;
   }
 
+  if (plan.mode == TrackingMode::kOcclusionHold) {
+    output.motion_control_authorized = plan.motion_control_authorized;
+    output.control_valid = output.motion_control_authorized;
+    output.occlusion_coast_age_frames = plan.occlusion_coast_age_frames;
+    output.occlusion_hold_remaining_frames = plan.hold_remaining_frames;
+    output.occlusion_probe_type = plan.occlusion_probe_type;
+    publish_occlusion_evidence(output);
+    output.occlusion_suspicion_started = false;
+    output.occlusion_suspicion_cleared = false;
+    if (selected) {
+      output.quality = selected->quality;
+      output.selected_template = selected->observation.template_kind;
+      output.selected_metrics = selected->observation.metrics;
+      output.normalized_center_residual = selected->center_residual;
+      output.area_log_change = selected->area_log_change;
+      output.aspect_log_change = selected->aspect_log_change;
+    }
+    const bool probe_hit = selected && anchor && recent &&
+        anchor->quality == QualityLevel::kReliable &&
+        recent->quality == QualityLevel::kReliable &&
+        output.template_iou >= config_.template_agreement_iou;
+    if (plan.occlusion_probe_type != OcclusionProbeType::kNone)
+      output.occlusion_probe_confirmation_required = 2;
+    if (plan.occlusion_probe_type == OcclusionProbeType::kSearch && probe_hit) {
+      coast_probe_candidate_ = CoastProbeCandidate{plan.frame_id, selected->observation.bbox};
+      output.occlusion_probe_confirmation_hits = 1;
+    } else if (plan.occlusion_probe_type == OcclusionProbeType::kConfirm && probe_hit &&
+               pending_coast_candidate &&
+               pending_coast_candidate->frame_id == last_frame_id_ &&
+               coast_confirmation_consistent(pending_coast_candidate->bbox,
+                                             selected->observation.bbox)) {
+      accept_observation(plan, *selected, true, output);
+      output.motion_control_authorized = false;
+      output.occlusion_hold_remaining_frames = 0;
+      output.occlusion_probe_confirmation_hits = 2;
+      publish_occlusion_evidence(output);
+      last_frame_id_ = plan.frame_id;
+      last_timestamp_ms_ = plan.timestamp_ms;
+      frame_open_ = false;
+      return output;
+    }
+    // No observation-side effects are allowed before two consistent hits.
+    occlusion_coast_age_frames_ = plan.occlusion_coast_age_frames;
+    if (hold_remaining_frames_ > 0) --hold_remaining_frames_;
+    if (hold_remaining_frames_ == 0) coast_probe_candidate_.reset();
+    mode_ = hold_remaining_frames_ > 0 ? TrackingMode::kOcclusionHold
+                                      : mode_for_timestamp(plan.timestamp_ms);
+    last_frame_id_ = plan.frame_id;
+    last_timestamp_ms_ = plan.timestamp_ms;
+    frame_open_ = false;
+    return output;
+  }
+
   bool accepted = false;
   bool reacquired = false;
   const bool detector_verification_active =
@@ -745,6 +849,7 @@ ControllerOutput LongTermController::finish_frame(
     loss_start_ms_ = plan.timestamp_ms;
     ++detector_eligibility_generation_;
     confirmations_.clear();
+    coast_probe_candidate_.reset();
     detector_candidates_.clear();
     active_detector_candidate_.reset();
     stable_frames_ = 0;
@@ -778,6 +883,7 @@ ControllerOutput LongTermController::finish_frame(
     }
     last_frame_id_ = plan.frame_id;
     last_timestamp_ms_ = plan.timestamp_ms;
+    frame_open_ = false;
     return output;
   }
   if (selected) {
@@ -850,35 +956,7 @@ ControllerOutput LongTermController::finish_frame(
   }
 
   if (accepted) {
-    output.bbox = selected->observation.bbox;
-    output.accepted = true;
-    output.control_valid = true;
-    output.reacquired = reacquired;
-    if (reacquired) {
-      motion_.initialize(output.bbox, plan.timestamp_ms, frame_size_.width,
-                         frame_size_.height);
-    } else {
-      motion_.correct(output.bbox, plan.timestamp_ms);
-    }
-    current_bbox_ = output.bbox;
-    loss_start_ms_.reset();
-    confirmations_.clear();
-    active_detector_candidate_.reset();
-    detector_candidates_.clear();
-    mode_ = TrackingMode::kTracking;
-    output.mode = mode_;
-    ++stable_frames_;
-    consecutive_unreliable_frames_ = 0;
-    if (reacquired) {
-      hold_used_for_loss_ = false;
-      hold_remaining_frames_ = 0;
-      occlusion_coast_age_frames_ = 0;
-      frozen_scale_reference_.reset();
-      occlusion_evidence_.reset();
-      occlusion_suspicion_frames_ = 0;
-      occlusion_decision_ = occlusion_evidence_.observe(OcclusionEvidenceInput{
-          output.bbox, output.bbox, selected->observation.metrics, true, false, false});
-    }
+    accept_observation(plan, *selected, reacquired, output);
   } else {
     ++consecutive_unreliable_frames_;
     if (!loss_start_ms_) loss_start_ms_ = plan.timestamp_ms;
@@ -929,7 +1007,13 @@ ControllerOutput LongTermController::finish_frame(
   output.detector_candidates_queued = detector_candidates_.size();
   last_frame_id_ = plan.frame_id;
   last_timestamp_ms_ = plan.timestamp_ms;
+  frame_open_ = false;
   return output;
+} catch (...) {
+  // Keep the frame open until it has a complete result so malformed probe
+  // identities and validation errors revoke coast just like inference errors.
+  abort_frame();
+  throw;
 }
 
 }  // namespace nanotrack

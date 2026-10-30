@@ -259,9 +259,9 @@ int main() {
     for (int age = 2; age <= duration; ++age) {
       tick = coast.begin_frame(8 + age, 320 + age * 40, true);
       expect_true(tick.mode == TrackingMode::kOcclusionHold &&
-                      !tick.run_tracker && !tick.request_detector &&
+                      tick.run_tracker == (age == 5 || age == 10) && !tick.request_detector &&
                       tick.occlusion_coast_age_frames == static_cast<std::size_t>(age),
-                  "every subsequent coast frame skips inference in Task 3");
+                  "coast runs only periodic probes and never requests detector work");
       output = coast.finish_frame(
           tick, {reliable_for_plan(tick, BBox{43, 30, 14, 20}, 8 + age)},
           std::nullopt);
@@ -294,6 +294,63 @@ int main() {
         std::nullopt);
     expect_true(output.occlusion_hold_triggered && output.control_valid,
                 "confirmed recovery clears old evidence and rearms a fresh coast");
+  }
+
+  // A target reappearing at age four recovers at 5/6; reappearing at age
+  // seven misses probe five and recovers at 10/11. Search alone never moves
+  // the control box, and a failed confirm cannot shift the periodic schedule.
+  for (int reappearance_age : {4, 7}) {
+    LongTermController coast(config);
+    coast.initialize(initial, 0, 0, frame_size);
+    for (int frame = 1; frame <= 8; ++frame)
+      step(coast, frame, frame * 40, initial);
+    auto plan = coast.begin_frame(9, 360, false);
+    output = coast.finish_frame(plan,
+        reliable_pair_for_plan(plan, BBox{41, 30, 18, 20}, 9), std::nullopt);
+    expect_true(!output.occlusion_hold_triggered && output.accepted,
+                "gradual replay starts with one suspicious accepted shrink");
+    plan = coast.begin_frame(10, 400, false);
+    auto shrink = reliable_pair_for_plan(plan, BBox{42, 30, 16, 20}, 10);
+    for (auto& observation : shrink) observation.metrics.peak_margin = 0.17F;
+    output = coast.finish_frame(plan, shrink, std::nullopt);
+    expect_true(output.occlusion_hold_triggered && output.occlusion_coast_age_frames == 1 &&
+                    output.control_valid && output.bbox.width == 20,
+                "second adjacent shrink plus peak evidence starts bounded motion coast");
+    const int search_age = reappearance_age == 4 ? 5 : 10;
+    const BBox recovered{44, 30, 20, 20};
+    for (int age = 2; age <= search_age + 1; ++age) {
+      plan = coast.begin_frame(9 + age, 360 + age * 40, true);
+      const bool confirming = age == search_age + 1;
+      const auto expected = confirming ? OcclusionProbeType::kConfirm
+          : age == 5 || age == 10 ? OcclusionProbeType::kSearch : OcclusionProbeType::kNone;
+      expect_true(plan.occlusion_probe_type == expected &&
+                      plan.run_tracker == (expected != OcclusionProbeType::kNone) &&
+                      !plan.request_detector && plan.predicted_bbox.width == 20,
+                  "reappearance replay follows five-frame search and immediate confirm plans");
+      std::vector<TrackerObservation> observations;
+      if (plan.run_tracker && age >= reappearance_age)
+        observations = reliable_pair_for_plan(plan, recovered, plan.frame_id);
+      output = coast.finish_frame(plan, observations, std::nullopt);
+      expect_true(output.accepted == confirming && output.reacquired == confirming &&
+                      output.control_valid && output.motion_control_authorized == !confirming &&
+                      output.mode == (confirming ? TrackingMode::kTracking
+                                                : TrackingMode::kOcclusionHold),
+                  "only the consistent confirm changes from motion coast to accepted tracking");
+      if (age == search_age) {
+        expect_true(output.bbox.x < 42 && output.bbox.width == 20 &&
+                        output.occlusion_probe_confirmation_hits == 1,
+                    "search hit stays isolated from the motion control box");
+      }
+    }
+    expect_true(output.bbox.x == 44 && output.bbox.width == 20,
+                "confirm publishes the recovered NanoTrack box immediately");
+    plan = coast.begin_frame(30, 1200, true);
+    expect_true(plan.mode == TrackingMode::kTracking &&
+                    plan.occlusion_coast_age_frames == 0 &&
+                    plan.occlusion_probe_type == OcclusionProbeType::kNone &&
+                    plan.predicted_bbox.x == 44 && !plan.request_detector,
+                "early recovery resets velocity, probe schedule and loss time");
+    coast.finish_frame(plan, reliable_pair_for_plan(plan, recovered, 30), std::nullopt);
   }
 
   for (std::int64_t timestamp : {1400, 4000}) {

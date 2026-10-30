@@ -139,6 +139,11 @@ class LongTermController {
     BBox bbox{};
   };
 
+  struct CoastProbeCandidate {
+    std::uint64_t frame_id = 0;
+    BBox bbox{};
+  };
+
   struct QueuedDetectorCandidate {
     std::uint64_t id = 0;
     DetectorCandidate candidate{};
@@ -179,6 +184,11 @@ class LongTermController {
   bool detector_geometry_consistent(const BBox& reference,
                                     const BBox& bbox) const;
   bool detector_confirmation_consistent(const BBox& bbox) const;
+  bool coast_confirmation_consistent(const BBox& reference, const BBox& bbox) const;
+  void accept_observation(const SearchPlan& plan,
+                          const EvaluatedObservation& selected,
+                          bool reacquired,
+                          ControllerOutput& output);
   DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
@@ -199,6 +209,7 @@ class LongTermController {
   std::optional<ActiveDetectorCandidate> active_detector_candidate_;
   std::uint64_t next_detector_candidate_id_ = 1;
   std::deque<Confirmation> confirmations_;
+  std::optional<CoastProbeCandidate> coast_probe_candidate_;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_timestamp_ms_ = 0;
   SearchPlan active_plan_{};

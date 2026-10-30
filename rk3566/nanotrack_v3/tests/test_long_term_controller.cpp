@@ -96,6 +96,356 @@ nanotrack::ControllerOutput reject_frame(nanotrack::LongTermController& controll
   return controller.finish_frame(plan, {}, std::nullopt);
 }
 
+// Removing probe scheduling, allowing one-template hits, or committing a search
+// box must fail these real controller fixtures.
+void start_probe_coast(nanotrack::LongTermController& controller) {
+  using namespace nanotrack;
+  const BBox stable{60, 40, 20, 20};
+  controller.initialize(stable, 0, 0, {240, 160}, make_fixed_target_class(0, true));
+  for (int id = 1; id <= 8; ++id) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    controller.finish_frame(plan, reliable_pair(plan, stable, id), std::nullopt);
+  }
+  const auto plan = controller.begin_frame(9, 360, true);
+  expect_true(controller.finish_frame(plan,
+      reliable_pair(plan, BBox{63, 40, 14, 20}, 9), std::nullopt)
+      .occlusion_hold_triggered, "probe fixture enters coast at age one");
+}
+
+nanotrack::SearchPlan probe_plan(nanotrack::LongTermController& controller, int age) {
+  return controller.begin_frame(8 + age, 320 + age * 40, true);
+}
+
+void advance_probe_coast(nanotrack::LongTermController& controller, int first, int last) {
+  for (int age = first; age <= last; ++age) {
+    const auto plan = probe_plan(controller, age);
+    controller.finish_frame(plan, {}, std::nullopt);
+  }
+}
+
+void test_coast_probe_schedule_and_isolation() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  LongTermController missed(config);
+  start_probe_coast(missed);
+  for (int age = 2; age <= 12; ++age) {
+    const auto plan = probe_plan(missed, age);
+    const auto expected = age == 5 || age == 10
+        ? OcclusionProbeType::kSearch : OcclusionProbeType::kNone;
+    expect_true(plan.occlusion_probe_type == expected &&
+                    plan.run_tracker == (age == 5 || age == 10) &&
+                    !plan.request_detector && !plan.detector_request &&
+                    plan.motion_control_authorized &&
+                    plan.predicted_bbox.x == 60 && plan.predicted_bbox.width == 20,
+                "misses schedule search only at ages five and ten from frozen motion");
+    const auto output = missed.finish_frame(plan, {}, std::nullopt);
+    expect_true(output.occlusion_probe_type == expected && output.control_valid &&
+                    !output.accepted && !output.reacquired &&
+                    output.hypothesis_source == HypothesisSource::kMotion,
+                "missed probes retain motion control and report their type");
+  }
+
+  // A pending recent template and an off-center hit expose any accidental
+  // normal-acceptance, motion-correction, or template/reference update path.
+  LongTermController isolated(config);
+  start_probe_coast(isolated);
+  isolated.recent_probation_ = true;
+  isolated.probation_reliable_frames_ = 1;
+  const auto recent_update = isolated.last_recent_update_ms_;
+  const auto reference_widths = isolated.occlusion_evidence_.stable_widths_;
+  const auto reference_heights = isolated.occlusion_evidence_.stable_heights_;
+  const auto reference_peaks = isolated.occlusion_evidence_.stable_peak_margins_;
+  const auto evidence_previous = isolated.occlusion_evidence_.previous_bbox_;
+  advance_probe_coast(isolated, 2, 4);
+  auto plan = probe_plan(isolated, 5);
+  auto output = isolated.finish_frame(
+      plan, reliable_pair(plan, BBox{62, 39, 22, 22}, 13), std::nullopt);
+  expect_true(output.occlusion_probe_type == OcclusionProbeType::kSearch &&
+                  output.occlusion_probe_confirmation_hits == 1 &&
+                  output.occlusion_probe_confirmation_required == 2 &&
+                  output.bbox.x == 60 && output.bbox.width == 20 &&
+                  !output.accepted && !output.reacquired && output.control_valid &&
+                  output.motion_control_authorized &&
+                  output.template_action == TemplateAction::kNone &&
+                  isolated.current_bbox().x == 60 &&
+                  isolated.recent_probation_ && isolated.probation_reliable_frames_ == 1 &&
+                  isolated.last_recent_update_ms_ == recent_update &&
+                  isolated.occlusion_evidence_.stable_widths_ == reference_widths &&
+                  isolated.occlusion_evidence_.stable_heights_ == reference_heights &&
+                  isolated.occlusion_evidence_.stable_peak_margins_ == reference_peaks &&
+                  isolated.occlusion_evidence_.previous_bbox_->width == evidence_previous->width &&
+                  isolated.occlusion_decision_.reference_width == std::optional<float>(20),
+              "search stores one hit without changing control, templates or reference");
+  expect_near(isolated.motion_.velocity_x_, 0, 1e-6F,
+              "search does not correct motion velocity");
+  plan = probe_plan(isolated, 6);
+  expect_true(plan.occlusion_probe_type == OcclusionProbeType::kConfirm &&
+                  plan.run_tracker && !plan.request_detector &&
+                  plan.predicted_bbox.x == 60,
+              "search schedules immediate next-frame confirm without moving the search center");
+  output = isolated.finish_frame(plan, {}, std::nullopt);
+  expect_true(!output.accepted && output.control_valid && output.bbox.x == 60 &&
+                  output.template_action == TemplateAction::kNone &&
+                  isolated.recent_probation_ && isolated.probation_reliable_frames_ == 1 &&
+                  output.occlusion_probe_confirmation_hits == 0,
+              "failed confirmation discards the hit without any acceptance effects");
+  for (int age = 7; age <= 10; ++age) {
+    plan = probe_plan(isolated, age);
+    expect_true(plan.occlusion_probe_type == (age == 10 ? OcclusionProbeType::kSearch
+                                                       : OcclusionProbeType::kNone),
+                "failed confirm returns to the original five-frame schedule");
+    isolated.finish_frame(plan, {}, std::nullopt);
+  }
+
+  for (int interval : {1, 4, 12, 300}) {
+    ControllerConfig configured;
+    configured.occlusion_probe_interval_frames = interval;
+    LongTermController controller(configured);
+    start_probe_coast(controller);
+    for (int age = 2; age <= 12; ++age) {
+      plan = probe_plan(controller, age);
+      const bool search = interval == 1 ||
+          (interval == 4 && (age == 4 || age == 8 || age == 12)) ||
+          (interval == 12 && age == 12);
+      expect_true(plan.run_tracker == search && plan.occlusion_probe_type ==
+                      (search ? OcclusionProbeType::kSearch : OcclusionProbeType::kNone) &&
+                      !plan.request_detector,
+                  "probe schedule honors configured intervals within the twelve-frame cap");
+      controller.finish_frame(plan, {}, std::nullopt);
+    }
+  }
+
+  ControllerConfig final_search_config;
+  final_search_config.occlusion_probe_interval_frames = 12;
+  LongTermController final_search(final_search_config);
+  start_probe_coast(final_search);
+  advance_probe_coast(final_search, 2, 11);
+  plan = probe_plan(final_search, 12);
+  output = final_search.finish_frame(plan,
+      reliable_pair(plan, BBox{63, 40, 20, 20}, 20), std::nullopt);
+  expect_true(!output.accepted && output.control_valid &&
+                  output.occlusion_probe_confirmation_hits == 1 &&
+                  !final_search.coast_probe_candidate_,
+              "a search hit on the last authorized age cannot extend the coast budget");
+  plan = probe_plan(final_search, 13);
+  output = final_search.finish_frame(plan,
+      reliable_pair(plan, BBox{63, 40, 20, 20}, 21), std::nullopt);
+  expect_true(plan.occlusion_probe_type == OcclusionProbeType::kNone &&
+                  !plan.motion_control_authorized && !output.accepted && !output.control_valid,
+              "age thirteen needs fresh ordinary confirmation after a last-age search hit");
+}
+
+void test_coast_probe_gates_and_recovery() {
+  using namespace nanotrack;
+  const BBox stable{60, 40, 20, 20};
+  // Each missing per-frame gate must prevent both a search candidate and a
+  // confirmation, even though the other frame is a perfect dual-template hit.
+  for (bool on_confirm : {false, true}) {
+    for (int failure = 0; failure < 8; ++failure) {
+      LongTermController controller{ControllerConfig{}};
+      start_probe_coast(controller);
+      advance_probe_coast(controller, 2, 4);
+      auto plan = probe_plan(controller, 5);
+      if (on_confirm) {
+        controller.finish_frame(plan, reliable_pair(plan, stable, 13), std::nullopt);
+        plan = probe_plan(controller, 6);
+      }
+      expect_true(plan.run_tracker && plan.occlusion_probe_type ==
+                      (on_confirm ? OcclusionProbeType::kConfirm : OcclusionProbeType::kSearch),
+                  "per-frame negative fixture exercises an actual search or confirm probe");
+      auto observations = reliable_pair(plan, stable, plan.frame_id);
+      switch (failure) {
+        case 0: observations.erase(observations.begin()); break;
+        case 1: observations.pop_back(); break;
+        case 2: observations[0] = weak_observation(plan, TemplateKind::kAnchor,
+                                                   stable, plan.frame_id); break;
+        case 3: observations[1] = weak_observation(plan, TemplateKind::kRecent,
+                                                   stable, plan.frame_id); break;
+        case 4: observations[1].bbox.x = 78; break; // template IoU < 0.30
+        case 5:
+          observations = reliable_pair(plan, BBox{160, 40, 20, 20}, plan.frame_id);
+          break; // motion center gate
+        case 6:
+          observations = reliable_pair(plan, BBox{52, 32, 36, 36}, plan.frame_id);
+          break; // motion area gate
+        case 7:
+          observations = reliable_pair(plan, BBox{55, 45, 30, 10}, plan.frame_id);
+          break; // motion aspect gate
+      }
+      const auto output = controller.finish_frame(plan, observations, std::nullopt);
+      expect_true(!output.accepted && !output.reacquired && output.control_valid &&
+                      output.bbox.x == 60 && output.bbox.width == 20 &&
+                      output.template_action == TemplateAction::kNone &&
+                      output.occlusion_probe_confirmation_hits == 0,
+                  "all per-frame probe gates are mandatory on search and confirm");
+      plan = probe_plan(controller, on_confirm ? 7 : 6);
+      expect_true(plan.occlusion_probe_type == OcclusionProbeType::kNone && !plan.run_tracker,
+                  "failed per-frame gates cannot leave a pending confirm");
+      controller.finish_frame(plan, {}, std::nullopt);
+    }
+  }
+
+  struct GeometryCase { BBox search; BBox confirm; bool loose_iou; };
+  const GeometryCase inconsistent[] = {
+      {{56.6F, 40, 20, 20}, {63.4F, 40, 20, 20}, false}, // IoU .493, center .34
+      {{60, 40, 20, 20}, {67.1F, 40, 20, 20}, true}, // center .355
+      {{62.5F, 42.5F, 15, 15}, stable, false}, // area log 0.575
+      {{61, 39, 18, 22}, {59, 41, 22, 18}, false}, // aspect log 0.401
+  };
+  for (const auto& geometry : inconsistent) {
+    ControllerConfig config;
+    if (geometry.loose_iou) config.occlusion_confirmation_iou = 0.30F;
+    // Deliberately loosen detector gates: coast must use its own four defaults.
+    config.detector_confirmation_iou = 0.10F;
+    config.detector_confirmation_center_distance = 2.0F;
+    config.detector_confirmation_max_area_log_change = 2.0F;
+    config.detector_confirmation_max_aspect_log_change = 2.0F;
+    LongTermController controller(config);
+    start_probe_coast(controller);
+    advance_probe_coast(controller, 2, 4);
+    auto plan = probe_plan(controller, 5);
+    auto output = controller.finish_frame(plan,
+        reliable_pair(plan, geometry.search, 13), std::nullopt);
+    expect_true(output.occlusion_probe_confirmation_hits == 1,
+                "cross-frame fixture first passes every per-frame search gate");
+    plan = probe_plan(controller, 6);
+    output = controller.finish_frame(plan,
+        reliable_pair(plan, geometry.confirm, 14), std::nullopt);
+    expect_true(output.quality == QualityLevel::kReliable && output.template_iou == 1 &&
+                    !output.accepted && !output.reacquired &&
+                    output.mode == TrackingMode::kOcclusionHold && output.bbox.x == 60 &&
+                    output.occlusion_probe_confirmation_hits == 0,
+                "different nearby boxes fail the independent coast cross-frame gates");
+  }
+
+  for (int search_age : {5, 10}) {
+    LongTermController controller{ControllerConfig{}};
+    start_probe_coast(controller);
+    advance_probe_coast(controller, 2, search_age - 1);
+    auto plan = probe_plan(controller, search_age);
+    controller.finish_frame(plan, reliable_pair(plan, BBox{63, 40, 20, 20}, 100),
+                            std::nullopt);
+    // The next processed frame may skip decoded IDs and timestamps; coast ages
+    // count completed controller frames, not numeric frame-ID differences.
+    plan = controller.begin_frame(100, 5000, true);
+    expect_true(plan.occlusion_probe_type == OcclusionProbeType::kConfirm &&
+                    plan.occlusion_coast_age_frames == static_cast<std::size_t>(search_age + 1) &&
+                    !plan.request_detector && plan.run_tracker,
+                "ages six and eleven confirm on the next processed frame despite timestamp gaps");
+    const auto output = controller.finish_frame(plan,
+        reliable_pair(plan, BBox{64, 40, 20, 20}, 101), std::nullopt);
+    expect_true(output.accepted && output.reacquired && output.control_valid &&
+                    !output.motion_control_authorized &&
+                    output.mode == TrackingMode::kTracking && output.bbox.x == 64 &&
+                    output.occlusion_probe_type == OcclusionProbeType::kConfirm &&
+                    output.occlusion_probe_confirmation_hits == 2 &&
+                    output.occlusion_probe_confirmation_required == 2 &&
+                    controller.hold_remaining_frames_ == 0 &&
+                    controller.occlusion_coast_age_frames_ == 0 &&
+                    !controller.hold_used_for_loss_ && !controller.loss_start_ms_ &&
+                    !controller.motion_.scale_frozen() &&
+                    !controller.frozen_scale_reference_ &&
+                    controller.confirmations_.empty() && controller.detector_candidates_.empty() &&
+                    !controller.active_detector_candidate_,
+                "only a validated second hit exits coast and clears recovery state");
+    expect_near(controller.motion_.velocity_x_, 0, 1e-6F,
+                "confirmed recovery reinitializes motion rather than correcting it");
+    expect_true(!controller.occlusion_decision_.reference_width &&
+                    !controller.occlusion_decision_.suspicion_active,
+                "confirmed recovery clears old stable reference and seeds only the new box");
+    plan = controller.begin_frame(101, 5040, true);
+    expect_true(plan.mode == TrackingMode::kTracking && plan.predicted_bbox.x == 64 &&
+                    plan.occlusion_probe_type == OcclusionProbeType::kNone &&
+                    plan.occlusion_coast_age_frames == 0 && !plan.request_detector,
+                "confirmed box becomes the next-frame motion center with no stale probe");
+    controller.finish_frame(plan, reliable_pair(plan, BBox{64, 40, 20, 20}, 102), std::nullopt);
+  }
+}
+
+void test_coast_probe_stale_identity_and_reset() {
+  using namespace nanotrack;
+  for (bool on_confirm : {false, true}) {
+    for (int mismatch = 0; mismatch < 3; ++mismatch) {
+      LongTermController controller{ControllerConfig{}};
+      start_probe_coast(controller);
+      advance_probe_coast(controller, 2, 4);
+      auto plan = probe_plan(controller, 5);
+      if (on_confirm) {
+        controller.finish_frame(plan, reliable_pair(plan, BBox{60, 40, 20, 20}, 13),
+                                std::nullopt);
+        plan = probe_plan(controller, 6);
+      }
+      auto observations = reliable_pair(plan, BBox{60, 40, 20, 20}, plan.frame_id);
+      if (mismatch == 0) --observations[0].frame_id;
+      if (mismatch == 1) --observations[0].timestamp_ms;
+      if (mismatch == 2) ++observations[1].search_token;
+      bool threw = false;
+      try { controller.finish_frame(plan, observations, std::nullopt); }
+      catch (const std::invalid_argument&) { threw = true; }
+      expect_true(threw, "stale probe frame/timestamp or mismatched template token is rejected");
+      expect_true(!controller.frame_open_ && controller.hold_remaining_frames_ == 0,
+                  "invalid probe identity aborts the failed coast session without an output");
+      plan = probe_plan(controller, on_confirm ? 7 : 6);
+      expect_true(plan.occlusion_probe_type != OcclusionProbeType::kConfirm &&
+                      !plan.motion_control_authorized,
+                  "invalid probe identity cannot survive as a pending candidate");
+      controller.finish_frame(plan, {}, std::nullopt);
+    }
+  }
+
+  LongTermController reset{ControllerConfig{}};
+  start_probe_coast(reset);
+  advance_probe_coast(reset, 2, 4);
+  auto plan = probe_plan(reset, 5);
+  reset.finish_frame(plan, reliable_pair(plan, BBox{60, 40, 20, 20}, 13), std::nullopt);
+  const auto old_confirm = probe_plan(reset, 6);
+  reset.initialize(BBox{100, 60, 30, 30}, 14, 560, {240, 160});
+  bool threw = false;
+  try { reset.finish_frame(old_confirm,
+      reliable_pair(old_confirm, BBox{60, 40, 20, 20}, 14), std::nullopt); }
+  catch (const std::logic_error&) { threw = true; }
+  plan = reset.begin_frame(15, 600, true);
+  expect_true(threw && plan.mode == TrackingMode::kTracking &&
+                  plan.occlusion_probe_type == OcclusionProbeType::kNone &&
+                  plan.predicted_bbox.x == 100 && !plan.motion_control_authorized,
+              "same-frame reinitialize discards the pending probe and old open plan");
+  reset.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController duplicate{ControllerConfig{}};
+  start_probe_coast(duplicate);
+  advance_probe_coast(duplicate, 2, 4);
+  plan = probe_plan(duplicate, 5);
+  duplicate.finish_frame(plan, reliable_pair(plan, BBox{60, 40, 20, 20}, 13), std::nullopt);
+  threw = false;
+  try { duplicate.finish_frame(plan, {}, std::nullopt); }
+  catch (const std::logic_error&) { threw = true; }
+  plan = probe_plan(duplicate, 6);
+  expect_true(threw && !duplicate.coast_probe_candidate_ &&
+                  plan.occlusion_probe_type == OcclusionProbeType::kNone,
+              "a duplicate stale result discards the search candidate even with no open frame");
+  duplicate.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController stale_plan{ControllerConfig{}};
+  start_probe_coast(stale_plan);
+  advance_probe_coast(stale_plan, 2, 4);
+  plan = probe_plan(stale_plan, 5);
+  stale_plan.finish_frame(plan, reliable_pair(plan, BBox{60, 40, 20, 20}, 13),
+                          std::nullopt);
+  const auto active_confirm = probe_plan(stale_plan, 6);
+  threw = false;
+  try { stale_plan.finish_frame(plan, reliable_pair(plan, BBox{60, 40, 20, 20}, 13),
+                                std::nullopt); }
+  catch (const std::logic_error&) { threw = true; }
+  expect_true(threw && !stale_plan.frame_open_ && stale_plan.hold_remaining_frames_ == 0,
+              "a stale search plan cannot retain or complete the active confirm session");
+  if (!stale_plan.frame_open_) {
+    plan = stale_plan.begin_frame(active_confirm.frame_id + 1, active_confirm.timestamp_ms + 40, false);
+    expect_true(!plan.motion_control_authorized && plan.occlusion_probe_type == OcclusionProbeType::kNone,
+                "the frame after a stale plan has no probe or coast authorization");
+    stale_plan.finish_frame(plan, {}, std::nullopt);
+  }
+}
+
 // These cases catch class-gate bypasses, mutable session state, and rejection
 // precedence changes without relying on detector or rendering test doubles.
 void test_target_class_gate() {
@@ -296,6 +646,9 @@ void test_target_class_gate() {
 
 int main() {
   using namespace nanotrack;
+  test_coast_probe_schedule_and_isolation();
+  test_coast_probe_gates_and_recovery();
+  test_coast_probe_stale_identity_and_reset();
 
   test_target_class_gate();
 
@@ -1219,14 +1572,15 @@ int main() {
           (gap == 1000 ? irregular_offsets[age - 1] : (age - 1) * gap);
       plan = bounded_coast.begin_frame(8 + age, timestamp, true);
       expect_true(plan.mode == TrackingMode::kOcclusionHold &&
-                      !plan.run_tracker && !plan.request_detector &&
+                      plan.run_tracker == (age == 5 || age == 10) && !plan.request_detector &&
                       !plan.detector_request && plan.motion_control_authorized &&
                       plan.occlusion_coast_age_frames == static_cast<std::size_t>(age) &&
                       plan.hold_remaining_frames == static_cast<std::size_t>(13 - age),
-                  "ages two through twelve plan frozen motion with no inference or detector");
+                  "ages two through twelve plan frozen motion with periodic probes and no detector");
       DetectorBatch old_batch{1, 40, {{stable, 0.99F, 0}}, 0};
       output = bounded_coast.finish_frame(
-          plan, reliable_pair(plan, BBox{66, 40, 14, 20}, 8 + age), old_batch);
+          plan, {reliable_observation(plan, TemplateKind::kAnchor,
+                                      BBox{66, 40, 14, 20}, 8 + age)}, old_batch);
       valid_ages += output.control_valid ? 1 : 0;
       expect_true(output.control_valid && output.motion_control_authorized &&
                       !output.accepted && output.bbox.width == 20 &&
@@ -1234,7 +1588,7 @@ int main() {
                       output.occlusion_coast_age_frames == static_cast<std::size_t>(age) &&
                       output.template_action == TemplateAction::kNone &&
                       output.detector_candidates_queued == 0,
-                  "non-probe coast ignores supplied observations and stale detector boxes");
+                  "single-template observations and stale detector boxes cannot replace coast control");
     }
     expect_true(valid_ages == 12, "inclusive coast authorizes exactly twelve frames");
     plan = bounded_coast.begin_frame(
