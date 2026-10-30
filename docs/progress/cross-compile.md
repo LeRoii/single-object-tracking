@@ -164,6 +164,21 @@ git diff --check
 - 边界：本任务只验证配置语法和文件存在/类型，不验证模型内容、哈希或 runtime 兼容性；未交叉编译、未连接板卡、未启动模型或吊舱。公共契约 `latest_handoff.available=false` 和现有候选编译裁决保持不变。
 - Handoff：后续生产 adapter 应消费本提交的严格解析/验证接口；下一步按计划实现配置选择与 WSL adapter 集成。协调对话无需因本次主机测试调整板端批准状态。
 
+## 2026-10-30 配置化 A6 候选构建暂存（Task 2，连接中断）
+
+- 时间：`2026-10-30T18:57:18+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；输入 HEAD 为 Task 1 commit `ebbfec37fba05283240a598cbc15b79a08be4aac`。
+- 先对 WSL 当前 adapter 和 CMake 做只读快照，确认原 SHA-256 分别为 `08735f05ea5e631ca459fce7cc164428d69ac77caf2a349f3b66ae2d76c5391b` 和 `2dc1029fc7b92d75fc028bb8531552f05d76eeffa505d6bfb0a3adc6105d8dae`。修改前建立可恢复备份 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/ai_alg.backup-20261030-before-deployment-config`，备份文件哈希与上述原文件一致。
+- 本地静态接入检查对原快照得到预期 RED：`5/16` 通过、11 项失败，失败项正是旧五个硬编码路径、未调用严格 parser、五路径未接入及 CMake 未包含 parser source。补丁后得到 GREEN：`18/18` 通过；adapter 除 parser include、唯一固定 `kDeploymentConfig=/app/nanotrack_b827_candidate/config/production-deployment.conf`、五路径接入外保持原字节行为，CMake 只新增 `production_deployment_config.cpp`。
+- 经 WSL 临时目录逐项 `sha256sum -c` 成功后，已经落盘并再次核对以下文件：
+  - `ai_alg/source/native-lib_impl.cpp`：`687293fc0ebef2630d878a5e68f30a4a2d7663aeb7495081bc90bc934cfb4ca0`；
+  - `ai_alg/CMakeLists.txt`：`0d763471acf50160e3fdc3c176c2e22a9141870bb473923f29adc213731c693b`；
+  - `ai_alg/nanotrack/include/production_deployment_config.hpp`：`f6c3035decc01e0b0428d07d300dbb3f3b7edc00f9a4fdbac570a106726d51e6`；
+  - `ai_alg/nanotrack/source/production_deployment_config.cpp`：`1c644b15d392c5b0e2711352d3dd044ce66e1b2a5a35aa28849d5d76e6e02cd9`；
+  - `deployment_b827/config/production-deployment.conf`：`220b77f494b7c577f9dc2e0306f3fe1ce2ad1a0c684ed93b9bbd61f9b458e82c`。
+- 随后向 WSL 临时目录传输三个 NanoTrack RKNN、VisDrone9 RKNN/manifest/labels 和 controller config 时，`100.104.145.88:2222` 连接中断。断线后 `tailscale ping -c 3 100.104.145.88` 无响应，SSH 和 TCP 2222 均超时；本机 `tailscale0` 路由仍存在。由于无法重新进入 WSL，临时工件目录的大小和 SHA、最终 `deployment_b827` 工件身份均**未确认**，不得把传输动作视为成功。
+- 本节没有执行 `BUILD_JOBS=4 ./run.sh --platform A6`，没有产生新的 `viewlink_app`/`libAI.a` 身份，也没有连接开发板或启动候选程序。Task 2 当前状态为 `blocked_on_wsl_reachability_after_adapter_staging`；恢复连接后的第一步必须先核对上述五个已安装文件和临时工件目录，再补传/校验七个工件，然后才允许运行 A6 构建。
+- RKNN 风险保持不变：交叉环境历史 runtime 为 `1.5.2`，临时 VisDrone9 工件及板端历史环境为 `2.3.2`；即使后续编译成功，也不能据此声明模型加载、推理、开发板或吊舱验收。
+
 ## 完成条件
 
 - `development_board_validation.latest_handoff.available=true`；
