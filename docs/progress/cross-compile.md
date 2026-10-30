@@ -1,9 +1,9 @@
 # 生产交叉编译任务进度
 
-- 任务状态：`blocked_waiting_for_approved_board_handoff`
-- 最近核对：`2026-10-22T21:58:11+08:00`
-- 核对分支/工作树：`codex/cross-compile-progress-sync` / `/home/u20/single-object-tracking/.worktrees/cross-compile-progress-sync`
-- 核对基线：`main@29b083e4e6ced2fd46eb7f9ecf821287b4cc401a`
+- 任务状态：`candidate_cross_compile_succeeded_handoff_unapproved`
+- 最近核对：`2026-10-30T17:55:23+08:00`
+- 核对分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`
+- 核对基线：`main@b827c0a6d8916e9c0832c748e30722f6f2fe5563`
 - 责任边界：确认能够取得协调对话指定的最新开发板验证结果，并使用现有交叉编译流程成功生成生产产物。
 
 ## 前置条件
@@ -64,6 +64,71 @@ sha256sum docs/progress/integration-contract.yaml \
 - **证据边界：** 当前只能证明生产交叉编译任务已经同步协调基线、读取当前契约并识别到输入未就绪；不能证明已经取得最新板端结果，不能证明本轮交叉编译成功，也不能证明部署或真实吊舱验收。
 - **不采用的历史证据：** 早期 A6 构建成功、旧二进制路径或旧对话中的哈希不属于当前协调者锁定的 handoff，除非协调对话以后明确把完全相同的身份发布为最新 handoff。
 
+## 2026-10-30 用户授权的候选生产交叉编译
+
+### 输入身份与裁决
+
+- 时间：`2026-10-30T17:55:23+08:00`。
+- 分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`。
+- 精确仓库核心源基线：`main@b827c0a6d8916e9c0832c748e30722f6f2fe5563`；开始时工作树干净。WSL 的生产 C ABI adapter 和 `ai_alg/CMakeLists.txt` 不在该仓库 commit 中，是本轮基于备份版本完成的生产集成文件，其最终哈希在下文单独锁定。
+- 用户明确授权在公共契约尚未发布 handoff 的情况下，对当前 `main` 和保留的 canonical COCO detector 执行一次候选生产交叉编译。该授权只允许验证生产编译链，不改变仓库规定的开发板/真实吊舱验收边界。
+- 当前 `docs/progress/integration-contract.yaml` SHA-256 为 `3d52ec1e0741620e38bb48810bbd1b8f1fb7d89df0c7989d208afecee87504a6`，其中 `development_board_validation.latest_handoff.available=false`；`docs/progress/board-validation.md` SHA-256 为 `840756c8f8230ff5c170f14ed1a5428e5d239b403155f7050db30fe84267dcc1`。因此本节结果是候选编译，不是协调者批准的板端 handoff 消费结果。
+
+canonical COCO detector 的部署身份如下；RKNN 哈希来自跟踪仓库中的 manifest 声明，本轮交叉编译环境没有复制或执行模型，不能把声明哈希提升为本轮模型加载证据：
+
+| 工件 | 生产路径/来源 | SHA-256 |
+| --- | --- | --- |
+| COCO RKNN | `/app/model/yolov8n-rk3566-fp16.rknn`；由 manifest 声明 | `4d53a9b1e12996556294be8e099fe2dc0815d5c9cfdc327edfe350832baf8cf6` |
+| detector manifest | `/app/model/detector-manifest.json`；仓库 `rk3566/nanotrack_v3/models/detector-manifest.json` | `8adcb1026803d688a7b85c55977d533eac6c15070ac4260bedb09d1da49d6061` |
+| COCO80 labels | `/app/model/coco80.txt`；仓库 `rk3566/nanotrack_v3/models/coco80.txt` | `bd17f1ee35d5f3c862a4894605855abbb9dda4b0621fdb0ac4c2c8c7bb7e730a` |
+| production controller config | `/app/model/visible-default.conf`；仓库 `rk3566/nanotrack_v3/config/visible-default.conf` | `b9a128b78063056173626af1c7c7d2c580a59b295c45a4afc0ef8e2e04bff95b` |
+
+### 同步、备份与生产边界
+
+- WSL 工程：`/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker`。
+- 修改前将 `ai_alg` 完整复制为 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/ai_alg.backup-20261030-before-main-b827`；原目录和备份各有 1273 个文件，`diff -qr` 无输出。备份中的 `source/native-lib_impl.cpp` SHA-256 为 `8f814a3bc282b3783e7d290f40abee7503cb3465d8a095fd2b8f8b665d1aec04`，`CMakeLists.txt` SHA-256 为 `75cfd954fdda7e2b1a87f2254ef7f568cdbf7a6a61b3bd1296f4d6a5811d682c`。
+- 通过 SSH 复用连接和 `scp` 只同步生产白名单：16 个头文件、13 个核心源文件、`visible-default.conf`、生产 C ABI adapter 和 `ai_alg/CMakeLists.txt`，合计 32 个文件。本地基线与 WSL 落盘文件逐文件 SHA-256 对比无差异。
+- 最终 WSL `ai_alg/source/native-lib_impl.cpp` SHA-256 为 `08735f05ea5e631ca459fce7cc164428d69ac77caf2a349f3b66ae2d76c5391b`；最终 `ai_alg/CMakeLists.txt` SHA-256 为 `2dc1029fc7b92d75fc028bb8531552f05d76eeffa505d6bfb0a3adc6105d8dae`。
+- 纳入的 Debug 分支生产改进包括位置门控、门控后候选上限、`OCCLUSION_HOLD`、单帧异常终止保护和目标类别初始化；adapter 使用 `YoloRknnEngine::labels().size()` 配置自动类别建立。
+- 未同步 `main.cpp`、CLI/运行时参数解析、HighGUI、键鼠交互、逐帧播放、调试覆盖层、调试遥测、视频/CSV/metadata 输出和 tracking log。生产源目录扫描以及最终归档成员/符号扫描均未发现这些对象或引用。
+- C ABI、RGB888 `1920x1080`、stride `5760`、`STATE_INIT_TRACK` 当帧输出、正常/不确定/丢失均返回 `true`、丢失期输出预测框等既有 adapter 语义保持不变；本轮没有在开发板上执行这些运行时行为。
+
+### 实际命令与观察结果
+
+主机侧先对精确源基线执行 RKNN-independent 回归：
+
+```bash
+cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-main-b827-host \
+  -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF
+cmake --build /tmp/nanotrack-main-b827-host -j4
+ctest --test-dir /tmp/nanotrack-main-b827-host --output-on-failure
+```
+
+观察结果：`16/16` 通过。
+
+WSL 中只执行 A6 生产构建：
+
+```bash
+cd /home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker
+BUILD_JOBS=4 ./run.sh --platform A6
+```
+
+观察结果：退出码 `0`；CMake 重新配置；GNU AArch64 C++ `10.3.0`；`target_class.cpp.o` 和其余生产核心进入 `libAI.a`；`viewlink_app` 链接成功。
+
+| 产物 | 大小/时间（Asia/Shanghai） | SHA-256 |
+| --- | --- | --- |
+| `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/build_A6/viewlink_app` | 32394856 bytes；`2026-10-30 17:53:28 +0800` | `768e65e635c3c78ff9d61f8963e8131ec5cb897c301fefcaffc31d17003da988` |
+| `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/build_A6/ai_alg/libAI.a` | 513498 bytes；`2026-10-30 17:53:27 +0800` | `8050dd530d3ce03538b740386c8e5c8fd2ec525888ed19e0dab8a550ead7da20` |
+
+`file` 将 `viewlink_app` 识别为 ARM aarch64 ELF。`libAI.a` 含 14 个预期对象并导出真实的 `tracker_detector_init`、`do_tracker_detector`、`sr_model_init`、`sr_infer_frame` C 符号；无 stub、CLI、main、HighGUI、交互或调试对象/符号。
+
+### 风险、阻塞和证据边界
+
+- 交叉环境链接的 `A6_libs/librknnrt.so` SHA-256 为 `135f497b820ae161d36f756c26b949419d271918e915e71663d424e5c1d799e7`，可见版本字符串为 RKNN runtime `1.5.2`；canonical COCO manifest 记录模型由 toolkit `2.3.2` 转换，而最新板端验证使用 RKNN API `2.3.2`。本轮只完成链接，没有模型加载/推理，故旧链接库与 2.3.2 模型/部署 runtime 的兼容性仍是明确风险。
+- 开发板最新记录仍为 `functional_pass_promotion_held`，且公共契约 `latest_handoff.available=false`。本次候选构建不绕过该门槛，不把 `b827c0a` 宣称为协调者批准的生产 handoff。
+- 没有把产物部署到开发板或真实吊舱，没有执行板端模型加载、推理、跟踪、长期恢复、内存平台或场景验收；不能声明开发板或吊舱验收通过。
+- 下一步由协调对话决定是否更新公共契约并锁定可消费 handoff；若以后批准的源 commit、模型、配置或 runtime 身份不同，必须重新交叉编译。人工可使用上述路径和 SHA-256 取得候选产物进行后续受控部署。
+
 ## 完成条件
 
 - `development_board_validation.latest_handoff.available=true`；
@@ -75,17 +140,16 @@ sha256sum docs/progress/integration-contract.yaml \
 
 ## Next action
 
-1. 等待开发板验证任务和协调对话发布 `available=true` 的最新 handoff。
-2. 读取 handoff 中的 source commit、模型/manifest/labels、配置、证据路径和裁决。
-3. 在本任务工作树和交叉编译环境中逐项核对 commit 与 SHA-256；任何一项不一致即停止并报告。
-4. 仅对完全匹配的 handoff 执行现有 A6 交叉编译命令，记录实际命令、退出码、产物路径和 SHA-256。
-5. 将任务文件与必要的源码/文档变更放入同一 commit，并把 commit ID 交给协调对话；真实吊舱部署和测试仍交给人完成。
+1. 将本次候选编译记录和任务 commit 交给协调对话，但保持 `latest_handoff.available=false`，直到开发板验证任务发布达到门槛的精确 handoff。
+2. handoff 发布后核对 source commit、模型/manifest/labels、配置、runtime 身份、证据路径和裁决。
+3. 若批准身份与本次候选输入完全一致，协调对话可决定如何采纳候选编译证据；任何一项不同都必须重新执行 A6 交叉编译，不能沿用本节哈希。
+4. 真实吊舱部署和测试仍由人完成；没有明确人工反馈不得声明吊舱验收通过。
 
 ## Handoff
 
-- 请协调对话采纳本次状态刷新：本任务已完成 owner refresh，建议把公共状态中的 `production_cross_compile.status` 从 `needs_owner_refresh` 更新为 `blocked_waiting_for_approved_board_handoff`，并保持 `latest_result_access_confirmed=false`、`compile_succeeded=false`。
-- 当前不得把 `development_board_validation.latest_handoff.available` 改为 `true`；必须等待开发板验证任务给出精确且达到门槛的 handoff。
-- 交叉编译完成后，再把生产产物路径和 SHA-256 交给用户。真实吊舱部署和测试由人完成；人工结果可由协调对话记录，但不是本任务的自动验收项。
+- 请协调对话采纳本次候选编译记录：`main@b827c0a6d8916e9c0832c748e30722f6f2fe5563` 已在现有 WSL 环境中生成 AArch64 `viewlink_app`，其路径和 SHA-256 见上文。
+- 公共契约当前没有“用户授权的未批准 handoff 候选编译”字段。协调对话如更新公共状态，应明确区分候选编译成功与批准 handoff 编译成功；在 handoff 未发布前保持 `latest_result_access_confirmed=false`，不得仅据本节把 `development_board_validation.latest_handoff.available` 改为 `true`。
+- 需要协调对话决定是否增加/记录 candidate compile 状态，并处理 RKNN runtime `1.5.2` 与板端/模型 `2.3.2` 的身份差异；真实吊舱部署和测试仍由人完成。
 
 ## 后续更新模板
 
