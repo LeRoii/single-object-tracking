@@ -68,6 +68,16 @@ void OcclusionEvidenceTracker::reset() {
   width_shrink_frames_ = height_shrink_frames_ = 0;
 }
 
+OcclusionEvidenceDecision OcclusionEvidenceTracker::observe_gap() {
+  previous_bbox_.reset();
+  width_shrink_frames_ = height_shrink_frames_ = 0;
+  clean_samples_.clear();
+  OcclusionEvidenceDecision decision;
+  decision.suspicion_active = frozen_reference_.has_value();
+  publish_reference(decision);
+  return decision;
+}
+
 std::optional<OcclusionEvidenceTracker::Reference>
 OcclusionEvidenceTracker::reference() const {
   if (frozen_reference_) return frozen_reference_;
@@ -88,7 +98,7 @@ void OcclusionEvidenceTracker::append_stable(const StableSample& sample) {
 }
 
 void OcclusionEvidenceTracker::publish_reference(
-    OcclusionEvidenceDecision& decision, const BBox& observation) const {
+    OcclusionEvidenceDecision& decision, const std::optional<BBox>& observation) const {
   const auto ref = reference();
   if (!ref || ref->samples < static_cast<std::size_t>(config_.occlusion_min_reference_samples)) {
     return;
@@ -99,8 +109,10 @@ void OcclusionEvidenceTracker::publish_reference(
           : OcclusionReferenceSource::kPartialStableMedian;
   decision.reference_width = ref->median.width;
   decision.reference_height = ref->median.height;
-  decision.width_ratio = observation.width / ref->median.width;
-  decision.height_ratio = observation.height / ref->median.height;
+  if (observation) {
+    decision.width_ratio = observation->width / ref->median.width;
+    decision.height_ratio = observation->height / ref->median.height;
+  }
 }
 
 OcclusionEvidenceDecision OcclusionEvidenceTracker::observe(
@@ -196,6 +208,9 @@ OcclusionEvidenceDecision OcclusionEvidenceTracker::observe(
     previous_bbox_ = bbox;
     width_shrink_frames_ = height_shrink_frames_ = 0;
   }
+  // Reestablish only a missing temporal baseline. An unaccepted observation
+  // cannot enter stable history or replace an existing stable/suspicious size.
+  if (!previous_bbox_) previous_bbox_ = bbox;
   decision.suspicion_active = frozen_reference_.has_value();
   decision.width_shrink_frames = width_shrink_frames_;
   decision.height_shrink_frames = height_shrink_frames_;

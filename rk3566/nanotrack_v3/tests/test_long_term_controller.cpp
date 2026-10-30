@@ -1102,7 +1102,9 @@ int main() {
     seed(gradual);
     int frame = 9;
     if (start_uncertain) {
-      output = reject_frame(gradual, frame, frame * 40, true);
+      plan = gradual.begin_frame(frame, frame * 40, true);
+      output = gradual.finish_frame(
+          plan, {rejected_observation(plan, TemplateKind::kAnchor, stable)}, std::nullopt);
       expect_true(output.mode == TrackingMode::kUncertain && !output.control_valid,
                   "ordinary one-frame quality loss enters uncertain");
       ++frame;
@@ -1128,6 +1130,43 @@ int main() {
                     output.occlusion_reference_width == std::optional<float>(20) &&
                     output.bbox.width == 20 && output.control_valid,
                 "two shrinking RELIABLE frames with peak drop trigger from tracking or uncertain");
+  }
+
+  // A missing frame must not join shrinking observations into one consecutive
+  // run, but two real adjacent shrink steps after the gap may still trigger.
+  LongTermController interrupted_shrink(coast_config);
+  seed(interrupted_shrink);
+  plan = interrupted_shrink.begin_frame(9, 360, false);
+  interrupted_shrink.finish_frame(
+      plan, reliable_pair(plan, BBox{61, 40, 18, 20}, 9), std::nullopt);
+  output = reject_frame(interrupted_shrink, 10, 400);
+  expect_true(output.occlusion_suspicion_active &&
+                  output.occlusion_width_shrink_frames == 0 &&
+                  output.occlusion_height_shrink_frames == 0 &&
+                  output.occlusion_clean_frames == 0 &&
+                  output.occlusion_reference_width == std::optional<float>(20) &&
+                  !output.occlusion_width_ratio && !output.occlusion_height_ratio &&
+                  !output.occlusion_severe_evidence && !output.occlusion_gradual_evidence,
+              "empty frame preserves frozen reference but interrupts evidence continuity");
+  plan = interrupted_shrink.begin_frame(11, 440, false);
+  auto after_gap = reliable_pair(plan, BBox{62, 40, 16, 20}, 11);
+  for (auto& observation : after_gap) observation.metrics.peak_margin = 0.16F;
+  output = interrupted_shrink.finish_frame(plan, after_gap, std::nullopt);
+  expect_true(!output.occlusion_hold_triggered && !output.control_valid &&
+                  output.occlusion_width_shrink_frames == 0 &&
+                  output.occlusion_peak_margin_evidence,
+              "width18 empty width16 cannot trigger a nonconsecutive gradual coast");
+  for (int frame : {12, 13}) {
+    plan = interrupted_shrink.begin_frame(frame, frame * 40, false);
+    const BBox shrinking = frame == 12 ? BBox{62.5F, 40, 15, 20}
+                                      : BBox{62.8F, 40, 14.4F, 20};
+    output = interrupted_shrink.finish_frame(
+        plan, {weak_observation(plan, TemplateKind::kAnchor, shrinking)}, std::nullopt);
+    expect_true(output.occlusion_hold_triggered == (frame == 13) &&
+                    output.occlusion_width_shrink_frames ==
+                        static_cast<std::size_t>(frame - 11) &&
+                    output.occlusion_reference_width == std::optional<float>(20),
+                "two adjacent shrink steps after the new baseline can trigger using frozen reference");
   }
 
   // Geometry disagreement is evidence even when the second template is weak;

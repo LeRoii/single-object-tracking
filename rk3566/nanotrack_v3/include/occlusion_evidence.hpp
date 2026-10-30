@@ -41,6 +41,9 @@ class OcclusionEvidenceTracker {
   explicit OcclusionEvidenceTracker(const ControllerConfig& config);
   void reset();
   OcclusionEvidenceDecision observe(const OcclusionEvidenceInput& input);
+  // Preserve reference/history/suspicion, but interrupt temporal runs. The
+  // first subsequent observation establishes a new size baseline.
+  OcclusionEvidenceDecision observe_gap();
 
  private:
   struct StableSample {
@@ -54,7 +57,7 @@ class OcclusionEvidenceTracker {
   std::optional<Reference> reference() const;
   void append_stable(const StableSample& sample);
   void publish_reference(OcclusionEvidenceDecision& decision,
-                         const BBox& observation) const;
+                         const std::optional<BBox>& observation = std::nullopt) const;
 
   ControllerConfig config_;
   std::deque<float> stable_widths_, stable_heights_, stable_peak_margins_;

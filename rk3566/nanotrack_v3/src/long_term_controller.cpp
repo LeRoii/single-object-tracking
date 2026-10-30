@@ -724,6 +724,8 @@ ControllerOutput LongTermController::finish_frame(
         detector_verification_active});
     occlusion_suspicion_frames_ = occlusion_decision_.suspicion_active
         ? occlusion_suspicion_frames_ + 1 : 0;
+  } else if (!selected) {
+    occlusion_decision_ = occlusion_evidence_.observe_gap();
   }
   publish_occlusion_evidence(output);
   if (selected && !hold_used_for_loss_ && hold_source_mode &&

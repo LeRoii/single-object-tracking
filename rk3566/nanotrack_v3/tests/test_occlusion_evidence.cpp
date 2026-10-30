@@ -363,6 +363,99 @@ void peak_baseline_is_the_selected_margin_median() {
           "absolute drop uses even-window margin median, not last margin or mean");
 }
 
+void observation_gaps_interrupt_both_shrink_axes_without_losing_reference() {
+  OcclusionEvidenceTracker tracker(ControllerConfig{});
+  seed(tracker);
+  auto decision = tracker.observe(sample(90, 95));
+  require(decision.width_shrink_frames == 1 && decision.height_shrink_frames == 1,
+          "fixture has an active shrinking run on both axes");
+  for (int gap = 0; gap < 2; ++gap) {
+    decision = tracker.observe_gap();
+    require(decision.suspicion_active && !decision.suspicion_started &&
+                !decision.suspicion_cleared && decision.width_shrink_frames == 0 &&
+                decision.height_shrink_frames == 0 && decision.clean_frames == 0 &&
+                !decision.triggered && !decision.severe_evidence &&
+                !decision.gradual_evidence && !decision.template_evidence &&
+                !decision.peak_margin_evidence && !decision.motion_residual_evidence &&
+                !decision.width_ratio && !decision.height_ratio &&
+                decision.reference_source == OcclusionReferenceSource::kFullStableMedian,
+            "each missing observation breaks continuity without inventing current evidence");
+    near(decision.reference_width, 100);
+    near(decision.reference_height, 100);
+  }
+  decision = tracker.observe(sample(80, 90, 0.06F));
+  require(!decision.triggered && decision.width_shrink_frames == 0 &&
+              decision.height_shrink_frames == 0 && decision.peak_margin_evidence,
+          "first observation after a gap establishes a fresh baseline and retains peak history");
+  decision = tracker.observe(sample(76, 85, 0.06F));
+  require(!decision.triggered && decision.width_shrink_frames == 1 &&
+              decision.height_shrink_frames == 1,
+          "one real adjacent shrink step cannot trigger gradual evidence");
+  decision = tracker.observe(sample(72, 80, 0.06F));
+  require(decision.trigger_reason == OcclusionTriggerReason::kGradualWidthPeak &&
+              decision.width_shrink_frames == 2 && decision.height_shrink_frames == 2,
+          "two adjacent shrink steps after a gap can trigger using the frozen reference");
+}
+
+void observation_gaps_interrupt_clean_runs_without_clearing_suspicion() {
+  OcclusionEvidenceTracker tracker(ControllerConfig{});
+  seed(tracker);
+  tracker.observe(sample(90));
+  auto decision = tracker.observe(sample(101));
+  require(decision.clean_frames == 1, "fixture has one clean recovery frame");
+  decision = tracker.observe_gap();
+  require(decision.suspicion_active && !decision.suspicion_cleared &&
+              decision.clean_frames == 0,
+          "gap discards pending clean samples while preserving suspicion");
+  near(decision.reference_width, 100);
+  decision = tracker.observe(sample(102));
+  require(decision.suspicion_active && !decision.suspicion_cleared &&
+              decision.clean_frames == 1,
+          "clean samples on opposite sides of a gap cannot clear suspicion");
+  decision = tracker.observe(sample(103));
+  require(!decision.suspicion_active && decision.suspicion_cleared &&
+              decision.clean_frames == 2,
+          "two new consecutive clean frames still clear suspicion");
+  decision = tracker.observe(sample(104));
+  near(decision.reference_width, 103);
+}
+
+void observation_gaps_preserve_unfrozen_history_and_immediate_severe_detection() {
+  OcclusionEvidenceTracker tracker(ControllerConfig{});
+  require(!tracker.observe_gap().reference_width,
+          "gap before any stable samples does not manufacture a reference");
+  for (float width : {100.0F, 101.0F, 102.0F}) tracker.observe(sample(width));
+  auto decision = tracker.observe_gap();
+  require(!decision.suspicion_active &&
+              decision.reference_source == OcclusionReferenceSource::kPartialStableMedian,
+          "gap preserves partial stable history without introducing suspicion");
+  near(decision.reference_width, 101);
+  decision = tracker.observe(sample(103));
+  near(decision.reference_width, 101.5F);
+  tracker.observe_gap();
+  decision = tracker.observe(sample(70));
+  require(decision.trigger_reason == OcclusionTriggerReason::kSevereWidth,
+          "severe detection remains available immediately after a gap");
+}
+
+void post_gap_unaccepted_observation_establishes_only_a_temporal_baseline() {
+  OcclusionEvidenceTracker tracker(ControllerConfig{});
+  seed(tracker);
+  tracker.observe_gap();
+  for (int step = 0; step < 3; ++step) {
+    const float widths[] = {90, 80, 76};
+    auto input = sample(widths[step], 100, 0.06F);
+    input.reliable_accepted = false;
+    const auto decision = tracker.observe(input);
+    require(decision.width_shrink_frames == step &&
+                decision.triggered == (step == 2),
+            "an unaccepted post-gap baseline must allow two later adjacent shrink steps");
+    near(decision.reference_width, 100);
+    require(decision.reference_source == OcclusionReferenceSource::kFullStableMedian,
+            "unaccepted baseline cannot change stable reference samples");
+  }
+}
+
 void noise_and_reversal_reset_each_axis_trend() {
   OcclusionEvidenceTracker tracker(ControllerConfig{});
   seed(tracker);
@@ -402,7 +495,11 @@ int main() {
       {"noise_boundary_is_not_a_clean_recovery", noise_boundary_is_not_a_clean_recovery},
       {"only_stable_accepted_observations_enter_history", only_stable_accepted_observations_enter_history},
       {"peak_baseline_is_the_selected_margin_median", peak_baseline_is_the_selected_margin_median},
-      {"noise_and_reversal_reset_each_axis_trend", noise_and_reversal_reset_each_axis_trend}};
+      {"noise_and_reversal_reset_each_axis_trend", noise_and_reversal_reset_each_axis_trend},
+      {"observation_gaps_interrupt_both_shrink_axes_without_losing_reference", observation_gaps_interrupt_both_shrink_axes_without_losing_reference},
+      {"observation_gaps_interrupt_clean_runs_without_clearing_suspicion", observation_gaps_interrupt_clean_runs_without_clearing_suspicion},
+      {"observation_gaps_preserve_unfrozen_history_and_immediate_severe_detection", observation_gaps_preserve_unfrozen_history_and_immediate_severe_detection},
+      {"post_gap_unaccepted_observation_establishes_only_a_temporal_baseline", post_gap_unaccepted_observation_establishes_only_a_temporal_baseline}};
   int failures = 0;
   for (const auto& test : tests) {
     try { test.second(); std::cout << "PASS: " << test.first << '\n'; }
