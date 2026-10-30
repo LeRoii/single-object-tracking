@@ -12,6 +12,11 @@
   - `head.rknn`：`2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600`。
 - 当前 detector 本来就是 COCO80 YOLOv8；`detector-manifest.json` 和 `coco80.txt` 已匹配该接口。
 - u20 当前没有 `yolov8n-rk3566-fp16.rknn`。不能把任意 COCO 模型改名替换；候选文件必须符合现有九输出 YOLOv8 后处理契约，并与 manifest 身份一致。期望 SHA-256 为 `4d53a9b1e12996556294be8e099fe2dc0815d5c9cfdc327edfe350832baf8cf6`。
+- 为先打通功能链路，用户批准临时使用 u20 中已通过既有板端 detector 功能检查的 VisDrone9 工件：
+  - RKNN：`/home/u20/single-object-tracking/artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-rk3566-fp16.rknn`，SHA-256 `3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0`；
+  - manifest：SHA-256 `05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e`；
+  - labels：SHA-256 `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992`。
+- VisDrone9 仅用于模型加载、detector 和集成启动验证，不代表 COCO80 效果或最终模型验收。以后通过配置切换回 canonical COCO，不再修改 adapter。
 
 ## 采用方案
 
@@ -22,9 +27,9 @@
 ```text
 tracker_model_dir=/app/nanotrack_b827_candidate/model
 controller_config_path=/app/nanotrack_b827_candidate/config/visible-default.conf
-detector_model_path=/app/nanotrack_b827_candidate/model/yolov8n-rk3566-fp16.rknn
+detector_model_path=/app/nanotrack_b827_candidate/model/yolov8n-visdrone9-rk3566-fp16.rknn
 detector_manifest_path=/app/nanotrack_b827_candidate/config/detector-manifest.json
-detector_labels_path=/app/nanotrack_b827_candidate/config/coco80.txt
+detector_labels_path=/app/nanotrack_b827_candidate/config/visdrone9.txt
 ```
 
 C ABI adapter 只保留部署配置文件自身的固定位置；`tracker_detector_init()` 启动时读取并校验全部键，然后用这些路径初始化 tracker、controller 和 detector。未知键、重复键、空值、缺失键或文件不存在均使初始化返回 `false`，同时保持 `is_bad_vis_model=true`，不使用静默回退模型。
@@ -38,12 +43,12 @@ C ABI adapter 只保留部署配置文件自身的固定位置；`tracker_detect
 │   ├── production-deployment.conf
 │   ├── visible-default.conf
 │   ├── detector-manifest.json
-│   └── coco80.txt
+│   └── visdrone9.txt
 └── model/
     ├── template_backbone.rknn
     ├── search_backbone.rknn
     ├── head.rknn
-    └── yolov8n-rk3566-fp16.rknn
+    └── yolov8n-visdrone9-rk3566-fp16.rknn
 ```
 
 ## 验证与边界
@@ -51,7 +56,7 @@ C ABI adapter 只保留部署配置文件自身的固定位置；`tracker_detect
 - 先为部署配置解析器覆盖正常配置、缺键、重复键、未知键和空值测试，再修改 adapter。
 - A6 交叉编译必须成功；重新记录 adapter、配置、`viewlink_app` 和 `libAI.a` SHA-256。
 - 部署前逐个核对四个 RKNN、manifest、labels 和 controller 配置哈希。
-- COCO detector RKNN 未取得时只允许完成代码、编译和目录暂存，不启动程序，不声明模型加载、板端推理、跟踪或吊舱验收通过。
+- 板端启动采用有时限的前台 smoke，并在启动前确认没有既有 `viewlink_app` 进程；只记录进程启动、模型加载和错误日志，不声明跟踪、长期恢复或吊舱验收通过。
 
 ## 未采用方案
 
