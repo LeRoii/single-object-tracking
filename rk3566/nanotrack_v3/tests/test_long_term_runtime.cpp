@@ -773,34 +773,34 @@ int main() {
   }
   hold_tracker.emit_reliable = false;
   hold_tracker.emit_weak = true;
-  hold_runtime.process_frame(image, 4, 160);
-  RuntimeFrameResult trigger = hold_runtime.process_frame(image, 5, 200);
+  RuntimeFrameResult trigger = hold_runtime.process_frame(image, 4, 160);
   expect_true(trigger.output.occlusion_hold_triggered &&
-                  hold_tracker.infer_calls == 5,
+                  trigger.output.occlusion_coast_age_frames == 1 &&
+                  trigger.output.control_valid &&
+                  hold_tracker.infer_calls == 4,
               "trigger frame still performs tracker inference");
   const int polls_before_hold = hold_detector.poll_calls;
-  RuntimeFrameResult hold_one = hold_runtime.process_frame(image, 6, 240);
-  RuntimeFrameResult hold_two = hold_runtime.process_frame(image, 7, 280);
-  expect_true(hold_one.tracker_skipped && hold_two.tracker_skipped &&
-                  hold_one.observations.empty() && hold_two.observations.empty() &&
-                  hold_tracker.infer_calls == 5,
-              "every complete hold frame skips tracker inference");
+  RuntimeFrameResult hold_one = hold_runtime.process_frame(image, 5, 200);
+  expect_true(hold_one.tracker_skipped && hold_one.observations.empty() &&
+                  hold_one.output.occlusion_coast_age_frames == 2 &&
+                  hold_one.output.control_valid && hold_tracker.infer_calls == 4,
+              "the remaining inclusive hold frame skips tracker inference");
   expect_true(hold_one.target_class.target_class_id == 4 &&
-                  hold_two.target_class.target_class_id == 4 &&
-                  hold_two.output.target_class.target_class_id == 4,
+                  hold_one.output.target_class.target_class_id == 4,
               "runtime preserves established session class through skipped HOLD frames");
   expect_true(hold_detector.submit_calls == 0 &&
-                  hold_detector.poll_calls == polls_before_hold + 2,
+                  hold_detector.poll_calls == polls_before_hold + 1,
               "hold suppresses detector submit while continuing one poll per frame");
-  RuntimeFrameResult resumed = hold_runtime.process_frame(image, 8, 320);
-  expect_true(!resumed.tracker_skipped && hold_tracker.infer_calls == 6,
+  RuntimeFrameResult resumed = hold_runtime.process_frame(image, 6, 240);
+  expect_true(!resumed.tracker_skipped && !resumed.output.motion_control_authorized &&
+                  !resumed.output.control_valid && hold_tracker.infer_calls == 5,
               "tracker resumes on the frame after the exact hold window");
 
   hold_runtime.initialize(image, BBox{40, 30, 20, 20}, 20, 800);
   hold_tracker.emit_reliable = true;
   hold_tracker.emit_weak = false;
   RuntimeFrameResult reinitialized = hold_runtime.process_frame(image, 21, 840);
-  expect_true(!reinitialized.tracker_skipped && hold_tracker.infer_calls == 7,
+  expect_true(!reinitialized.tracker_skipped && hold_tracker.infer_calls == 6,
               "explicit reinitialization clears runtime skip state");
 
   if (failures != 0) {

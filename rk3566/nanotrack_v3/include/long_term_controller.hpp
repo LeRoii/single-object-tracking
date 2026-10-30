@@ -3,6 +3,7 @@
 #include "controller_config.hpp"
 #include "long_term_types.hpp"
 #include "motion_estimator.hpp"
+#include "occlusion_evidence.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -116,7 +117,8 @@ class LongTermController {
       const SearchPlan& plan,
       const std::vector<TrackerObservation>& observations,
       const std::optional<DetectorBatch>& detector_batch);
-  // Abandon an unfinished frame. Already-finished controller state is retained.
+  // Abandon an unfinished frame and revoke its coast budget. Already-finished
+  // controller state is retained.
   void abort_frame() noexcept;
 
   TrackingMode mode() const { return mode_; }
@@ -180,11 +182,12 @@ class LongTermController {
   DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
-  std::optional<ScaleReference> occlusion_scale_reference() const;
-  void record_reliable_scale(const BBox& bbox);
+  void publish_occlusion_evidence(ControllerOutput& output) const;
 
   ControllerConfig config_;
   MotionEstimator motion_;
+  OcclusionEvidenceTracker occlusion_evidence_;
+  OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};
   BBox current_bbox_{};
   TargetClassState target_class_{};
@@ -203,9 +206,10 @@ class LongTermController {
   std::int64_t last_recent_update_ms_ = 0;
   bool recent_probation_ = false;
   int probation_reliable_frames_ = 0;
-  std::deque<BBox> reliable_scale_history_;
   int consecutive_unreliable_frames_ = 0;
   std::size_t hold_remaining_frames_ = 0;
+  std::size_t occlusion_coast_age_frames_ = 0;
+  std::size_t occlusion_suspicion_frames_ = 0;
   bool hold_used_for_loss_ = false;
   std::optional<ScaleReference> frozen_scale_reference_;
   std::uint64_t detector_eligibility_generation_ = 0;

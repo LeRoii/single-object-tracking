@@ -1,6 +1,5 @@
 #include "controller_config.hpp"
 #include "long_term_types.hpp"
-#include "motion_estimator.hpp"
 #include "target_class.hpp"
 
 #include <cstddef>
@@ -277,10 +276,6 @@ void test_target_class_gate() {
       holding.finish_frame(reliable_plan, reliable_pair(reliable_plan, roi, id), std::nullopt);
     }
     auto trigger_plan = holding.begin_frame(4, 160, false);
-    holding.finish_frame(trigger_plan,
-        {weak_observation(trigger_plan, TemplateKind::kAnchor, BBox{43, 33, 14, 14})},
-        std::nullopt);
-    trigger_plan = holding.begin_frame(5, 200, false);
     DetectorBatch old_batch{1, 40, {{roi, 0.9F, 3}}};
     old_batch.generation = std::numeric_limits<std::uint64_t>::max();
     const auto trigger = holding.finish_frame(trigger_plan,
@@ -291,7 +286,8 @@ void test_target_class_gate() {
                     trigger.detector_candidate_diagnostics[0].class_disposition ==
                         (state.target_class_allows_recovery ? DetectorClassDisposition::kMismatch
                                                            : DetectorClassDisposition::kTargetUnknown) &&
-                    !trigger.control_valid,
+                    trigger.control_valid && trigger.motion_control_authorized &&
+                    trigger.occlusion_coast_age_frames == 1,
                 "same-frame HOLD preserves earlier structural rejection and class disposition");
   }
 }
@@ -1024,379 +1020,318 @@ int main() {
                   output.detector_candidates_queued == 0,
               "long detector-free loss remains bounded and invalid");
 
-  const auto feed_reliable_box = [](LongTermController& controller,
-                                    std::uint64_t frame_id,
-                                    const BBox& bbox) {
-    const SearchPlan reliable_plan =
-        controller.begin_frame(frame_id, frame_id * 40, false);
-    return controller.finish_frame(
-        reliable_plan,
-        {reliable_observation(reliable_plan, TemplateKind::kAnchor, bbox,
-                              frame_id)},
-        std::nullopt);
+  // A correction-before-evidence bug would move the coast center/velocity,
+  // commit a template update, and accept the collapsed visual box.
+  ControllerConfig coast_config = config;
+  coast_config.stable_frames_for_update = 9;
+  coast_config.recent_update_interval_ms = 1;
+  const BBox stable{60, 40, 20, 20};
+  const FrameSize coast_frame{240, 160};
+  const auto seed = [&](LongTermController& controller, int count = 8) {
+    controller.initialize(stable, 0, 0, coast_frame,
+                          make_fixed_target_class(0, true));
+    for (int frame = 1; frame <= count; ++frame) {
+      const SearchPlan tick = controller.begin_frame(frame, frame * 40, false);
+      expect_true(controller.finish_frame(
+          tick, reliable_pair(tick, stable, frame), std::nullopt).accepted,
+          "stable observations establish the target");
+    }
   };
-  const auto feed_weak_box = [](LongTermController& controller,
-                                std::uint64_t frame_id,
-                                const BBox& bbox) {
-    const SearchPlan weak_plan =
-        controller.begin_frame(frame_id, frame_id * 40, false);
+  const auto collapse = [&](LongTermController& controller, int frame,
+                            std::int64_t timestamp) {
+    const SearchPlan tick = controller.begin_frame(frame, timestamp, true);
     return controller.finish_frame(
-        weak_plan,
-        {weak_observation(weak_plan, TemplateKind::kAnchor, bbox, frame_id)},
-        std::nullopt);
+        tick, reliable_pair(tick, BBox{66, 40, 14, 20}, frame), std::nullopt);
   };
 
-  ControllerConfig hold_config = config;
-  hold_config.uncertain_ms = 1000;
-  hold_config.local_recovery_ms = 2000;
-  hold_config.assisted_recovery_ms = 3000;
-
-  LongTermController incomplete_reference(hold_config);
-  incomplete_reference.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 7; ++frame) {
-    expect_true(feed_reliable_box(incomplete_reference, frame,
-                                  BBox{60, 40, 20, 20})
-                    .accepted,
-                "reliable pre-occlusion sample is accepted");
-  }
-  feed_weak_box(incomplete_reference, 8, BBox{63, 43, 14, 14});
-  output = feed_weak_box(incomplete_reference, 9, BBox{63, 43, 14, 14});
-  expect_true(!output.occlusion_hold_triggered &&
-                  incomplete_reference.mode() != TrackingMode::kOcclusionHold,
-              "fewer than a full reliable reference window cannot trigger hold");
-
-  LongTermController median_boundary(hold_config);
-  median_boundary.initialize(BBox{70, 50, 20, 40}, 0, 0, FrameSize{300, 220},
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  const float reference_widths[] = {16, 18, 20, 22, 24, 26, 28, 30};
-  for (std::uint64_t index = 0; index < 8; ++index) {
-    const float width = reference_widths[index];
-    feed_reliable_box(median_boundary, index + 1,
-                      BBox{80.0F - 0.5F * width, 50, width, 40});
-  }
-  output = feed_weak_box(median_boundary, 9,
-                         BBox{71.95F, 56, 16.10F, 28.0F});
-  expect_true(!output.occlusion_hold_triggered,
-              "one unreliable frame cannot trigger hold");
-  output = feed_weak_box(median_boundary, 10,
-                         BBox{71.95F, 56, 16.10F, 28.0F});
-  expect_true(output.occlusion_hold_triggered &&
+  LongTermController direct(coast_config);
+  seed(direct);
+  plan = direct.begin_frame(9, 360, true);
+  MotionEstimator untouched = direct.motion_;
+  const BBox predicted_before_trigger = direct.motion_.current_bbox();
+  const BBox accepted_before_trigger = direct.current_bbox();
+  const auto generation_before = direct.detector_eligibility_generation_;
+  output = direct.finish_frame(
+      plan, reliable_pair(plan, BBox{66, 40, 14, 20}, 9), std::nullopt);
+  expect_true(plan.mode == TrackingMode::kTracking &&
                   output.mode == TrackingMode::kOcclusionHold &&
+                  output.quality == QualityLevel::kReliable &&
+                  output.occlusion_hold_triggered &&
+                  output.occlusion_trigger_reason == OcclusionTriggerReason::kSevereWidth &&
+                  output.occlusion_coast_age_frames == 1 &&
                   output.occlusion_hold_remaining_frames == 12 &&
-                  output.occlusion_consecutive_unreliable_frames == 2 &&
-                  output.occlusion_observation_width ==
-                      std::optional<float>(16.10F) &&
-                  output.occlusion_observation_height ==
-                      std::optional<float>(28.0F),
-              "second unreliable observation at the inclusive ratio boundary triggers hold");
-  expect_true(output.occlusion_reference_width.has_value() &&
-                  output.occlusion_reference_height.has_value(),
-              "trigger exposes the robust scale reference");
-  if (output.occlusion_reference_width && output.occlusion_reference_height) {
-    expect_near(*output.occlusion_reference_width, 23.0F, 1e-5F,
-                "even reliable window averages the two middle widths");
-    expect_near(*output.occlusion_reference_height, 40.0F, 1e-5F,
-                "even reliable window averages the two middle heights");
-  }
-  if (output.occlusion_width_ratio && output.occlusion_height_ratio) {
-    expect_near(*output.occlusion_width_ratio, 0.70F, 1e-5F,
-                "width shrink ratio is measured against the robust reference");
-    expect_near(*output.occlusion_height_ratio, 0.70F, 1e-5F,
-                "height shrink ratio is measured against the robust reference");
-  } else {
-    expect_true(false, "trigger exposes both observed shrink ratios");
-  }
+                  !output.accepted && output.control_valid &&
+                  output.motion_control_authorized &&
+                  output.hypothesis_source == HypothesisSource::kMotion,
+              "RELIABLE severe width triggers directly and authorizes coast age one");
+  expect_near(output.bbox.x, predicted_before_trigger.x, 1e-5F,
+              "trigger uses the motion center rather than the collapsed observation");
+  expect_near(output.bbox.width, 20, 1e-5F, "trigger freezes the stable width");
+  expect_near(direct.current_bbox().x, accepted_before_trigger.x, 1e-5F,
+              "trigger never commits the abnormal tracker bbox");
+  expect_true(output.template_action == TemplateAction::kNone &&
+                  !direct.recent_probation_ &&
+                  direct.detector_eligibility_generation_ == generation_before + 1 &&
+                  direct.confirmations_.empty() &&
+                  direct.detector_candidates_.empty() &&
+                  !direct.active_detector_candidate_ &&
+                  direct.loss_start_ms_ == std::optional<std::int64_t>(360),
+              "trigger precedes template effects and clears loss eligibility");
+  untouched.freeze_scale(20, 20);
+  const BBox next_expected = untouched.predict(400);
+  plan = direct.begin_frame(10, 400, true);
+  expect_near(plan.predicted_bbox.x, next_expected.x, 1e-5F,
+              "trigger does not correct motion position or velocity");
+  direct.finish_frame(plan, {}, std::nullopt);
 
-  LongTermController above_boundary(hold_config);
-  above_boundary.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    feed_reliable_box(above_boundary, frame, BBox{60, 40, 20, 20});
-  }
-  feed_weak_box(above_boundary, 9, BBox{62.999F, 42.999F, 14.002F, 14.002F});
-  output = feed_weak_box(above_boundary, 10,
-                         BBox{62.999F, 42.999F, 14.002F, 14.002F});
-  expect_true(!output.occlusion_hold_triggered &&
-                  above_boundary.mode() != TrackingMode::kOcclusionHold,
-              "a minimum dimension ratio of 0.7001 does not trigger hold");
-
-  LongTermController no_observation_counter(hold_config);
-  no_observation_counter.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    feed_reliable_box(no_observation_counter, frame, BBox{60, 40, 20, 20});
-  }
-  output = reject_frame(no_observation_counter, 9, 360);
-  expect_true(!output.occlusion_hold_triggered,
-              "a no-observation frame cannot trigger hold by itself");
-  output = feed_weak_box(no_observation_counter, 10,
-                         BBox{63, 43, 14, 14});
-  expect_true(output.occlusion_hold_triggered,
-              "a no-observation frame still counts toward consecutive unreliability");
-
-  LongTermController fast_translation(hold_config);
-  fast_translation.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    feed_reliable_box(fast_translation, frame, BBox{60, 40, 20, 20});
-  }
-  feed_weak_box(fast_translation, 9, BBox{85, 40, 20, 20});
-  output = feed_weak_box(fast_translation, 10, BBox{85, 40, 20, 20});
-  expect_true(!output.occlusion_hold_triggered &&
-                  fast_translation.mode() != TrackingMode::kOcclusionHold,
-              "fast translation at stable scale does not trigger occlusion hold");
-
-  ControllerConfig verification_hold_config = hold_config;
-  verification_hold_config.uncertain_ms = 50;
-  verification_hold_config.local_recovery_ms = 100;
-  verification_hold_config.assisted_recovery_ms = 1000;
-  verification_hold_config.detector_candidate_max_center_ratio = 1.0F;
-  LongTermController detector_verification_no_hold(verification_hold_config);
-  detector_verification_no_hold.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
-      make_fixed_target_class(0, true));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    feed_reliable_box(detector_verification_no_hold, frame,
-                      BBox{60, 40, 20, 20});
-  }
-  reject_frame(detector_verification_no_hold, 9, 360);
-  plan = detector_verification_no_hold.begin_frame(10, 500, true);
-  expect_true(plan.mode == TrackingMode::kAssistedRecovery &&
-                  plan.request_detector && plan.detector_request,
-              "detector-verification fixture reaches an assisted request");
-  DetectorBatch verification_batch;
-  verification_batch.source_frame_id = plan.frame_id;
-  verification_batch.source_timestamp_ms = plan.timestamp_ms;
-  verification_batch.generation = plan.detector_request->generation;
-  verification_batch.candidates = {{BBox{60, 40, 20, 20}, 0.95F, 0}};
-  detector_verification_no_hold.finish_frame(plan, {}, verification_batch);
-  plan = detector_verification_no_hold.begin_frame(11, 540, false);
-  expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
-                  plan.detector_candidate_id.has_value(),
-              "queued candidate is actively under NanoTrack verification");
-  output = detector_verification_no_hold.finish_frame(
-      plan, {weak_observation(plan, TemplateKind::kAnchor,
-                              BBox{63, 43, 14, 14}, 11)},
-      std::nullopt);
-  expect_true(!output.occlusion_hold_triggered &&
-                  output.mode == TrackingMode::kAssistedRecovery,
-              "active detector verification excludes occlusion-hold entry");
-
-  ControllerConfig clearing_config = verification_hold_config;
-  clearing_config.occlusion_hold_frames = 1;
-  LongTermController hold_clears_pending(clearing_config);
-  hold_clears_pending.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
-      make_fixed_target_class(0, true));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    feed_reliable_box(hold_clears_pending, frame, BBox{60, 40, 20, 20});
-  }
-  reject_frame(hold_clears_pending, 9, 360);
-  plan = hold_clears_pending.begin_frame(10, 400, false);
-  const BBox conflicting_recent{75, 40, 20, 20};
-  output = hold_clears_pending.finish_frame(
-      plan,
-      {reliable_observation(plan, TemplateKind::kAnchor,
-                            plan.predicted_bbox, 10),
-       reliable_observation(plan, TemplateKind::kRecent,
-                            conflicting_recent, 10)},
-      std::nullopt);
-  expect_true(!output.accepted && !output.control_valid,
-              "pre-hold motion confirmation remains pending");
-  plan = hold_clears_pending.begin_frame(11, 500, true);
-  expect_true(plan.mode == TrackingMode::kAssistedRecovery &&
-                  plan.request_detector && plan.detector_request,
-              "fixture records a detector request before reacquisition");
-  output = hold_clears_pending.finish_frame(
-      plan,
-      {reliable_observation(plan, TemplateKind::kAnchor,
-                            plan.predicted_bbox, 11)},
-      std::nullopt);
-  expect_true(output.reacquired && output.control_valid,
-              "second motion confirmation reacquires while retaining request identity");
-  for (std::uint64_t frame = 12; frame <= 18; ++frame) {
-    const SearchPlan reliable_plan =
-        hold_clears_pending.begin_frame(frame, 489 + frame, false);
-    hold_clears_pending.finish_frame(
-        reliable_plan,
-        {reliable_observation(reliable_plan, TemplateKind::kAnchor,
-                              BBox{60, 40, 20, 20}, frame)},
-        std::nullopt);
-  }
-  plan = hold_clears_pending.begin_frame(19, 508, false);
-  output = hold_clears_pending.finish_frame(
-      plan, {weak_observation(plan, TemplateKind::kAnchor,
-                              BBox{63, 43, 14, 14}, 19)},
-      std::nullopt);
-  expect_true(!output.occlusion_hold_triggered,
-              "first shrunken observation starts the new loss episode");
-  plan = hold_clears_pending.begin_frame(20, 509, false);
-  DetectorBatch late_previous_request;
-  late_previous_request.source_frame_id = 11;
-  late_previous_request.source_timestamp_ms = 500;
-  late_previous_request.generation = plan.detector_request
-                                         ? plan.detector_request->generation
-                                         : 0;
-  late_previous_request.candidates = {{BBox{60, 40, 20, 20}, 0.95F, 0}};
-  output = hold_clears_pending.finish_frame(
-      plan, {weak_observation(plan, TemplateKind::kAnchor,
-                              BBox{63, 43, 14, 14}, 20)},
-      late_previous_request);
+  // A staged template must not be committed or rolled back by a trigger.
+  LongTermController probation(coast_config);
+  seed(probation);
+  plan = probation.begin_frame(9, 360, false);
+  output = probation.finish_frame(plan, reliable_pair(plan, stable, 9), std::nullopt);
+  expect_true(output.template_action == TemplateAction::kStageRecent,
+              "fixture has a staged recent template");
+  output = collapse(probation, 10, 400);
   expect_true(output.occlusion_hold_triggered &&
+                  output.template_action == TemplateAction::kNone &&
+                  probation.recent_probation_ && probation.probation_reliable_frames_ == 0,
+              "trigger cannot commit or roll back a staged template");
+
+  for (bool start_uncertain : {false, true}) {
+    LongTermController gradual(coast_config);
+    seed(gradual);
+    int frame = 9;
+    if (start_uncertain) {
+      output = reject_frame(gradual, frame, frame * 40, true);
+      expect_true(output.mode == TrackingMode::kUncertain && !output.control_valid,
+                  "ordinary one-frame quality loss enters uncertain");
+      ++frame;
+    }
+    plan = gradual.begin_frame(frame, frame * 40, true);
+    expect_true(plan.run_tracker && !plan.request_detector,
+                "tracking and uncertain continue per-frame NanoTrack without detector");
+    auto pair = reliable_pair(plan, BBox{61, 40, 18, 20}, frame);
+    for (auto& observation : pair) observation.metrics.peak_margin = 0.16F;
+    output = gradual.finish_frame(plan, pair, std::nullopt);
+    expect_true(!output.occlusion_hold_triggered &&
+                    output.occlusion_suspicion_active &&
+                    output.occlusion_reference_width == std::optional<float>(20),
+                "first shrink freezes the stable reference before accepting smaller scale");
+    ++frame;
+    plan = gradual.begin_frame(frame, frame * 40, true);
+    pair = reliable_pair(plan, BBox{62, 40, 16, 20}, frame);
+    for (auto& observation : pair) observation.metrics.peak_margin = 0.16F;
+    output = gradual.finish_frame(plan, pair, std::nullopt);
+    expect_true(output.occlusion_hold_triggered &&
+                    output.occlusion_trigger_reason == OcclusionTriggerReason::kGradualWidthPeak &&
+                    output.occlusion_width_shrink_frames == 2 &&
+                    output.occlusion_reference_width == std::optional<float>(20) &&
+                    output.bbox.width == 20 && output.control_valid,
+                "two shrinking RELIABLE frames with peak drop trigger from tracking or uncertain");
+  }
+
+  // Geometry disagreement is evidence even when the second template is weak;
+  // a lone recent template does not constitute anchor/recent disagreement.
+  for (bool weak_disagreeing_recent : {false, true}) {
+    LongTermController template_evidence(coast_config);
+    seed(template_evidence);
+    for (int frame : {9, 10}) {
+      plan = template_evidence.begin_frame(frame, frame * 40, false);
+      const BBox shrinking = frame == 9 ? BBox{61, 40, 18, 20}
+                                       : BBox{62, 40, 16, 20};
+      std::vector<TrackerObservation> observations;
+      if (weak_disagreeing_recent) {
+        observations = {reliable_observation(plan, TemplateKind::kAnchor, shrinking),
+                        weak_observation(plan, TemplateKind::kRecent, BBox{90, 40, 20, 20})};
+      } else {
+        observations = {reliable_observation(plan, TemplateKind::kRecent, shrinking)};
+      }
+      output = template_evidence.finish_frame(plan, observations, std::nullopt);
+    }
+    expect_true(output.occlusion_template_evidence == weak_disagreeing_recent &&
+                    output.occlusion_hold_triggered == weak_disagreeing_recent,
+                "template evidence requires actual anchor/recent bbox disagreement");
+  }
+
+  for (int sample_count : {2, 3, 7, 8}) {
+    LongTermController partial(coast_config);
+    seed(partial, sample_count);
+    output = collapse(partial, sample_count + 1, (sample_count + 1) * 40);
+    expect_true(output.occlusion_hold_triggered == (sample_count >= 3),
+                "severe trigger needs at least three stable samples");
+    if (sample_count >= 3) {
+      expect_true(output.occlusion_reference_source ==
+                      (sample_count == 8 ? OcclusionReferenceSource::kFullStableMedian
+                                         : OcclusionReferenceSource::kPartialStableMedian),
+                  "trigger publishes partial or full reference provenance");
+    }
+  }
+
+  // Frame count governs coast; the resumed state is independently time-driven.
+  const std::int64_t irregular_offsets[] =
+      {0, 1, 7, 100, 101, 1000, 1001, 1020, 5000, 5100, 9000, 9001, 12000};
+  for (std::int64_t gap : {1, 40, 1000}) {
+    LongTermController bounded_coast(coast_config);
+    seed(bounded_coast);
+    output = collapse(bounded_coast, 9, 360);
+    int valid_ages = output.control_valid ? 1 : 0;
+    for (int age = 2; age <= 12; ++age) {
+      const std::int64_t timestamp = 360 +
+          (gap == 1000 ? irregular_offsets[age - 1] : (age - 1) * gap);
+      plan = bounded_coast.begin_frame(8 + age, timestamp, true);
+      expect_true(plan.mode == TrackingMode::kOcclusionHold &&
+                      !plan.run_tracker && !plan.request_detector &&
+                      !plan.detector_request && plan.motion_control_authorized &&
+                      plan.occlusion_coast_age_frames == static_cast<std::size_t>(age) &&
+                      plan.hold_remaining_frames == static_cast<std::size_t>(13 - age),
+                  "ages two through twelve plan frozen motion with no inference or detector");
+      DetectorBatch old_batch{1, 40, {{stable, 0.99F, 0}}, 0};
+      output = bounded_coast.finish_frame(
+          plan, reliable_pair(plan, BBox{66, 40, 14, 20}, 8 + age), old_batch);
+      valid_ages += output.control_valid ? 1 : 0;
+      expect_true(output.control_valid && output.motion_control_authorized &&
+                      !output.accepted && output.bbox.width == 20 &&
+                      output.bbox.height == 20 &&
+                      output.occlusion_coast_age_frames == static_cast<std::size_t>(age) &&
+                      output.template_action == TemplateAction::kNone &&
+                      output.detector_candidates_queued == 0,
+                  "non-probe coast ignores supplied observations and stale detector boxes");
+    }
+    expect_true(valid_ages == 12, "inclusive coast authorizes exactly twelve frames");
+    plan = bounded_coast.begin_frame(
+        21, 360 + (gap == 1000 ? irregular_offsets[12] : 12 * gap), true);
+    const TrackingMode expected = gap == 1 ? TrackingMode::kUncertain
+        : gap == 40 ? TrackingMode::kLocalRecovery : TrackingMode::kLost;
+    expect_true(plan.mode == expected && plan.run_tracker &&
+                    !plan.motion_control_authorized &&
+                    plan.occlusion_coast_age_frames == 0 &&
+                    plan.predicted_bbox.width == 20 && plan.predicted_bbox.height == 20,
+                "age thirteen resumes the elapsed-time mode with frozen search scale");
+    output = bounded_coast.finish_frame(plan, {}, std::nullopt);
+    expect_true(!output.control_valid && !output.motion_control_authorized,
+                "age thirteen revokes coast even with detector work enabled");
+  }
+
+  // A trigger clears already queued hypotheses and pending NanoTrack confirmation.
+  LongTermController pending(coast_config);
+  seed(pending);
+  pending.confirmations_.push_back({8, stable});
+  pending.detector_candidates_.push_back({1, {stable, 0.99F, 0}, 0, {stable}, 1});
+  output = collapse(pending, 9, 360);
+  expect_true(output.occlusion_hold_triggered && pending.confirmations_.empty() &&
+                  pending.detector_candidates_.empty(),
+              "coast trigger clears pending confirmations and detector candidates");
+
+  // Explicit reselect works with an open trigger frame, mid coast and pending loss.
+  for (int reset_age : {0, 1, 6, 13}) {
+    LongTermController reset(coast_config);
+    seed(reset);
+    if (reset_age == 0) {
+      reset.begin_frame(9, 360, false);
+    } else {
+      collapse(reset, 9, 360);
+      for (int age = 2; age <= reset_age; ++age)
+        reject_frame(reset, 8 + age, 360 + (age - 1) * 40);
+    }
+    reset.initialize(BBox{20, 20, 30, 30}, 50, 5000, coast_frame,
+                     make_fixed_target_class(0, true));
+    expect_true(!reset.loss_start_ms_ && !reset.motion_.scale_frozen() &&
+                    reset.confirmations_.empty() && reset.detector_candidates_.empty(),
+                "reselect clears loss, frozen scale and pending recovery");
+    plan = reset.begin_frame(51, 5040, true);
+    output = reset.finish_frame(plan, reliable_pair(plan, BBox{26, 20, 18, 30}, 51),
+                                std::nullopt);
+    expect_true(plan.mode == TrackingMode::kTracking &&
+                    plan.occlusion_coast_age_frames == 0 &&
+                    !plan.motion_control_authorized &&
+                    !output.occlusion_hold_triggered && !output.occlusion_reference_width,
+                "reselect discards old evidence and coast authorization");
+  }
+
+  ControllerConfig same_frame_config = coast_config;
+  same_frame_config.occlusion_hold_frames = 1;
+  LongTermController same_frame_batch(same_frame_config);
+  same_frame_batch.initialize(stable, 0, 0, coast_frame,
+                              make_fixed_target_class(0, true));
+  reject_frame(same_frame_batch, 1, 40);
+  plan = same_frame_batch.begin_frame(2, 1100, true);
+  const DetectorRequest previous_request = *plan.detector_request;
+  same_frame_batch.finish_frame(plan, {}, std::nullopt);
+  for (int frame = 3; frame <= 11; ++frame) {
+    plan = same_frame_batch.begin_frame(frame, 1176 + frame, false);
+    same_frame_batch.finish_frame(plan, reliable_pair(plan, stable, frame), std::nullopt);
+  }
+  plan = same_frame_batch.begin_frame(12, 1188, false);
+  DetectorBatch late_batch{previous_request.frame_id,
+                          previous_request.timestamp_ms,
+                          {{stable, 0.99F, 0}}, previous_request.generation};
+  output = same_frame_batch.finish_frame(
+      plan, reliable_pair(plan, BBox{66, 40, 14, 20}, 12), late_batch);
+  expect_true(output.occlusion_hold_triggered && output.control_valid &&
                   output.detector_status == DetectorBatchStatus::kAccepted &&
-                  output.detector_position_valid_count == 1 &&
                   output.detector_candidates_queued == 0 &&
                   output.detector_candidate_diagnostics.size() == 1 &&
+                  !output.detector_candidate_diagnostics[0].queued &&
                   output.detector_candidate_diagnostics[0].rejection ==
-                      DetectorCandidateRejection::kHoldInvalidated &&
-                  !output.detector_candidate_diagnostics[0].queued,
-              "hold entry invalidates and clears a candidate ingested on its trigger frame");
-  plan = hold_clears_pending.begin_frame(21, 510, false);
-  hold_clears_pending.finish_frame(plan, {}, std::nullopt);
-  plan = hold_clears_pending.begin_frame(22, 2000, false);
+                      DetectorCandidateRejection::kHoldInvalidated,
+              "coast invalidates a still-fresh candidate ingested on its trigger frame");
+  plan = same_frame_batch.begin_frame(13, 5000, true);
   expect_true(plan.hypothesis_source == HypothesisSource::kMotion &&
-                  !plan.detector_candidate_id.has_value(),
-              "hold entry clears candidates queued on its trigger frame");
-  output = hold_clears_pending.finish_frame(
-      plan, {reliable_observation(plan, TemplateKind::kAnchor,
-                                  plan.predicted_bbox, 22)},
-      std::nullopt);
-  expect_true(!output.accepted && !output.control_valid,
-              "post-hold reliable observation remains under confirmation");
-
-  ControllerConfig confirmation_clear_config = hold_config;
-  confirmation_clear_config.occlusion_hold_frames = 1;
-  confirmation_clear_config.occlusion_trigger_consecutive_unreliable = 3;
-  LongTermController hold_clears_confirmation(confirmation_clear_config);
-  hold_clears_confirmation.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    feed_reliable_box(hold_clears_confirmation, frame,
-                      BBox{60, 40, 20, 20});
-  }
-  plan = hold_clears_confirmation.begin_frame(9, 360, false);
-  output = hold_clears_confirmation.finish_frame(
-      plan,
-      {reliable_observation(plan, TemplateKind::kAnchor,
-                            plan.predicted_bbox, 9),
-       reliable_observation(plan, TemplateKind::kRecent,
-                            BBox{75, 40, 20, 20}, 9)},
-      std::nullopt);
-  expect_true(!output.accepted &&
-                  hold_clears_confirmation.confirmations_.size() == 1,
-              "one motion confirmation is pending before two weak frames");
-  output = feed_weak_box(hold_clears_confirmation, 10,
-                         BBox{63, 43, 14, 14});
-  expect_true(!output.occlusion_hold_triggered &&
-                  hold_clears_confirmation.confirmations_.size() == 1,
-              "first weak frame preserves the pending confirmation");
-  output = feed_weak_box(hold_clears_confirmation, 11,
-                         BBox{63, 43, 14, 14});
-  expect_true(output.occlusion_hold_triggered &&
-                  hold_clears_confirmation.confirmations_.empty(),
-              "HOLD entry clears the pending motion confirmation immediately");
-  plan = hold_clears_confirmation.begin_frame(12, 480, false);
-  hold_clears_confirmation.finish_frame(plan, {}, std::nullopt);
-  plan = hold_clears_confirmation.begin_frame(13, 520, false);
-  output = hold_clears_confirmation.finish_frame(
-      plan, {reliable_observation(plan, TemplateKind::kAnchor,
-                                  plan.predicted_bbox, 13)},
-      std::nullopt);
-  expect_true(!output.accepted && !output.control_valid &&
-                  hold_clears_confirmation.confirmations_.size() == 1,
-              "first reliable observation after HOLD starts a new confirmation");
-
-  ControllerConfig diagnostic_config = hold_config;
-  diagnostic_config.occlusion_reference_window = 3;
-  diagnostic_config.occlusion_hold_frames = 1;
-  diagnostic_config.uncertain_ms = 100;
-  diagnostic_config.local_recovery_ms = 200;
-  diagnostic_config.assisted_recovery_ms = 1000;
-  diagnostic_config.detector_max_candidates = 1;
-  diagnostic_config.detector_candidate_max_center_ratio = 0.20F;
-  LongTermController diagnostics(diagnostic_config);
-  diagnostics.initialize(BBox{60, 40, 20, 20}, 0, 0, FrameSize{240, 160},
-      make_fixed_target_class(0, true));
-  for (std::uint64_t frame = 1; frame <= 3; ++frame) {
-    feed_reliable_box(diagnostics, frame, BBox{60, 40, 20, 20});
-  }
-  feed_weak_box(diagnostics, 4, BBox{63, 43, 14, 14});
-  output = feed_weak_box(diagnostics, 5, BBox{63, 43, 14, 14});
-  expect_true(output.occlusion_hold_triggered,
-              "diagnostic fixture enters hold before detector recovery");
-  plan = diagnostics.begin_frame(6, 240, true);
-  DetectorBatch during_hold_batch;
-  during_hold_batch.source_frame_id = 5;
-  during_hold_batch.source_timestamp_ms = 200;
-  during_hold_batch.generation = 0;
-  during_hold_batch.candidates = {{BBox{65, 45, 20, 20}, 0.9F, 0}};
-  output = diagnostics.finish_frame(plan, {}, during_hold_batch);
-  expect_true(plan.mode == TrackingMode::kOcclusionHold,
-              "single configured complete hold frame is explicit");
-  expect_true(output.detector_candidate_diagnostics.size() == 1 &&
+                  plan.detector_request->generation == previous_request.generation + 1,
+              "post-coast detector requests use the incremented generation");
+  late_batch.source_frame_id = plan.frame_id;
+  late_batch.source_timestamp_ms = plan.timestamp_ms;
+  output = same_frame_batch.finish_frame(plan, {}, late_batch);
+  expect_true(!output.control_valid && output.detector_candidates_queued == 0 &&
                   output.detector_candidate_diagnostics[0].rejection ==
-                      DetectorCandidateRejection::kGenerationInvalidated &&
-                  !output.detector_candidate_diagnostics[0].queued &&
-                  !output.control_valid,
-              "late pre-hold batch is drained for diagnostics during hold only");
-  plan = diagnostics.begin_frame(7, 1200, true);
-  expect_true(plan.request_detector && plan.detector_request.has_value(),
-              "post-hold assisted recovery schedules a new generation");
-  DetectorBatch invalidated_batch;
-  invalidated_batch.source_frame_id = plan.frame_id;
-  invalidated_batch.source_timestamp_ms = plan.timestamp_ms;
-  invalidated_batch.generation = plan.detector_request->generation - 1;
-  invalidated_batch.candidates = {{BBox{65, 45, 20, 20}, 0.9F, 0}};
-  output = diagnostics.finish_frame(plan, {}, invalidated_batch);
-  expect_true(output.detector_candidate_diagnostics.size() == 1 &&
-                  !output.detector_candidate_diagnostics[0].batch_eligible &&
-                  !output.detector_candidate_diagnostics[0].queued &&
-                  output.detector_candidate_diagnostics[0].drawable &&
-                  output.detector_candidate_diagnostics[0].rejection ==
-                      DetectorCandidateRejection::kGenerationInvalidated &&
-                  !output.control_valid,
-              "pre-hold generation remains diagnostic-only after hold exits");
+                      DetectorCandidateRejection::kGenerationInvalidated,
+              "pre-coast generations remain ineligible after the coast budget expires");
 
-  plan = diagnostics.begin_frame(8, 1800, true);
-  expect_true(plan.request_detector && plan.detector_request.has_value(),
-              "next detector interval provides a current-generation request");
-  DetectorBatch mixed_diagnostics;
-  mixed_diagnostics.source_frame_id = plan.frame_id;
-  mixed_diagnostics.source_timestamp_ms = plan.timestamp_ms;
-  mixed_diagnostics.generation = plan.detector_request->generation;
-  mixed_diagnostics.candidates = {
-      {BBox{61, 41, 20, 20}, 0.90F, 0},
-      {BBox{200, 120, 20, 20}, 0.80F, 0},
-      {BBox{70, 45, 20, 20}, 0.70F, 0},
-      {BBox{std::numeric_limits<float>::quiet_NaN(), 0, 20, 20}, 0.60F, 0},
-  };
-  output = diagnostics.finish_frame(plan, {}, mixed_diagnostics);
-  expect_true(output.detector_candidate_diagnostics.size() == 4,
-              "every post-NMS candidate receives one canonical diagnostic");
-  if (output.detector_candidate_diagnostics.size() == 4) {
-    const auto& pass = output.detector_candidate_diagnostics[0];
-    const auto& position_reject = output.detector_candidate_diagnostics[1];
-    const auto& capacity_reject = output.detector_candidate_diagnostics[2];
-    const auto& invalid = output.detector_candidate_diagnostics[3];
-    expect_true(pass.batch_eligible && pass.position_gate_pass && pass.queued &&
-                    pass.drawable && pass.candidate_id.has_value() &&
-                    pass.rejection == DetectorCandidateRejection::kNone,
-                "nearest eligible candidate is queued with an assigned id");
-    expect_true(position_reject.batch_eligible &&
-                    !position_reject.position_gate_pass &&
-                    !position_reject.queued && position_reject.drawable &&
-                    position_reject.rejection ==
-                        DetectorCandidateRejection::kPositionRejected,
-                "large position jump remains drawable but cannot queue");
-    expect_true(capacity_reject.batch_eligible &&
-                    capacity_reject.position_gate_pass &&
-                    !capacity_reject.queued && capacity_reject.drawable &&
-                    capacity_reject.rejection ==
-                        DetectorCandidateRejection::kCapacityRejected,
-                "top-N exclusion has a distinct canonical reason");
-    expect_true(!invalid.batch_eligible && !invalid.position_gate_pass &&
-                    !invalid.queued && !invalid.drawable &&
-                    invalid.rejection == DetectorCandidateRejection::kInvalid,
-                "non-finite geometry is text-only and never control eligible");
+  LongTermController abandoned(coast_config);
+  seed(abandoned);
+  collapse(abandoned, 9, 360);
+  abandoned.begin_frame(10, 400, false);
+  abandoned.abort_frame();
+  plan = abandoned.begin_frame(11, 440, false);
+  expect_true(plan.mode == TrackingMode::kUncertain &&
+                  !plan.motion_control_authorized && plan.run_tracker,
+              "aborting an unfinished coast frame immediately ends its authorization");
+  abandoned.finish_frame(plan, {}, std::nullopt);
+
+  // Finite out-of-frame predictions are clipped before control is authorized.
+  LongTermController clipped(coast_config);
+  seed(clipped);
+  collapse(clipped, 9, 360);
+  clipped.motion_.velocity_x_ = 100000;
+  plan = clipped.begin_frame(10, 400, true);
+  output = clipped.finish_frame(plan, {}, std::nullopt);
+  expect_true(output.control_valid && output.bbox.x >= 0 &&
+                  output.bbox.x + output.bbox.width <= coast_frame.width &&
+                  output.bbox.width == 20,
+              "finite off-frame motion is safely clipped at frozen scale");
+
+  for (float bad_velocity : {std::numeric_limits<float>::quiet_NaN(),
+                             std::numeric_limits<float>::infinity()}) {
+    LongTermController invalid_motion(coast_config);
+    seed(invalid_motion);
+    collapse(invalid_motion, 9, 360);
+    invalid_motion.motion_.velocity_x_ = bad_velocity;
+    bool threw = false;
+    bool produced_output = false;
+    try {
+      plan = invalid_motion.begin_frame(10, 400, true);
+      invalid_motion.finish_frame(plan, {}, std::nullopt);
+      produced_output = true;
+    } catch (const std::runtime_error&) {
+      threw = true;
+    }
+    expect_true(threw && !produced_output && !invalid_motion.frame_open_ &&
+                    invalid_motion.hold_remaining_frames_ == 0,
+                "non-finite motion aborts the frame with no output and revokes coast");
+    invalid_motion.initialize(stable, 20, 800, coast_frame);
+    output = reject_frame(invalid_motion, 21, 840);
+    expect_true(!output.control_valid,
+                "motion exception cannot leave control authority after reinitialization");
   }
 
   if (failures != 0) {
