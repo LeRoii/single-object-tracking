@@ -129,6 +129,23 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 没有把产物部署到开发板或真实吊舱，没有执行板端模型加载、推理、跟踪、长期恢复、内存平台或场景验收；不能声明开发板或吊舱验收通过。
 - 下一步由协调对话决定是否更新公共契约并锁定可消费 handoff；若以后批准的源 commit、模型、配置或 runtime 身份不同，必须重新交叉编译。人工可使用上述路径和 SHA-256 取得候选产物进行后续受控部署。
 
+## 2026-10-30 实际测试板候选目录暂存
+
+- 时间：`2026-10-30T18:19:53+08:00`。
+- 经 Windows/WSL 连接 `root@192.168.2.119`，板端身份为 `rk3566_rk3568`、AArch64、Buildroot 2021.11、Linux 5.10.198；只执行文件检查和候选目录暂存，没有启动程序或执行板端测试。
+- 新建隔离目录 `/app/nanotrack_b827_candidate`，没有覆盖 `/app/bin/viewlink_app`、`/app/viewlink_appnt3` 或 `/app/model`。原程序在操作后 SHA-256 仍分别为 `a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357` 和 `55d5d709ac08ac7dd119e7c6fe01b96263afd1eeb0f7d36318d2152f330c3598`。
+- 已暂存并在板端复核：
+  - `/app/nanotrack_b827_candidate/bin/viewlink_app`：`768e65e635c3c78ff9d61f8963e8131ec5cb897c301fefcaffc31d17003da988`；
+  - `model/coco80.txt`：`bd17f1ee35d5f3c862a4894605855abbb9dda4b0621fdb0ac4c2c8c7bb7e730a`；
+  - `model/detector-manifest.json`：`8adcb1026803d688a7b85c55977d533eac6c15070ac4260bedb09d1da49d6061`；
+  - `model/visible-default.conf`：`b9a128b78063056173626af1c7c7d2c580a59b295c45a4afc0ef8e2e04bff95b`。
+- 板卡、WSL、Windows 用户目录和当前仓库均未找到四个必需 RKNN 文件，旧的反向隧道 `127.0.0.1:10022` 也未在线。当前明确缺少：
+  - `template_backbone.rknn`，期望 SHA-256 `38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709`；
+  - `search_backbone.rknn`，期望 SHA-256 `92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a`；
+  - `head.rknn`，期望 SHA-256 `2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600`；
+  - `yolov8n-rk3566-fp16.rknn`，manifest 声明 SHA-256 `4d53a9b1e12996556294be8e099fe2dc0815d5c9cfdc327edfe350832baf8cf6`。
+- 当前候选 binary 仍使用编译期绝对路径 `/app/model`，不会自动读取新目录下的 `model/`。在四个 RKNN 工件取得前不启动；取得后还需要在“重新编译为 `/app/nanotrack_b827_candidate/model`”和“将模型安装到既有 `/app/model`”之间确认部署方式。前者保持候选目录隔离且不影响现有模型，建议优先采用。
+
 ## 完成条件
 
 - `development_board_validation.latest_handoff.available=true`；
