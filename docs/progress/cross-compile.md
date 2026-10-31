@@ -315,6 +315,17 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 证据边界：本节证明控制/显示通道分离通过纯函数和适配层合同检查、主机 17/17 回归通过、A6 交叉编译成功且新工件已隔离上传。由于新程序尚未启动，本节不证明上位机实际显示、伺服静止、质量门判断、模型运行或真实吊舱验收；这些结论必须以后续人工下发指令的实际观察为准。
 - 下一步：按用户指令启动该隔离程序时，进程环境需包含 `LD_LIBRARY_PATH=/app/lib:/usr/lib`，保留 stdout/stderr 日志，并由用户确认“真实框可见且伺服不动”；不得据此升级公共开发板 handoff 或吊舱验收状态。
 
+## 2026-11-01 自适应遮挡滑行板端改动同步、A6 构建与诊断启动
+
+- 时间：`2026-11-01T00:15:30+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`。开发板验证分支最新提交为 `codex/adaptive-occlusion-coast@617bef92986741c4702e01a2727cd5e3e5ed9367`；其中三次末端板上修正对应共享提交 `3890c50bc6aff067027d63f0140d798f783d472e`、`e3ec19615a0d931544fa9567f288be62a0935551`、`d589215f1c0319f2686d6364edfec86a67a0c63e`，开发板独立工作树均为 clean。该上游分支合入本诊断分支后的 merge commit 为 `433deff6d93611d38dcc884f3ef18ad55d12a1f6`。
+- 合并仅在 `rk3566/nanotrack_v3/CMakeLists.txt` 出现一处源列表相邻冲突：保留本分支 `production_deployment_config` 测试，同时保留上游 `occlusion_evidence` 测试和源文件。合并前主机基线 CTest `17/17` 通过；合并后新建 `/tmp/codex_postmerge_host_build` 并重新配置、构建、执行 CTest，结果为 `18/18` 通过，零失败。
+- WSL 工程 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker` 不是 Git checkout。同步前备份位于 `ai_alg/backup-before-adaptive-coast-433deff`，其中原 `CMakeLists.txt` SHA-256 为 `0d763471acf50160e3fdc3c176c2e22a9141870bb473923f29adc213731c693b`。只将合并提交的 `include/`、`src/`、`config/` 分别同步到 WSL `ai_alg/nanotrack/include/`、`source/`、`config/`，并在 WSL AI 源列表中增加 `occlusion_evidence.cpp`；保留既有零控制诊断 `native-lib_impl.cpp`。同步后的三组目录执行 checksum dry-run 无文件差异，WSL `ai_alg/CMakeLists.txt` SHA-256 为 `55aabecdd167459b4ebd03822e5af0d7e2f07e23083b89d4b2025bfc7e7f3279`。
+- 实际交叉编译命令仍为 `BUILD_JOBS=4 ./run.sh --platform A6`，退出码 `0`；日志观察到新增 `occlusion_evidence.cpp.o` 编译，随后 `libAI.a` 和 `viewlink_app` 链接成功。新程序 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/build_A6/viewlink_app` 为 ARM aarch64 ELF，SHA-256 为 `313a5e767f84cf73a24133859564300a05a0d60abc7d52be4cc0ad613a37bb05`。
+- 新诊断目录为 `/app/nanotrack_433deff_adaptive_zero_control_20261101`；板上程序 SHA-256 与 WSL 完全一致。新 `visible-default.conf` SHA-256 为 `2010c6cd16553595844a12f103f53412942289262d866b9fadba26b2821337ed`，包含自适应遮挡证据/确认参数；旧共享配置已保留为 `/app/nanotrack_b827_candidate/config/visible-default.conf.pre-433deff`，SHA-256 `b9a128b78063056173626af1c7c7d2c580a59b295c45a4afc0ef8e2e04bff95b`。
+- 首次切换时旧 PID `30016` 短暂处于不可中断 `D` 状态并继续占用 `/dev/video0`，导致新实例持续出现 `VIDIOC_STREAMON`/格式设置失败。停止新实例后旧实例恢复为可终止状态；结束已核验的旧进程并确认视频设备释放，再以 `LD_LIBRARY_PATH=/app/lib:/usr/lib` 启动新版本。最终仅有新 PID `16804`，启动后六秒内摄像头相关错误计数为 `0`；日志位于新目录 `log/stdout.log` 和 `log/stderr.log`。
+- 证据边界：本节证明已取得并合并最新自适应遮挡滑行源码、主机回归通过、A6 交叉编译成功、工件/配置哈希匹配并在测试板上无摄像头冲突地启动。尚未收到本次人工跟踪反馈，不能宣称 `quality/accepted`、框稳定、伺服静止、长期恢复或真实吊舱验收通过；公共契约仍是 `latest_handoff.available=false`，本结果是用户授权的诊断候选，不是协调者批准的生产 handoff。
+- 下一步：由用户通过上位机执行多次约十秒的稳定目标跟踪后取消；保留日志并分析 `quality`、`accepted`、框尺寸和状态转换。任何人工结果只按实际观察记录，不提升为未达到的发布门。
+
 达到以上条件只能表述为“最新板端结果已成功交叉编译”，不能表述为“已部署”或“吊舱测试通过”。
 
 ## Next action
