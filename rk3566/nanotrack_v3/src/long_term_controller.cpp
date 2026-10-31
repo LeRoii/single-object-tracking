@@ -311,7 +311,7 @@ void LongTermController::abort_frame() noexcept {
   }
 }
 
-void LongTermController::publish_occlusion_evidence(ControllerOutput& output) const {
+void LongTermController::publish_occlusion_evidence(ControllerOutput& output) {
   const auto& decision = occlusion_decision_;
   output.occlusion_reference_source = decision.reference_source;
   output.occlusion_reference_width = decision.reference_width;
@@ -333,6 +333,10 @@ void LongTermController::publish_occlusion_evidence(ControllerOutput& output) co
   output.occlusion_peak_margin_evidence = decision.peak_margin_evidence;
   output.occlusion_motion_residual_evidence = decision.motion_residual_evidence;
   output.occlusion_trigger_reason = decision.trigger_reason;
+  // The reference and reason persist through coast and recovery; event pulses
+  // belong only to the output frame on which they were first published.
+  occlusion_decision_.suspicion_started = false;
+  occlusion_decision_.suspicion_cleared = false;
 }
 
 LongTermController::EvaluatedObservation LongTermController::evaluate(

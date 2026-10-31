@@ -214,7 +214,7 @@ class LongTermController {
   DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
-  void publish_occlusion_evidence(ControllerOutput& output) const;
+  void publish_occlusion_evidence(ControllerOutput& output);
 
   ControllerConfig config_;
   MotionEstimator motion_;

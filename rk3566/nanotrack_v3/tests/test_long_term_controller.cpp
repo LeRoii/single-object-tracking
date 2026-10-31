@@ -19,6 +19,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <tuple>
 
 namespace {
 
@@ -123,6 +124,82 @@ void advance_probe_coast(nanotrack::LongTermController& controller, int first, i
   for (int age = first; age <= last; ++age) {
     const auto plan = probe_plan(controller, age);
     controller.finish_frame(plan, {}, std::nullopt);
+  }
+}
+
+void test_suspicion_event_pulses_are_single_shot() {
+  using namespace nanotrack;
+  LongTermController controller{ControllerConfig{}};
+  DebugTelemetry telemetry(1000);
+  const BBox stable{60, 40, 20, 20};
+  controller.initialize(stable, 0, 0, {240, 160}, make_fixed_target_class(0, true));
+  const auto process = [&](const std::vector<TrackerObservation>& observations,
+                           const SearchPlan& plan) {
+    RuntimeFrameResult frame;
+    frame.plan = plan;
+    frame.observations = observations;
+    frame.output = controller.finish_frame(plan, observations, std::nullopt);
+    const auto events = telemetry.frame_events(frame, 1, false);
+    std::size_t starts = 0, clears = 0;
+    for (const auto& event : events) {
+      starts += event.find("event=occlusion_suspicion_start ") != std::string::npos;
+      clears += event.find("event=occlusion_suspicion_clear ") != std::string::npos;
+    }
+    return std::make_tuple(frame.output, starts, clears);
+  };
+  for (int id = 1; id <= 8; ++id) {
+    auto plan = controller.begin_frame(id, id * 40, false);
+    process(reliable_pair(plan, stable, id), plan);
+  }
+  auto plan = controller.begin_frame(9, 360, false);
+  auto [trigger, starts, clears] = process(reliable_pair(plan, BBox{63, 40, 14, 20}, 9), plan);
+  expect_true(trigger.occlusion_hold_triggered && trigger.occlusion_suspicion_started &&
+                  starts == 1 && clears == 0,
+              "severe trigger emits exactly one suspicion start at age one");
+  for (int age = 2; age <= 12; ++age) {
+    plan = probe_plan(controller, age);
+    auto [output, frame_starts, frame_clears] = process({}, plan);
+    expect_true(output.occlusion_coast_age_frames == static_cast<std::size_t>(age) &&
+                    output.control_valid && !output.occlusion_suspicion_started &&
+                    frame_starts == 0 && frame_clears == 0,
+                "each hold frame keeps motion control without repeating pulses");
+  }
+  for (int id = 21; id <= 23; ++id) {
+    plan = controller.begin_frame(id, id * 40, false);
+    auto observations = std::vector<TrackerObservation>{
+        weak_observation(plan, TemplateKind::kAnchor, stable, id),
+        weak_observation(plan, TemplateKind::kRecent, stable, id)};
+    auto [output, frame_starts, frame_clears] = process(observations, plan);
+    expect_true(output.mode == TrackingMode::kLocalRecovery &&
+                    !output.occlusion_suspicion_started && frame_starts == 0 &&
+                    frame_clears == 0 &&
+                    output.occlusion_reference_width == 20 &&
+                    output.occlusion_trigger_reason == OcclusionTriggerReason::kSevereWidth,
+                "selected recovery observations preserve reference without replaying pulses");
+  }
+
+  LongTermController clean{ControllerConfig{}};
+  DebugTelemetry clean_telemetry(1000);
+  clean.initialize(stable, 0, 0, {240, 160}, make_fixed_target_class(0, true));
+  for (int id = 1; id <= 12; ++id) {
+    auto clean_plan = clean.begin_frame(id, id * 40, false);
+    const auto bbox = id == 9 ? BBox{60.4F, 40, 19.2F, 20} : stable;
+    auto observations = reliable_pair(clean_plan, bbox, id);
+    RuntimeFrameResult frame;
+    frame.plan = clean_plan;
+    frame.observations = observations;
+    frame.output = clean.finish_frame(clean_plan, observations, std::nullopt);
+    const auto events = clean_telemetry.frame_events(frame, 1, false);
+    std::size_t clear_count = 0;
+    for (const auto& event : events)
+      clear_count += event.find("event=occlusion_suspicion_clear ") != std::string::npos;
+    expect_true(clear_count == static_cast<std::size_t>(id == 11) &&
+                    frame.output.occlusion_suspicion_cleared == (id == 11),
+                "normal clean observations emit the clear pulse exactly once");
+    if (id == 11) {
+      expect_true(!clean.occlusion_decision_.suspicion_cleared,
+                  "published clear pulse is consumed from the retained decision");
+    }
   }
 }
 
@@ -825,6 +902,7 @@ int main() {
   using namespace nanotrack;
   test_target_class_recovery_request_gate();
   test_coast_generation_provenance();
+  test_suspicion_event_pulses_are_single_shot();
   test_coast_probe_schedule_and_isolation();
   test_coast_probe_gates_and_recovery();
   test_coast_probe_stale_identity_and_reset();
