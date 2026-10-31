@@ -1,7 +1,7 @@
 # 生产交叉编译任务进度
 
 - 任务状态：`candidate_cross_compile_succeeded_handoff_unapproved`
-- 最近核对：`2026-10-30T17:55:23+08:00`
+- 最近核对：`2026-10-31T16:24:12+08:00`
 - 核对分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`
 - 核对基线：`main@b827c0a6d8916e9c0832c748e30722f6f2fe5563`
 - 责任边界：确认能够取得协调对话指定的最新开发板验证结果，并使用现有交叉编译流程成功生成生产产物。
@@ -271,7 +271,7 @@ timeout -s TERM -k 2 <seconds> env LD_LIBRARY_PATH=/app/lib \
 
 - 请协调对话采纳本次候选编译记录：`main@b827c0a6d8916e9c0832c748e30722f6f2fe5563` 已在现有 WSL 环境中生成 AArch64 `viewlink_app`，其路径和 SHA-256 见上文。
 - 公共契约当前没有“用户授权的未批准 handoff 候选编译”字段。协调对话如更新公共状态，应明确区分候选编译成功与批准 handoff 编译成功；在 handoff 未发布前保持 `latest_result_access_confirmed=false`，不得仅据本节把 `development_board_validation.latest_handoff.available` 改为 `true`。
-- 需要协调对话决定是否增加/记录 candidate compile 状态，并处理 RKNN runtime `1.5.2` 与板端/模型 `2.3.2` 的身份差异；真实吊舱部署和测试仍由人完成。
+- 需要协调对话决定是否增加/记录 candidate compile 状态，并准确保留三方身份：交叉环境链接库可见 runtime `1.5.2`、本次实际测试板部署 runtime API `1.6.0` / driver `0.9.3`、临时 VisDrone9 模型 toolkit `2.3.2`。本候选四模型已在该测试板加载，但这不等于最终 runtime 兼容矩阵、模型质量或吊舱验收；真实吊舱部署和测试仍由人完成。
 
 ## 后续更新模板
 
