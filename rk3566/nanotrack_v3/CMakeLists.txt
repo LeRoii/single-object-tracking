@@ -95,7 +95,7 @@ if(BUILD_TESTING)
   add_test(NAME controller_support COMMAND test_controller_support)
 
   add_executable(test_long_term_controller tests/test_long_term_controller.cpp)
-  target_link_libraries(test_long_term_controller PRIVATE nanotrack_controller_support)
+  target_link_libraries(test_long_term_controller PRIVATE nanotrack_debug_telemetry)
   add_test(NAME long_term_controller COMMAND test_long_term_controller)
 
   add_executable(test_long_term_runtime tests/test_long_term_runtime.cpp)

@@ -31,7 +31,7 @@ for name in ("template_backbone.rknn", "search_backbone.rknn", "head.rknn"):
 
 header = [
     "schema_version", "frame_id", "timestamp_ms", "state", "quality",
-    "control_valid", "accepted", "reacquired", "x", "y", "width",
+    "control_valid", "accepted", "reacquired", "x", "y", "width", "hypothesis_source",
     "height", "anchor_score", "anchor_psr", "anchor_apce", "recent_score",
     "recent_psr", "recent_apce", "search_scale", "detector_status",
     "detector_configured", "detector_ready", "detector_requested",
@@ -66,6 +66,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
             "schema_version": "9", "frame_id": frame_id,
             "timestamp_ms": timestamp_ms, "state": "TRACKING",
             "quality": "RELIABLE", "control_valid": "1", "accepted": "1",
+            "hypothesis_source": "MOTION",
             "reacquired": "0", "x": "1", "y": "1", "width": "4",
             "height": "4", "search_scale": "1", "detector_status": "NONE",
             "detector_configured": "0", "detector_ready": "0",
@@ -82,6 +83,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
             "occlusion_hold_remaining_frames": "0",
             "tracker_skipped": "0",
             "detector_suppressed_by_hold": "0",
+            "occlusion_probe_rejection": "NONE",
             "occlusion_reference_source": "NONE", "occlusion_suspicion_active": "0", "occlusion_suspicion_started": "0", "occlusion_suspicion_cleared": "0", "occlusion_suspicion_frames": "0", "occlusion_clean_frames": "0", "occlusion_width_shrink_frames": "0", "occlusion_height_shrink_frames": "0", "occlusion_severe_evidence": "0", "occlusion_gradual_evidence": "0", "occlusion_template_evidence": "0", "occlusion_peak_margin_evidence": "0", "occlusion_motion_residual_evidence": "0", "occlusion_trigger_reason": "NONE", "occlusion_coast_age_frames": "0", "occlusion_probe_type": "NONE", "occlusion_probe_confirmation_hits": "0", "occlusion_probe_confirmation_required": "0", "motion_control_authorized": "0",
             "target_class_status": "UNKNOWN", "target_class_id": "",
             "target_class_reason": "DETECTOR_UNAVAILABLE",
@@ -92,7 +94,12 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
         if frame_id == 2:
             row.update({
                 "state": "OCCLUSION_HOLD", "quality": "REJECTED",
-                "control_valid": "0", "accepted": "0",
+                "control_valid": "1", "accepted": "0",
+                "motion_control_authorized": "1",
+                "occlusion_coast_age_frames": "2",
+                "occlusion_reference_source": "FULL_STABLE_MEDIAN",
+                "occlusion_trigger_reason": "SEVERE_WIDTH",
+                "occlusion_probe_rejection": "NONE",
                 "occlusion_hold_remaining_frames": "11",
                 "occlusion_reference_width": "4",
                 "occlusion_reference_height": "4",
@@ -110,7 +117,7 @@ metadata = {
     "occlusion_trigger_consecutive_unreliable": 2,
     "occlusion_trigger_min_dimension_ratio": 0.70,
     "occlusion_reference_window": 8,
-    "occlusion_probe_interval_frames": 1, "occlusion_gradual_dimension_ratio": 1, "occlusion_gradual_consecutive_frames": 1, "occlusion_min_reference_samples": 1, "occlusion_shrink_step_ratio": 1, "occlusion_suspicion_clear_frames": 1, "occlusion_peak_margin_drop": 1, "occlusion_motion_residual_threshold": 1, "occlusion_confirmation_iou": 1, "occlusion_confirmation_center_distance": 1, "occlusion_confirmation_max_area_log_change": 1, "occlusion_confirmation_max_aspect_log_change": 1,
+    "occlusion_probe_interval_frames": 5, "occlusion_gradual_dimension_ratio": 1, "occlusion_gradual_consecutive_frames": 1, "occlusion_min_reference_samples": 1, "occlusion_shrink_step_ratio": 1, "occlusion_suspicion_clear_frames": 1, "occlusion_peak_margin_drop": 1, "occlusion_motion_residual_threshold": 1, "occlusion_confirmation_iou": 1, "occlusion_confirmation_center_distance": 1, "occlusion_confirmation_max_area_log_change": 1, "occlusion_confirmation_max_aspect_log_change": 1,
     "rknn_api_version": "api", "rknn_driver_version": "driver",
     "tracked_frames": 2, "mean_runtime_ms": 2.0, "p50_runtime_ms": 2.0,
     "p95_runtime_ms": 2.0, "runtime_fps": 500.0,
@@ -178,4 +185,52 @@ PY
     exit 1
   fi
 done
+
+for invalid_case in age13 banana reference bad_bool nan_gate nan_ratio no_auth bad_probe bad_hits; do
+  cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
+  python3 - "$artifact_dir/bboxes.csv" "$invalid_case" <<'PY'
+import csv, sys
+path, case = sys.argv[1:]
+with open(path, newline="") as stream:
+    rows = list(csv.DictReader(stream))
+fields = list(rows[0])
+key, value = {
+    "age13": ("occlusion_coast_age_frames", "13"),
+    "banana": ("occlusion_probe_type", "BANANA"),
+    "reference": ("occlusion_reference_source", "BAD"),
+    "bad_bool": ("occlusion_severe_evidence", "2"),
+    "nan_gate": ("occlusion_probe_cross_gate", "nan"),
+    "nan_ratio": ("occlusion_width_ratio", "nan"),
+    "no_auth": ("motion_control_authorized", "0"),
+    "bad_probe": ("occlusion_probe_type", "SEARCH"),
+    "bad_hits": ("occlusion_probe_confirmation_hits", "3"),
+}[case]
+rows[2][key] = value
+with open(path, "w", newline="") as stream:
+    writer = csv.DictWriter(stream, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(rows)
+PY
+  if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
+    echo "verify_board accepted invalid schema case: $invalid_case" >&2
+    exit 1
+  fi
+done
+cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
+cp "$artifact_dir/session-metadata.json" "$artifact_dir/metadata.valid.json"
+for invalid_case in nan_threshold interval0; do
+  cp "$artifact_dir/metadata.valid.json" "$artifact_dir/session-metadata.json"
+  python3 - "$artifact_dir/session-metadata.json" "$invalid_case" <<'PY'
+import json, sys
+path, case = sys.argv[1:]
+with open(path) as stream: data = json.load(stream)
+data["occlusion_peak_margin_drop" if case == "nan_threshold" else "occlusion_probe_interval_frames"] = float("nan") if case == "nan_threshold" else 0
+with open(path, "w") as stream: json.dump(data, stream)
+PY
+  if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
+    echo "verify_board accepted invalid metadata case: $invalid_case" >&2
+    exit 1
+  fi
+done
+cp "$artifact_dir/metadata.valid.json" "$artifact_dir/session-metadata.json"
 

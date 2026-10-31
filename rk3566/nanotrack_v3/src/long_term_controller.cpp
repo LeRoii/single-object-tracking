@@ -460,17 +460,6 @@ bool LongTermController::detector_geometry_consistent(
              config_.detector_confirmation_max_aspect_log_change;
 }
 
-bool LongTermController::coast_confirmation_consistent(
-    const BBox& reference, const BBox& bbox) const {
-  return bbox_iou(reference, bbox) >= config_.occlusion_confirmation_iou &&
-         normalized_center_distance(bbox, reference) <=
-             config_.occlusion_confirmation_center_distance &&
-         area_log_delta(bbox, reference) <=
-             config_.occlusion_confirmation_max_area_log_change &&
-         aspect_log_delta(bbox, reference) <=
-             config_.occlusion_confirmation_max_aspect_log_change;
-}
-
 void LongTermController::accept_observation(
     const SearchPlan& plan, const EvaluatedObservation& selected,
     bool reacquired, ControllerOutput& output) {
@@ -828,15 +817,11 @@ ControllerOutput LongTermController::finish_frame(
       coast_probe_candidate_ = CoastProbeCandidate{plan.frame_id, selected->observation.bbox};
       output.occlusion_probe_confirmation_hits = 1;
     } else if (plan.occlusion_probe_type == OcclusionProbeType::kConfirm && probe_hit &&
-               pending_coast_candidate &&
-               pending_coast_candidate->frame_id == last_frame_id_ &&
-               coast_confirmation_consistent(pending_coast_candidate->bbox,
-                                             selected->observation.bbox)) {
+               output.occlusion_probe_cross_gate.value_or(false)) {
       accept_observation(plan, *selected, true, output);
       output.motion_control_authorized = false;
       output.occlusion_hold_remaining_frames = 0;
       output.occlusion_probe_confirmation_hits = 2;
-      publish_occlusion_evidence(output);
       last_frame_id_ = plan.frame_id;
       last_timestamp_ms_ = plan.timestamp_ms;
       frame_open_ = false;

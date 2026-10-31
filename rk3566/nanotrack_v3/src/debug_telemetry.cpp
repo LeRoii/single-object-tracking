@@ -192,6 +192,16 @@ std::vector<std::string> DebugTelemetry::frame_events(
            << " reference_source=" << to_string(o.occlusion_reference_source)
            << " reference_width=" << optional_ratio(o.occlusion_reference_width)
            << " reference_height=" << optional_ratio(o.occlusion_reference_height)
+           << " width_ratio=" << optional_ratio(o.occlusion_width_ratio)
+           << " height_ratio=" << optional_ratio(o.occlusion_height_ratio)
+           << " suspicion_active=" << o.occlusion_suspicion_active
+           << " suspicion_started=" << o.occlusion_suspicion_started
+           << " suspicion_cleared=" << o.occlusion_suspicion_cleared
+           << " suspicion_frames=" << o.occlusion_suspicion_frames
+           << " clean_frames=" << o.occlusion_clean_frames
+           << " width_shrink_frames=" << o.occlusion_width_shrink_frames
+           << " height_shrink_frames=" << o.occlusion_height_shrink_frames
+           << " remaining=" << o.occlusion_hold_remaining_frames
            << " severe=" << o.occlusion_severe_evidence
            << " gradual=" << o.occlusion_gradual_evidence
            << " template=" << o.occlusion_template_evidence

@@ -11,6 +11,9 @@
 #define private public
 #include "long_term_controller.hpp"
 #undef private
+#include "debug_telemetry.hpp"
+#include "interactive_debug_overlay.hpp"
+#include "tracking_log.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -329,6 +332,23 @@ void test_coast_probe_gates_and_recovery() {
                   "rejected probe exposes its reason and available observation and motion boxes");
       if (failure == 2) expect_true(!output.occlusion_probe_anchor_score_gate.value_or(true), "weak anchor exposes score gate");
       if (failure == 3) expect_true(!output.occlusion_probe_recent_score_gate.value_or(true), "weak recent exposes score gate");
+      if (failure == 3) {
+        RuntimeFrameResult frame;
+        frame.plan = plan;
+        frame.output = output;
+        frame.observations = observations;
+        const auto overlay = make_interactive_debug_overlay(frame);
+        bool saw_recent = false;
+        for (const auto& box : overlay.boxes) {
+          if (box.label.find("COAST ") != std::string::npos &&
+              box.label.find("RECENT") != std::string::npos) {
+            saw_recent = box.label.find("selected_quality=RELIABLE") != std::string::npos &&
+                         box.label.find("anchor=1 recent=0") != std::string::npos &&
+                         box.label.find(" quality=RELIABLE") == std::string::npos;
+          }
+        }
+        expect_true(saw_recent, "bad recent overlay labels selected quality and both template gates truthfully");
+      }
       if (failure == 4) expect_true(!output.occlusion_probe_template_gate.value_or(true), "template disagreement exposes gate");
       if (failure == 5) expect_true(!output.occlusion_probe_anchor_center_gate.value_or(true), "motion center rejection exposes gate");
       if (failure == 6) expect_true(!output.occlusion_probe_anchor_area_gate.value_or(true), "motion area rejection exposes gate");
@@ -403,6 +423,30 @@ void test_coast_probe_gates_and_recovery() {
                 "ages six and eleven confirm on the next processed frame despite timestamp gaps");
     const auto output = controller.finish_frame(plan,
         reliable_pair(plan, BBox{64, 40, 20, 20}, 101), std::nullopt);
+    expect_true(output.occlusion_reference_source == OcclusionReferenceSource::kFullStableMedian &&
+                    output.occlusion_reference_width == 20 && output.occlusion_reference_height == 20 &&
+                    output.occlusion_trigger_reason == OcclusionTriggerReason::kSevereWidth,
+                "recovery output retains pre-reset coast reference and reason");
+    RuntimeFrameResult event_frame;
+    event_frame.plan = plan;
+    event_frame.output = output;
+    DebugTelemetry telemetry;
+    auto previous = event_frame;
+    previous.output.mode = TrackingMode::kOcclusionHold;
+    telemetry.frame_events(previous, 1, false);
+    const auto events = telemetry.frame_events(event_frame, 1, false);
+    bool event_snapshot = false;
+    for (const auto& event : events) {
+      if (event.find("event=occlusion_reacquired") != std::string::npos &&
+          event.find("reference_source=FULL_STABLE_MEDIAN") != std::string::npos &&
+          event.find("reference_width=20.000") != std::string::npos &&
+          event.find("reference_height=20.000") != std::string::npos &&
+          event.find("trigger_reason=SEVERE_WIDTH") != std::string::npos) event_snapshot = true;
+    }
+    const auto row = make_tracking_log_row(event_frame);
+    expect_true(event_snapshot && row.occlusion_reference_width == 20 &&
+                    row.occlusion_trigger_reason == OcclusionTriggerReason::kSevereWidth,
+                "real controller recovery retains reference and reason in event and CSV row");
     expect_true(output.occlusion_probe_rejection == "NONE" &&
                     output.occlusion_probe_cross_gate.value_or(false),
                 "confirmed recovery exposes successful cross-frame gate");

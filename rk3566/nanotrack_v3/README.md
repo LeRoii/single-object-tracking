@@ -336,6 +336,18 @@ records the twelve effective adaptive configuration values. The old
 `occlusion_trigger_consecutive_unreliable` is retained for provenance and is
 not the coast trigger.
 
+In the following metadata keys the common prefix is `occlusion_`:
+`probe_interval_frames` is the search cadence; `gradual_dimension_ratio`
+is the cumulative size threshold; `gradual_consecutive_frames` counts
+shrink steps; `min_reference_samples` sets the minimum stable samples;
+`shrink_step_ratio` defines a shrink step; `suspicion_clear_frames` counts
+clean frames; `peak_margin_drop` is the peak-margin drop threshold;
+`motion_residual_threshold` is the normalized motion residual threshold;
+`confirmation_iou`, `confirmation_center_distance`,
+`confirmation_max_area_log_change`, and
+`confirmation_max_aspect_log_change` set the four cross-frame confirmation
+geometry gates. Values come from the effective ControllerConfig.
+
 Those metadata keys are `occlusion_probe_interval_frames`,
 `occlusion_gradual_dimension_ratio`, `occlusion_gradual_consecutive_frames`,
 `occlusion_min_reference_samples`, `occlusion_shrink_step_ratio`,
@@ -347,6 +359,28 @@ Those metadata keys are `occlusion_probe_interval_frames`,
 per-template score and motion geometry, template agreement, and cross-frame
 IoU/center/area/aspect checks; empty means unevaluated. The rejection reason
 and probe/motion boxes are controller output, not new UI decisions.
+
+The CSV prefixes `occlusion_probe_motion_` and `occlusion_probe_` with
+`x/y/width/height` are respectively the motion prediction and the selected
+probe observation; empty means unavailable. The per-template
+`occlusion_probe_anchor/recent_reliable` and
+`occlusion_probe_anchor/recent_{score,center,area,aspect}_gate` report each
+template's evaluated gates. `occlusion_probe_template_gate` is template
+agreement. `occlusion_probe_cross_{iou,center,area,aspect}` and
+`occlusion_probe_cross_gate` report the individual and combined cross-frame
+checks. `occlusion_probe_rejection` uses priority: `MISSING_TEMPLATE`,
+`QUALITY_OR_MOTION_GEOMETRY`, `TEMPLATE_AGREEMENT`, `MISSING_CANDIDATE`,
+`CONFIRM_GEOMETRY`, otherwise `NONE`. Gate fields are empty when not
+evaluated. Overlay `selected_quality/center/area/aspect` describe the
+selected observation, while anchor/recent gate labels are separate.
+
+The structured events `occlusion_suspicion_start/clear`,
+`occlusion_coast_enter/tick/exit`, `occlusion_probe_search/confirm/rejected`
+and `occlusion_reacquired` include frame, age, reference and ratios,
+suspicion/shrink/clean counters, remaining budget, evidence flags, trigger
+reason, probe type/hits/gates/rejection, motion/probe/control boxes and control
+authorization when available. They consume controller/runtime output; the
+reacquisition frame retains its pre-reset reference and reason.
 
 The trigger frame is age 1; ages 1–12 are inclusive. With default interval 5,
 SEARCH occurs at ages 5 and 10, and a successful search schedules CONFIRM on

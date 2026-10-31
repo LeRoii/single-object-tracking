@@ -328,6 +328,12 @@ int main() {
   }
   expect_true(coast.control_valid && motion_control && search_probe,
               "motion coast is green control while search is an independent non-control probe");
+  for (const auto& box : coast.boxes) {
+    if (box.kind == DebugBoxKind::kCoastSearchProbe)
+      expect_true(box.label.find("selected_quality=") != std::string::npos &&
+                      box.label.find(" quality=") == std::string::npos,
+                  "probe label identifies aggregate quality as selected, not template quality");
+  }
   hold.output.occlusion_probe_type = OcclusionProbeType::kConfirm;
   hold.observations[0].bbox.width = -1;
   const auto confirm = make_interactive_debug_overlay(hold);

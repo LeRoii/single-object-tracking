@@ -862,6 +862,38 @@ metadata 记录运行时实际的 12 个新增配置值；旧的
 `occlusion_probe_rejection` 给出缺模板、质量或运动几何、模板不一致、
 缺候选或跨帧几何失败原因；所有门由控制器输出，显示层不重算。
 
+具体字段均以 `occlusion_probe_` 开头：`motion_x/y/width/height`
+是运动预测框，`x/y/width/height` 是选中的探针观测框；空值表示无框。
+`anchor_reliable/recent_reliable` 为各模板是否可靠；
+`anchor/recent_score_gate`、`center_gate`、`area_gate`、`aspect_gate`
+各自使用相应模板的质量阈值及运动中心、面积、长宽比几何门。
+`template_gate` 是双模板一致性门；`cross_iou/center/area/aspect` 是
+确认观测与前次搜索候选的四个独立跨帧门，`cross_gate` 是它们的合取。
+显示中的 `selected_quality/center/area/aspect` 属于控制器选中的观测，
+不是每个模板各自的质量；anchor/recent 门单独显示。
+拒绝原因按优先顺序为 `MISSING_TEMPLATE`（缺模板）、
+`QUALITY_OR_MOTION_GEOMETRY`（质量或运动几何门失败）、
+`TEMPLATE_AGREEMENT`（双模板不一致）、`MISSING_CANDIDATE`（无待确认候选）、
+`CONFIRM_GEOMETRY`（跨帧几何失败），通过或未评估为 `NONE`。
+
+新增 metadata 配置都来自实际 `ControllerConfig`，以下均带 `occlusion_`
+前缀：`probe_interval_frames` 是搜索间隔；`gradual_dimension_ratio`
+是累计尺寸比例门；`gradual_consecutive_frames` 是连续缩小次数；
+`min_reference_samples` 是稳定参考最少样本；`shrink_step_ratio`
+是单步缩小比例门；`suspicion_clear_frames` 是解除嫌疑的连续干净帧数；
+`peak_margin_drop` 是峰值边际下降门；`motion_residual_threshold`
+是归一化运动残差门；`confirmation_iou`、
+`confirmation_center_distance`、`confirmation_max_area_log_change`、
+`confirmation_max_aspect_log_change` 是跨帧确认的 IoU、中心距离、
+面积对数变化及长宽比对数变化门。
+
+`occlusion_suspicion_start/clear`、`occlusion_coast_enter/tick/exit`、
+`occlusion_probe_search/confirm/rejected` 和 `occlusion_reacquired`
+事件携带帧号、年龄、参考及比例、嫌疑/干净/缩小计数、剩余帧数、证据、
+触发原因、探针类型/确认次数/各门/拒绝原因、运动/探针/控制框和授权；
+未评估值为空或 none。成功确认的事件和 CSV 行保留重置之前的参考和触发原因，
+控制器内部则为后续帧重置。
+
 ### 20.10 人工初始化时建立目标类别（schema 8）
 
 独立 Debug 默认 `detector_class_id=-1`，表示自动建立类别。每次确认 ROI，包括同帧重新框选，

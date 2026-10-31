@@ -209,11 +209,11 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
       std::ostringstream label;
       label << "COAST " << to_string(result.output.occlusion_probe_type)
             << " " << to_string(observation.template_kind)
-            << " quality=" << to_string(result.output.quality)
+            << " selected_quality=" << to_string(result.output.quality)
             << " iou=" << formatted_float(result.output.template_iou)
-            << " center=" << formatted_float(result.output.normalized_center_residual)
-            << " area=" << formatted_float(result.output.area_log_change)
-            << " aspect=" << formatted_float(result.output.aspect_log_change)
+            << " selected_center=" << formatted_float(result.output.normalized_center_residual)
+            << " selected_area=" << formatted_float(result.output.area_log_change)
+            << " selected_aspect=" << formatted_float(result.output.aspect_log_change)
             << " hits=" << result.output.occlusion_probe_confirmation_hits
             << "/" << result.output.occlusion_probe_confirmation_required
             << " reason=" << result.output.occlusion_probe_rejection

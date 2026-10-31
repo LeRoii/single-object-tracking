@@ -77,6 +77,13 @@ void test_adaptive_coast_events() {
   o.occlusion_reference_source = OcclusionReferenceSource::kFullStableMedian;
   o.occlusion_reference_width = 30;
   o.occlusion_reference_height = 40;
+  o.occlusion_width_ratio = 0.7F;
+  o.occlusion_height_ratio = 0.9F;
+  o.occlusion_suspicion_frames = 3;
+  o.occlusion_clean_frames = 1;
+  o.occlusion_width_shrink_frames = 2;
+  o.occlusion_height_shrink_frames = 4;
+  o.occlusion_hold_remaining_frames = 12;
   o.occlusion_severe_evidence = true;
   o.occlusion_trigger_reason = OcclusionTriggerReason::kSevereWidth;
   o.motion_control_authorized = true;
@@ -85,6 +92,13 @@ void test_adaptive_coast_events() {
   events = telemetry.frame_events(result, 1, false);
   expect_true(contains(events, "event=occlusion_coast_enter frame=1 coast_age=1") &&
                   contains(events, "reference_source=FULL_STABLE_MEDIAN") &&
+                  contains(events, "width_ratio=0.700") &&
+                  contains(events, "height_ratio=0.900") &&
+                  contains(events, "suspicion_frames=3") &&
+                  contains(events, "clean_frames=1") &&
+                  contains(events, "width_shrink_frames=2") &&
+                  contains(events, "height_shrink_frames=4") &&
+                  contains(events, "remaining=12") &&
                   contains(events, "trigger_reason=SEVERE_WIDTH") &&
                   contains(events, "motion_control_authorized=1") &&
                   contains(events, "control_bbox=10.00,20.00,30.00,40.00"),
