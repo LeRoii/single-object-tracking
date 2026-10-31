@@ -55,6 +55,79 @@ nanotrack::RuntimeFrameResult frame_result(std::uint64_t frame_id) {
   return result;
 }
 
+void test_adaptive_coast_events() {
+  using namespace nanotrack;
+  DebugTelemetry telemetry(1000);
+  auto result = frame_result(1);
+  auto& o = result.output;
+  o.occlusion_suspicion_started = true;
+  auto events = telemetry.frame_events(result, 1, false);
+  expect_true(contains(events, "event=occlusion_suspicion_start frame=1"),
+              "controller suspicion pulse is visible off heartbeat cadence");
+  o.occlusion_suspicion_started = false;
+  o.occlusion_suspicion_cleared = true;
+  events = telemetry.frame_events(result, 1, false);
+  expect_true(contains(events, "event=occlusion_suspicion_clear frame=1"),
+              "controller clear pulse is visible");
+  o.occlusion_suspicion_cleared = false;
+  o.mode = TrackingMode::kOcclusionHold;
+  o.accepted = false;
+  o.occlusion_hold_triggered = true;
+  o.occlusion_coast_age_frames = 1;
+  o.occlusion_reference_source = OcclusionReferenceSource::kFullStableMedian;
+  o.occlusion_reference_width = 30;
+  o.occlusion_reference_height = 40;
+  o.occlusion_severe_evidence = true;
+  o.occlusion_trigger_reason = OcclusionTriggerReason::kSevereWidth;
+  o.motion_control_authorized = true;
+  result.plan.motion_predicted_bbox = BBox{10, 20, 30, 40};
+  o.bbox = result.plan.motion_predicted_bbox;
+  events = telemetry.frame_events(result, 1, false);
+  expect_true(contains(events, "event=occlusion_coast_enter frame=1 coast_age=1") &&
+                  contains(events, "reference_source=FULL_STABLE_MEDIAN") &&
+                  contains(events, "trigger_reason=SEVERE_WIDTH") &&
+                  contains(events, "motion_control_authorized=1") &&
+                  contains(events, "control_bbox=10.00,20.00,30.00,40.00"),
+              "coast entry binds age/reference/evidence/control box and authorization");
+  o.occlusion_hold_triggered = false;
+  for (const auto age : {5, 6, 10, 11}) {
+    o.frame_id = age;
+    o.occlusion_coast_age_frames = age;
+    o.occlusion_probe_type = age == 5 || age == 10 ? OcclusionProbeType::kSearch : OcclusionProbeType::kConfirm;
+    o.occlusion_probe_confirmation_required = 2;
+    o.occlusion_probe_confirmation_hits = 0;
+    o.occlusion_probe_rejection = "MISSING_TEMPLATE";
+    events = telemetry.frame_events(result, 1, false);
+    expect_true(contains(events, std::string("event=occlusion_probe_") +
+                    (age == 5 || age == 10 ? "search" : "confirm") + " frame=" + std::to_string(age)) &&
+                    contains(events, "event=occlusion_probe_rejected") &&
+                    contains(events, "event=occlusion_coast_tick"),
+                "search/confirm/rejected events follow output type rather than a UI schedule");
+  }
+  o.mode = TrackingMode::kTracking;
+  o.reacquired = o.accepted = true;
+  o.occlusion_probe_confirmation_hits = 2;
+  o.occlusion_probe_rejection = "NONE";
+  o.motion_control_authorized = false;
+  events = telemetry.frame_events(result, 1, false);
+  expect_true(contains(events, "event=occlusion_reacquired") &&
+                  contains(events, "event=occlusion_coast_exit") &&
+                  !contains(events, "event=occlusion_probe_rejected"),
+              "confirmed early recovery reports recovery and exit, never rejection");
+  telemetry.reset();
+  o.mode = TrackingMode::kOcclusionHold;
+  o.reacquired = false;
+  o.occlusion_probe_type = OcclusionProbeType::kNone;
+  o.occlusion_coast_age_frames = 12;
+  telemetry.frame_events(result, 1, false);
+  o.mode = TrackingMode::kLocalRecovery;
+  o.occlusion_coast_age_frames = 0;
+  events = telemetry.frame_events(result, 1, false);
+  expect_true(contains(events, "event=occlusion_coast_exit") &&
+                  contains(events, "exit_reason=TIMEOUT_OR_ABORT"),
+              "coast exit is visible after the last authorized frame");
+}
+
 void test_initialization_events() {
   using namespace nanotrack;
   DebugTelemetry telemetry(2);
@@ -148,6 +221,7 @@ void test_initialization_events() {
 
 int main() {
   using namespace nanotrack;
+  test_adaptive_coast_events();
 
   DebugTelemetry telemetry(3);
   RuntimeFrameResult first = frame_result(1);

@@ -114,6 +114,10 @@ cv::Mat render_interactive(const cv::Mat& source,
           return cv::Scalar(0, 255, 255);
         case nanotrack::DebugBoxKind::kAcceptedControl:
           return cv::Scalar(0, 255, 0);
+        case nanotrack::DebugBoxKind::kCoastSearchProbe:
+          return cv::Scalar(255, 0, 0);
+        case nanotrack::DebugBoxKind::kCoastConfirmProbe:
+          return cv::Scalar(0, 165, 255);
         case nanotrack::DebugBoxKind::kTargetClassInitializationSelected:
           return cv::Scalar(255, 255, 255);
       }
@@ -330,6 +334,18 @@ std::string builtin_config_identity(const nanotrack::ControllerConfig& config) {
          << config.occlusion_trigger_consecutive_unreliable << '|'
          << config.occlusion_trigger_min_dimension_ratio << '|'
          << config.occlusion_reference_window << '|'
+         << config.occlusion_probe_interval_frames << '|'
+         << config.occlusion_gradual_dimension_ratio << '|'
+         << config.occlusion_gradual_consecutive_frames << '|'
+         << config.occlusion_min_reference_samples << '|'
+         << config.occlusion_shrink_step_ratio << '|'
+         << config.occlusion_suspicion_clear_frames << '|'
+         << config.occlusion_peak_margin_drop << '|'
+         << config.occlusion_motion_residual_threshold << '|'
+         << config.occlusion_confirmation_iou << '|'
+         << config.occlusion_confirmation_center_distance << '|'
+         << config.occlusion_confirmation_max_area_log_change << '|'
+         << config.occlusion_confirmation_max_aspect_log_change << '|'
          << nanotrack::to_string(config.detector_target_mode) << '|'
          << config.detector_search_scale << '|'
          << config.detector_subtarget_max_probes << '|'
@@ -382,6 +398,7 @@ void write_session_metadata(const std::string& path,
   metadata.occlusion_trigger_min_dimension_ratio =
       config.occlusion_trigger_min_dimension_ratio;
   metadata.occlusion_reference_window = config.occlusion_reference_window;
+  nanotrack::apply_controller_config_metadata(metadata, config);
   metadata.rknn_api_version = tracker.api_version();
   metadata.rknn_driver_version = tracker.driver_version();
   metadata.source_fps = finite_source_fps;

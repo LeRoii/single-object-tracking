@@ -357,16 +357,17 @@ LongTermController::EvaluatedObservation LongTermController::evaluate(
       normalized_center_distance(observation.bbox, plan.predicted_bbox);
   result.area_log_change = area_log_delta(observation.bbox, plan.predicted_bbox);
   result.aspect_log_change = aspect_log_delta(observation.bbox, plan.predicted_bbox);
-  const bool hard_gate =
-      result.center_residual <= config_.max_center_distance * plan.search_scale &&
-      result.area_log_change <= config_.max_area_log_change &&
-      result.aspect_log_change <= config_.max_aspect_log_change;
+  result.center_gate = result.center_residual <= config_.max_center_distance * plan.search_scale;
+  result.area_gate = result.area_log_change <= config_.max_area_log_change;
+  result.aspect_gate = result.aspect_log_change <= config_.max_aspect_log_change;
+  result.score_gate = metrics.raw_score >= config_.reliable_score &&
+                      metrics.psr >= config_.reliable_psr &&
+                      metrics.apce >= config_.reliable_apce &&
+                      metrics.peak_margin >= config_.reliable_peak_margin;
+  const bool hard_gate = result.center_gate && result.area_gate && result.aspect_gate;
   if (!hard_gate) {
     result.quality = QualityLevel::kRejected;
-  } else if (metrics.raw_score >= config_.reliable_score &&
-             metrics.psr >= config_.reliable_psr &&
-             metrics.apce >= config_.reliable_apce &&
-             metrics.peak_margin >= config_.reliable_peak_margin) {
+  } else if (result.score_gate) {
     result.quality = QualityLevel::kReliable;
   } else if (metrics.raw_score >= config_.weak_score &&
              metrics.psr >= config_.weak_psr &&
@@ -779,6 +780,48 @@ ControllerOutput LongTermController::finish_frame(
         anchor->quality == QualityLevel::kReliable &&
         recent->quality == QualityLevel::kReliable &&
         output.template_iou >= config_.template_agreement_iou;
+    if (plan.occlusion_probe_type != OcclusionProbeType::kNone) {
+      output.occlusion_probe_motion_bbox = plan.motion_predicted_bbox;
+      if (selected) output.occlusion_probe_bbox = selected->observation.bbox;
+      if (anchor) output.occlusion_probe_anchor_reliable = anchor->quality == QualityLevel::kReliable;
+      if (recent) output.occlusion_probe_recent_reliable = recent->quality == QualityLevel::kReliable;
+      if (anchor) {
+        output.occlusion_probe_anchor_score_gate = anchor->score_gate;
+        output.occlusion_probe_anchor_center_gate = anchor->center_gate;
+        output.occlusion_probe_anchor_area_gate = anchor->area_gate;
+        output.occlusion_probe_anchor_aspect_gate = anchor->aspect_gate;
+      }
+      if (recent) {
+        output.occlusion_probe_recent_score_gate = recent->score_gate;
+        output.occlusion_probe_recent_center_gate = recent->center_gate;
+        output.occlusion_probe_recent_area_gate = recent->area_gate;
+        output.occlusion_probe_recent_aspect_gate = recent->aspect_gate;
+      }
+      if (anchor && recent)
+        output.occlusion_probe_template_gate = output.template_iou >= config_.template_agreement_iou;
+      if (!anchor || !recent) output.occlusion_probe_rejection = "MISSING_TEMPLATE";
+      else if (anchor->quality != QualityLevel::kReliable ||
+               recent->quality != QualityLevel::kReliable)
+        output.occlusion_probe_rejection = "QUALITY_OR_MOTION_GEOMETRY";
+      else if (!*output.occlusion_probe_template_gate)
+        output.occlusion_probe_rejection = "TEMPLATE_AGREEMENT";
+      if (plan.occlusion_probe_type == OcclusionProbeType::kConfirm && probe_hit) {
+        if (!pending_coast_candidate || pending_coast_candidate->frame_id != last_frame_id_) {
+          output.occlusion_probe_rejection = "MISSING_CANDIDATE";
+        } else {
+          const auto& reference = pending_coast_candidate->bbox;
+          const auto& bbox = selected->observation.bbox;
+          output.occlusion_probe_cross_iou = bbox_iou(reference, bbox) >= config_.occlusion_confirmation_iou;
+          output.occlusion_probe_cross_center = normalized_center_distance(bbox, reference) <= config_.occlusion_confirmation_center_distance;
+          output.occlusion_probe_cross_area = area_log_delta(bbox, reference) <= config_.occlusion_confirmation_max_area_log_change;
+          output.occlusion_probe_cross_aspect = aspect_log_delta(bbox, reference) <= config_.occlusion_confirmation_max_aspect_log_change;
+          output.occlusion_probe_cross_gate = *output.occlusion_probe_cross_iou &&
+              *output.occlusion_probe_cross_center && *output.occlusion_probe_cross_area &&
+              *output.occlusion_probe_cross_aspect;
+          if (!*output.occlusion_probe_cross_gate) output.occlusion_probe_rejection = "CONFIRM_GEOMETRY";
+        }
+      }
+    }
     if (plan.occlusion_probe_type != OcclusionProbeType::kNone)
       output.occlusion_probe_confirmation_required = 2;
     if (plan.occlusion_probe_type == OcclusionProbeType::kSearch && probe_hit) {

@@ -307,8 +307,9 @@ processed frame. It records:
 - tracker/runtime latency and full video-pipeline latency (decode, tracking,
   overlay, and encode).
 
-During `OCCLUSION_HOLD`, NanoTrack inference and detector submission are
-intentionally skipped, `tracker_ms=0`, and that zero is excluded from the
+During `OCCLUSION_HOLD`, detector submission is skipped. NanoTrack runs on
+search and confirmation probe frames; other coast frames have `tracker_ms=0`,
+and that zero is excluded from the
 reported mean tracker inference latency. `runtime_ms` and `pipeline_ms` remain
 positive. All post-NMS detector diagnostics are shown in interactive Debug:
 purple means a valid raw hypothesis with no rejection reason, gray means a
@@ -318,9 +319,43 @@ verification probe. `PASS` does not imply `queued=1`, and no raw detector box
 can directly authorize `control_valid`.
 
 Only a row with `control_valid=1` may drive a gimbal or downstream control
-loop. `UNCERTAIN`, `LOCAL_RECOVERY`, `OCCLUSION_HOLD`, `ASSISTED_RECOVERY`,
-and `LOST` rows can contain a predicted box for visualization while remaining
-invalid for control.
+loop. HOLD may authorize bounded motion prediction; other recovery rows can
+contain predicted boxes without control authorization.
+
+Schema 9 logs controller diagnostics directly: `occlusion_reference_source`
+identifies the partial/full stable median; reference width/height and
+width/height ratios are optional. Suspicion active/start/clear and
+`suspicion_frames`, `clean_frames`, `width_shrink_frames`, and
+`height_shrink_frames` describe the controller's evidence history. The
+`severe`, `gradual`, `template`, `peak_margin`, and `motion_residual`
+`occlusion_*_evidence` flags and `occlusion_trigger_reason` are its decisions.
+`occlusion_coast_age_frames`, `occlusion_probe_type`,
+`occlusion_probe_confirmation_hits/required`, and
+`motion_control_authorized` describe the coast output. Session metadata
+records the twelve effective adaptive configuration values. The old
+`occlusion_trigger_consecutive_unreliable` is retained for provenance and is
+not the coast trigger.
+
+Those metadata keys are `occlusion_probe_interval_frames`,
+`occlusion_gradual_dimension_ratio`, `occlusion_gradual_consecutive_frames`,
+`occlusion_min_reference_samples`, `occlusion_shrink_step_ratio`,
+`occlusion_suspicion_clear_frames`, `occlusion_peak_margin_drop`,
+`occlusion_motion_residual_threshold`, `occlusion_confirmation_iou`,
+`occlusion_confirmation_center_distance`,
+`occlusion_confirmation_max_area_log_change`, and
+`occlusion_confirmation_max_aspect_log_change`. Probe gate fields report
+per-template score and motion geometry, template agreement, and cross-frame
+IoU/center/area/aspect checks; empty means unevaluated. The rejection reason
+and probe/motion boxes are controller output, not new UI decisions.
+
+The trigger frame is age 1; ages 1–12 are inclusive. With default interval 5,
+SEARCH occurs at ages 5 and 10, and a successful search schedules CONFIRM on
+the next processed frame (ages 6 or 11). Green `CTRL MOTION COAST` is a
+bounded motion prediction, not a current-frame visual observation. Search and
+confirm boxes are non-green observations until confirmation. Detector
+candidates never directly authorize control. The defaults are uncalibrated
+(`calibrated=false`); real-video calibration and board acceptance remain
+separate.
 
 If `--session-metadata` is omitted, metadata is written next to the CSV as
 `OUTPUT.csv.metadata.json`. It records the model manifest fingerprint, RKNN

@@ -679,7 +679,7 @@ DEBUG_EVENT event=<事件名> key=value key=value ...
 | `detector_batch` | `poll()` 得到一个完成批次，不论控制器最终接受还是拒绝 | `frame`：消费结果时的帧；`source_frame`：批次来自哪一帧；`age_ms`：结果年龄；`raw`：通过置信度和有效框检查、但尚未执行 NMS 的候选数；`filtered`：detector 后处理后的候选数；`position_valid`：通过控制器位置硬门、应用最大候选数前的数量；`position_rejected`：框/置信度合法但仅因位置硬门被拒绝的数量；`status`：控制器对批次的新鲜度和合法性判断；`total_ms`：该批次 detector 总耗时 |
 | `detector_error` | detector `submit()` 或 `poll()` 抛出异常 | `frame`：发现异常的当前帧；`message`：`DetectorDiagnostics::error`，其中空白已替换为下划线。它是 detector 链路错误，不自动表示 NanoTrack 主链已经停止 |
 | `detector_candidate` | 完成批次产生候选诊断时，每个 `ControllerOutput::detector_candidate_diagnostics` 元素各打印一次 | `index`：批内顺序；`bbox/class_id/confidence`：adapter 经阈值和 NMS 后的候选；`center_ratio`：相对运动预测的位置距离；`source_frame/age_ms`：异步批次来源帧与当前消费年龄；`eligible/position_pass/queued/candidate_id/rejection`：控制器已作出的原始筛选结论。事件直接消费控制器诊断，不在日志层重算门限 |
-| `occlusion_hold_enter` | `occlusion_hold_triggered=true` 的触发帧 | `remaining`：配置的完整等待帧数；`consecutive_unreliable`：触发时连续非可靠帧计数，来自控制器内部计数器的只读快照；`reference`：可靠历史中位数宽高；`observation`：实际触发 HOLD 的选中 NanoTrack 观测宽高；`width_ratio/height_ratio`：该观测相对参考尺度；`tracker_skipped`：触发帧仍已推理，所以通常为 0；`detector_suppressed`：该帧是否已经按 HOLD 跳过 detector 提交。这些诊断值不参与日志层决策，也不改变状态机行为 |
+| `occlusion_hold_enter` | `occlusion_hold_triggered=true` 的触发帧 | 兼容事件，含剩余数、参考宽高、观测宽高和比例；`consecutive_unreliable` 仅为历史诊断，不再决定触发。详细证据见新的 `occlusion_coast_enter` |
 | `occlusion_hold_tick` | 完整 HOLD 帧，即输出状态为 `OCCLUSION_HOLD` 且不是触发帧 | `remaining`：本帧开始时剩余数；`motion`：继续预测中心、冻结宽高的框；`tracker_skipped=1` 与 `detector_suppressed=1` 表示有意跳过，而非推理故障 |
 | `occlusion_hold_exit` | 上一输出为 HOLD、本帧恢复其他状态 | `next_state`：按累计丢失时间进入的下一状态；`loss_duration_ms`：DebugTelemetry 从本次连续 `control_valid=0` 首帧到退出帧观察到的时长，属于日志观测值，不改变控制器状态 |
 | `detector_verify` | 当前 `SearchPlan::hypothesis_source` 为 `DETECTOR`，即正在用 NanoTrack 验证一个 detector 候选或其已锁定位置 | 字段详见下一小节；事件出现只证明“正在验证”，不证明重捕成功 |
@@ -815,7 +815,7 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 候选较多时标签按列排布，不静默丢弃；完整字段同时保留在 `detector_candidate` 事件。
 `FULL_OBJECT` 模式下原始候选、活动候选和橙色 probe 可能完全重合；标签仍分别保留。
 紫色、橙色、蓝色或黄色框出现只说明相应假设/观测存在，不能据此判定跟踪有效。
-只有绿色 `ACCEPTED CTRL` 和日志中的 `control_valid=1` 才代表控制器授权。
+绿色 `ACCEPTED CTRL` 或 `CTRL MOTION COAST` 及日志中的 `control_valid=1` 表示控制器授权；后者是有限运动预测。
 
 ### 20.9 schema 7 新增 CSV 字段
 
@@ -828,9 +828,39 @@ detector 框只能产生候选搜索假设，不能直接产生 `control_valid=1
 | `tracker_skipped` | `LongTermRuntime` 是否因 `run_tracker=false` 跳过 NanoTrack；为 1 时允许 `tracker_ms=0` |
 | `detector_suppressed_by_hold` | 本帧处于 HOLD 且跳过 tracker/detector 提交；在途 detector 仍可 poll 并仅作诊断 |
 
-schema 7 引入的这些字段在 schema 8 中继续保留。普通跟踪行仍记录正的 `runtime_ms` 和 `pipeline_ms`。初始化行的耗时使用默认零/空值。板端校验只在
+schema 7 引入的这些字段在 schema 9 中继续保留。普通跟踪行仍记录正的 `runtime_ms` 和 `pipeline_ms`。初始化行的耗时使用默认零/空值。板端校验只在
 `tracker_skipped=1` 时接受 `tracker_ms=0`；其他帧零值仍判为错误。会话 metadata 的
-`schema_version` 当前为 8，避免旧解析器静默误读新增列。
+`schema_version` 当前为 9，避免旧解析器静默误读新增列。
+
+### 20.9.1 自适应遮挡 coast（schema 9）
+
+触发帧计为 age 1，默认允许 age 1～12 共 12 帧的有限 motion 预测控制；
+age 13 撤销 coast 授权。默认第 5、10 帧执行 SEARCH，命中后下一处理帧执行
+CONFIRM（分别为第 6、11 帧）。绿色 `CTRL MOTION COAST` 表示控制器授权的
+预测框，并非当前帧的视觉观测；SEARCH/CONFIRM 框为非绿色探针，未经确认不能
+取代控制框。detector 候选不能直接授权控制。默认阈值 `calibrated=false`，
+尚需真实标注视频标定。
+
+CSV 新字段均来自 `ControllerOutput`：`occlusion_reference_source` 表示无参考、
+部分或完整稳定窗口中位数；参考宽高及其比例为可空值。
+`occlusion_suspicion_active/started/cleared` 表示嫌疑状态及起止脉冲，
+`occlusion_suspicion_frames`、`occlusion_clean_frames`、
+`occlusion_width_shrink_frames`、`occlusion_height_shrink_frames` 为相应连续计数。
+`occlusion_severe_evidence`、`occlusion_gradual_evidence`、
+`occlusion_template_evidence`、`occlusion_peak_margin_evidence`、
+`occlusion_motion_residual_evidence` 是各证据布尔值；
+`occlusion_trigger_reason` 是控制器给出的触发原因。
+`occlusion_coast_age_frames`、`occlusion_probe_type`、
+`occlusion_probe_confirmation_hits/required` 和 `motion_control_authorized`
+分别为当前年龄、探针类型、确认命中数/要求数及运动控制授权。
+metadata 记录运行时实际的 12 个新增配置值；旧的
+`occlusion_trigger_consecutive_unreliable` 仅为兼容及溯源，不再决定触发。
+事件输出上述证据、框和授权。探针 `anchor/recent_score_gate`、
+`center_gate`、`area_gate`、`aspect_gate` 分别为两模板的质量和运动几何门；
+`template_gate` 为模板一致性；`cross_iou/center/area/aspect` 和
+`cross_gate` 为确认帧与搜索候选之间的几何门及其合取。空值表示未评估。
+`occlusion_probe_rejection` 给出缺模板、质量或运动几何、模板不一致、
+缺候选或跨帧几何失败原因；所有门由控制器输出，显示层不重算。
 
 ### 20.10 人工初始化时建立目标类别（schema 8）
 

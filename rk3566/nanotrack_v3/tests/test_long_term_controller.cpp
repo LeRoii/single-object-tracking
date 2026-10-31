@@ -323,6 +323,16 @@ void test_coast_probe_gates_and_recovery() {
           break; // motion aspect gate
       }
       const auto output = controller.finish_frame(plan, observations, std::nullopt);
+      expect_true(output.occlusion_probe_rejection != "NONE" &&
+                      output.occlusion_probe_motion_bbox.has_value() &&
+                      (failure == 0 || failure == 1 || output.occlusion_probe_bbox.has_value()),
+                  "rejected probe exposes its reason and available observation and motion boxes");
+      if (failure == 2) expect_true(!output.occlusion_probe_anchor_score_gate.value_or(true), "weak anchor exposes score gate");
+      if (failure == 3) expect_true(!output.occlusion_probe_recent_score_gate.value_or(true), "weak recent exposes score gate");
+      if (failure == 4) expect_true(!output.occlusion_probe_template_gate.value_or(true), "template disagreement exposes gate");
+      if (failure == 5) expect_true(!output.occlusion_probe_anchor_center_gate.value_or(true), "motion center rejection exposes gate");
+      if (failure == 6) expect_true(!output.occlusion_probe_anchor_area_gate.value_or(true), "motion area rejection exposes gate");
+      if (failure == 7) expect_true(!output.occlusion_probe_anchor_aspect_gate.value_or(true), "motion aspect rejection exposes gate");
       expect_true(!output.accepted && !output.reacquired && output.control_valid &&
                       output.bbox.x == 60 && output.bbox.width == 20 &&
                       output.template_action == TemplateAction::kNone &&
@@ -356,11 +366,20 @@ void test_coast_probe_gates_and_recovery() {
     auto plan = probe_plan(controller, 5);
     auto output = controller.finish_frame(plan,
         reliable_pair(plan, geometry.search, 13), std::nullopt);
+    expect_true(output.occlusion_probe_rejection == "NONE" &&
+                    output.occlusion_probe_template_gate.value_or(false) &&
+                    output.occlusion_probe_anchor_reliable.value_or(false) &&
+                    output.occlusion_probe_recent_reliable.value_or(false),
+                "search success exposes evaluated gates");
     expect_true(output.occlusion_probe_confirmation_hits == 1,
                 "cross-frame fixture first passes every per-frame search gate");
     plan = probe_plan(controller, 6);
     output = controller.finish_frame(plan,
         reliable_pair(plan, geometry.confirm, 14), std::nullopt);
+    expect_true(output.occlusion_probe_rejection == "CONFIRM_GEOMETRY" &&
+                    output.occlusion_probe_cross_gate.has_value() &&
+                    !*output.occlusion_probe_cross_gate,
+                "confirm mismatch exposes cross-frame gate failure");
     expect_true(output.quality == QualityLevel::kReliable && output.template_iou == 1 &&
                     !output.accepted && !output.reacquired &&
                     output.mode == TrackingMode::kOcclusionHold && output.bbox.x == 60 &&
@@ -384,6 +403,9 @@ void test_coast_probe_gates_and_recovery() {
                 "ages six and eleven confirm on the next processed frame despite timestamp gaps");
     const auto output = controller.finish_frame(plan,
         reliable_pair(plan, BBox{64, 40, 20, 20}, 101), std::nullopt);
+    expect_true(output.occlusion_probe_rejection == "NONE" &&
+                    output.occlusion_probe_cross_gate.value_or(false),
+                "confirmed recovery exposes successful cross-frame gate");
     expect_true(output.accepted && output.reacquired && output.control_valid &&
                     !output.motion_control_authorized &&
                     output.mode == TrackingMode::kTracking && output.bbox.x == 64 &&

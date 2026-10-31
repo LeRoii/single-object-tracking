@@ -51,6 +51,9 @@ header = [
     "occlusion_reference_height", "occlusion_width_ratio",
     "occlusion_height_ratio", "tracker_skipped",
     "detector_suppressed_by_hold",
+    "occlusion_probe_anchor_score_gate", "occlusion_probe_anchor_center_gate", "occlusion_probe_anchor_area_gate", "occlusion_probe_anchor_aspect_gate", "occlusion_probe_recent_score_gate", "occlusion_probe_recent_center_gate", "occlusion_probe_recent_area_gate", "occlusion_probe_recent_aspect_gate",
+    "occlusion_probe_rejection", "occlusion_probe_motion_x", "occlusion_probe_motion_y", "occlusion_probe_motion_width", "occlusion_probe_motion_height", "occlusion_probe_x", "occlusion_probe_y", "occlusion_probe_width", "occlusion_probe_height", "occlusion_probe_anchor_reliable", "occlusion_probe_recent_reliable", "occlusion_probe_template_gate", "occlusion_probe_cross_gate", "occlusion_probe_cross_iou", "occlusion_probe_cross_center", "occlusion_probe_cross_area", "occlusion_probe_cross_aspect",
+    "occlusion_reference_source", "occlusion_suspicion_active", "occlusion_suspicion_started", "occlusion_suspicion_cleared", "occlusion_suspicion_frames", "occlusion_clean_frames", "occlusion_width_shrink_frames", "occlusion_height_shrink_frames", "occlusion_severe_evidence", "occlusion_gradual_evidence", "occlusion_template_evidence", "occlusion_peak_margin_evidence", "occlusion_motion_residual_evidence", "occlusion_trigger_reason", "occlusion_coast_age_frames", "occlusion_probe_type", "occlusion_probe_confirmation_hits", "occlusion_probe_confirmation_required", "motion_control_authorized",
     "target_class_status", "target_class_id", "target_class_reason",
     "detector_recovery_enabled",
 ]
@@ -60,7 +63,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
     for frame_id, timestamp_ms in ((0, 0), (1, 33), (2, 66)):
         row = {key: "" for key in header}
         row.update({
-            "schema_version": "8", "frame_id": frame_id,
+            "schema_version": "9", "frame_id": frame_id,
             "timestamp_ms": timestamp_ms, "state": "TRACKING",
             "quality": "RELIABLE", "control_valid": "1", "accepted": "1",
             "reacquired": "0", "x": "1", "y": "1", "width": "4",
@@ -79,6 +82,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
             "occlusion_hold_remaining_frames": "0",
             "tracker_skipped": "0",
             "detector_suppressed_by_hold": "0",
+            "occlusion_reference_source": "NONE", "occlusion_suspicion_active": "0", "occlusion_suspicion_started": "0", "occlusion_suspicion_cleared": "0", "occlusion_suspicion_frames": "0", "occlusion_clean_frames": "0", "occlusion_width_shrink_frames": "0", "occlusion_height_shrink_frames": "0", "occlusion_severe_evidence": "0", "occlusion_gradual_evidence": "0", "occlusion_template_evidence": "0", "occlusion_peak_margin_evidence": "0", "occlusion_motion_residual_evidence": "0", "occlusion_trigger_reason": "NONE", "occlusion_coast_age_frames": "0", "occlusion_probe_type": "NONE", "occlusion_probe_confirmation_hits": "0", "occlusion_probe_confirmation_required": "0", "motion_control_authorized": "0",
             "target_class_status": "UNKNOWN", "target_class_id": "",
             "target_class_reason": "DETECTOR_UNAVAILABLE",
             "detector_recovery_enabled": "0",
@@ -99,13 +103,14 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
         writer.writerow(row)
 
 metadata = {
-    "schema_version": 8, "manifest_hash": "hash",
+    "schema_version": 9, "manifest_hash": "hash",
     "controller_config_hash": "config", "sensor": "visible",
     "calibrated": False, "detector_target_mode": "FULL_OBJECT",
     "occlusion_hold_frames": 12,
     "occlusion_trigger_consecutive_unreliable": 2,
     "occlusion_trigger_min_dimension_ratio": 0.70,
     "occlusion_reference_window": 8,
+    "occlusion_probe_interval_frames": 1, "occlusion_gradual_dimension_ratio": 1, "occlusion_gradual_consecutive_frames": 1, "occlusion_min_reference_samples": 1, "occlusion_shrink_step_ratio": 1, "occlusion_suspicion_clear_frames": 1, "occlusion_peak_margin_drop": 1, "occlusion_motion_residual_threshold": 1, "occlusion_confirmation_iou": 1, "occlusion_confirmation_center_distance": 1, "occlusion_confirmation_max_area_log_change": 1, "occlusion_confirmation_max_aspect_log_change": 1,
     "rknn_api_version": "api", "rknn_driver_version": "driver",
     "tracked_frames": 2, "mean_runtime_ms": 2.0, "p50_runtime_ms": 2.0,
     "p95_runtime_ms": 2.0, "runtime_fps": 500.0,

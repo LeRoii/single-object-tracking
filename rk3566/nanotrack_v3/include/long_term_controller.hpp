@@ -96,6 +96,25 @@ struct ControllerOutput {
   OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
   std::size_t occlusion_probe_confirmation_hits = 0;
   std::size_t occlusion_probe_confirmation_required = 0;
+  std::string occlusion_probe_rejection = "NONE";
+  std::optional<BBox> occlusion_probe_motion_bbox;
+  std::optional<BBox> occlusion_probe_bbox;
+  std::optional<bool> occlusion_probe_anchor_reliable;
+  std::optional<bool> occlusion_probe_recent_reliable;
+  std::optional<bool> occlusion_probe_template_gate;
+  std::optional<bool> occlusion_probe_cross_gate;
+  std::optional<bool> occlusion_probe_cross_iou;
+  std::optional<bool> occlusion_probe_cross_center;
+  std::optional<bool> occlusion_probe_cross_area;
+  std::optional<bool> occlusion_probe_cross_aspect;
+  std::optional<bool> occlusion_probe_anchor_score_gate;
+  std::optional<bool> occlusion_probe_anchor_center_gate;
+  std::optional<bool> occlusion_probe_anchor_area_gate;
+  std::optional<bool> occlusion_probe_anchor_aspect_gate;
+  std::optional<bool> occlusion_probe_recent_score_gate;
+  std::optional<bool> occlusion_probe_recent_center_gate;
+  std::optional<bool> occlusion_probe_recent_area_gate;
+  std::optional<bool> occlusion_probe_recent_aspect_gate;
   bool motion_control_authorized = false;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};
@@ -132,6 +151,10 @@ class LongTermController {
     float center_residual = 0.0F;
     float area_log_change = 0.0F;
     float aspect_log_change = 0.0F;
+    bool score_gate = false;
+    bool center_gate = false;
+    bool area_gate = false;
+    bool aspect_gate = false;
   };
 
   struct Confirmation {

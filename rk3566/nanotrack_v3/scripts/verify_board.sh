@@ -60,7 +60,7 @@ height = int(sys.argv[5])
 detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
-EXPECTED_TRACKING_SCHEMA = 8
+EXPECTED_TRACKING_SCHEMA = 9
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 
 manifest = json.loads((artifact_dir / "manifest.json").read_text())
@@ -95,6 +95,9 @@ required = {
     "occlusion_reference_width", "occlusion_reference_height",
     "occlusion_width_ratio", "occlusion_height_ratio", "tracker_skipped",
     "detector_suppressed_by_hold",
+    "occlusion_probe_anchor_score_gate", "occlusion_probe_anchor_center_gate", "occlusion_probe_anchor_area_gate", "occlusion_probe_anchor_aspect_gate", "occlusion_probe_recent_score_gate", "occlusion_probe_recent_center_gate", "occlusion_probe_recent_area_gate", "occlusion_probe_recent_aspect_gate",
+    "occlusion_probe_rejection", "occlusion_probe_motion_x", "occlusion_probe_motion_y", "occlusion_probe_motion_width", "occlusion_probe_motion_height", "occlusion_probe_x", "occlusion_probe_y", "occlusion_probe_width", "occlusion_probe_height", "occlusion_probe_anchor_reliable", "occlusion_probe_recent_reliable", "occlusion_probe_template_gate", "occlusion_probe_cross_gate", "occlusion_probe_cross_iou", "occlusion_probe_cross_center", "occlusion_probe_cross_area", "occlusion_probe_cross_aspect",
+    "occlusion_reference_source", "occlusion_suspicion_active", "occlusion_suspicion_started", "occlusion_suspicion_cleared", "occlusion_suspicion_frames", "occlusion_clean_frames", "occlusion_width_shrink_frames", "occlusion_height_shrink_frames", "occlusion_severe_evidence", "occlusion_gradual_evidence", "occlusion_template_evidence", "occlusion_peak_margin_evidence", "occlusion_motion_residual_evidence", "occlusion_trigger_reason", "occlusion_coast_age_frames", "occlusion_probe_type", "occlusion_probe_confirmation_hits", "occlusion_probe_confirmation_required", "motion_control_authorized",
     "target_class_status", "target_class_id", "target_class_reason",
     "detector_recovery_enabled",
 }
@@ -170,6 +173,7 @@ for key in {
     "rknn_driver_version", "occlusion_hold_frames",
     "occlusion_trigger_consecutive_unreliable",
     "occlusion_trigger_min_dimension_ratio", "occlusion_reference_window",
+    "occlusion_probe_interval_frames", "occlusion_gradual_dimension_ratio", "occlusion_gradual_consecutive_frames", "occlusion_min_reference_samples", "occlusion_shrink_step_ratio", "occlusion_suspicion_clear_frames", "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold", "occlusion_confirmation_iou", "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change", "occlusion_confirmation_max_aspect_log_change",
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",
     "end_to_end_fps",
