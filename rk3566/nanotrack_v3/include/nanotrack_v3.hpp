@@ -47,6 +47,7 @@ class NanoTrackV3 final : public ShortTermTracker {
   std::vector<float> recent_feature_;
   std::vector<float> recent_backup_feature_;
   TrackerState state_{};
+  BBox initial_bbox_{};
   TrackerConfig config_{};
   cv::Scalar channel_average_{};
   int frame_width_ = 0;

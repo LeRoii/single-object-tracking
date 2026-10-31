@@ -110,6 +110,36 @@ BBox clip_bbox(const BBox& bbox, int frame_width, int frame_height) {
   return BBox{left, top, right - left, bottom - top};
 }
 
+BBox constrain_bbox_dimensions(const BBox& candidate,
+                               const BBox& reference,
+                               float minimum_ratio,
+                               float maximum_ratio,
+                               int frame_width,
+                               int frame_height) {
+  validate_bbox(candidate, frame_width, frame_height);
+  validate_bbox(reference, frame_width, frame_height);
+  if (!finite(minimum_ratio) || !finite(maximum_ratio) ||
+      minimum_ratio <= 0.0F || maximum_ratio < minimum_ratio) {
+    throw std::invalid_argument("bbox dimension ratios are invalid");
+  }
+
+  const float width = std::clamp(
+      candidate.width, reference.width * minimum_ratio,
+      std::min(reference.width * maximum_ratio,
+               static_cast<float>(frame_width)));
+  const float height = std::clamp(
+      candidate.height, reference.height * minimum_ratio,
+      std::min(reference.height * maximum_ratio,
+               static_cast<float>(frame_height)));
+  const float center_x = candidate.x + 0.5F * candidate.width;
+  const float center_y = candidate.y + 0.5F * candidate.height;
+  const float left = std::clamp(center_x - 0.5F * width, 0.0F,
+                                static_cast<float>(frame_width) - width);
+  const float top = std::clamp(center_y - 0.5F * height, 0.0F,
+                               static_cast<float>(frame_height) - height);
+  return BBox{left, top, width, height};
+}
+
 float percentile_ms(std::vector<float> values, float percentile) {
   if (values.empty()) {
     throw std::invalid_argument("cannot calculate a percentile of no values");

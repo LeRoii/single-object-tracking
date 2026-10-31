@@ -258,6 +258,63 @@ timeout -s TERM -k 2 <seconds> env LD_LIBRARY_PATH=/app/lib \
 - 对该结果执行交叉编译并观察到成功退出；
 - 将命令、结果和生产产物路径写入本文件。
 
+## 2026-10-31 零伺服偏移诊断版交叉编译与隔离上传
+
+- 时间：`2026-10-31T23:50:00+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；开始时 HEAD 为 `98a196fa7d4dca5480a081fe39775bda01101d7c`。
+- 用户确认的诊断边界是：上位机继续读取真实 `rect_show`；宿主伺服控制使用的 `track_box_result.rect[0]` 在初始化帧及所有后续跟踪帧始终以 1920x1080 图像中心为中心，使其整数中心偏移严格为 `(0,0)`；`rect[1..4]`、NanoTrack 推理、尺寸保护、长期状态机、质量判定、检测器和模型配置不变。
+- 保留上一轮已由人工观察确认“框高不再缩到 1”的尺寸保护：输出宽高限制为初始框对应维度的 `0.75..1.33`，且裁剪到图像边缘。该保护的主机单测与本轮完整回归一并执行。
+- 新增适配层诊断日志：每帧记录 `mode/quality/accepted/control_valid`、真实/控制/最终/预测框、三类中心偏移、选中观测的 raw score、penalized peak、PSR、APCE、peak margin、中心残差、面积和宽高比变化；另逐条记录 anchor/recent observation 的框及五项响应指标。
+
+本轮先完成控制框纯函数红绿验证：缺少 `centered_control_box` 时测试按预期编译失败；实现后，奇数尺寸、偶数尺寸和 1x1 边缘小框均保持原宽高、输入框不被修改，并得到整数中心 `(960,540)`。适配层合同检查确认只在初始化和正常输出各调用一次居中函数，`rect_show` 与 `rect[1]` 均使用真实框且没有被控制框替换。
+
+主机侧重新建立干净的 RKNN-independent 构建目录并执行：
+
+```bash
+cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-zero-control-host \
+  -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF
+cmake --build /tmp/nanotrack-zero-control-host -j4
+ctest --test-dir /tmp/nanotrack-zero-control-host --output-on-failure
+```
+
+观察结果：`17/17` 测试通过，零失败；`git diff --check` 通过。原计划引用的 `/tmp/nanotrack-scale-guard` 已被环境清理，因此使用上述全新目录重新配置，而不是复用旧测试结果。
+
+同步到 WSL 的适配层源码和帮助头文件 SHA-256 分别为：
+
+- `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/ai_alg/source/native-lib_impl.cpp`：`2b56081633ad6a1084a875bb7444a70745f667cf20aea23a37bb7a8610a553fe`；
+- `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/ai_alg/include/control_output_safety.hpp`：`bee1882c3523e3e30ceb6b292b9ec3b2705d76db1dd0f2d15c639fb2f4e8cd30`。
+
+实际交叉编译命令：
+
+```bash
+cd /home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker
+BUILD_JOBS=4 ./run.sh --platform A6
+```
+
+观察结果：退出码 `0`，重新编译适配层及 NanoTrack 相关对象，成功链接 `libAI.a` 和 `viewlink_app`。新工件身份为：
+
+| 工件 | 大小 | SHA-256 |
+| --- | ---: | --- |
+| `build_A6/viewlink_app` | 32,408,600 bytes | `e68509753b886e184a6b0be875129939ecfba2377d98452822311ff938415062` |
+| `build_A6/ai_alg/libAI.a` | 554,748 bytes | `cb6440e45f1bb0b3528810a4155bb658badbdee942bbabd59a4ab30bd6083f0c` |
+
+`file` 将程序识别为 ARM aarch64 ELF；字符串复核可见 `AI_TRACK_DIAG state=INIT/DO_TRACK`、`selected_pscore` 和 `AI_TRACK_OBS`。新程序与上一轮诊断程序 `3298c835d468e1876d9638ee88f9829dd753d97f76042b9cd7c602ff763bfb43` 不同。
+
+板端只执行隔离上传，没有启动程序。新路径为：
+
+```text
+/app/nanotrack_b827_zero_control_diag_20261031/bin/viewlink_app
+```
+
+传输先落到同目录 `viewlink_app.staging`，板端 SHA-256 匹配后改为权限 `755` 并原子重命名。最终板端大小仍为 32,408,600 bytes、SHA-256 仍为 `e68509753b886e184a6b0be875129939ecfba2377d98452822311ff938415062`，暂存文件不存在，进程检查输出 `ZERO_CONTROL_DIAG_NOT_RUNNING`。
+
+上传前后受保护程序保持不变：
+
+- `/app/bin/viewlink_app`：`a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357`；
+- `/app/nanotrack_b827_candidate/bin/viewlink_app`：`80554ffe9bde5c0ea0a729c56902d657d548214018eee84a445f3203c22f4692`。
+
+- 证据边界：本节证明控制/显示通道分离通过纯函数和适配层合同检查、主机 17/17 回归通过、A6 交叉编译成功且新工件已隔离上传。由于新程序尚未启动，本节不证明上位机实际显示、伺服静止、质量门判断、模型运行或真实吊舱验收；这些结论必须以后续人工下发指令的实际观察为准。
+- 下一步：按用户指令启动该隔离程序时，进程环境需包含 `LD_LIBRARY_PATH=/app/lib:/usr/lib`，保留 stdout/stderr 日志，并由用户确认“真实框可见且伺服不动”；不得据此升级公共开发板 handoff 或吊舱验收状态。
+
 达到以上条件只能表述为“最新板端结果已成功交叉编译”，不能表述为“已部署”或“吊舱测试通过”。
 
 ## Next action
