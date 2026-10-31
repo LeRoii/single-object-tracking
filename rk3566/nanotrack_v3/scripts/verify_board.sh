@@ -201,11 +201,12 @@ for index, row in enumerate(rows):
     hits, required_hits = int(row["occlusion_probe_confirmation_hits"]), int(row["occlusion_probe_confirmation_required"])
     auth = row["motion_control_authorized"] == "1"
     hold = row["state"] == "OCCLUSION_HOLD"
-    if age > metadata["occlusion_hold_frames"] or (hold and (age == 0 or not auth)) or (auth and (not hold or row["control_valid"] != "1" or row["hypothesis_source"] != "MOTION")):
+    coast_budget = min(12, metadata["occlusion_hold_frames"])
+    if age > coast_budget or (hold and (age == 0 or not auth)) or (auth and (not hold or row["control_valid"] != "1" or row["hypothesis_source"] != "MOTION")):
         raise SystemExit(f"invalid coast authorization at row {index}")
     if age and not hold and row["reacquired"] != "1":
         raise SystemExit(f"coast age outside hold or recovery at row {index}")
-    if hold and int(row["occlusion_hold_remaining_frames"]) != metadata["occlusion_hold_frames"] - age + 1:
+    if hold and int(row["occlusion_hold_remaining_frames"]) != coast_budget - age + 1:
         raise SystemExit(f"invalid coast remaining at row {index}")
     if probe == "NONE":
         if hits or required_hits:
@@ -222,6 +223,27 @@ for index, row in enumerate(rows):
         raise SystemExit(f"inconsistent cross-frame gates at row {index}")
     if combined and not all(cross):
         raise SystemExit(f"missing cross-frame gate at row {index}")
+    if age and row["reacquired"] == "1":
+        required_gates = [
+            "occlusion_probe_anchor_reliable", "occlusion_probe_recent_reliable",
+            "occlusion_probe_template_gate", "occlusion_probe_cross_gate",
+            *(f"occlusion_probe_{template}_{gate}_gate"
+              for template in ("anchor", "recent")
+              for gate in ("score", "center", "area", "aspect")),
+            *(f"occlusion_probe_cross_{gate}" for gate in ("iou", "center", "area", "aspect")),
+        ]
+        if (row["state"] != "TRACKING" or row["accepted"] != "1" or
+                row["control_valid"] != "1" or auth or probe != "CONFIRM" or
+                hits != 2 or required_hits != 2 or row["occlusion_probe_rejection"] != "NONE" or
+                any(row[key] != "1" for key in required_gates)):
+            raise SystemExit(f"invalid coast reacquisition at row {index}")
+        for prefix in ("occlusion_probe_motion_", "occlusion_probe_"):
+            box = [row[prefix + suffix] for suffix in ("x", "y", "width", "height")]
+            if not all(box):
+                raise SystemExit(f"missing {prefix} recovery box at row {index}")
+            x, y, box_width, box_height = map(float, box)
+            if x < 0 or y < 0 or x + box_width > width + 1e-3 or y + box_height > height + 1e-3:
+                raise SystemExit(f"invalid {prefix} recovery box at row {index}")
     values = {key: float(row[key]) for key in {"x", "y", "width", "height"}}
     if int(row["frame_id"]) != first_frame_id + index:
         raise SystemExit(f"non-sequential frame id at row {index}")

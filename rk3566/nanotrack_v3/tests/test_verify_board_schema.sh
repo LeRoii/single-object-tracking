@@ -149,6 +149,70 @@ ffmpeg -loglevel error -f lavfi -i color=size=16x16:rate=1 \
 bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16
 
 cp "$artifact_dir/bboxes.csv" "$artifact_dir/bboxes.valid.csv"
+cp "$artifact_dir/session-metadata.json" "$artifact_dir/metadata.base.json"
+review_failures=0
+for review_case in budget_valid budget_age13 recovery_valid recovery_bad_cross recovery_bad_template recovery_bad_geometry; do
+  cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
+  cp "$artifact_dir/metadata.base.json" "$artifact_dir/session-metadata.json"
+  python3 - "$artifact_dir" "$review_case" <<'PY'
+import csv, json, pathlib, sys
+path, case = pathlib.Path(sys.argv[1]), sys.argv[2]
+csv_path, metadata_path = path / "bboxes.csv", path / "session-metadata.json"
+with csv_path.open(newline="") as stream:
+    rows = list(csv.DictReader(stream))
+fields = list(rows[0])
+with metadata_path.open() as stream:
+    metadata = json.load(stream)
+if case.startswith("budget_"):
+    metadata["occlusion_hold_frames"] = 13
+    if case == "budget_age13":
+        rows[2]["occlusion_coast_age_frames"] = "13"
+        rows[2]["occlusion_hold_remaining_frames"] = "1"
+else:
+    row = rows[2]
+    row.update({"state": "TRACKING", "quality": "RELIABLE", "accepted": "1",
+        "reacquired": "1", "control_valid": "1", "motion_control_authorized": "0",
+        "occlusion_coast_age_frames": "6", "occlusion_hold_remaining_frames": "0",
+        "occlusion_probe_type": "CONFIRM", "occlusion_probe_confirmation_hits": "2",
+        "occlusion_probe_confirmation_required": "2", "occlusion_probe_rejection": "NONE",
+        "tracker_skipped": "0", "detector_suppressed_by_hold": "0", "tracker_ms": "1"})
+    for prefix in ("occlusion_probe_motion_", "occlusion_probe_"):
+        for suffix, value in zip(("x", "y", "width", "height"), ("1", "1", "4", "4")):
+            row[prefix + suffix] = value
+    for template in ("anchor", "recent"):
+        row["occlusion_probe_" + template + "_reliable"] = "1"
+        for gate in ("score", "center", "area", "aspect"):
+            row["occlusion_probe_" + template + "_" + gate + "_gate"] = "1"
+    for gate in ("gate", "iou", "center", "area", "aspect"):
+        row["occlusion_probe_cross_" + gate] = "1"
+    row["occlusion_probe_template_gate"] = "1"
+    if case == "recovery_bad_cross":
+        row["occlusion_probe_cross_iou"] = row["occlusion_probe_cross_gate"] = "0"
+        row["occlusion_probe_rejection"] = "CONFIRM_GEOMETRY"
+    if case == "recovery_bad_template":
+        row["occlusion_probe_recent_score_gate"] = "0"
+    if case == "recovery_bad_geometry":
+        row["occlusion_probe_width"] = ""
+with csv_path.open("w", newline="") as stream:
+    writer = csv.DictWriter(stream, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(rows)
+with metadata_path.open("w") as stream:
+    json.dump(metadata, stream)
+PY
+  if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
+    if [[ "$review_case" != *_valid ]]; then
+      echo "verify_board accepted $review_case" >&2
+      review_failures=$((review_failures + 1))
+    fi
+  elif [[ "$review_case" == *_valid ]]; then
+    echo "verify_board rejected $review_case" >&2
+    review_failures=$((review_failures + 1))
+  fi
+done
+cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
+cp "$artifact_dir/metadata.base.json" "$artifact_dir/session-metadata.json"
+if [[ "$review_failures" != 0 ]]; then exit 1; fi
 for invalid_case in unskipped_zero nan_tracker inf_runtime inf_pipeline skipped_nonzero; do
   cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
   python3 - "$artifact_dir/bboxes.csv" "$invalid_case" <<'PY'
