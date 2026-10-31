@@ -179,6 +179,42 @@ git diff --check
 - 本节没有执行 `BUILD_JOBS=4 ./run.sh --platform A6`，没有产生新的 `viewlink_app`/`libAI.a` 身份，也没有连接开发板或启动候选程序。Task 2 当前状态为 `blocked_on_wsl_reachability_after_adapter_staging`；恢复连接后的第一步必须先核对上述五个已安装文件和临时工件目录，再补传/校验七个工件，然后才允许运行 A6 构建。
 - RKNN 风险保持不变：交叉环境历史 runtime 为 `1.5.2`，临时 VisDrone9 工件及板端历史环境为 `2.3.2`；即使后续编译成功，也不能据此声明模型加载、推理、开发板或吊舱验收。
 
+## 2026-10-31 配置化 A6 候选构建完成（Task 2）
+
+- 时间：`2026-10-31T15:46:59+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；输入 HEAD 为 `e976d8083f5d53f5bb7e4ac5fa7c2cea0f24917c`，包含 Task 1 parser commit `ebbfec37fba05283240a598cbc15b79a08be4aac` 和中断暂存记录。
+- WSL 恢复后首先重新核对前节五个已安装文件，SHA-256 未变化。断线留下的 RKNN 半文件没有被采用；改用 `rsync --partial --append-verify` 续传，然后在临时目录和最终 `deployment_b827` 目录分别核对工件身份。
+
+| 部署工件 | WSL 候选路径 | SHA-256 |
+| --- | --- | --- |
+| NanoTrack template | `deployment_b827/model/template_backbone.rknn` | `38b60334e8e0f0999bfb7ff9e943090546461f9307682653685237e24b2a7709` |
+| NanoTrack search | `deployment_b827/model/search_backbone.rknn` | `92125f1ef6254dade5786bb999faa5b9d9412ceb2b7987f6dbba82f959b7ef6a` |
+| NanoTrack head | `deployment_b827/model/head.rknn` | `2065bfca503cca9197e67de1a754efad930dfed4d2fc73881c77d9e850dcb600` |
+| temporary VisDrone9 RKNN | `deployment_b827/model/yolov8n-visdrone9-rk3566-fp16.rknn` | `3698bc9bea1f43a4bac2826a09e03be0439fddfbc5c5604d8ed0f92b36881df0` |
+| VisDrone9 manifest | `deployment_b827/config/detector-manifest.json` | `05e6d8c7c210b7f9d85b8fb712aa00b014f310e46e85f171ce1158afc90ba63e` |
+| VisDrone9 labels | `deployment_b827/config/visdrone9.txt` | `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992` |
+| controller config | `deployment_b827/config/visible-default.conf` | `b9a128b78063056173626af1c7c7d2c580a59b295c45a4afc0ef8e2e04bff95b` |
+| deployment config | `deployment_b827/config/production-deployment.conf` | `220b77f494b7c577f9dc2e0306f3fe1ce2ad1a0c684ed93b9bbd61f9b458e82c` |
+
+- `production-deployment.conf` 只指向 `/app/nanotrack_b827_candidate` 下的上述 tracker/controller/detector/manifest/labels 路径。adapter 只固定该配置文件自身的位置；未知/重复/缺失/空键、缺文件或模型初始化异常均沿现有 `catch` 使 `tracker_detector_init()` 返回 `false`，没有 fallback。
+- 实际执行：
+
+```bash
+cd /home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker
+BUILD_JOBS=4 ./run.sh --platform A6
+```
+
+- 观察结果：退出码 `0`；CMake 重新配置；GNU AArch64 C++ 工具链完成 `production_deployment_config.cpp.o`、`target_class.cpp.o` 及其余生产对象编译，`libAI.a` 和 `viewlink_app` 链接成功。完整日志位于 WSL `deployment_b827/build-A6-configurable.log`，SHA-256 `e9d0e480dd82ced5d0f4121401ee7150a3c7fb362e878300358a7cebdd8262e5`。
+
+| 产物 | 大小/时间（Asia/Shanghai） | SHA-256 |
+| --- | --- | --- |
+| `build_A6/viewlink_app` | 32404424 bytes；`2026-10-31 15:46:31 +0800` | `80554ffe9bde5c0ea0a729c56902d657d548214018eee84a445f3203c22f4692` |
+| `build_A6/ai_alg/libAI.a` | 551452 bytes；`2026-10-31 15:46:30 +0800` | `4eb1fd42f5063b327cb72545a2747319305061852b143b184930a4aebf0af76f` |
+
+- `file` 将新程序识别为 ARM aarch64 ELF。`libAI.a` 含 `production_deployment_config.cpp.o`、`target_class.cpp.o` 和真实 `tracker_detector_init`、`do_tracker_detector`、`sr_model_init`、`sr_infer_frame` C 符号；归档成员没有 `main/debug/highgui/telemetry/tracking_log/video/csv` 对象，字符串扫描确认唯一部署配置绑定为 `/app/nanotrack_b827_candidate/config/production-deployment.conf`。
+- 新二进制已复制到 WSL `deployment_b827/bin/viewlink_app` 并复核为同一 SHA。被替换的旧候选二进制保存在 `deployment_b827.backup-20261031-old-binary/viewlink_app`，SHA-256 `768e65e635c3c78ff9d61f8963e8131ec5cb897c301fefcaffc31d17003da988`。没有修改 WSL 工程外的现有板端程序或 `/app/model`。
+- 证据边界：Task 2 只证明锁定工件已取得并且配置化生产代码在现有 A6 环境成功交叉编译。VisDrone9 仅是临时功能候选，不是 COCO80 或最终 detector 验收；本节未执行板端模型加载、推理、跟踪/长期恢复、内存平台或真实吊舱测试。交叉链接 runtime `1.5.2` 与模型/历史板端环境 `2.3.2` 的兼容风险仍需板端启动暴露，编译成功不消除该风险。
+- 下一步：按 Task 3 对板端执行只读 preflight，在不覆盖 `/app/bin/viewlink_app`、`/app/viewlink_appnt3`、`/app/model` 的前提下，以临时目录复制精确白名单，并做有界前台启动；这仍不是开发板验收或吊舱验收。
+
 ## 完成条件
 
 - `development_board_validation.latest_handoff.available=true`；
