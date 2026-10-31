@@ -146,6 +146,7 @@ void test_target_class_presentation() {
               "class disposition and higher-priority final rejection remain independent");
 
   RuntimeFrameResult initialization;
+  initialization.plan.motion_predicted_bbox = BBox{1, 1, 5, 5};
   initialization.initialization.emplace();
   auto& state = initialization.initialization->target_class;
   TargetClassCandidateMatch selected;
@@ -310,6 +311,39 @@ int main() {
               "hold renders only frozen motion with explicit remaining count and no control");
 
   test_target_class_presentation();
+
+  hold.output.control_valid = true;
+  hold.output.motion_control_authorized = true;
+  hold.output.bbox = BBox{10, 20, 30, 40};
+  hold.output.occlusion_probe_type = OcclusionProbeType::kSearch;
+  hold.observations = result.observations;
+  const auto coast = make_interactive_debug_overlay(hold);
+  bool motion_control = false;
+  bool search_probe = false;
+  for (const auto& box : coast.boxes) {
+    motion_control |= box.label == "CTRL MOTION COAST" &&
+                      box.kind == DebugBoxKind::kAcceptedControl;
+    search_probe |= box.label.find("COAST SEARCH") != std::string::npos &&
+                    box.kind != DebugBoxKind::kAcceptedControl;
+  }
+  expect_true(coast.control_valid && motion_control && search_probe,
+              "motion coast is green control while search is an independent non-control probe");
+  for (const auto& box : coast.boxes) {
+    if (box.kind == DebugBoxKind::kCoastSearchProbe)
+      expect_true(box.label.find("selected_quality=") != std::string::npos &&
+                      box.label.find(" quality=") == std::string::npos,
+                  "probe label identifies aggregate quality as selected, not template quality");
+  }
+  hold.output.occlusion_probe_type = OcclusionProbeType::kConfirm;
+  hold.observations[0].bbox.width = -1;
+  const auto confirm = make_interactive_debug_overlay(hold);
+  bool confirm_box = false, invalid_text = false;
+  for (const auto& box : confirm.boxes)
+    confirm_box |= box.kind == DebugBoxKind::kCoastConfirmProbe;
+  for (const auto& item : confirm.texts)
+    invalid_text |= item.label.find("COAST CONFIRM") != std::string::npos;
+  expect_true(confirm_box && invalid_text,
+              "confirm probes use their distinct kind and invalid observations stay text only");
 
   if (failures != 0) {
     std::cerr << failures << " overlay test(s) failed\n";

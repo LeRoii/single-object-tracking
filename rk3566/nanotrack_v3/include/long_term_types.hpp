@@ -20,6 +20,21 @@ enum class TrackingMode {
 };
 
 enum class QualityLevel { kReliable, kWeak, kRejected };
+enum class OcclusionReferenceSource {
+  kNone, kPartialStableMedian, kFullStableMedian
+};
+enum class OcclusionTriggerReason {
+  kNone,
+  kSevereWidth,
+  kSevereHeight,
+  kGradualWidthTemplate,
+  kGradualWidthPeak,
+  kGradualWidthMotion,
+  kGradualHeightTemplate,
+  kGradualHeightPeak,
+  kGradualHeightMotion,
+};
+enum class OcclusionProbeType { kNone, kSearch, kConfirm };
 enum class TemplateKind { kAnchor, kRecent };
 enum class TemplateAction { kNone, kStageRecent, kCommitRecent, kRollbackRecent };
 enum class HypothesisSource { kMotion, kDetector };
@@ -169,6 +184,9 @@ struct DetectorDiagnostics {
 };
 
 const char* to_string(TrackingMode value);
+const char* to_string(OcclusionReferenceSource value);
+const char* to_string(OcclusionTriggerReason value);
+const char* to_string(OcclusionProbeType value);
 const char* to_string(QualityLevel value);
 const char* to_string(TemplateKind value);
 const char* to_string(TemplateAction value);

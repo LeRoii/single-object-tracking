@@ -60,8 +60,37 @@ height = int(sys.argv[5])
 detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
-EXPECTED_TRACKING_SCHEMA = 8
+EXPECTED_TRACKING_SCHEMA = 9
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
+metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
+for key, low, high in [
+    ("occlusion_hold_frames", 1, 300), ("occlusion_reference_window", 3, 60),
+    ("occlusion_trigger_consecutive_unreliable", 1, 10),
+    ("occlusion_probe_interval_frames", 1, 300),
+    ("occlusion_gradual_consecutive_frames", 1, 60),
+    ("occlusion_min_reference_samples", 1, 60),
+    ("occlusion_suspicion_clear_frames", 1, 60),
+]:
+    value = metadata.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise SystemExit(f"invalid metadata {key}")
+for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
+            "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
+            "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold",
+            "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change",
+            "occlusion_confirmation_max_aspect_log_change"):
+    value = metadata.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise SystemExit(f"invalid metadata {key}")
+    if key == "occlusion_peak_margin_drop":
+        valid = value >= 0
+    elif key in {"occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
+                 "occlusion_shrink_step_ratio", "occlusion_confirmation_iou"}:
+        valid = 0 < value <= 1
+    else:
+        valid = value > 0
+    if not valid:
+        raise SystemExit(f"out of range metadata {key}")
 
 manifest = json.loads((artifact_dir / "manifest.json").read_text())
 for model in manifest["models"].values():
@@ -76,7 +105,7 @@ if len(rows) != expected:
     raise SystemExit(f"CSV row count {len(rows)} != expected {expected}")
 required = {
     "schema_version", "frame_id", "timestamp_ms", "state", "quality", "control_valid",
-    "accepted", "reacquired", "x", "y", "width", "height",
+    "accepted", "reacquired", "x", "y", "width", "height", "hypothesis_source",
     "anchor_score", "anchor_psr", "anchor_apce", "recent_score",
     "recent_psr", "recent_apce", "search_scale", "detector_status",
     "detector_configured", "detector_ready", "detector_requested",
@@ -95,6 +124,9 @@ required = {
     "occlusion_reference_width", "occlusion_reference_height",
     "occlusion_width_ratio", "occlusion_height_ratio", "tracker_skipped",
     "detector_suppressed_by_hold",
+    "occlusion_probe_anchor_score_gate", "occlusion_probe_anchor_center_gate", "occlusion_probe_anchor_area_gate", "occlusion_probe_anchor_aspect_gate", "occlusion_probe_recent_score_gate", "occlusion_probe_recent_center_gate", "occlusion_probe_recent_area_gate", "occlusion_probe_recent_aspect_gate",
+    "occlusion_probe_rejection", "occlusion_probe_motion_x", "occlusion_probe_motion_y", "occlusion_probe_motion_width", "occlusion_probe_motion_height", "occlusion_probe_x", "occlusion_probe_y", "occlusion_probe_width", "occlusion_probe_height", "occlusion_probe_anchor_reliable", "occlusion_probe_recent_reliable", "occlusion_probe_template_gate", "occlusion_probe_cross_gate", "occlusion_probe_cross_iou", "occlusion_probe_cross_center", "occlusion_probe_cross_area", "occlusion_probe_cross_aspect",
+    "occlusion_reference_source", "occlusion_suspicion_active", "occlusion_suspicion_started", "occlusion_suspicion_cleared", "occlusion_suspicion_frames", "occlusion_clean_frames", "occlusion_width_shrink_frames", "occlusion_height_shrink_frames", "occlusion_severe_evidence", "occlusion_gradual_evidence", "occlusion_template_evidence", "occlusion_peak_margin_evidence", "occlusion_motion_residual_evidence", "occlusion_trigger_reason", "occlusion_coast_age_frames", "occlusion_probe_type", "occlusion_probe_confirmation_hits", "occlusion_probe_confirmation_required", "motion_control_authorized",
     "target_class_status", "target_class_id", "target_class_reason",
     "detector_recovery_enabled",
 }
@@ -106,6 +138,112 @@ last_timestamp = None
 for index, row in enumerate(rows):
     if row["schema_version"] != str(EXPECTED_TRACKING_SCHEMA):
         raise SystemExit(f"unexpected CSV schema version at row {index}")
+    enums = {
+        "state": {"TRACKING", "UNCERTAIN", "LOCAL_RECOVERY", "ASSISTED_RECOVERY", "LOST", "OCCLUSION_HOLD"},
+        "quality": {"RELIABLE", "WEAK", "REJECTED"},
+        "hypothesis_source": {"MOTION", "DETECTOR"},
+        "detector_status": {"NONE", "ACCEPTED", "STALE", "FRAME_MISMATCH", "INVALID", "POSITION_REJECTED"},
+        "target_class_status": {"FIXED", "ESTABLISHED", "UNKNOWN"},
+        "target_class_reason": {"FIXED_OVERRIDE", "UNIQUE_MATCH", "NO_MATCH", "AMBIGUOUS", "DETECTOR_UNAVAILABLE", "DETECTOR_ERROR"},
+        "occlusion_reference_source": {"NONE", "PARTIAL_STABLE_MEDIAN", "FULL_STABLE_MEDIAN"},
+        "occlusion_trigger_reason": {"NONE", "SEVERE_WIDTH", "SEVERE_HEIGHT",
+            "GRADUAL_WIDTH_TEMPLATE", "GRADUAL_WIDTH_PEAK", "GRADUAL_WIDTH_MOTION",
+            "GRADUAL_HEIGHT_TEMPLATE", "GRADUAL_HEIGHT_PEAK", "GRADUAL_HEIGHT_MOTION"},
+        "occlusion_probe_type": {"NONE", "SEARCH", "CONFIRM"},
+        "occlusion_probe_rejection": {"NONE", "MISSING_TEMPLATE", "QUALITY_OR_MOTION_GEOMETRY",
+            "TEMPLATE_AGREEMENT", "MISSING_CANDIDATE", "CONFIRM_GEOMETRY"},
+    }
+    for key, valid in enums.items():
+        if row[key] not in valid:
+            raise SystemExit(f"invalid {key} at row {index}")
+    boolean_keys = {"accepted", "reacquired", "detector_configured", "detector_ready",
+        "detector_requested", "detector_recovery_enabled", "occlusion_suspicion_active", "occlusion_suspicion_started",
+        "occlusion_suspicion_cleared", "occlusion_severe_evidence", "occlusion_gradual_evidence",
+        "occlusion_template_evidence", "occlusion_peak_margin_evidence",
+        "occlusion_motion_residual_evidence", "motion_control_authorized"}
+    for key in boolean_keys:
+        if row[key] not in {"0", "1"}:
+            raise SystemExit(f"invalid {key} at row {index}")
+    optional_gates = [key for key in required if key.startswith("occlusion_probe_") and
+                      (key.endswith("_gate") or key.endswith("_reliable") or
+                       key in {"occlusion_probe_cross_iou", "occlusion_probe_cross_center",
+                               "occlusion_probe_cross_area", "occlusion_probe_cross_aspect"})]
+    for key in optional_gates:
+        if row[key] not in {"", "0", "1"}:
+            raise SystemExit(f"invalid {key} at row {index}")
+    counts = ("occlusion_suspicion_frames", "occlusion_clean_frames",
+        "occlusion_width_shrink_frames", "occlusion_height_shrink_frames",
+        "occlusion_coast_age_frames", "occlusion_hold_remaining_frames",
+        "occlusion_probe_confirmation_hits", "occlusion_probe_confirmation_required")
+    for key in counts:
+        if not row[key].isdigit():
+            raise SystemExit(f"invalid {key} at row {index}")
+    for key in ("occlusion_reference_width", "occlusion_reference_height",
+                "occlusion_width_ratio", "occlusion_height_ratio",
+                "occlusion_probe_motion_x", "occlusion_probe_motion_y",
+                "occlusion_probe_motion_width", "occlusion_probe_motion_height",
+                "occlusion_probe_x", "occlusion_probe_y",
+                "occlusion_probe_width", "occlusion_probe_height"):
+        if row[key] and not math.isfinite(float(row[key])):
+            raise SystemExit(f"invalid {key} at row {index}")
+    for key in ("occlusion_reference_width", "occlusion_reference_height",
+                "occlusion_width_ratio", "occlusion_height_ratio",
+                "occlusion_probe_motion_width", "occlusion_probe_motion_height",
+                "occlusion_probe_width", "occlusion_probe_height"):
+        if row[key] and float(row[key]) <= 0:
+            raise SystemExit(f"nonpositive {key} at row {index}")
+    for prefix in ("occlusion_probe_motion_", "occlusion_probe_"):
+        box = [row[prefix + suffix] for suffix in ("x", "y", "width", "height")]
+        if any(box) and not all(box):
+            raise SystemExit(f"partial {prefix} box at row {index}")
+    age = int(row["occlusion_coast_age_frames"])
+    probe = row["occlusion_probe_type"]
+    hits, required_hits = int(row["occlusion_probe_confirmation_hits"]), int(row["occlusion_probe_confirmation_required"])
+    auth = row["motion_control_authorized"] == "1"
+    hold = row["state"] == "OCCLUSION_HOLD"
+    coast_budget = min(12, metadata["occlusion_hold_frames"])
+    if age > coast_budget or (hold and (age == 0 or not auth)) or (auth and (not hold or row["control_valid"] != "1" or row["hypothesis_source"] != "MOTION")):
+        raise SystemExit(f"invalid coast authorization at row {index}")
+    if age and not hold and row["reacquired"] != "1":
+        raise SystemExit(f"coast age outside hold or recovery at row {index}")
+    if hold and int(row["occlusion_hold_remaining_frames"]) != coast_budget - age + 1:
+        raise SystemExit(f"invalid coast remaining at row {index}")
+    if probe == "NONE":
+        if hits or required_hits:
+            raise SystemExit(f"probe counts without probe at row {index}")
+    elif not age or required_hits != 2 or hits > 2 or (probe == "SEARCH" and hits > 1) or (not hold and row["reacquired"] != "1"):
+        raise SystemExit(f"invalid probe state at row {index}")
+    if probe == "SEARCH" and age % metadata["occlusion_probe_interval_frames"] != 0:
+        raise SystemExit(f"invalid search age at row {index}")
+    if probe == "CONFIRM" and (age < 2 or (age - 1) % metadata["occlusion_probe_interval_frames"] != 0):
+        raise SystemExit(f"invalid confirm age at row {index}")
+    cross = [row["occlusion_probe_cross_" + key] for key in ("iou", "center", "area", "aspect")]
+    combined = row["occlusion_probe_cross_gate"]
+    if any(cross) and (not all(cross) or combined != ("1" if all(v == "1" for v in cross) else "0")):
+        raise SystemExit(f"inconsistent cross-frame gates at row {index}")
+    if combined and not all(cross):
+        raise SystemExit(f"missing cross-frame gate at row {index}")
+    if age and row["reacquired"] == "1":
+        required_gates = [
+            "occlusion_probe_anchor_reliable", "occlusion_probe_recent_reliable",
+            "occlusion_probe_template_gate", "occlusion_probe_cross_gate",
+            *(f"occlusion_probe_{template}_{gate}_gate"
+              for template in ("anchor", "recent")
+              for gate in ("score", "center", "area", "aspect")),
+            *(f"occlusion_probe_cross_{gate}" for gate in ("iou", "center", "area", "aspect")),
+        ]
+        if (row["state"] != "TRACKING" or row["accepted"] != "1" or
+                row["control_valid"] != "1" or auth or probe != "CONFIRM" or
+                hits != 2 or required_hits != 2 or row["occlusion_probe_rejection"] != "NONE" or
+                any(row[key] != "1" for key in required_gates)):
+            raise SystemExit(f"invalid coast reacquisition at row {index}")
+        for prefix in ("occlusion_probe_motion_", "occlusion_probe_"):
+            box = [row[prefix + suffix] for suffix in ("x", "y", "width", "height")]
+            if not all(box):
+                raise SystemExit(f"missing {prefix} recovery box at row {index}")
+            x, y, box_width, box_height = map(float, box)
+            if x < 0 or y < 0 or x + box_width > width + 1e-3 or y + box_height > height + 1e-3:
+                raise SystemExit(f"invalid {prefix} recovery box at row {index}")
     values = {key: float(row[key]) for key in {"x", "y", "width", "height"}}
     if int(row["frame_id"]) != first_frame_id + index:
         raise SystemExit(f"non-sequential frame id at row {index}")
@@ -170,6 +308,7 @@ for key in {
     "rknn_driver_version", "occlusion_hold_frames",
     "occlusion_trigger_consecutive_unreliable",
     "occlusion_trigger_min_dimension_ratio", "occlusion_reference_window",
+    "occlusion_probe_interval_frames", "occlusion_gradual_dimension_ratio", "occlusion_gradual_consecutive_frames", "occlusion_min_reference_samples", "occlusion_shrink_step_ratio", "occlusion_suspicion_clear_frames", "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold", "occlusion_confirmation_iou", "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change", "occlusion_confirmation_max_aspect_log_change",
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",
     "end_to_end_fps",

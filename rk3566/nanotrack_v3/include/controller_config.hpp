@@ -29,9 +29,22 @@ struct ControllerConfig {
   std::int64_t local_recovery_ms = 1000;
   std::int64_t assisted_recovery_ms = 3000;
   int occlusion_hold_frames = 12;
+  // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;
   float occlusion_trigger_min_dimension_ratio = 0.70F;
   int occlusion_reference_window = 8;
+  int occlusion_probe_interval_frames = 5;
+  float occlusion_gradual_dimension_ratio = 0.85F;
+  int occlusion_gradual_consecutive_frames = 2;
+  int occlusion_min_reference_samples = 3;
+  float occlusion_shrink_step_ratio = 0.97F;
+  int occlusion_suspicion_clear_frames = 2;
+  float occlusion_peak_margin_drop = 0.02F;
+  float occlusion_motion_residual_threshold = 0.75F;
+  float occlusion_confirmation_iou = 0.50F;
+  float occlusion_confirmation_center_distance = 0.35F;
+  float occlusion_confirmation_max_area_log_change = 0.50F;
+  float occlusion_confirmation_max_aspect_log_change = 0.40F;
   std::int64_t detector_interval_ms = 500;
   std::int64_t detector_stale_ms = 150;
   std::size_t detector_max_candidates = 3;

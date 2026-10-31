@@ -52,6 +52,27 @@ void expect_occlusion_defaults(const nanotrack::ControllerConfig& config,
               context + " defaults to a 0.70 dimension ratio");
   expect_true(config.occlusion_reference_window == 8,
               context + " defaults to eight reference observations");
+  expect_true(config.occlusion_probe_interval_frames == 5 &&
+                  config.occlusion_gradual_consecutive_frames == 2 &&
+                  config.occlusion_min_reference_samples == 3 &&
+                  config.occlusion_suspicion_clear_frames == 2,
+              context + " defaults to adaptive coast frame counts");
+  expect_near(config.occlusion_gradual_dimension_ratio, 0.85F, 1e-6F,
+              context + " defaults to a 0.85 gradual dimension ratio");
+  expect_near(config.occlusion_shrink_step_ratio, 0.97F, 1e-6F,
+              context + " defaults to a 0.97 shrink step ratio");
+  expect_near(config.occlusion_peak_margin_drop, 0.02F, 1e-6F,
+              context + " defaults to a 0.02 peak margin drop");
+  expect_near(config.occlusion_motion_residual_threshold, 0.75F, 1e-6F,
+              context + " defaults to a 0.75 motion residual threshold");
+  expect_near(config.occlusion_confirmation_iou, 0.50F, 1e-6F,
+              context + " defaults to a 0.50 coast confirmation IoU");
+  expect_near(config.occlusion_confirmation_center_distance, 0.35F, 1e-6F,
+              context + " defaults to a 0.35 coast confirmation center delta");
+  expect_near(config.occlusion_confirmation_max_area_log_change, 0.50F, 1e-6F,
+              context + " defaults to a 0.50 coast confirmation area delta");
+  expect_near(config.occlusion_confirmation_max_aspect_log_change, 0.40F, 1e-6F,
+              context + " defaults to a 0.40 coast confirmation aspect delta");
 }
 
 }  // namespace
@@ -237,6 +258,14 @@ int main() {
        &ControllerConfig::occlusion_trigger_consecutive_unreliable, 1, 10},
       {"occlusion_reference_window", &ControllerConfig::occlusion_reference_window,
        3, 60},
+      {"occlusion_probe_interval_frames",
+       &ControllerConfig::occlusion_probe_interval_frames, 1, 300},
+      {"occlusion_gradual_consecutive_frames",
+       &ControllerConfig::occlusion_gradual_consecutive_frames, 1, 60},
+      {"occlusion_min_reference_samples",
+       &ControllerConfig::occlusion_min_reference_samples, 1, 60},
+      {"occlusion_suspicion_clear_frames",
+       &ControllerConfig::occlusion_suspicion_clear_frames, 1, 60},
   };
   for (const CountLimit& limit : occlusion_counts) {
     for (int value : {limit.minimum, limit.maximum}) {
@@ -261,24 +290,55 @@ int main() {
                     std::string(limit.key) + " requires an in-range integer");
     }
   }
-  for (float ratio : {0.01F, 1.0F}) {
-    write_file(occlusion_path, "occlusion_trigger_min_dimension_ratio=" +
-                                   std::to_string(ratio) + "\n");
-    expect_near(load_controller_config(occlusion_path)
-                    .occlusion_trigger_min_dimension_ratio,
-                ratio, 1e-6F, "occlusion ratio accepts (0,1] values");
-  }
-  for (float ratio : {-0.01F, 0.0F, 1.01F,
-                      std::numeric_limits<float>::quiet_NaN(),
-                      std::numeric_limits<float>::infinity()}) {
-    ControllerConfig invalid = default_visible;
-    invalid.occlusion_trigger_min_dimension_ratio = ratio;
-    expect_throws([&] { validate_controller_config(invalid); },
-                  "occlusion ratio rejects out-of-range or non-finite values");
-    write_file(occlusion_path, "occlusion_trigger_min_dimension_ratio=" +
-                                   std::to_string(ratio) + "\n");
-    expect_throws([&] { load_controller_config(occlusion_path); },
-                  "occlusion ratio rejects invalid file values");
+  struct FloatLimit {
+    const char* key;
+    float ControllerConfig::*field;
+    bool allow_zero;
+    bool bounded_at_one;
+  };
+  const FloatLimit occlusion_floats[] = {
+      {"occlusion_trigger_min_dimension_ratio",
+       &ControllerConfig::occlusion_trigger_min_dimension_ratio, false, true},
+      {"occlusion_gradual_dimension_ratio",
+       &ControllerConfig::occlusion_gradual_dimension_ratio, false, true},
+      {"occlusion_shrink_step_ratio",
+       &ControllerConfig::occlusion_shrink_step_ratio, false, true},
+      {"occlusion_confirmation_iou",
+       &ControllerConfig::occlusion_confirmation_iou, false, true},
+      {"occlusion_peak_margin_drop",
+       &ControllerConfig::occlusion_peak_margin_drop, true, false},
+      {"occlusion_motion_residual_threshold",
+       &ControllerConfig::occlusion_motion_residual_threshold, false, false},
+      {"occlusion_confirmation_center_distance",
+       &ControllerConfig::occlusion_confirmation_center_distance, false, false},
+      {"occlusion_confirmation_max_area_log_change",
+       &ControllerConfig::occlusion_confirmation_max_area_log_change, false, false},
+      {"occlusion_confirmation_max_aspect_log_change",
+       &ControllerConfig::occlusion_confirmation_max_aspect_log_change, false, false},
+  };
+  for (const FloatLimit& limit : occlusion_floats) {
+    for (float value : {0.0F, 0.01F, 0.63F, 1.0F, 1.01F, 100.0F, -0.01F,
+                        std::numeric_limits<float>::quiet_NaN(),
+                        std::numeric_limits<float>::infinity(),
+                        -std::numeric_limits<float>::infinity()}) {
+      const bool valid = std::isfinite(value) &&
+                         (limit.allow_zero ? value >= 0.0F : value > 0.0F) &&
+                         (!limit.bounded_at_one || value <= 1.0F);
+      ControllerConfig candidate = default_visible;
+      candidate.*(limit.field) = value;
+      write_file(occlusion_path,
+                 std::string(limit.key) + "=" + std::to_string(value) + "\n");
+      if (valid) {
+        validate_controller_config(candidate);
+        expect_near(load_controller_config(occlusion_path).*(limit.field), value,
+                    1e-6F, std::string(limit.key) + " accepts valid file values");
+      } else {
+        expect_throws([&] { validate_controller_config(candidate); },
+                      std::string(limit.key) + " rejects invalid direct values");
+        expect_throws([&] { load_controller_config(occlusion_path); },
+                      std::string(limit.key) + " rejects invalid file values");
+      }
+    }
   }
 
   ControllerConfig motion_config;

@@ -44,6 +44,7 @@ add_library(nanotrack_controller_support
   src/long_term_types.cpp
   src/target_class.cpp
   src/motion_estimator.cpp
+  src/occlusion_evidence.cpp
   src/tracking_log.cpp
 )
 target_include_directories(nanotrack_controller_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -79,6 +80,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_production_deployment_config PRIVATE nanotrack_production_deployment_config)
   add_test(NAME production_deployment_config COMMAND test_production_deployment_config)
 
+  add_executable(test_occlusion_evidence tests/test_occlusion_evidence.cpp)
+  target_link_libraries(test_occlusion_evidence PRIVATE nanotrack_controller_support)
+  add_test(NAME occlusion_evidence COMMAND test_occlusion_evidence)
+
   add_executable(test_target_class tests/test_target_class.cpp)
   target_link_libraries(test_target_class PRIVATE nanotrack_controller_support)
   add_test(NAME target_class COMMAND test_target_class)
@@ -103,7 +108,7 @@ if(BUILD_TESTING)
   add_test(NAME controller_support COMMAND test_controller_support)
 
   add_executable(test_long_term_controller tests/test_long_term_controller.cpp)
-  target_link_libraries(test_long_term_controller PRIVATE nanotrack_controller_support)
+  target_link_libraries(test_long_term_controller PRIVATE nanotrack_debug_telemetry)
   add_test(NAME long_term_controller COMMAND test_long_term_controller)
 
   add_executable(test_long_term_runtime tests/test_long_term_runtime.cpp)
