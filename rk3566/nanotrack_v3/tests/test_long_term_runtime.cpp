@@ -110,6 +110,13 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
     ++submit_calls;
     last_request = request;
     ready = false;
+    if (complete_immediately) {
+      nanotrack::DetectorBatch batch;
+      batch.source_frame_id = request.frame_id;
+      batch.source_timestamp_ms = request.timestamp_ms;
+      batch.generation = request.generation;
+      next_batch = batch;
+    }
   }
   std::optional<nanotrack::DetectorBatch> poll() override {
     ++poll_calls;
@@ -145,6 +152,7 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
   bool enabled = false;
   bool ready = true;
   bool fail_next_poll = false;
+  bool complete_immediately = false;
   int submit_calls = 0;
   int poll_calls = 0;
   int blocking_calls = 0;
@@ -255,6 +263,52 @@ void test_uncertain_runtime_cadence(const nanotrack::ImageView& image) {
                     result.plan.run_tracker && tracker.infer_calls == static_cast<int>(i + 1) &&
                     detector.poll_calls == static_cast<int>(i + 1) && detector.submit_calls == 0,
                 "UNCERTAIN runs tracker and polls every processed frame despite irregular gaps");
+  }
+}
+
+void test_runtime_target_class_recovery_requests(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const BBox roi{40, 30, 20, 20};
+  // Automatic initialization is tested with both a known match and no match;
+  // a fixed class disabled at initialization must stay disabled even if its
+  // detector becomes ready later. Status alone is not the eligibility gate.
+  for (int scenario : {0, 1, 2}) {
+    FakeTracker tracker;
+    tracker.emit_reliable = false;
+    FakeDetector detector;
+    detector.enabled = scenario != 2;
+    detector.complete_immediately = true;
+    DetectorBatch initialization_batch;
+    initialization_batch.candidates = {{scenario == 1 ? roi : BBox{150, 80, 20, 20}, 0.9F, 0}};
+    detector.blocking_batch = initialization_batch;
+    LongTermRuntime runtime(ControllerConfig{}, tracker, detector,
+                            {scenario == 2 ? 0 : -1, 1, {}});
+    const auto initialized = runtime.initialize(image, roi, 0, 0);
+    const bool eligible = scenario == 1;
+    expect_true(initialized.target_class.target_class_allows_recovery == eligible &&
+                    initialized.target_class.status == (scenario == 0 ? TargetClassStatus::kUnknown :
+                        scenario == 1 ? TargetClassStatus::kEstablished : TargetClassStatus::kFixed) &&
+                    detector.blocking_calls == (scenario == 2 ? 0 : 1) && detector.submit_calls == 0,
+                "initial class establishment remains independent of recovery request eligibility");
+    detector.enabled = true;
+    runtime.process_frame(image, 1, 100);
+    const std::int64_t timestamps[] = {299, 300, 1099, 1100, 1599, 1600, 3099, 3100, 3600};
+    const int known_request_counts[] = {0, 0, 0, 1, 1, 2, 3, 3, 4};
+    for (std::size_t index = 0; index < 9; ++index) {
+      const auto result = runtime.process_frame(image, index + 2, timestamps[index]);
+      const int expected = eligible ? known_request_counts[index] : 0;
+      expect_true(detector.submit_calls == expected &&
+                      (!result.detector.request_submitted || eligible) &&
+                      (!result.plan.request_detector || eligible) &&
+                      detector.poll_calls == static_cast<int>(index + 2) &&
+                      tracker.infer_calls == static_cast<int>(index + 2) &&
+                      !result.output.control_valid && !result.output.reacquired &&
+                      !result.output.accepted && result.output.detector_candidates_queued == 0,
+                  "runtime submits only eligible recovery work at unchanged cadence for scenario " +
+                      std::to_string(scenario) + " at " + std::to_string(timestamps[index]) + " ms");
+    }
+    expect_true(detector.blocking_calls == (scenario == 2 ? 0 : 1),
+                "recovery never repeats initialization class establishment");
   }
 }
 
@@ -633,11 +687,14 @@ void test_target_class_initialization(const nanotrack::ImageView& image) {
                 "ambiguous and no-match initialization retain manual ROI with UNKNOWN");
     tracker.emit_reliable = false;
     runtime.process_frame(image, 8, 300);
+    const int submits_before = detector.submit_calls;
     const auto diagnostic_request = runtime.process_frame(image, 9, 400);
-    expect_true(diagnostic_request.detector.request_submitted &&
+    expect_true(!diagnostic_request.detector.request_submitted &&
+                    !diagnostic_request.plan.request_detector &&
+                    detector.submit_calls == submits_before &&
                     diagnostic_request.plan.hypothesis_source == HypothesisSource::kMotion &&
                     !diagnostic_request.output.control_valid,
-                "UNKNOWN initialization still schedules diagnostic detector requests");
+                "UNKNOWN initialization suppresses recovery detector requests");
     DetectorBatch diagnostic_batch;
     diagnostic_batch.source_frame_id = detector.last_request.frame_id;
     diagnostic_batch.source_timestamp_ms = detector.last_request.timestamp_ms;
@@ -647,7 +704,7 @@ void test_target_class_initialization(const nanotrack::ImageView& image) {
     const auto received = runtime.process_frame(image, 10, 410);
     const auto next = runtime.process_frame(image, 11, 420);
     expect_true(received.detector.batch_received &&
-                    received.output.detector_status == DetectorBatchStatus::kAccepted &&
+                    received.output.detector_status == DetectorBatchStatus::kInvalid &&
                     received.output.detector_candidates_queued == 0 &&
                     !received.output.control_valid && !received.output.accepted &&
                     next.plan.hypothesis_source == HypothesisSource::kMotion &&
@@ -816,6 +873,7 @@ int main() {
   test_frame_lifetime(image);
   test_adaptive_coast_execution(image);
   test_uncertain_runtime_cadence(image);
+  test_runtime_target_class_recovery_requests(image);
   test_late_precoast_batches(image);
   test_probe_failure_and_same_frame_reselect(image);
   ControllerConfig config;
@@ -878,7 +936,7 @@ int main() {
   FakeTracker detector_tracker;
   FakeDetector active_detector;
   active_detector.enabled = true;
-  LongTermRuntime detector_runtime(config, detector_tracker, active_detector);
+  LongTermRuntime detector_runtime(config, detector_tracker, active_detector, {1, 2, {}});
   detector_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
   detector_tracker.emit_reliable = false;
   detector_runtime.process_frame(image, 1, 100);
@@ -900,7 +958,7 @@ int main() {
   FakeTracker busy_tracker;
   FakeDetector busy_detector;
   busy_detector.enabled = true;
-  LongTermRuntime busy_runtime(recovery_config, busy_tracker, busy_detector);
+  LongTermRuntime busy_runtime(recovery_config, busy_tracker, busy_detector, {0, 1, {}});
   busy_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
   busy_tracker.emit_reliable = false;
   busy_runtime.process_frame(image, 1, 10);
@@ -940,7 +998,7 @@ int main() {
   FakeTracker stale_tracker;
   FakeDetector stale_detector;
   stale_detector.enabled = true;
-  LongTermRuntime stale_runtime(recovery_config, stale_tracker, stale_detector);
+  LongTermRuntime stale_runtime(recovery_config, stale_tracker, stale_detector, {0, 1, {}});
   stale_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
   stale_tracker.emit_reliable = false;
   stale_runtime.process_frame(image, 1, 10);
@@ -969,7 +1027,7 @@ int main() {
   FakeTracker error_tracker;
   FakeDetector error_detector;
   error_detector.enabled = true;
-  LongTermRuntime error_runtime(recovery_config, error_tracker, error_detector);
+  LongTermRuntime error_runtime(recovery_config, error_tracker, error_detector, {0, 1, {}});
   error_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
   error_tracker.emit_reliable = false;
   error_runtime.process_frame(image, 1, 10);

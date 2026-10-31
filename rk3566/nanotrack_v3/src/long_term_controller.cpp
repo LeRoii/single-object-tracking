@@ -282,7 +282,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   const bool interval_ready =
       !last_detector_request_ms_ ||
       timestamp_ms - *last_detector_request_ms_ >= config_.detector_interval_ms;
-  if (detector_ready && recovery_uses_detector && interval_ready) {
+  if (detector_ready && recovery_uses_detector && interval_ready &&
+      target_class_.target_class_allows_recovery) {
     plan.request_detector = true;
     plan.detector_request = DetectorRequest{
         frame_id,

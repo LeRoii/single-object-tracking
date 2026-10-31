@@ -564,6 +564,50 @@ void test_coast_probe_stale_identity_and_reset() {
 
 // These cases catch class-gate bypasses, mutable session state, and rejection
 // precedence changes without relying on detector or rendering test doubles.
+void test_target_class_recovery_request_gate() {
+  using namespace nanotrack;
+  const BBox roi{40, 30, 20, 20};
+  const FrameSize frame{200, 120};
+  const auto established = establish_target_class(roi, frame, {{roi, 0.9F, 2}}, 3, {});
+  for (const TargetClassState& state : {
+           make_unknown_target_class(TargetClassReason::kNoMatch),
+           make_unknown_target_class(TargetClassReason::kAmbiguous),
+           make_unknown_target_class(TargetClassReason::kDetectorError),
+           make_unknown_target_class(TargetClassReason::kDetectorUnavailable),
+           make_fixed_target_class(2, false), make_fixed_target_class(2, true), established}) {
+    LongTermController controller(ControllerConfig{});
+    controller.initialize(roi, 0, 0, frame, state);
+    reject_frame(controller, 1, 100);
+    struct Step { std::int64_t ms; TrackingMode mode; bool request; };
+    const Step steps[] = {
+        {299, TrackingMode::kUncertain, false},
+        {300, TrackingMode::kLocalRecovery, false},
+        {1099, TrackingMode::kLocalRecovery, false},
+        {1100, TrackingMode::kAssistedRecovery, true},
+        {1599, TrackingMode::kAssistedRecovery, false},
+        {1600, TrackingMode::kAssistedRecovery, true},
+        {3099, TrackingMode::kAssistedRecovery, true},
+        {3100, TrackingMode::kLost, false},
+        {3600, TrackingMode::kLost, true}};
+    std::uint64_t id = 2;
+    for (const auto& step : steps) {
+      const auto plan = controller.begin_frame(id++, step.ms, true);
+      const bool expected = state.target_class_allows_recovery && step.request;
+      expect_true(plan.mode == step.mode && plan.request_detector == expected &&
+                      plan.detector_request.has_value() == expected,
+                  "recovery request uses session class eligibility and existing interval at " +
+                      std::to_string(step.ms) + " ms for " + to_string(state.status));
+      const auto output = controller.finish_frame(plan, {}, std::nullopt);
+      expect_true(!output.control_valid && !output.accepted && !output.reacquired &&
+                      output.detector_candidates_queued == 0,
+                  "request gating never creates a candidate or authorizes control");
+    }
+    if (!state.target_class_allows_recovery)
+      expect_true(!controller.last_detector_request_ms_ && !controller.last_detector_request_frame_,
+                  "disabled recovery leaves detector request history empty");
+  }
+}
+
 void test_target_class_gate() {
   using namespace nanotrack;
   const BBox roi{40, 30, 20, 20};
@@ -581,11 +625,19 @@ void test_target_class_gate() {
     controller.initialize(roi, 0, 0, frame, state);
     reject_frame(controller, 1, 100);
     const SearchPlan plan = controller.begin_frame(2, 1100, true);
-    expect_true(plan.request_detector && plan.hypothesis_source == HypothesisSource::kMotion,
-                "UNKNOWN and known classes retain diagnostic detector scheduling");
+    expect_true(plan.request_detector == state.target_class_allows_recovery &&
+                    plan.hypothesis_source == HypothesisSource::kMotion,
+                "only eligible initialized classes schedule recovery detector work");
+    // Ingestion remains independently guarded even if an old worker completion
+    // has a matching request identity. Disabled sessions cannot create this
+    // request themselves; seed only its identity to exercise the ingestion gate.
+    if (!state.target_class_allows_recovery) {
+      controller.last_detector_request_frame_ = 2;
+      controller.last_detector_request_ms_ = 1100;
+    }
     DetectorBatch batch{2, 1100, {{roi, 0.9F, 2}, {roi, 0.99F, 3},
                                   {roi, 0.8F, -1}}};
-    batch.generation = plan.detector_request->generation;
+    batch.generation = controller.detector_eligibility_generation_;
     batch.request_id = 9001;  // Adapter identity is independent of generation.
     const ControllerOutput output = controller.finish_frame(plan, {}, batch);
     const bool enabled = state.target_class_allows_recovery;
@@ -629,8 +681,12 @@ void test_target_class_gate() {
     controller.initialize(roi, 0, 0, frame, state);
     reject_frame(controller, 1, 100);
     const auto plan = controller.begin_frame(2, 1100, true);
+    if (!state.target_class_allows_recovery) {
+      controller.last_detector_request_frame_ = 2;
+      controller.last_detector_request_ms_ = 1100;
+    }
     DetectorBatch batch{2, 1100, {{roi, 0.99F, 3}}};
-    batch.generation = plan.detector_request->generation;
+    batch.generation = controller.detector_eligibility_generation_;
     const auto output = controller.finish_frame(plan, {}, batch);
     expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
                     output.detector_candidates_queued == 0 &&
@@ -652,12 +708,16 @@ void test_target_class_gate() {
       controller.initialize(roi, 0, 0, frame, state);
       reject_frame(controller, 1, 100);
       SearchPlan request = controller.begin_frame(2, 1100, true);
+      if (!state.target_class_allows_recovery) {
+        controller.last_detector_request_frame_ = 2;
+        controller.last_detector_request_ms_ = 1100;
+      }
       controller.finish_frame(request, {}, std::nullopt);
       SearchPlan plan = controller.begin_frame(3, stage <= 2 ? 1300 : 1140, false);
       DetectorBatch batch{2, 1100, {{BBox{160, 70, 20, 20}, 0.9F, 3},
                                     {BBox{-1, 0, 20, 20}, 0.9F, 2},
                                     {roi, 0.9F, -1}}};
-      batch.generation = request.detector_request->generation;
+      batch.generation = controller.detector_eligibility_generation_;
       if (stage == 0) --batch.generation;
       if (stage <= 1) batch.source_frame_id = 999;
       // Inject HOLD at this public boundary to exercise simultaneous causes;
@@ -720,7 +780,8 @@ void test_target_class_gate() {
               "same-frame reinitialize atomically clears all recovery state");
   reject_frame(controller, 4, 1180);
   plan = controller.begin_frame(5, 2180, true);
-  expect_true(plan.detector_request->generation == generation + 2 &&
+  expect_true(!plan.request_detector && !plan.detector_request &&
+                  controller.detector_eligibility_generation_ == generation + 2 &&
                   plan.hypothesis_source == HypothesisSource::kMotion,
               "each same-frame reinitialize advances eligibility generation");
   batch.source_frame_id = 5;
@@ -762,6 +823,7 @@ void test_target_class_gate() {
 
 int main() {
   using namespace nanotrack;
+  test_target_class_recovery_request_gate();
   test_coast_generation_provenance();
   test_coast_probe_schedule_and_isolation();
   test_coast_probe_gates_and_recovery();
