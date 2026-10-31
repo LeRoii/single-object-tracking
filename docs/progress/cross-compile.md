@@ -225,6 +225,32 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 下一步需要人工先停止现有 `viewlink_app` 及其自动拉起机制，或者明确授权根代理对这两个确切进程/机制执行受控停用。恢复后必须从完整只读 preflight 重新开始，不能沿用 PID 或进程空闲结论；随后才可复制九文件白名单、保留旧候选并执行有界前台 smoke。
 - 证据边界：当前只证明测试板可达、身份/空间/保护文件已核对，并识别出并发冲突。没有形成新候选暂存、模型加载、启动、跟踪、重检测、开发板验收或吊舱验收证据。
 
+## 2026-10-31 板端隔离候选发布与跟踪指令 smoke（Task 3）
+
+- 时间：`2026-10-31T16:24:12+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；输入 HEAD `7a865280b261cacd253e0665c43e326fadd9656c`。用户人工停止原 `viewlink_app` 和 `app_watchdog.sh` 后重新执行完整 preflight，确认二者均不在运行；未由本任务终止或修改生产进程、自启动或 watchdog。
+- 板端证据目录为 `/tmp/codex_nanotrack_20261031T161155`。板端系统时钟仍错误地显示为 `2017-08-04`；本节时间采用根代理的 Asia/Shanghai 时间，板端文件 mtime 仅作为原始信息保留。
+- 从 WSL `deployment_b827` 只复制 Task 2 锁定的九文件白名单到 `/app/nanotrack_b827_candidate.staging-20261031T161155-codex`。白名单 SHA-256 为 `77fd1d3a56ebb67b575aa352afea0e4a9dfa267903db4645fa501b7c952f27e1`，只读核验脚本 SHA-256 为 `aa1ff2bb7aba956a766ebf3694f05b6248037e93c5ff3f68f1802f67f9fbe95c`。staging 的九项 size/SHA、AArch64 ELF header、五个配置路径和“无额外文件/目录”检查全部通过。
+- 旧候选目录未删除，保留为 `/app/nanotrack_b827_candidate.backup-20261031T161155-codex`；已验证 staging 以同文件系统 rename 发布为 `/app/nanotrack_b827_candidate`。发布后再次执行 `sh /tmp/codex_nanotrack_20261031T161155/verify-candidate.sh /app/nanotrack_b827_candidate`，九文件哈希全部匹配 Task 2，程序仍为 `80554ffe9bde5c0ea0a729c56902d657d548214018eee84a445f3203c22f4692`。
+- 动态库只对本次进程设置 `LD_LIBRARY_PATH=/app/lib`，没有修改系统环境、启动脚本或 `/app/lib`。实际 loader 检查显示应用依赖可解析；`librknnrt.so` 实际来自 `/lib/librknnrt.so`，SHA-256 `62f849a06a522a190b96d14da4339910bdd228048ad9b3adfeb12f959cba8b8d`，RKNN API `1.6.0 (9a7b5d24c@2023-12-13T17:31:11)`，NPU driver `0.9.3`。这消除了“本板 runtime 不能加载本候选四个模型”的启动风险，但不改变模型质量或场景验收边界。
+
+实际有界启动形式为：
+
+```sh
+cd /app
+timeout -s TERM -k 2 <seconds> env LD_LIBRARY_PATH=/app/lib \
+  /app/nanotrack_b827_candidate/bin/viewlink_app
+```
+
+- 10 秒启动 smoke 中，三个 NanoTrack RKNN 和 VisDrone9 RKNN/manifest/labels 均报告上述 API/driver 身份并完成初始化；stdout/stderr SHA-256 分别为 `b8e54b36c1ea9442411d3d7aee7d3eccfa50d33689c2f3995a35807b1ab4d539`、`9bf009dee6ac9012c4a7fe37a701184f8a00a79be5d67c9ffa2afb933420d9cf`。进程不响应 TERM，随后由本次 `timeout -k 2` 的 KILL 边界结束，观察到状态 `137`，退出后无残留。
+- 首个 90 秒窗口没有在日志中观察到跟踪初始化事件，不能证明当时指令已到达。用户随后明确要求再次启动并在第二个 120 秒窗口内确认“已下发”。该窗口 stdout `/tmp/codex_nanotrack_20261031T161155/stdout.trackcmd2.log` 为 725091 bytes、SHA-256 `d19ebd92e8780c60e0777ea68429838ddab88f368faadcedf80ab6778a6ae0ab`；stderr 为 5638 bytes、SHA-256 `702176188399a36d939495a8b6961ba8470d23afd746cbacbcc60cd04cceb60a`。
+- 第二个窗口再次成功初始化四个模型，并实际记录 `TRACK_INIT: ... init_box=(940,519,64,64)`；紧随其后的首帧记录为 `DO_TRACK first frame: rect[0]=(942,506,58,64), ... use init_box=(940,519,64,64)`。日志没有 `track init failed`，说明本候选在正确进程库路径下收到了该次上位机指令，完成任务初始化，并由 `do_tracker_detector()` 返回了有效首帧框。
+- 后续两次 `DO_TRACK reinit` 分别使用 `(1137,479,64,64)` 和 `(729,558,64,64)`；二者之前均出现 `do_track: new click during inference, drop result`。因此只把它们记录为后续新点击/框选触发的重初始化，不把它们宣称为 YOLO 自动重检测或长期恢复证据。
+- 120 秒窗口同样在 TERM 后由 KILL 边界结束，控制终端明确记录 `Killed`，退出后无 `viewlink_app` 或 `app_watchdog` 残留。本窗口的 `exit.trackcmd2.txt` 内容为 `0`，经复核是多层 SSH 引号导致的错误状态捕获，不能作为程序退出码；本节仅采用控制终端的 KILL 观察和退出后进程检查，不把该文件提升为有效退出证据。
+- stderr 中仍有缺失 `/mnt/sdcard/user_custom.xml`、thermal sysfs、`XDG_RUNTIME_DIR` 和串口设备的板级应用告警；它们没有阻止本次模型初始化和跟踪首帧返回，但本任务未修复或验证这些非算法外设路径。stdout 中大量 `rk-debug_err layinfo->numLayer=..., mInitSucee=0` 也被原样保留，未据此声明显示/叠加链正常。
+- 退出后重新生成受保护文件和 `/app/model` 的 tree/SHA/symlink 快照；四份 `cmp` 均返回 `0`。受保护程序仍为 `/app/bin/viewlink_app` SHA-256 `a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357` 和 `/app/viewlink_appnt3` SHA-256 `55d5d709ac08ac7dd119e7c6fe01b96263afd1eeb0f7d36318d2152f330c3598`；`/app/model` 未改变，也没有新增 symlink。
+- 证据边界：本节是隔离候选的模型加载和一条人工下发跟踪指令 smoke，证明当前二进制/配置/四模型能够在这块板上启动并返回首帧框；它不是开发板验证任务的完整复测，不证明检测器自动重检测、长期恢复效果、内存平台、场景指标或真实吊舱验收。公共契约仍为 `latest_handoff.available=false`，VisDrone9 仍只是临时功能候选；真实吊舱部署和测试仍须人工完成。
+- Handoff：请协调对话采纳“配置化 A6 交叉编译成功 + 隔离板端模型加载/单次跟踪初始化 smoke 成功”的精确候选证据，但不要据此把公共契约改成批准的开发板 handoff，也不要宣称吊舱验收。若协调者锁定的最终 source/model/config 身份变化，必须重新交叉编译。
+
 ## 完成条件
 
 - `development_board_validation.latest_handoff.available=true`；
