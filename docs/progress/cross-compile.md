@@ -215,6 +215,16 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 证据边界：Task 2 只证明锁定工件已取得并且配置化生产代码在现有 A6 环境成功交叉编译。VisDrone9 仅是临时功能候选，不是 COCO80 或最终 detector 验收；本节未执行板端模型加载、推理、跟踪/长期恢复、内存平台或真实吊舱测试。交叉链接 runtime `1.5.2` 与模型/历史板端环境 `2.3.2` 的兼容风险仍需板端启动暴露，编译成功不消除该风险。
 - 下一步：按 Task 3 对板端执行只读 preflight，在不覆盖 `/app/bin/viewlink_app`、`/app/viewlink_appnt3`、`/app/model` 的前提下，以临时目录复制精确白名单，并做有界前台启动；这仍不是开发板验收或吊舱验收。
 
+## 2026-10-31 板端隔离暂存 preflight（Task 3，因现有进程停止）
+
+- 时间：`2026-10-31T15:57:25+08:00`；输入 HEAD `e3dae4ad090937c3a40f419046dce9c1678f879d`。通过 WSL 连接测试板 `root@192.168.2.119`，只执行只读 preflight；没有复制、改名、删除、停止或启动任何板端程序。
+- 板端身份仍为 `rk3566_rk3568`、AArch64、Buildroot 2021.11、Linux 5.10.198；NPU driver 报告 `v0.9.3`。板端系统时钟错误地显示为 `2017-08-04`，因此后续证据时间必须同时使用根代理时间和板端原始时间，不能依赖板端 mtime 排序。
+- `/app` 所在根文件系统可用约 26,980,744 KiB，`/tmp` 可用约 1,902,712 KiB，空间和 inode 足够。`sha256sum/wc/od/awk/tr/find/sort/cmp/readlink/tar/mv/mkdir/chmod/sleep/kill/timeout` 可见；`file/readelf/ldd` 未在 `command -v` 输出中出现，不能把缺少这些工具误写成依赖正常。
+- 受保护程序仍未变化：`/app/bin/viewlink_app` SHA-256 `a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357`；`/app/viewlink_appnt3` SHA-256 `55d5d709ac08ac7dd119e7c6fe01b96263afd1eeb0f7d36318d2152f330c3598`。现有旧候选目录仍只有早期 binary 和 COCO/config 文件，本轮未修改。
+- 安全阻塞：`ps` 和 `pidof viewlink_app` 均确认 `/app/bin/viewlink_app` 正在运行，PID `784`，同时存在 `app_watchdog.sh` PID `785`。按“不得启动第二实例、不得终止既有程序、必须确认 watchdog 不会自动拉起”的约束，Task 3 在复制前停止；没有为了继续 smoke 而 kill 生产进程或修改 watchdog。
+- 下一步需要人工先停止现有 `viewlink_app` 及其自动拉起机制，或者明确授权根代理对这两个确切进程/机制执行受控停用。恢复后必须从完整只读 preflight 重新开始，不能沿用 PID 或进程空闲结论；随后才可复制九文件白名单、保留旧候选并执行有界前台 smoke。
+- 证据边界：当前只证明测试板可达、身份/空间/保护文件已核对，并识别出并发冲突。没有形成新候选暂存、模型加载、启动、跟踪、重检测、开发板验收或吊舱验收证据。
+
 ## 完成条件
 
 - `development_board_validation.latest_handoff.available=true`；
