@@ -364,3 +364,29 @@ BUILD_JOBS=4 ./run.sh --platform A6
 生产产物：<path, optional SHA-256>
 下一步：<hand to human for pod deployment/test>
 ```
+
+## 2026-11-01 NanoTrack 初始化输入帧快照诊断（本地实现通过，等待 WSL 恢复）
+
+- 时间：`2026-11-01T13:09:28+08:00`。
+- 分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`。
+- 本轮起始 HEAD：`2b200a4b38782af6592501d8953e9a0917d541b9`。
+- 用户确认的设计：每次 `STATE_INIT_TRACK` 在 RGB 转 BGR 后、调用 NanoTrack 初始化前，仅保存一张未标注完整 PNG；保存失败只记录日志，不改变跟踪、框或伺服输出语义。设计和实施计划分别为
+  `docs/superpowers/specs/2026-11-01-init-frame-snapshot-design.md`（SHA-256
+  `eee60536bde29b6c4cb9245b3dac88f130e38471f2348fbed6f71e6f7717183e`）和
+  `docs/superpowers/plans/2026-11-01-init-frame-snapshot.md`（SHA-256
+  `0e85a12b18b01cde32aa7587c578a7194b2af290845290c6eaf4ec0df3f1a7c1`）。
+- 按 TDD 先观察到 RED：快照测试因 `init_frame_snapshot.hpp` 不存在编译失败，适配器顺序测试因找不到 `save_init_frame_snapshot` 失败。最小实现后，2x2 BGR PNG 真实写入/读回像素一致；不存在父目录时返回 `false`、提供错误文本且不抛异常；适配器调用位于 `make_bgr_view()` 后、`LongTermRuntime::initialize()` 前且仅出现一次。
+- 本地诊断暂存文件 SHA-256：`init_frame_snapshot.hpp`
+  `6fb2bcb7944ac43d9619511dba25c7dff5b5bf25318bcefb7704b2642561af0f`，
+  `init_frame_snapshot.cpp`
+  `192e4bc053dd574f11c25cc0d16b3e89c868dec8ea82c2ade48a98b92da2ca59`，
+  接入后的 `native-lib_impl.cpp`
+  `f4ae4df28d4f0bced7fff953bad17609fad2826a668214945dbe27a0b5fcf0f4`。
+  这些适配器暂存文件位于本计划隔离的 git-ignored 执行目录；在 WSL 恢复后必须按上述哈希同步并复核，不能仅凭文件名消费。
+- RKNN-independent 基线和实现后回归均为 CTest `18/18` 通过；快照聚焦测试和适配器调用顺序测试也通过。
+- 外部阻塞：`ssh -o BatchMode=yes -o ConnectTimeout=8 wjm@100.104.145.88 true` 在 TCP 连接阶段超时，尚未进入 SSH 认证。故本轮没有写入 WSL、没有执行 `BUILD_JOBS=4 ./run.sh --platform A6`、没有生成或部署新的 A6 二进制，也没有在吊舱上生成 PNG。现有板端程序和目录未被本轮修改。
+- 下一步：Windows/WSL 的 Tailscale SSH 恢复后，将上述三份经测试文件及 CMake 源文件项同步到 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/ai_alg/` 并逐项核对 SHA-256；随后完成 A6 编译、隔离部署，在用户下发一次初始化后读取 `/app/nanotrack_433deff_init_frame_diag_20261101/log/nanotrack_init_input.png`，核对尺寸、颜色、内容和初始化框日志。
+
+### 证据边界
+
+当前只证明诊断保存逻辑在主机 OpenCV 环境中按预期工作，并且现有 RKNN-independent 回归未被破坏；不能声明 WSL 源码已更新、A6 交叉编译成功、板端图片已生成、输入图像正确、跟踪质量改善或真实吊舱验收通过。
