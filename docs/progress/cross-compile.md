@@ -390,3 +390,21 @@ BUILD_JOBS=4 ./run.sh --platform A6
 ### 证据边界
 
 当前只证明诊断保存逻辑在主机 OpenCV 环境中按预期工作，并且现有 RKNN-independent 回归未被破坏；不能声明 WSL 源码已更新、A6 交叉编译成功、板端图片已生成、输入图像正确、跟踪质量改善或真实吊舱验收通过。
+
+## 2026-11-01 NanoTrack 初始化输入帧快照诊断完成
+
+- 时间：`2026-11-01T14:04:41+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；实施前基线为 `2b200a4b38782af6592501d8953e9a0917d541b9`，设计/计划提交为 `05f21b2bd29a9d62842a89e6027ce930ad1ed638`。
+- WSL 实际通过 `100.104.145.88:2222` 恢复连接。写入前备份位于 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/ai_alg/backup-before-init-frame-snapshot-05f21b2/`；只在现有适配层的 RGB→BGR 后、`LongTermRuntime::initialize()` 前增加无控制副作用的 PNG 保存，并在 `ai_alg/CMakeLists.txt` 增加对应源文件和 `opencv_imgcodecs`。
+- 第一次 A6 编译暴露 `cv::MatStep` 直接传给 `%zu` 的告警；停止部署后先增加 `frame_step_bytes()` 聚焦 RED 测试，再以 `frame.step[0]` 返回 `std::size_t` 修正。最终主机快照测试、适配器顺序测试和 RKNN-independent CTest `18/18` 均通过。
+- 最终同步文件 SHA-256：`include/init_frame_snapshot.hpp` 为 `76266b222847868b9c44907dc6aea2da041c1f976abb15718601c4976d7b8e55`；`source/init_frame_snapshot.cpp` 为 `39afbed46eae4438fd1daf688541aa197df97303ac222e1abef923a76e579095`；`source/native-lib_impl.cpp` 为 `39fec2569be78682621c4d67f8c23e17593b6c00c88225ae26c7182a1b11191a`；`ai_alg/CMakeLists.txt` 为 `bef7585ef5ab3cf905861f1ddeb2eb51f5ef109fd054cb5be5250a3e16889e3c`。
+- 实际执行 `cd /home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker && BUILD_JOBS=4 ./run.sh --platform A6`，最终退出码 `0` 且无编译告警。`build_A6/viewlink_app` 为 ARM aarch64 ELF、34,888,216 bytes、SHA-256 `9daea988453a3ae03d83dff8467da293be0139e357c73200f3c90216a0531bff`；`build_A6/ai_alg/libAI.a` 为 588,638 bytes、SHA-256 `0d812eb62c867ad54c7922d17d54db36a9cb0897b8d109d85db49c80842f1496`。
+- 诊断程序隔离部署到 `/app/nanotrack_433deff_init_frame_diag_20261101`，板端程序哈希与 WSL 一致；受保护的 `/app/bin/viewlink_app` 仍为 `a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357`。以 `XDG_RUNTIME_DIR=/var/run LD_LIBRARY_PATH=/app/lib:/usr/lib` 启动，进程 PID `6047` 持续运行，启动日志没有 `eglInitialize failed`、`mInitSucee=0` 或 `track init failed`。
+- 用户下发后实际发生两次 `STATE_INIT_TRACK`：第一次在诊断 frame 1，第二次在 frame 59，因此固定文件名被第二次初始化覆盖，不是同一条日志重复打印。两次初始框均为 `(1047,484,64,64)`。
+- 最终快照 `/app/nanotrack_433deff_init_frame_diag_20261101/log/nanotrack_init_input.png` 为 2,018,708 bytes、SHA-256 `3aae880f8d7701010b8fa80f13acb5d8c0463a0bdc16c1fab84dad5a6d2db4d9`。本地 `file` 识别为 `1920 x 1080, 8-bit/color RGB, non-interlaced`；适配层日志为 `width=1920 height=1080 channels=3 step=5760`。人工查看显示当前室内真实画面，色彩自然，无绿屏、行错位或明显通道交换；初始框坐标位于画面中央偏右的杯子/把手区域。由此可确认进入 NanoTrack 初始化前的完整 BGR 帧内容和内存步长正确。
+- 同一日志中第一次初始化后的 57 个跟踪帧统计为 `quality0/quality1/quality2=0/3/54`、`accepted1/accepted0=0/57`。枚举 `0/1/2` 对应 `Reliable/Weak/Rejected`。实际配置 `/app/nanotrack_b827_candidate/config/visible-default.conf` SHA-256 为 `2010c6cd16553595844a12f103f53412942289262d866b9fadba26b2821337ed`，要求 `reliable_psr=6.0`；本次 PSR 约为 `4.5..5.9`，因此没有观测达到 Reliable，而控制器只接受 Reliable 观测。这把 `accepted=false` 定位到质量门/度量层，不支持“输入帧格式错误”假设。
+
+### 证据边界与 Handoff
+
+- 本节证明诊断代码通过主机回归和 A6 交叉编译，并在测试板取得了可目视复核的初始化输入帧；它不证明门限应如何修改，也不证明跟踪质量、重捕、伺服控制或真实吊舱验收。
+- 本轮没有修改 PSR/APCE/peak-margin 计算、可靠门限、accepted 策略、长期状态机或控制输出。下一步应由算法/开发板验证任务基于有标注稳定序列核对 PSR 度量或标定门限；交叉编译任务只在协调者锁定新的精确源码/配置身份后重新构建。
+- 公共契约仍应保持 `development_board_validation.latest_handoff.available=false`；协调对话可采纳本节的“初始化输入正确、拒绝发生在质量门之后”诊断证据，但不得据此宣称开发板或吊舱验收通过。
