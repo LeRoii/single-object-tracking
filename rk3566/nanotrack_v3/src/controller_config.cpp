@@ -130,7 +130,8 @@ ControllerConfig default_controller_config(const std::string& sensor) {
   ControllerConfig config;
   config.sensor = sensor;
   if (sensor == "visible") {
-    config.reliable_psr = 6.0F;
+    config.reliable_psr = 4.5F;
+    config.weak_psr = 4.5F;
     config.reliable_peak_margin = 0.06F;
   }
   validate_controller_config(config);

@@ -408,3 +408,13 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 本节证明诊断代码通过主机回归和 A6 交叉编译，并在测试板取得了可目视复核的初始化输入帧；它不证明门限应如何修改，也不证明跟踪质量、重捕、伺服控制或真实吊舱验收。
 - 本轮没有修改 PSR/APCE/peak-margin 计算、可靠门限、accepted 策略、长期状态机或控制输出。下一步应由算法/开发板验证任务基于有标注稳定序列核对 PSR 度量或标定门限；交叉编译任务只在协调者锁定新的精确源码/配置身份后重新构建。
 - 公共契约仍应保持 `development_board_validation.latest_handoff.available=false`；协调对话可采纳本节的“初始化输入正确、拒绝发生在质量门之后”诊断证据，但不得据此宣称开发板或吊舱验收通过。
+
+## 2026-11-03 可见光 PSR 4.5/4.5 候选验证与主线同步
+
+- 时间：`2026-11-03T23:54:32+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；本轮起始 HEAD：`6ae23ee40a468067dd325ccb17809a01a5ff8d24`。
+- 用户在同一测试板上分别完成两轮静止目标人工点选。旧门限轮为 `reliable_psr=6.0`、`weak_psr=5.0`，共 6 次初始化、817 个跟踪帧，`RELIABLE/WEAK/REJECTED=439/28/350`、`accepted=431`；其中 3/6 组从未进入接受跟踪。冻结日志为 `/app/nanotrack_433deff_init_frame_diag_20261101/log/{stdout,stderr}.threshold-20261103.log`，SHA-256 分别为 `a82072441fe06b9677af0769dc15fdc28a9c71bccfb889b0c7050ab7b361b2dd`、`819ced0e04cd0bb3641e9add93bffdcc742076a6d9344bc6de63d8bd29b7ae9a`。
+- 单变量候选仅把可见光 PSR 门限改为 `4.5/4.5`；板端原配置保留为 `/app/nanotrack_b827_candidate/config/visible-default.conf.pre-psr45-20261103`，SHA-256 `2010c6cd16553595844a12f103f53412942289262d866b9fadba26b2821337ed`。实际候选配置 SHA-256 为 `fb6e0ab48a5a2ae57873a53ae8cccae7a5c8a03ffd9e347dc9f966922580c15b`。两轮均使用同一诊断程序 `/app/nanotrack_433deff_init_frame_diag_20261101/bin/viewlink_app`，SHA-256 `9daea988453a3ae03d83dff8467da293be0139e357c73200f3c90216a0531bff`。
+- 新门限轮同样为 6 次初始化，共 882 个跟踪帧，`RELIABLE/WEAK/REJECTED=857/11/14`、`accepted=783`；六组均进入接受跟踪，最长连续未接受为 4 帧，状态帧分布 `TRACKING/UNCERTAIN/LOCAL_RECOVERY/ASSISTED_RECOVERY/LOST=783/98/1/0/0`。仅 1 帧 PSR 低于 4.5；其余拒绝主要由瞬时 peak margin 触发，均未推进到 assisted recovery 或 lost。冻结日志为 `/app/nanotrack_433deff_init_frame_diag_20261101/log/{stdout,stderr}.psr45-20261103.log`，SHA-256 分别为 `5e223405d930183ee05afb662b2481468d40090a2bced147db6e369762a4f85e`、`efe8b29274c66fb46f8b6bff7bcc91a3bc9985efabfba3fda7186137a03930a4`；测试程序已停止。
+- 两轮目标不同，因此上述差异不是同目标 A/B 因果证明；日志没有标注真值，也不能证明框始终落在正确目标上。用户只确认所选目标均为静止且按预期不应跟丢。该结果支持将 `4.5/4.5` 保留为候选，但不构成精度、稳定率、重捕率、开发板正式验收或真实吊舱验收。
+- 主线同步同时修改随包 `rk3566/nanotrack_v3/config/visible-default.conf` 与 `default_controller_config("visible")`，避免内置默认仍为 `6.0/5.0` 或出现 `reliable_psr < weak_psr` 的非法组合；红外默认和其余质量门均未修改。测试先按 TDD 得到预期 RED：`controller_support` 对内置默认和随包配置共报 4 项旧值失败；最小实现后聚焦测试通过，随后执行 `cmake --build /tmp/nanotrack-psr45-host-20261103 -j4` 和 `ctest --test-dir /tmp/nanotrack-psr45-host-20261103 --output-on-failure`，结果 `18/18` 通过、零失败。同步后的随包配置 SHA-256 为 `fb6e0ab48a5a2ae57873a53ae8cccae7a5c8a03ffd9e347dc9f966922580c15b`。
+- 本轮没有修改协调对话拥有的 `docs/progress/STATUS.md` 或 `docs/progress/integration-contract.yaml`，没有执行 A6 生产交叉编译、生产部署或真实吊舱验收。生产交叉编译仍须等待协调者批准的开发板 handoff；本提交只同步经本轮功能诊断支持的可见光 PSR 候选门限及其回归测试。
