@@ -65,8 +65,10 @@ int main() {
   expect_true(default_visible.detector_target_mode ==
                   DetectorTargetMode::kFullObject,
               "whole-object detector hypotheses remain the default");
-  expect_near(default_visible.reliable_psr, 6.0F, 1e-6F,
+  expect_near(default_visible.reliable_psr, 4.5F, 1e-6F,
               "visible bring-up default accepts observed RKNN PSR range");
+  expect_near(default_visible.weak_psr, 4.5F, 1e-6F,
+              "visible bring-up weak PSR matches the validated candidate");
   expect_near(default_visible.reliable_peak_margin, 0.06F, 1e-6F,
               "visible bring-up default accepts observed RKNN peak margin");
   expect_near(default_visible.detector_candidate_max_center_ratio, 0.15F,
@@ -87,9 +89,13 @@ int main() {
   const std::string source_dir = source_file.substr(
       0, source_file.find_last_of("/\\"));
   const std::string config_dir = source_dir + "/../config/";
-  expect_occlusion_defaults(
-      load_controller_config(config_dir + "visible-default.conf"),
-      "shipped visible configuration");
+  const ControllerConfig shipped_visible =
+      load_controller_config(config_dir + "visible-default.conf");
+  expect_occlusion_defaults(shipped_visible, "shipped visible configuration");
+  expect_near(shipped_visible.reliable_psr, 4.5F, 1e-6F,
+              "shipped visible config uses the validated reliable PSR");
+  expect_near(shipped_visible.weak_psr, 4.5F, 1e-6F,
+              "shipped visible config uses the validated weak PSR");
   expect_occlusion_defaults(
       load_controller_config(config_dir + "infrared-default.conf"),
       "shipped infrared configuration");
