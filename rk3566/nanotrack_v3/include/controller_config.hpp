@@ -25,6 +25,9 @@ struct ControllerConfig {
   float max_area_log_change = 1.00F;
   float max_aspect_log_change = 0.70F;
   float max_accepted_scale_step_ratio = 1.00F;
+  float accepted_scale_deadband_ratio = 0.00F;
+  float accepted_scale_smoothing_alpha = 1.00F;
+  float max_reacquisition_center_distance = 0.00F;
 
   std::int64_t uncertain_ms = 200;
   std::int64_t local_recovery_ms = 1000;
@@ -79,5 +82,6 @@ struct ControllerConfig {
 ControllerConfig default_controller_config(const std::string& sensor);
 ControllerConfig load_controller_config(const std::string& path);
 void validate_controller_config(const ControllerConfig& config);
+std::string controller_config_identity(const ControllerConfig& config);
 
 }  // namespace nanotrack

@@ -96,8 +96,19 @@ int main() {
               "visible weak peak margin retains a lower staging boundary");
   expect_near(default_visible.max_accepted_scale_step_ratio, 0.05F, 1e-6F,
               "visible accepted dimensions are limited to five percent per frame");
+  expect_near(default_visible.accepted_scale_deadband_ratio, 0.02F, 1e-6F,
+              "visible accepted scale suppresses changes through two percent");
+  expect_near(default_visible.accepted_scale_smoothing_alpha, 0.10F, 1e-6F,
+              "visible accepted scale moves ten percent toward its bounded target");
+  expect_near(default_visible.max_reacquisition_center_distance, 0.75F,
+              1e-6F,
+              "visible ordinary recovery uses the fixed center residual gate");
   expect_near(ControllerConfig{}.max_accepted_scale_step_ratio, 1.0F, 1e-6F,
               "generic controller behavior remains unrestricted");
+  expect_true(ControllerConfig{}.accepted_scale_deadband_ratio == 0.0F &&
+                  ControllerConfig{}.accepted_scale_smoothing_alpha == 1.0F &&
+                  ControllerConfig{}.max_reacquisition_center_distance == 0.0F,
+              "generic controller defaults preserve legacy scale and recovery behavior");
   expect_near(default_visible.detector_candidate_max_center_ratio, 0.15F,
               1e-6F,
               "visible default strictly limits detector center jumps");
@@ -114,6 +125,10 @@ int main() {
               "visible evidence does not alter infrared weak peak-margin default");
   expect_near(default_infrared.max_accepted_scale_step_ratio, 1.0F, 1e-6F,
               "infrared accepted dimensions retain existing unrestricted behavior");
+  expect_true(default_infrared.accepted_scale_deadband_ratio == 0.0F &&
+                  default_infrared.accepted_scale_smoothing_alpha == 1.0F &&
+                  default_infrared.max_reacquisition_center_distance == 0.0F,
+              "infrared retains compatibility scale and recovery settings");
   expect_near(default_infrared.detector_candidate_max_center_ratio, 0.15F,
               1e-6F,
               "infrared default uses the same strict detector position gate");
@@ -135,6 +150,13 @@ int main() {
               "shipped visible config uses the weak peak-margin candidate");
   expect_near(shipped_visible.max_accepted_scale_step_ratio, 0.05F, 1e-6F,
               "shipped visible config limits accepted scale steps to five percent");
+  expect_near(shipped_visible.accepted_scale_deadband_ratio, 0.02F, 1e-6F,
+              "shipped visible config suppresses two-percent scale noise");
+  expect_near(shipped_visible.accepted_scale_smoothing_alpha, 0.10F, 1e-6F,
+              "shipped visible config smooths bounded scale updates");
+  expect_near(shipped_visible.max_reacquisition_center_distance, 0.75F,
+              1e-6F,
+              "shipped visible config fixes the ordinary recovery center gate");
   expect_occlusion_defaults(
       load_controller_config(config_dir + "infrared-default.conf"),
       "shipped infrared configuration");
@@ -163,6 +185,9 @@ int main() {
              "reliable_psr=8.5\n"
              "weak_score=0.57\n"
              "max_accepted_scale_step_ratio=0.25\n"
+             "accepted_scale_deadband_ratio=0.03\n"
+             "accepted_scale_smoothing_alpha=0.20\n"
+             "max_reacquisition_center_distance=0.80\n"
              "uncertain_ms=200\n"
              "local_recovery_ms=1000\n"
              "assisted_recovery_ms=3000\n"
@@ -187,6 +212,12 @@ int main() {
               "visible reliable score override");
   expect_near(visible.max_accepted_scale_step_ratio, 0.25F, 1e-6F,
               "accepted scale-step ratio parses explicitly");
+  expect_near(visible.accepted_scale_deadband_ratio, 0.03F, 1e-6F,
+              "accepted scale deadband parses explicitly");
+  expect_near(visible.accepted_scale_smoothing_alpha, 0.20F, 1e-6F,
+              "accepted scale smoothing alpha parses explicitly");
+  expect_near(visible.max_reacquisition_center_distance, 0.80F, 1e-6F,
+              "ordinary recovery center distance parses explicitly");
   expect_true(visible.uncertain_ms == 200 &&
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
@@ -201,6 +232,20 @@ int main() {
               "infrared config keeps a separate identity");
   expect_near(infrared.reliable_score, 0.74F, 1e-6F,
               "infrared override does not inherit visible values");
+
+  const std::string default_identity = controller_config_identity(default_visible);
+  ControllerConfig identity_variant = default_visible;
+  identity_variant.accepted_scale_deadband_ratio = 0.03F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale deadband");
+  identity_variant = default_visible;
+  identity_variant.accepted_scale_smoothing_alpha = 0.20F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale smoothing alpha");
+  identity_variant = default_visible;
+  identity_variant.max_reacquisition_center_distance = 0.80F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes ordinary recovery center distance");
 
   const std::string unknown_path = "/tmp/nanotrack_unknown_test.conf";
   write_file(unknown_path, "sensor=visible\nunknown_key=1\n");
@@ -367,6 +412,66 @@ int main() {
         expect_throws([&] { load_controller_config(occlusion_path); },
                       std::string(limit.key) + " rejects invalid file values");
       }
+    }
+  }
+
+  struct NewFloatLimit {
+    const char* key;
+    float ControllerConfig::*field;
+  };
+  const NewFloatLimit new_unit_limits[] = {
+      {"accepted_scale_deadband_ratio",
+       &ControllerConfig::accepted_scale_deadband_ratio},
+      {"accepted_scale_smoothing_alpha",
+       &ControllerConfig::accepted_scale_smoothing_alpha},
+  };
+  for (const NewFloatLimit& limit : new_unit_limits) {
+    for (float value : {0.0F, 0.01F, 0.99F, 1.0F, 1.01F, -0.01F,
+                        std::numeric_limits<float>::quiet_NaN(),
+                        std::numeric_limits<float>::infinity(),
+                        -std::numeric_limits<float>::infinity()}) {
+      const bool deadband = std::string(limit.key) ==
+                            "accepted_scale_deadband_ratio";
+      const bool valid = std::isfinite(value) &&
+                         (deadband ? value >= 0.0F : value > 0.0F) &&
+                         (deadband ? value < 1.0F : value <= 1.0F);
+      ControllerConfig candidate = default_visible;
+      candidate.*(limit.field) = value;
+      write_file(occlusion_path,
+                 std::string(limit.key) + "=" + std::to_string(value) + "\n");
+      if (valid) {
+        validate_controller_config(candidate);
+        expect_near(load_controller_config(occlusion_path).*(limit.field), value,
+                    1e-6F, std::string(limit.key) + " accepts its exact range");
+      } else {
+        expect_throws([&] { validate_controller_config(candidate); },
+                      std::string(limit.key) + " rejects invalid direct values");
+        expect_throws([&] { load_controller_config(occlusion_path); },
+                      std::string(limit.key) + " rejects invalid file values");
+      }
+    }
+  }
+  for (float value : {0.0F, 0.01F, 0.75F, 100.0F, -0.01F,
+                      std::numeric_limits<float>::quiet_NaN(),
+                      std::numeric_limits<float>::infinity(),
+                      -std::numeric_limits<float>::infinity()}) {
+    const bool valid = std::isfinite(value) && value >= 0.0F;
+    ControllerConfig candidate = default_visible;
+    candidate.max_reacquisition_center_distance = value;
+    write_file(occlusion_path,
+               "max_reacquisition_center_distance=" + std::to_string(value) +
+                   "\n");
+    if (valid) {
+      validate_controller_config(candidate);
+      expect_near(load_controller_config(occlusion_path)
+                      .max_reacquisition_center_distance,
+                  value, 1e-6F,
+                  "ordinary recovery center distance accepts zero or positive finite values");
+    } else {
+      expect_throws([&] { validate_controller_config(candidate); },
+                    "ordinary recovery center distance rejects invalid direct values");
+      expect_throws([&] { load_controller_config(occlusion_path); },
+                    "ordinary recovery center distance rejects invalid file values");
     }
   }
 

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -76,6 +77,9 @@ void set_value(ControllerConfig& config,
   else if (key == "max_area_log_change") config.max_area_log_change = parse_float(key, value);
   else if (key == "max_aspect_log_change") config.max_aspect_log_change = parse_float(key, value);
   else if (key == "max_accepted_scale_step_ratio") config.max_accepted_scale_step_ratio = parse_float(key, value);
+  else if (key == "accepted_scale_deadband_ratio") config.accepted_scale_deadband_ratio = parse_float(key, value);
+  else if (key == "accepted_scale_smoothing_alpha") config.accepted_scale_smoothing_alpha = parse_float(key, value);
+  else if (key == "max_reacquisition_center_distance") config.max_reacquisition_center_distance = parse_float(key, value);
   else if (key == "uncertain_ms") config.uncertain_ms = parse_integer(key, value);
   else if (key == "local_recovery_ms") config.local_recovery_ms = parse_integer(key, value);
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
@@ -136,6 +140,9 @@ ControllerConfig default_controller_config(const std::string& sensor) {
     config.reliable_peak_margin = 0.04F;
     config.weak_peak_margin = 0.02F;
     config.max_accepted_scale_step_ratio = 0.05F;
+    config.accepted_scale_deadband_ratio = 0.02F;
+    config.accepted_scale_smoothing_alpha = 0.10F;
+    config.max_reacquisition_center_distance = 0.75F;
   }
   validate_controller_config(config);
   return config;
@@ -178,6 +185,23 @@ void validate_controller_config(const ControllerConfig& config) {
       config.max_accepted_scale_step_ratio > 1.0F) {
     throw std::invalid_argument(
         "accepted scale step ratio must be finite and in (0,1]");
+  }
+  if (!std::isfinite(config.accepted_scale_deadband_ratio) ||
+      config.accepted_scale_deadband_ratio < 0.0F ||
+      config.accepted_scale_deadband_ratio >= 1.0F) {
+    throw std::invalid_argument(
+        "accepted scale deadband ratio must be finite and in [0,1)");
+  }
+  if (!std::isfinite(config.accepted_scale_smoothing_alpha) ||
+      config.accepted_scale_smoothing_alpha <= 0.0F ||
+      config.accepted_scale_smoothing_alpha > 1.0F) {
+    throw std::invalid_argument(
+        "accepted scale smoothing alpha must be finite and in (0,1]");
+  }
+  if (!std::isfinite(config.max_reacquisition_center_distance) ||
+      config.max_reacquisition_center_distance < 0.0F) {
+    throw std::invalid_argument(
+        "reacquisition center distance must be finite and non-negative");
   }
   if (config.uncertain_ms <= 0 ||
       config.local_recovery_ms <= config.uncertain_ms ||
@@ -292,6 +316,46 @@ ControllerConfig load_controller_config(const std::string& path) {
   }
   validate_controller_config(config);
   return config;
+}
+
+std::string controller_config_identity(const ControllerConfig& config) {
+  std::ostringstream stream;
+  stream << config.sensor << '|' << config.calibrated << '|'
+         << config.reliable_score << '|' << config.reliable_psr << '|'
+         << config.reliable_apce << '|' << config.reliable_peak_margin << '|'
+         << config.weak_score << '|' << config.weak_psr << '|'
+         << config.weak_apce << '|' << config.weak_peak_margin << '|'
+         << config.max_accepted_scale_step_ratio << '|'
+         << config.accepted_scale_deadband_ratio << '|'
+         << config.accepted_scale_smoothing_alpha << '|'
+         << config.max_reacquisition_center_distance << '|'
+         << config.detector_candidate_max_center_ratio << '|'
+         << config.occlusion_hold_frames << '|'
+         << config.occlusion_trigger_consecutive_unreliable << '|'
+         << config.occlusion_trigger_min_dimension_ratio << '|'
+         << config.occlusion_reference_window << '|'
+         << config.occlusion_probe_interval_frames << '|'
+         << config.occlusion_gradual_dimension_ratio << '|'
+         << config.occlusion_gradual_consecutive_frames << '|'
+         << config.occlusion_min_reference_samples << '|'
+         << config.occlusion_shrink_step_ratio << '|'
+         << config.occlusion_suspicion_clear_frames << '|'
+         << config.occlusion_peak_margin_drop << '|'
+         << config.occlusion_motion_residual_threshold << '|'
+         << config.occlusion_confirmation_iou << '|'
+         << config.occlusion_confirmation_center_distance << '|'
+         << config.occlusion_confirmation_max_area_log_change << '|'
+         << config.occlusion_confirmation_max_aspect_log_change << '|'
+         << to_string(config.detector_target_mode) << '|'
+         << config.detector_search_scale << '|'
+         << config.detector_subtarget_max_probes << '|'
+         << config.detector_confirmation_iou << '|'
+         << config.detector_confirmation_center_distance << '|'
+         << config.detector_confirmation_max_area_log_change << '|'
+         << config.detector_confirmation_max_aspect_log_change << '|'
+         << config.uncertain_ms << '|' << config.local_recovery_ms << '|'
+         << config.assisted_recovery_ms;
+  return stream.str();
 }
 
 }  // namespace nanotrack

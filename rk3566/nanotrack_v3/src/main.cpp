@@ -322,43 +322,6 @@ std::string fnv1a64_text(const std::string& text) {
   return encoded.str();
 }
 
-std::string builtin_config_identity(const nanotrack::ControllerConfig& config) {
-  std::ostringstream stream;
-  stream << config.sensor << '|' << config.calibrated << '|'
-         << config.reliable_score << '|' << config.reliable_psr << '|'
-         << config.reliable_apce << '|' << config.reliable_peak_margin << '|'
-         << config.weak_score << '|' << config.weak_psr << '|'
-         << config.weak_apce << '|' << config.weak_peak_margin << '|'
-         << config.max_accepted_scale_step_ratio << '|'
-         << config.detector_candidate_max_center_ratio << '|'
-         << config.occlusion_hold_frames << '|'
-         << config.occlusion_trigger_consecutive_unreliable << '|'
-         << config.occlusion_trigger_min_dimension_ratio << '|'
-         << config.occlusion_reference_window << '|'
-         << config.occlusion_probe_interval_frames << '|'
-         << config.occlusion_gradual_dimension_ratio << '|'
-         << config.occlusion_gradual_consecutive_frames << '|'
-         << config.occlusion_min_reference_samples << '|'
-         << config.occlusion_shrink_step_ratio << '|'
-         << config.occlusion_suspicion_clear_frames << '|'
-         << config.occlusion_peak_margin_drop << '|'
-         << config.occlusion_motion_residual_threshold << '|'
-         << config.occlusion_confirmation_iou << '|'
-         << config.occlusion_confirmation_center_distance << '|'
-         << config.occlusion_confirmation_max_area_log_change << '|'
-         << config.occlusion_confirmation_max_aspect_log_change << '|'
-         << nanotrack::to_string(config.detector_target_mode) << '|'
-         << config.detector_search_scale << '|'
-         << config.detector_subtarget_max_probes << '|'
-         << config.detector_confirmation_iou << '|'
-         << config.detector_confirmation_center_distance << '|'
-         << config.detector_confirmation_max_area_log_change << '|'
-         << config.detector_confirmation_max_aspect_log_change << '|'
-         << config.uncertain_ms << '|' << config.local_recovery_ms << '|'
-         << config.assisted_recovery_ms;
-  return stream.str();
-}
-
 void write_session_metadata(const std::string& path,
                             const nanotrack::Options& options,
                             const nanotrack::ControllerConfig& config,
@@ -375,7 +338,7 @@ void write_session_metadata(const std::string& path,
       std::filesystem::path(options.model_dir) / "manifest.json";
   const std::string config_hash =
       options.controller_config.empty()
-          ? fnv1a64_text(builtin_config_identity(config))
+          ? fnv1a64_text(nanotrack::controller_config_identity(config))
           : fnv1a64_file(options.controller_config);
   const double finite_source_fps =
       std::isfinite(source_fps) && source_fps > 0.0 ? source_fps : 0.0;
