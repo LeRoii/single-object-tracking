@@ -127,58 +127,93 @@ void advance_probe_coast(nanotrack::LongTermController& controller, int first, i
   }
 }
 
-void test_accepted_scale_is_limited_and_accumulates() {
+void test_accepted_scale_deadband_smoothing_and_compatibility() {
   using namespace nanotrack;
   ControllerConfig config;
   config.max_accepted_scale_step_ratio = 0.05F;
+  config.accepted_scale_deadband_ratio = 0.02F;
+  config.accepted_scale_smoothing_alpha = 0.10F;
   config.max_center_distance = 10.0F;
   config.max_area_log_change = 10.0F;
   config.max_aspect_log_change = 10.0F;
   LongTermController controller(config);
-  controller.initialize(BBox{40, 30, 20, 10}, 0, 0, {200, 120});
+  controller.initialize(BBox{100, 70, 100, 80}, 0, 0, {400, 300});
 
   auto plan = controller.begin_frame(1, 40, false);
   auto output = controller.finish_frame(
-      plan, reliable_pair(plan, BBox{60, 45, 40, 30}, 1), std::nullopt);
+      plan, reliable_pair(plan, BBox{99, 70.8F, 102, 78.4F}, 1), std::nullopt);
   expect_true(output.accepted && output.control_valid,
-              "reliable scale-change observation remains accepted");
-  expect_near(output.bbox.width, 21.0F, 1e-5F,
-              "accepted width grows by at most five percent");
-  expect_near(output.bbox.height, 10.5F, 1e-5F,
-              "accepted height grows by at most five percent");
-  expect_near(output.bbox.x + 0.5F * output.bbox.width, 80.0F, 1e-5F,
-              "scale limiting preserves the observed horizontal center");
-  expect_near(output.bbox.y + 0.5F * output.bbox.height, 60.0F, 1e-5F,
-              "scale limiting preserves the observed vertical center");
+              "reliable deadband observation remains accepted");
+  expect_near(output.bbox.width, 100.0F, 1e-5F,
+              "exact two-percent width growth remains inside the deadband");
+  expect_near(output.bbox.height, 80.0F, 1e-5F,
+              "exact two-percent height shrink remains inside the deadband");
+  expect_near(output.bbox.x + 0.5F * output.bbox.width, 150.0F, 1e-5F,
+              "deadband preserves the raw horizontal center");
+  expect_near(output.bbox.y + 0.5F * output.bbox.height, 110.0F, 1e-5F,
+              "deadband preserves the raw vertical center");
 
   plan = controller.begin_frame(2, 80, false);
   output = controller.finish_frame(
-      plan, reliable_pair(plan, BBox{60, 45, 40, 30}, 2), std::nullopt);
-  expect_near(output.bbox.width, 22.05F, 1e-4F,
-              "consecutive reliable frames accumulate allowed width change");
-  expect_near(output.bbox.height, 11.025F, 1e-4F,
-              "consecutive reliable frames accumulate allowed height change");
+      plan, reliable_pair(plan, BBox{98.5F, 69, 103, 82}, 2), std::nullopt);
+  expect_near(output.bbox.width, 100.3F, 1e-4F,
+              "width just outside the deadband begins a smoothed update");
+  expect_near(output.bbox.height, 80.2F, 1e-4F,
+              "height just outside the deadband begins a smoothed update");
 
-  plan = controller.begin_frame(3, 120, false);
-  output = controller.finish_frame(
-      plan, reliable_pair(plan, BBox{77.5F, 57.5F, 5, 5}, 3), std::nullopt);
-  expect_near(output.bbox.width, 20.9475F, 1e-4F,
-              "accepted width shrinks by at most five percent");
-  expect_near(output.bbox.height, 10.47375F, 1e-4F,
-              "accepted height shrinks by at most five percent");
+  LongTermController growth(config);
+  growth.initialize(BBox{100, 70, 100, 80}, 0, 0, {400, 300});
+  plan = growth.begin_frame(1, 40, false);
+  output = growth.finish_frame(
+      plan, reliable_pair(plan, BBox{75, 30, 150, 160}, 3), std::nullopt);
+  expect_near(output.bbox.width, 100.5F, 1e-4F,
+              "five-percent outer width target is smoothed to a half-percent step");
+  expect_near(output.bbox.height, 80.4F, 1e-4F,
+              "five-percent outer height target is smoothed to a half-percent step");
+  expect_near(output.bbox.x + 0.5F * output.bbox.width, 150.0F, 1e-5F,
+              "large growth preserves the raw horizontal center");
+  expect_near(output.bbox.y + 0.5F * output.bbox.height, 110.0F, 1e-5F,
+              "large growth preserves the raw vertical center");
+
+  LongTermController shrink(config);
+  shrink.initialize(BBox{100, 70, 100, 80}, 0, 0, {400, 300});
+  plan = shrink.begin_frame(1, 40, false);
+  output = shrink.finish_frame(
+      plan, reliable_pair(plan, BBox{125, 90, 50, 40}, 4), std::nullopt);
+  expect_near(output.bbox.width, 99.5F, 1e-4F,
+              "large shrink is smoothed to a half-percent width step");
+  expect_near(output.bbox.height, 79.6F, 1e-4F,
+              "large shrink is smoothed to a half-percent height step");
+
+  float previous_width = 100.5F;
+  for (int frame = 2; frame <= 200; ++frame) {
+    plan = growth.begin_frame(frame, frame * 40, false);
+    output = growth.finish_frame(
+        plan, reliable_pair(plan, BBox{75, 30, 150, 160}, frame + 10),
+        std::nullopt);
+    expect_true(output.bbox.width + 1e-5F >= previous_width &&
+                    output.bbox.width - previous_width <=
+                        previous_width * 0.005F + 1e-4F,
+                "persistent growth converges monotonically within the half-percent cap");
+    previous_width = output.bbox.width;
+  }
+  expect_true(std::fabs(output.bbox.width - 150.0F) / output.bbox.width <=
+                  0.020001F,
+              "persistent real scale change converges until it reaches the deadband");
 
   LongTermController edge(config);
-  edge.initialize(BBox{40, 30, 20, 10}, 0, 0, {200, 120});
+  edge.initialize(BBox{100, 70, 100, 80}, 0, 0, {400, 300});
   plan = edge.begin_frame(1, 40, false);
   output = edge.finish_frame(
-      plan, reliable_pair(plan, BBox{0, 0, 4, 4}, 1), std::nullopt);
+      plan, reliable_pair(plan, BBox{0, 0, 20, 20}, 1), std::nullopt);
   expect_true(output.accepted && output.bbox.x == 0.0F && output.bbox.y == 0.0F &&
-                  output.bbox.width == 19.0F && output.bbox.height == 9.5F &&
-                  output.bbox.x + output.bbox.width <= 200.0F &&
-                  output.bbox.y + output.bbox.height <= 120.0F,
-              "limited scale remains a valid in-frame box at the top-left edge");
+                  output.bbox.x + output.bbox.width <= 400.0F &&
+                  output.bbox.y + output.bbox.height <= 300.0F,
+              "smoothed scale remains frame-safe through the centering helper");
 
   config.max_accepted_scale_step_ratio = 1.0F;
+  config.accepted_scale_deadband_ratio = 0.0F;
+  config.accepted_scale_smoothing_alpha = 1.0F;
   LongTermController unrestricted(config);
   unrestricted.initialize(BBox{40, 30, 20, 10}, 0, 0, {240, 160});
   plan = unrestricted.begin_frame(1, 40, false);
@@ -187,6 +222,73 @@ void test_accepted_scale_is_limited_and_accumulates() {
   expect_true(output.accepted && output.bbox.width == 60.0F &&
                   output.bbox.height == 40.0F,
               "scale-step ratio one preserves legacy unrestricted acceptance");
+}
+
+void test_ordinary_recovery_uses_fixed_center_gate() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.max_reacquisition_center_distance = 0.75F;
+  config.max_center_distance = 1.50F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  LongTermController controller(config);
+  const BBox stable{40, 40, 20, 20};
+  const BBox in_view_recovery{48, 40, 20, 20};
+  const BBox center_jump{56, 40, 20, 20};
+  controller.initialize(stable, 0, 0, {240, 160});
+
+  auto output = reject_frame(controller, 1, 40);
+  expect_true(!output.accepted && !output.control_valid,
+              "recovery fixture first enters an unaccepted interval");
+  auto plan = controller.begin_frame(2, 80, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, in_view_recovery, 2), std::nullopt);
+  expect_true(!output.accepted && controller.confirmations_.size() == 1 &&
+                  output.normalized_center_residual <= 0.453F,
+              "observed in-view residual can enter ordinary confirmation");
+
+  plan = controller.begin_frame(3, 120, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, center_jump, 3), std::nullopt);
+  expect_true(!output.accepted && controller.confirmations_.empty() &&
+                  output.quality == QualityLevel::kReliable &&
+                  output.normalized_center_residual > 0.75F,
+              "fixed center gate clears a reliable but displaced recovery hit");
+
+  plan = controller.begin_frame(4, 160, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, in_view_recovery, 4), std::nullopt);
+  expect_true(!output.accepted && controller.confirmations_.size() == 1,
+              "first good hit after a center jump starts a fresh queue");
+  plan = controller.begin_frame(5, 200, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, in_view_recovery, 5), std::nullopt);
+  expect_true(output.accepted && output.reacquired && output.control_valid,
+              "two fresh in-view hits complete ordinary recovery");
+
+  LongTermController template_conflict(config);
+  template_conflict.initialize(stable, 0, 0, {240, 160});
+  plan = template_conflict.begin_frame(1, 40, false);
+  const std::vector<TrackerObservation> conflicting{
+      reliable_observation(plan, TemplateKind::kAnchor, center_jump, 9),
+      reliable_observation(plan, TemplateKind::kRecent,
+                           BBox{40, 60, 20, 20}, 9)};
+  output = template_conflict.finish_frame(plan, conflicting, std::nullopt);
+  expect_true(!output.accepted && template_conflict.confirmations_.empty() &&
+                  output.normalized_center_residual > 0.75F,
+              "template-conflict confirmation also uses the fixed center gate");
+
+  config.max_reacquisition_center_distance = 0.0F;
+  LongTermController compatibility(config);
+  compatibility.initialize(stable, 0, 0, {240, 160});
+  reject_frame(compatibility, 1, 40);
+  for (int frame : {2, 3}) {
+    plan = compatibility.begin_frame(frame, frame * 40, false);
+    output = compatibility.finish_frame(
+        plan, reliable_pair(plan, center_jump, frame), std::nullopt);
+  }
+  expect_true(output.accepted && output.reacquired,
+              "zero sentinel preserves legacy ordinary confirmation behavior");
 }
 
 void test_loss_freezes_scale_and_recovery_uses_limited_bbox() {
@@ -1043,7 +1145,8 @@ void test_target_class_gate() {
 
 int main() {
   using namespace nanotrack;
-  test_accepted_scale_is_limited_and_accumulates();
+  test_accepted_scale_deadband_smoothing_and_compatibility();
+  test_ordinary_recovery_uses_fixed_center_gate();
   test_loss_freezes_scale_and_recovery_uses_limited_bbox();
   test_target_class_recovery_request_gate();
   test_coast_generation_provenance();

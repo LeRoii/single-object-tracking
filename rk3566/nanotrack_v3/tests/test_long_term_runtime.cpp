@@ -1,6 +1,7 @@
 #include "long_term_runtime.hpp"
 #include "target_class_session.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -248,6 +249,8 @@ void test_runtime_commits_stabilized_bbox(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   ControllerConfig config;
   config.max_accepted_scale_step_ratio = 0.05F;
+  config.accepted_scale_deadband_ratio = 0.02F;
+  config.accepted_scale_smoothing_alpha = 0.10F;
   config.max_center_distance = 10.0F;
   config.max_area_log_change = 10.0F;
   config.max_aspect_log_change = 10.0F;
@@ -260,8 +263,8 @@ void test_runtime_commits_stabilized_bbox(const nanotrack::ImageView& image) {
   const RuntimeFrameResult result = runtime.process_frame(image, 1, 40);
   expect_true(result.output.accepted && tracker.commit_calls == 1 &&
                   same_bbox(tracker.committed_bbox, result.output.bbox) &&
-                  result.output.bbox.width == 21.0F &&
-                  result.output.bbox.height == 10.5F,
+                  std::fabs(result.output.bbox.width - 20.1F) < 1e-5F &&
+                  std::fabs(result.output.bbox.height - 10.05F) < 1e-5F,
               "runtime commits the exact controller-stabilized accepted box");
 }
 

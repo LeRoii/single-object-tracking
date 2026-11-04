@@ -468,15 +468,25 @@ bool LongTermController::detector_geometry_consistent(
 BBox LongTermController::stabilize_accepted_bbox(
     const BBox& observation) const {
   const float ratio = config_.max_accepted_scale_step_ratio;
-  if (ratio >= 1.0F) return observation;
-  const float width = std::clamp(
-      observation.width, current_bbox_.width * (1.0F - ratio),
-      std::min(static_cast<float>(frame_size_.width),
-               current_bbox_.width * (1.0F + ratio)));
-  const float height = std::clamp(
-      observation.height, current_bbox_.height * (1.0F - ratio),
-      std::min(static_cast<float>(frame_size_.height),
-               current_bbox_.height * (1.0F + ratio)));
+  const float deadband = config_.accepted_scale_deadband_ratio;
+  const float alpha = config_.accepted_scale_smoothing_alpha;
+  if (ratio >= 1.0F && deadband == 0.0F && alpha >= 1.0F) {
+    return observation;
+  }
+  const auto stabilize_dimension = [&](float observed, float current,
+                                       float frame_limit) {
+    if (std::fabs(observed - current) <= current * deadband) return current;
+    const float target = std::clamp(
+        observed, current * (1.0F - ratio),
+        std::min(frame_limit, current * (1.0F + ratio)));
+    return current + alpha * (target - current);
+  };
+  const float width = stabilize_dimension(
+      observation.width, current_bbox_.width,
+      static_cast<float>(frame_size_.width));
+  const float height = stabilize_dimension(
+      observation.height, current_bbox_.height,
+      static_cast<float>(frame_size_.height));
   const float center_x = observation.x + 0.5F * observation.width;
   const float center_y = observation.y + 0.5F * observation.height;
   return centered_box(center_x, center_y, BBox{0.0F, 0.0F, width, height},
@@ -957,9 +967,18 @@ ControllerOutput LongTermController::finish_frame(
                             force_confirmation;
       if (!recovery) {
         accepted = true;
-      } else if (add_confirmation(plan.frame_id, selected->observation.bbox)) {
-        accepted = true;
-        reacquired = true;
+      } else {
+        const bool fixed_center_gate =
+            config_.max_reacquisition_center_distance == 0.0F ||
+            selected->center_residual <=
+                config_.max_reacquisition_center_distance;
+        if (!fixed_center_gate) {
+          confirmations_.clear();
+        } else if (add_confirmation(plan.frame_id,
+                                    selected->observation.bbox)) {
+          accepted = true;
+          reacquired = true;
+        }
       }
     }
   }
