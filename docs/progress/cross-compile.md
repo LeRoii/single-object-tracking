@@ -434,3 +434,20 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 当前只证明候选配置、控制器尺度限制、丢失冻结和运行时提交一致性通过 RKNN-independent 主机测试。十次测试只有正样本人工语义，没有相似干扰、遮挡和错误重捕负样本，故不得把候选标为正式阈值标定完成。
 - 截至本地候选提交前，尚未执行 A6 交叉编译、板端/吊舱部署或修改远程配置，也没有启动或停止远程进程。用户已授权继续实机测试；下一步按隔离候选方式交叉编译、核验工件哈希、部署并启动，由人进行同协议静止目标与负样本测试，比较 false-loss 起点、逐帧宽高变化、身份保持和错误接受。
 - 本轮没有修改协调对话拥有的 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或开发板任务拥有的 `docs/progress/board-validation.md`。公共契约仍应保持 `development_board_validation.latest_handoff.available=false`，真实吊舱验收只能由人报告。
+
+### A6 交叉编译、隔离部署与实机测试启动
+
+- 时间：`2026-11-04T22:15:03+08:00`；输入源码提交：`7dabe87d52e2126421196667f7b261e8151c6491`。提交前重新执行主机构建与完整 CTest，结果仍为 `18/18` 通过、零失败。
+- WSL 工程为 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker`。同步前将 8 个 NanoTrack 源码/配置输入保存到 `ai_alg/backup-before-visible-scale-7dabe87/`；同步包 `/tmp/nanotrack-visible-scale-7dabe87.tgz` 为 30,459 bytes，SHA-256 `a28716e66080d094b31d35e8f85a5803b6c128c8de23b81f39e91451c08133f9`。解包后逐项哈希与本地提交一致，再更新 WSL `ai_alg/nanotrack/{include,source,config}` 和 `deployment_b827/config/visible-default.conf`；既有快照/中心控制框诊断适配器未改动。
+- 实际在 WSL 工程根目录执行 `BUILD_JOBS=4 ./run.sh --platform A6`，退出码 `0`，重新编译 `controller_config.cpp.o`、`long_term_controller.cpp.o` 等生产对象并成功链接 `libAI.a` 和 `viewlink_app`。完整日志 `deployment_b827/build-A6-visible-scale-7dabe87.log` 为 2,525 bytes，SHA-256 `2bc4d508ab6b9dfec9971cd90d5c797016341e8ded8783508219d3f12286b65f`。
+
+| A6 工件 | 大小 | SHA-256 |
+| --- | ---: | --- |
+| `build_A6/viewlink_app` | 34,888,416 bytes | `a86c13ad278f06f140cf2a7cf27b8b1ced677a93556eb73c76c78ea6fda29c0b` |
+| `build_A6/ai_alg/libAI.a` | 590,426 bytes | `f17c2899d7397b98ac833f4ec95766a0dbfd009cb45c1dd555bccf66bf3315b9` |
+
+- `file` 将程序识别为 ARM aarch64 ELF；`libAI.a` 包含生产 `controller_config`、`long_term_controller`、`production_deployment_config`、`native-lib_impl` 等对象，二进制字符串可见 `max_accepted_scale_step_ratio`、逐帧 `AI_TRACK_DIAG` 格式和固定部署配置路径。
+- 板端启动前确认无 `viewlink_app` 或 `app_watchdog` 进程。新程序隔离部署到 `/app/nanotrack_7dabe87_visible_scale_20261104/bin/viewlink_app`，板端大小和 SHA-256 与 WSL 完全一致。受保护的 `/app/bin/viewlink_app` 仍为 `a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357`，未被覆盖。
+- 运行配置 `/app/nanotrack_b827_candidate/config/visible-default.conf` 由上一轮 `4.5/4.5` 版本原子替换为本轮配置，当前 SHA-256 为 `b2a333ca0cfe8173d63f5cfa71f24304e7cabd08d7656d3ada71b902b32372bf`；旧配置保存在同目录 `visible-default.conf.pre-visible-scale-7dabe87-20261104`，SHA-256 `fb6e0ab48a5a2ae57873a53ae8cccae7a5c8a03ffd9e347dc9f966922580c15b`。
+- 实际以 `XDG_RUNTIME_DIR=/var/run`、`LD_LIBRARY_PATH=/app/lib:/usr/lib` 后台启动隔离程序；启动 PID `17854`，stdout/stderr 分别为 `/app/nanotrack_7dabe87_visible_scale_20261104/log/stdout.visible-scale-20261104.log` 和 `stderr.visible-scale-20261104.log`。启动后复核进程存活，三个 NanoTrack RKNN 与 VisDrone9 RKNN 均报告 API `1.6.0 (9a7b5d24c@2023-12-13T17:31:11)`、driver `0.9.3` 并完成初始化。既有缺失 `user_custom.xml` 和 thermal sysfs 告警仍存在，但未阻止本次进程和模型初始化。
+- 当前仅达到“候选源码提交、A6 交叉编译、隔离部署和模型启动成功”。实机点选尚未开始，不能据此评价阈值、尺度稳定、身份保持、伺服行为或吊舱验收；日志仍在增长，必须在用户完成后冻结并重新计算最终大小/SHA-256，再做逐次统计分析。
