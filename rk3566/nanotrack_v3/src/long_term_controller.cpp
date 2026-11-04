@@ -465,10 +465,28 @@ bool LongTermController::detector_geometry_consistent(
              config_.detector_confirmation_max_aspect_log_change;
 }
 
+BBox LongTermController::stabilize_accepted_bbox(
+    const BBox& observation) const {
+  const float ratio = config_.max_accepted_scale_step_ratio;
+  if (ratio >= 1.0F) return observation;
+  const float width = std::clamp(
+      observation.width, current_bbox_.width * (1.0F - ratio),
+      std::min(static_cast<float>(frame_size_.width),
+               current_bbox_.width * (1.0F + ratio)));
+  const float height = std::clamp(
+      observation.height, current_bbox_.height * (1.0F - ratio),
+      std::min(static_cast<float>(frame_size_.height),
+               current_bbox_.height * (1.0F + ratio)));
+  const float center_x = observation.x + 0.5F * observation.width;
+  const float center_y = observation.y + 0.5F * observation.height;
+  return centered_box(center_x, center_y, BBox{0.0F, 0.0F, width, height},
+                      frame_size_);
+}
+
 void LongTermController::accept_observation(
     const SearchPlan& plan, const EvaluatedObservation& selected,
     bool reacquired, ControllerOutput& output) {
-  output.bbox = selected.observation.bbox;
+  output.bbox = stabilize_accepted_bbox(selected.observation.bbox);
   output.accepted = true;
   output.control_valid = true;
   output.reacquired = reacquired;
@@ -997,6 +1015,8 @@ ControllerOutput LongTermController::finish_frame(
   if (accepted) {
     accept_observation(plan, *selected, reacquired, output);
   } else {
+    motion_.freeze_scale(current_bbox_.width, current_bbox_.height);
+    output.bbox = motion_.current_bbox();
     ++consecutive_unreliable_frames_;
     if (!loss_start_ms_) loss_start_ms_ = plan.timestamp_ms;
     mode_ = mode_for_timestamp(plan.timestamp_ms);

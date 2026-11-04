@@ -329,6 +329,7 @@ std::string builtin_config_identity(const nanotrack::ControllerConfig& config) {
          << config.reliable_apce << '|' << config.reliable_peak_margin << '|'
          << config.weak_score << '|' << config.weak_psr << '|'
          << config.weak_apce << '|' << config.weak_peak_margin << '|'
+         << config.max_accepted_scale_step_ratio << '|'
          << config.detector_candidate_max_center_ratio << '|'
          << config.occlusion_hold_frames << '|'
          << config.occlusion_trigger_consecutive_unreliable << '|'

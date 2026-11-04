@@ -244,6 +244,27 @@ void test_adaptive_coast_execution(const nanotrack::ImageView& image) {
   }
 }
 
+void test_runtime_commits_stabilized_bbox(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.max_accepted_scale_step_ratio = 0.05F;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  FakeTracker tracker;
+  FakeDetector detector;
+  LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+  runtime.initialize(image, BBox{40, 30, 20, 10}, 0, 0);
+  tracker.reliable_bbox = BBox{60, 45, 40, 30};
+
+  const RuntimeFrameResult result = runtime.process_frame(image, 1, 40);
+  expect_true(result.output.accepted && tracker.commit_calls == 1 &&
+                  same_bbox(tracker.committed_bbox, result.output.bbox) &&
+                  result.output.bbox.width == 21.0F &&
+                  result.output.bbox.height == 10.5F,
+              "runtime commits the exact controller-stabilized accepted box");
+}
+
 void test_uncertain_runtime_cadence(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   ControllerConfig config;
@@ -872,6 +893,7 @@ int main() {
   test_target_class_session_config(image);
   test_frame_lifetime(image);
   test_adaptive_coast_execution(image);
+  test_runtime_commits_stabilized_bbox(image);
   test_uncertain_runtime_cadence(image);
   test_runtime_target_class_recovery_requests(image);
   test_late_precoast_batches(image);

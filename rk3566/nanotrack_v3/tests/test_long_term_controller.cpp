@@ -127,6 +127,149 @@ void advance_probe_coast(nanotrack::LongTermController& controller, int first, i
   }
 }
 
+void test_accepted_scale_is_limited_and_accumulates() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.max_accepted_scale_step_ratio = 0.05F;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  LongTermController controller(config);
+  controller.initialize(BBox{40, 30, 20, 10}, 0, 0, {200, 120});
+
+  auto plan = controller.begin_frame(1, 40, false);
+  auto output = controller.finish_frame(
+      plan, reliable_pair(plan, BBox{60, 45, 40, 30}, 1), std::nullopt);
+  expect_true(output.accepted && output.control_valid,
+              "reliable scale-change observation remains accepted");
+  expect_near(output.bbox.width, 21.0F, 1e-5F,
+              "accepted width grows by at most five percent");
+  expect_near(output.bbox.height, 10.5F, 1e-5F,
+              "accepted height grows by at most five percent");
+  expect_near(output.bbox.x + 0.5F * output.bbox.width, 80.0F, 1e-5F,
+              "scale limiting preserves the observed horizontal center");
+  expect_near(output.bbox.y + 0.5F * output.bbox.height, 60.0F, 1e-5F,
+              "scale limiting preserves the observed vertical center");
+
+  plan = controller.begin_frame(2, 80, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, BBox{60, 45, 40, 30}, 2), std::nullopt);
+  expect_near(output.bbox.width, 22.05F, 1e-4F,
+              "consecutive reliable frames accumulate allowed width change");
+  expect_near(output.bbox.height, 11.025F, 1e-4F,
+              "consecutive reliable frames accumulate allowed height change");
+
+  plan = controller.begin_frame(3, 120, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, BBox{77.5F, 57.5F, 5, 5}, 3), std::nullopt);
+  expect_near(output.bbox.width, 20.9475F, 1e-4F,
+              "accepted width shrinks by at most five percent");
+  expect_near(output.bbox.height, 10.47375F, 1e-4F,
+              "accepted height shrinks by at most five percent");
+
+  LongTermController edge(config);
+  edge.initialize(BBox{40, 30, 20, 10}, 0, 0, {200, 120});
+  plan = edge.begin_frame(1, 40, false);
+  output = edge.finish_frame(
+      plan, reliable_pair(plan, BBox{0, 0, 4, 4}, 1), std::nullopt);
+  expect_true(output.accepted && output.bbox.x == 0.0F && output.bbox.y == 0.0F &&
+                  output.bbox.width == 19.0F && output.bbox.height == 9.5F &&
+                  output.bbox.x + output.bbox.width <= 200.0F &&
+                  output.bbox.y + output.bbox.height <= 120.0F,
+              "limited scale remains a valid in-frame box at the top-left edge");
+
+  config.max_accepted_scale_step_ratio = 1.0F;
+  LongTermController unrestricted(config);
+  unrestricted.initialize(BBox{40, 30, 20, 10}, 0, 0, {240, 160});
+  plan = unrestricted.begin_frame(1, 40, false);
+  output = unrestricted.finish_frame(
+      plan, reliable_pair(plan, BBox{70, 50, 60, 40}, 1), std::nullopt);
+  expect_true(output.accepted && output.bbox.width == 60.0F &&
+                  output.bbox.height == 40.0F,
+              "scale-step ratio one preserves legacy unrestricted acceptance");
+}
+
+void test_loss_freezes_scale_and_recovery_uses_limited_bbox() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.max_accepted_scale_step_ratio = 0.05F;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  LongTermController controller(config);
+  controller.initialize(BBox{40, 30, 20, 10}, 0, 0, {240, 160});
+
+  auto plan = controller.begin_frame(1, 40, false);
+  auto output = controller.finish_frame(
+      plan, reliable_pair(plan, BBox{50, 40, 40, 20}, 1), std::nullopt);
+  expect_near(output.bbox.width, 21.0F, 1e-5F,
+              "fixture establishes a limited last accepted width");
+  expect_true(controller.motion_.velocity_width_ != 0.0F &&
+                  controller.motion_.velocity_height_ != 0.0F,
+              "fixture establishes nonzero scale velocity before loss");
+
+  plan = controller.begin_frame(2, 80, false);
+  const float first_predicted_center_x =
+      plan.predicted_bbox.x + 0.5F * plan.predicted_bbox.width;
+  output = controller.finish_frame(plan, {}, std::nullopt);
+  expect_true(!output.accepted && !output.control_valid &&
+                  controller.motion_.scale_frozen(),
+              "first unaccepted frame freezes motion scale without authorizing control");
+  expect_near(output.bbox.width, 21.0F, 1e-5F,
+              "first unaccepted output restores the last accepted width");
+  expect_near(output.bbox.height, 10.5F, 1e-5F,
+              "first unaccepted output restores the last accepted height");
+  expect_near(output.bbox.x + 0.5F * output.bbox.width,
+              first_predicted_center_x, 1e-5F,
+              "scale freeze retains the motion-predicted center");
+
+  plan = controller.begin_frame(3, 120, false);
+  const float second_predicted_center_x =
+      plan.predicted_bbox.x + 0.5F * plan.predicted_bbox.width;
+  output = controller.finish_frame(plan, {}, std::nullopt);
+  expect_near(output.bbox.width, 21.0F, 1e-5F,
+              "repeated recovery prediction keeps frozen width");
+  expect_near(output.bbox.height, 10.5F, 1e-5F,
+              "repeated recovery prediction keeps frozen height");
+  expect_true(std::fabs(second_predicted_center_x - first_predicted_center_x) >
+                  1e-5F,
+              "frozen scale does not freeze center motion");
+
+  const BBox recovery_observation{80, 55, 40, 30};
+  plan = controller.begin_frame(4, 160, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, recovery_observation, 4), std::nullopt);
+  expect_true(!output.accepted && controller.confirmations_.size() == 1 &&
+                  controller.motion_.scale_frozen(),
+              "first reliable recovery hit remains unaccepted and frozen");
+  expect_near(output.bbox.width, 21.0F, 1e-5F,
+              "unconfirmed enlarged-crop scale cannot change final width");
+
+  plan = controller.begin_frame(5, 200, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, recovery_observation, 5), std::nullopt);
+  expect_true(output.accepted && output.reacquired && output.control_valid &&
+                  !controller.motion_.scale_frozen(),
+              "second consistent recovery hit accepts and unfreezes stabilized scale");
+  expect_near(output.bbox.width, 22.05F, 1e-4F,
+              "accepted recovery width is limited to five percent");
+  expect_near(output.bbox.height, 11.025F, 1e-4F,
+              "accepted recovery height is limited to five percent");
+  expect_near(output.bbox.x + 0.5F * output.bbox.width, 100.0F, 1e-5F,
+              "accepted recovery keeps the observed horizontal center");
+  expect_near(output.bbox.y + 0.5F * output.bbox.height, 70.0F, 1e-5F,
+              "accepted recovery keeps the observed vertical center");
+  expect_true(controller.current_bbox_.x == output.bbox.x &&
+                  controller.current_bbox_.y == output.bbox.y &&
+                  controller.current_bbox_.width == output.bbox.width &&
+                  controller.current_bbox_.height == output.bbox.height &&
+                  controller.motion_.current_bbox().x == output.bbox.x &&
+                  controller.motion_.current_bbox().y == output.bbox.y &&
+                  controller.motion_.current_bbox().width == output.bbox.width &&
+                  controller.motion_.current_bbox().height == output.bbox.height,
+              "accepted recovery installs the same stabilized controller and motion box");
+}
+
 void test_suspicion_event_pulses_are_single_shot() {
   using namespace nanotrack;
   LongTermController controller{ControllerConfig{}};
@@ -900,6 +1043,8 @@ void test_target_class_gate() {
 
 int main() {
   using namespace nanotrack;
+  test_accepted_scale_is_limited_and_accumulates();
+  test_loss_freezes_scale_and_recovery_uses_limited_bbox();
   test_target_class_recovery_request_gate();
   test_coast_generation_provenance();
   test_suspicion_event_pulses_are_single_shot();

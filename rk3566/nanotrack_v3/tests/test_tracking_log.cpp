@@ -91,11 +91,14 @@ void test_adaptive_coast_serialization() {
   config.occlusion_probe_interval_frames = 7;
   config.occlusion_gradual_dimension_ratio = 0.81F;
   config.occlusion_confirmation_iou = 0.61F;
+  config.max_accepted_scale_step_ratio = 0.05F;
   apply_controller_config_metadata(metadata, config);
   auto json = tracking_session_metadata_json(metadata);
   expect_true(contains(json, "\"occlusion_probe_interval_frames\": 7") &&
                   contains(json, "\"occlusion_gradual_dimension_ratio\": 0.810000") &&
-                  contains(json, "\"occlusion_confirmation_iou\": 0.610000"),
+                  contains(json, "\"occlusion_confirmation_iou\": 0.610000") &&
+                  metadata.max_accepted_scale_step_ratio == 0.05F &&
+                  contains(json, "\"max_accepted_scale_step_ratio\": 0.050000"),
               "metadata uses effective configuration instead of schema defaults");
   metadata.occlusion_peak_margin_drop = std::numeric_limits<float>::infinity();
   bool rejected = false;

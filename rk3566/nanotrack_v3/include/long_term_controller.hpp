@@ -207,6 +207,7 @@ class LongTermController {
   bool detector_geometry_consistent(const BBox& reference,
                                     const BBox& bbox) const;
   bool detector_confirmation_consistent(const BBox& bbox) const;
+  BBox stabilize_accepted_bbox(const BBox& observation) const;
   void accept_observation(const SearchPlan& plan,
                           const EvaluatedObservation& selected,
                           bool reacquired,

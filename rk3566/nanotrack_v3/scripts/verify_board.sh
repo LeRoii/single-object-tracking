@@ -76,6 +76,7 @@ for key, low, high in [
         raise SystemExit(f"invalid metadata {key}")
 for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
             "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
+            "max_accepted_scale_step_ratio",
             "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold",
             "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change",
             "occlusion_confirmation_max_aspect_log_change"):
@@ -85,7 +86,8 @@ for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimensio
     if key == "occlusion_peak_margin_drop":
         valid = value >= 0
     elif key in {"occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
-                 "occlusion_shrink_step_ratio", "occlusion_confirmation_iou"}:
+                 "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
+                 "max_accepted_scale_step_ratio"}:
         valid = 0 < value <= 1
     else:
         valid = value > 0
@@ -308,6 +310,7 @@ for key in {
     "rknn_driver_version", "occlusion_hold_frames",
     "occlusion_trigger_consecutive_unreliable",
     "occlusion_trigger_min_dimension_ratio", "occlusion_reference_window",
+    "max_accepted_scale_step_ratio",
     "occlusion_probe_interval_frames", "occlusion_gradual_dimension_ratio", "occlusion_gradual_consecutive_frames", "occlusion_min_reference_samples", "occlusion_shrink_step_ratio", "occlusion_suspicion_clear_frames", "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold", "occlusion_confirmation_iou", "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change", "occlusion_confirmation_max_aspect_log_change",
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",

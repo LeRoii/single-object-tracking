@@ -86,12 +86,18 @@ int main() {
   expect_true(default_visible.detector_target_mode ==
                   DetectorTargetMode::kFullObject,
               "whole-object detector hypotheses remain the default");
-  expect_near(default_visible.reliable_psr, 4.5F, 1e-6F,
-              "visible bring-up default accepts observed RKNN PSR range");
-  expect_near(default_visible.weak_psr, 4.5F, 1e-6F,
-              "visible bring-up weak PSR matches the validated candidate");
-  expect_near(default_visible.reliable_peak_margin, 0.06F, 1e-6F,
-              "visible bring-up default accepts observed RKNN peak margin");
+  expect_near(default_visible.reliable_psr, 4.2F, 1e-6F,
+              "visible candidate accepts confirmed static-target PSR range");
+  expect_near(default_visible.weak_psr, 4.0F, 1e-6F,
+              "visible weak PSR retains a lower staging boundary");
+  expect_near(default_visible.reliable_peak_margin, 0.04F, 1e-6F,
+              "visible candidate accepts confirmed static-target peak margins");
+  expect_near(default_visible.weak_peak_margin, 0.02F, 1e-6F,
+              "visible weak peak margin retains a lower staging boundary");
+  expect_near(default_visible.max_accepted_scale_step_ratio, 0.05F, 1e-6F,
+              "visible accepted dimensions are limited to five percent per frame");
+  expect_near(ControllerConfig{}.max_accepted_scale_step_ratio, 1.0F, 1e-6F,
+              "generic controller behavior remains unrestricted");
   expect_near(default_visible.detector_candidate_max_center_ratio, 0.15F,
               1e-6F,
               "visible default strictly limits detector center jumps");
@@ -102,6 +108,12 @@ int main() {
               "visible evidence does not alter infrared PSR default");
   expect_near(default_infrared.reliable_peak_margin, 0.10F, 1e-6F,
               "visible evidence does not alter infrared peak-margin default");
+  expect_near(default_infrared.weak_psr, 5.0F, 1e-6F,
+              "visible evidence does not alter infrared weak PSR default");
+  expect_near(default_infrared.weak_peak_margin, 0.04F, 1e-6F,
+              "visible evidence does not alter infrared weak peak-margin default");
+  expect_near(default_infrared.max_accepted_scale_step_ratio, 1.0F, 1e-6F,
+              "infrared accepted dimensions retain existing unrestricted behavior");
   expect_near(default_infrared.detector_candidate_max_center_ratio, 0.15F,
               1e-6F,
               "infrared default uses the same strict detector position gate");
@@ -113,10 +125,16 @@ int main() {
   const ControllerConfig shipped_visible =
       load_controller_config(config_dir + "visible-default.conf");
   expect_occlusion_defaults(shipped_visible, "shipped visible configuration");
-  expect_near(shipped_visible.reliable_psr, 4.5F, 1e-6F,
-              "shipped visible config uses the validated reliable PSR");
-  expect_near(shipped_visible.weak_psr, 4.5F, 1e-6F,
-              "shipped visible config uses the validated weak PSR");
+  expect_near(shipped_visible.reliable_psr, 4.2F, 1e-6F,
+              "shipped visible config uses the static-target reliable PSR candidate");
+  expect_near(shipped_visible.weak_psr, 4.0F, 1e-6F,
+              "shipped visible config uses the staged weak PSR candidate");
+  expect_near(shipped_visible.reliable_peak_margin, 0.04F, 1e-6F,
+              "shipped visible config uses the reliable peak-margin candidate");
+  expect_near(shipped_visible.weak_peak_margin, 0.02F, 1e-6F,
+              "shipped visible config uses the weak peak-margin candidate");
+  expect_near(shipped_visible.max_accepted_scale_step_ratio, 0.05F, 1e-6F,
+              "shipped visible config limits accepted scale steps to five percent");
   expect_occlusion_defaults(
       load_controller_config(config_dir + "infrared-default.conf"),
       "shipped infrared configuration");
@@ -144,6 +162,7 @@ int main() {
              "reliable_score=0.82\n"
              "reliable_psr=8.5\n"
              "weak_score=0.57\n"
+             "max_accepted_scale_step_ratio=0.25\n"
              "uncertain_ms=200\n"
              "local_recovery_ms=1000\n"
              "assisted_recovery_ms=3000\n"
@@ -166,6 +185,8 @@ int main() {
               "detector center ratio parses at the boundary");
   expect_near(visible.reliable_score, 0.82F, 1e-6F,
               "visible reliable score override");
+  expect_near(visible.max_accepted_scale_step_ratio, 0.25F, 1e-6F,
+              "accepted scale-step ratio parses explicitly");
   expect_true(visible.uncertain_ms == 200 &&
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
@@ -303,6 +324,8 @@ int main() {
     bool bounded_at_one;
   };
   const FloatLimit occlusion_floats[] = {
+      {"max_accepted_scale_step_ratio",
+       &ControllerConfig::max_accepted_scale_step_ratio, false, true},
       {"occlusion_trigger_min_dimension_ratio",
        &ControllerConfig::occlusion_trigger_min_dimension_ratio, false, true},
       {"occlusion_gradual_dimension_ratio",

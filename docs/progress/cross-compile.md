@@ -418,3 +418,19 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 两轮目标不同，因此上述差异不是同目标 A/B 因果证明；日志没有标注真值，也不能证明框始终落在正确目标上。用户只确认所选目标均为静止且按预期不应跟丢。该结果支持将 `4.5/4.5` 保留为候选，但不构成精度、稳定率、重捕率、开发板正式验收或真实吊舱验收。
 - 主线同步同时修改随包 `rk3566/nanotrack_v3/config/visible-default.conf` 与 `default_controller_config("visible")`，避免内置默认仍为 `6.0/5.0` 或出现 `reliable_psr < weak_psr` 的非法组合；红外默认和其余质量门均未修改。测试先按 TDD 得到预期 RED：`controller_support` 对内置默认和随包配置共报 4 项旧值失败；最小实现后聚焦测试通过，随后执行 `cmake --build /tmp/nanotrack-psr45-host-20261103 -j4` 和 `ctest --test-dir /tmp/nanotrack-psr45-host-20261103 --output-on-failure`，结果 `18/18` 通过、零失败。同步后的随包配置 SHA-256 为 `fb6e0ab48a5a2ae57873a53ae8cccae7a5c8a03ffd9e347dc9f966922580c15b`。
 - 本轮没有修改协调对话拥有的 `docs/progress/STATUS.md` 或 `docs/progress/integration-contract.yaml`，没有执行 A6 生产交叉编译、生产部署或真实吊舱验收。生产交叉编译仍须等待协调者批准的开发板 handoff；本提交只同步经本轮功能诊断支持的可见光 PSR 候选门限及其回归测试。
+
+## 2026-11-04 静止目标阈值分层与控制器尺度稳定候选
+
+- 时间：`2026-11-04T21:59:03+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；实施前 HEAD：`7b87042b75e886cf2427f89d521078da59c660eb`。用户先批准本地源码修改和主机验证；随后于 `2026-11-04T22:05:44+08:00` 明确要求继续实机测试，授权本候选提交、A6 交叉编译、隔离部署和测试进程启动。提交前主机构建成功、CTest `18/18` 通过；本节后续继续记录交叉编译与实机启动的真实结果，不以授权本身代替完成证据。
+- 诊断输入为十次人工确认的静止目标测试，共 1878 个 `DO_TRACK` 帧。冻结日志 `/tmp/stdout.scale-static-20261104.log`、`/tmp/stderr.scale-static-20261104.log` 的 SHA-256 分别为 `7dff6ee141452021acbfae1246108c4b33d64df068df2a21490c1f16ac2864ba`、`2e02db905df70a6efedb0a0a76151b04a478e4cafd7f027a45d872021fbf4023`。用户补充确认第十次恢复的是同一目标，且本次目标不属于 detector 支持类别；因此同目标恢复和无 detector 候选不记为异常。
+- 排除人工报告跟丢的第七次后，48 次从 accepted 进入 non-accepted 的起点中，47 次涉及 `reliable_peak_margin < 0.06`，只有 1 次主要由 `PSR < 4.5` 触发。第七次恢复窗口存在约 `4.30..4.47` 的 PSR。由此把可见光候选分层改为 `reliable_psr=4.2`、`weak_psr=4.0`、`reliable_peak_margin=0.04`、`weak_peak_margin=0.02`；`calibrated=false` 保持不变，raw score、APCE、几何门、模板确认和红外配置不变。
+- 根因链路为：非可靠帧触发搜索倍率从 `1.0` 扩到 `1.5` 或更大；更大原图区域仍缩放到固定 `255x255`，改变目标采样、响应峰和尺度回归；此前恢复观察的宽高又会直接进入最终框和下一帧参考，形成锯齿。候选新增 `max_accepted_scale_step_ratio=0.05`：每个 accepted 帧的宽、高分别相对最后 accepted 控制框最多变化正负 5%，中心仍采用可靠观察中心；同一稳定框进入 `ControllerOutput`、运动修正/重初始化、控制器当前状态和既有 `commit_bbox()` 路径。值 `1.0` 明确定义为兼容旧行为的“不限制”哨兵，故 generic/infrared 不改变行为。
+- 普通 non-accepted 路径现在立即调用既有 `MotionEstimator::freeze_scale()`，把宽高恢复到最后 accepted 框并清零尺度速度；中心继续按运动模型预测。扩大搜索仍用于定位，但未确认观察的原始尺度不再污染最终框。两次一致 Reliable 的三帧窗口确认规则保持不变；确认重捕后，观察中心立即恢复，尺度仍通过 5% 限制后统一写回。
+- 设计和计划分别为 `docs/superpowers/specs/2026-11-04-visible-threshold-scale-stabilization-design.md`、`docs/superpowers/plans/2026-11-04-visible-threshold-scale-stabilization.md`。TDD RED 实际观察到：新配置字段不存在导致编译失败；未限制实现产生 7 项接受尺度断言失败；普通丢失产生 6 项冻结/恢复断言失败；`1.0` 兼容语义产生 1 项断言失败。最小实现后，配置/元数据聚焦测试 `2/2` 通过，控制器/运行时聚焦测试 `2/2` 通过。最终自审又发现板端证据校验器未强制新元数据字段；新增缺失字段和 `1.01` 越界负例后先观察到 `verify_board_schema` 错误放行并失败，再补充 `scripts/verify_board.sh` 的 `(0,1]` 校验，聚焦测试恢复通过。
+- 在 `/tmp/nanotrack-visible-scale-stabilization` 执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-visible-scale-stabilization -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF`、`cmake --build /tmp/nanotrack-visible-scale-stabilization -- -j2`、`ctest --test-dir /tmp/nanotrack-visible-scale-stabilization --output-on-failure`；配置、构建成功，CTest `18/18` 通过、零失败，`git diff --check` 成功。修改后的随包 `rk3566/nanotrack_v3/config/visible-default.conf` SHA-256 为 `b2a333ca0cfe8173d63f5cfa71f24304e7cabd08d7656d3ada71b902b32372bf`。
+
+### 证据边界与下一步
+
+- 当前只证明候选配置、控制器尺度限制、丢失冻结和运行时提交一致性通过 RKNN-independent 主机测试。十次测试只有正样本人工语义，没有相似干扰、遮挡和错误重捕负样本，故不得把候选标为正式阈值标定完成。
+- 截至本地候选提交前，尚未执行 A6 交叉编译、板端/吊舱部署或修改远程配置，也没有启动或停止远程进程。用户已授权继续实机测试；下一步按隔离候选方式交叉编译、核验工件哈希、部署并启动，由人进行同协议静止目标与负样本测试，比较 false-loss 起点、逐帧宽高变化、身份保持和错误接受。
+- 本轮没有修改协调对话拥有的 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或开发板任务拥有的 `docs/progress/board-validation.md`。公共契约仍应保持 `development_board_validation.latest_handoff.available=false`，真实吊舱验收只能由人报告。

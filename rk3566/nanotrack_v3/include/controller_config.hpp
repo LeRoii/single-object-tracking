@@ -24,6 +24,7 @@ struct ControllerConfig {
   float max_center_distance = 1.50F;
   float max_area_log_change = 1.00F;
   float max_aspect_log_change = 0.70F;
+  float max_accepted_scale_step_ratio = 1.00F;
 
   std::int64_t uncertain_ms = 200;
   std::int64_t local_recovery_ms = 1000;

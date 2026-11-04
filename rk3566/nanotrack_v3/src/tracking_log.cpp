@@ -643,6 +643,7 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.occlusion_confirmation_center_distance = config.occlusion_confirmation_center_distance;
   metadata.occlusion_confirmation_max_area_log_change = config.occlusion_confirmation_max_area_log_change;
   metadata.occlusion_confirmation_max_aspect_log_change = config.occlusion_confirmation_max_aspect_log_change;
+  metadata.max_accepted_scale_step_ratio = config.max_accepted_scale_step_ratio;
 }
 
 std::string tracking_session_metadata_json(
@@ -653,6 +654,7 @@ std::string tracking_session_metadata_json(
       metadata.reliable_psr,
       metadata.reliable_apce,
       metadata.reliable_peak_margin,
+      metadata.max_accepted_scale_step_ratio,
       metadata.detector_candidate_max_center_ratio,
       metadata.occlusion_trigger_min_dimension_ratio,
       metadata.occlusion_gradual_dimension_ratio,
@@ -774,6 +776,8 @@ std::string tracking_session_metadata_json(
          << "  \"reliable_apce\": " << metadata.reliable_apce << ",\n"
          << "  \"reliable_peak_margin\": " << metadata.reliable_peak_margin
          << ",\n"
+         << "  \"max_accepted_scale_step_ratio\": "
+         << metadata.max_accepted_scale_step_ratio << ",\n"
          << "  \"uncertain_ms\": " << metadata.uncertain_ms << ",\n"
          << "  \"local_recovery_ms\": " << metadata.local_recovery_ms << ",\n"
          << "  \"assisted_recovery_ms\": " << metadata.assisted_recovery_ms

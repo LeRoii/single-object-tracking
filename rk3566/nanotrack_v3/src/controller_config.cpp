@@ -75,6 +75,7 @@ void set_value(ControllerConfig& config,
   else if (key == "max_center_distance") config.max_center_distance = parse_float(key, value);
   else if (key == "max_area_log_change") config.max_area_log_change = parse_float(key, value);
   else if (key == "max_aspect_log_change") config.max_aspect_log_change = parse_float(key, value);
+  else if (key == "max_accepted_scale_step_ratio") config.max_accepted_scale_step_ratio = parse_float(key, value);
   else if (key == "uncertain_ms") config.uncertain_ms = parse_integer(key, value);
   else if (key == "local_recovery_ms") config.local_recovery_ms = parse_integer(key, value);
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
@@ -130,9 +131,11 @@ ControllerConfig default_controller_config(const std::string& sensor) {
   ControllerConfig config;
   config.sensor = sensor;
   if (sensor == "visible") {
-    config.reliable_psr = 4.5F;
-    config.weak_psr = 4.5F;
-    config.reliable_peak_margin = 0.06F;
+    config.reliable_psr = 4.2F;
+    config.weak_psr = 4.0F;
+    config.reliable_peak_margin = 0.04F;
+    config.weak_peak_margin = 0.02F;
+    config.max_accepted_scale_step_ratio = 0.05F;
   }
   validate_controller_config(config);
   return config;
@@ -169,6 +172,12 @@ void validate_controller_config(const ControllerConfig& config) {
       config.reliable_apce < config.weak_apce ||
       config.reliable_peak_margin < config.weak_peak_margin) {
     throw std::invalid_argument("reliable thresholds must not be weaker than weak thresholds");
+  }
+  if (!std::isfinite(config.max_accepted_scale_step_ratio) ||
+      config.max_accepted_scale_step_ratio <= 0.0F ||
+      config.max_accepted_scale_step_ratio > 1.0F) {
+    throw std::invalid_argument(
+        "accepted scale step ratio must be finite and in (0,1]");
   }
   if (config.uncertain_ms <= 0 ||
       config.local_recovery_ms <= config.uncertain_ms ||

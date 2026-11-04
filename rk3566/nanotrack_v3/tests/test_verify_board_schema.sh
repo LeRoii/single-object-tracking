@@ -117,6 +117,7 @@ metadata = {
     "occlusion_trigger_consecutive_unreliable": 2,
     "occlusion_trigger_min_dimension_ratio": 0.70,
     "occlusion_reference_window": 8,
+    "max_accepted_scale_step_ratio": 0.05,
     "occlusion_probe_interval_frames": 5, "occlusion_gradual_dimension_ratio": 1, "occlusion_gradual_consecutive_frames": 1, "occlusion_min_reference_samples": 1, "occlusion_shrink_step_ratio": 1, "occlusion_suspicion_clear_frames": 1, "occlusion_peak_margin_drop": 1, "occlusion_motion_residual_threshold": 1, "occlusion_confirmation_iou": 1, "occlusion_confirmation_center_distance": 1, "occlusion_confirmation_max_area_log_change": 1, "occlusion_confirmation_max_aspect_log_change": 1,
     "rknn_api_version": "api", "rknn_driver_version": "driver",
     "tracked_frames": 2, "mean_runtime_ms": 2.0, "p50_runtime_ms": 2.0,
@@ -282,13 +283,20 @@ PY
 done
 cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
 cp "$artifact_dir/session-metadata.json" "$artifact_dir/metadata.valid.json"
-for invalid_case in nan_threshold interval0; do
+for invalid_case in nan_threshold interval0 missing_scale_step invalid_scale_step; do
   cp "$artifact_dir/metadata.valid.json" "$artifact_dir/session-metadata.json"
   python3 - "$artifact_dir/session-metadata.json" "$invalid_case" <<'PY'
 import json, sys
 path, case = sys.argv[1:]
 with open(path) as stream: data = json.load(stream)
-data["occlusion_peak_margin_drop" if case == "nan_threshold" else "occlusion_probe_interval_frames"] = float("nan") if case == "nan_threshold" else 0
+if case == "nan_threshold":
+    data["occlusion_peak_margin_drop"] = float("nan")
+elif case == "interval0":
+    data["occlusion_probe_interval_frames"] = 0
+elif case == "missing_scale_step":
+    del data["max_accepted_scale_step_ratio"]
+else:
+    data["max_accepted_scale_step_ratio"] = 1.01
 with open(path, "w") as stream: json.dump(data, stream)
 PY
   if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then

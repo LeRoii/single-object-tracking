@@ -208,6 +208,7 @@ struct TrackingSessionMetadata {
   float reliable_psr = 0.0F;
   float reliable_apce = 0.0F;
   float reliable_peak_margin = 0.0F;
+  float max_accepted_scale_step_ratio = 1.0F;
   std::int64_t uncertain_ms = 0;
   std::int64_t local_recovery_ms = 0;
   std::int64_t assisted_recovery_ms = 0;
