@@ -644,6 +644,10 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.occlusion_confirmation_max_area_log_change = config.occlusion_confirmation_max_area_log_change;
   metadata.occlusion_confirmation_max_aspect_log_change = config.occlusion_confirmation_max_aspect_log_change;
   metadata.max_accepted_scale_step_ratio = config.max_accepted_scale_step_ratio;
+  metadata.accepted_scale_deadband_ratio = config.accepted_scale_deadband_ratio;
+  metadata.accepted_scale_smoothing_alpha = config.accepted_scale_smoothing_alpha;
+  metadata.max_reacquisition_center_distance =
+      config.max_reacquisition_center_distance;
 }
 
 std::string tracking_session_metadata_json(
@@ -655,6 +659,9 @@ std::string tracking_session_metadata_json(
       metadata.reliable_apce,
       metadata.reliable_peak_margin,
       metadata.max_accepted_scale_step_ratio,
+      metadata.accepted_scale_deadband_ratio,
+      metadata.accepted_scale_smoothing_alpha,
+      metadata.max_reacquisition_center_distance,
       metadata.detector_candidate_max_center_ratio,
       metadata.occlusion_trigger_min_dimension_ratio,
       metadata.occlusion_gradual_dimension_ratio,
@@ -778,6 +785,12 @@ std::string tracking_session_metadata_json(
          << ",\n"
          << "  \"max_accepted_scale_step_ratio\": "
          << metadata.max_accepted_scale_step_ratio << ",\n"
+         << "  \"accepted_scale_deadband_ratio\": "
+         << metadata.accepted_scale_deadband_ratio << ",\n"
+         << "  \"accepted_scale_smoothing_alpha\": "
+         << metadata.accepted_scale_smoothing_alpha << ",\n"
+         << "  \"max_reacquisition_center_distance\": "
+         << metadata.max_reacquisition_center_distance << ",\n"
          << "  \"uncertain_ms\": " << metadata.uncertain_ms << ",\n"
          << "  \"local_recovery_ms\": " << metadata.local_recovery_ms << ",\n"
          << "  \"assisted_recovery_ms\": " << metadata.assisted_recovery_ms

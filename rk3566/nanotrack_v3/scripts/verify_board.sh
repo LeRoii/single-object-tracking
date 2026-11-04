@@ -77,17 +77,21 @@ for key, low, high in [
 for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
             "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
             "max_accepted_scale_step_ratio",
+            "accepted_scale_deadband_ratio", "accepted_scale_smoothing_alpha",
+            "max_reacquisition_center_distance",
             "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold",
             "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change",
             "occlusion_confirmation_max_aspect_log_change"):
     value = metadata.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise SystemExit(f"invalid metadata {key}")
-    if key == "occlusion_peak_margin_drop":
+    if key in {"occlusion_peak_margin_drop", "max_reacquisition_center_distance"}:
         valid = value >= 0
+    elif key == "accepted_scale_deadband_ratio":
+        valid = 0 <= value < 1
     elif key in {"occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
                  "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
-                 "max_accepted_scale_step_ratio"}:
+                 "max_accepted_scale_step_ratio", "accepted_scale_smoothing_alpha"}:
         valid = 0 < value <= 1
     else:
         valid = value > 0
@@ -311,6 +315,8 @@ for key in {
     "occlusion_trigger_consecutive_unreliable",
     "occlusion_trigger_min_dimension_ratio", "occlusion_reference_window",
     "max_accepted_scale_step_ratio",
+    "accepted_scale_deadband_ratio", "accepted_scale_smoothing_alpha",
+    "max_reacquisition_center_distance",
     "occlusion_probe_interval_frames", "occlusion_gradual_dimension_ratio", "occlusion_gradual_consecutive_frames", "occlusion_min_reference_samples", "occlusion_shrink_step_ratio", "occlusion_suspicion_clear_frames", "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold", "occlusion_confirmation_iou", "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change", "occlusion_confirmation_max_aspect_log_change",
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",

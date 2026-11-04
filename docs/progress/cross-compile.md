@@ -462,3 +462,18 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 完全画面内的逐帧尺寸仍有高频小幅变化：最终宽度在 56.6% 的相邻帧发生变化，变化中位数 1 像素、P95 为 2 像素、最大 4 像素，方向反转 866 次；最终高度仅 6.2% 的相邻帧变化。对应原始宽度有 70.3% 的相邻帧变化、P95 为 5 像素、最大 12 像素。故本轮限制显著降低单帧尺度突变和高度抖动，但不是低通或死区，不能把“宽度快速来回变化”标记为解决。
 - 其余画面内区间中，第 10 次开头是质量波动最大的一组：4 个未接受片段、最长 4 帧、一次进入 `LOCAL_RECOVERY`；PSR 始终为 `5.57..6.89`，主要原因仍是 peak margin `0.004..0.031`，不是 PSR 4.2 门限。继续无条件降低 peak-margin 门会把明显多峰响应直接标为 Reliable，不由本轮正样本日志支持。
 - 本轮建议保持当前阈值作为候选，不继续下调；下一轮代码设计应分别处理两个结构问题：对 accepted 尺度增加小变化死区/时间平滑以消除 1..2 像素高频反转；对连续边界接触/部分出画增加可见性门，并限制恢复中心相对运动预测的跳变，避免仅靠两个彼此一致的边界伪峰恢复控制。未经用户再次确认，本节没有修改算法或配置；除冻结并停止本轮测试进程外，只更新本任务进度记录。
+
+## 2026-11-04 可见光尺度死区/平滑与普通恢复中心门本地主机实现
+
+- 时间：`2026-11-04T23:05:20+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；实施前 HEAD：`6e4791d72063bb9ab624b6e9fb29e89bf4bc007d`。配置契约提交为 `c8c8ef6aeccbd9d3fa227e0bb216d8ebeb5ff103`，控制器行为提交为 `1f2608aa97bd7d8f1e300ab9eab11ce20b8b0ac4`；本节的元数据、证据校验和进度记录随最终实现提交一并形成。
+- 用户确认的设计保持可见光质量门 `reliable_psr/weak_psr=4.2/4.0`、peak margin `0.04/0.02` 和外层尺度上限 `max_accepted_scale_step_ratio=0.05`；新增 `accepted_scale_deadband_ratio=0.02`、`accepted_scale_smoothing_alpha=0.10` 和 `max_reacquisition_center_distance=0.75`。通用/红外有效兼容值为 `0/1/0`，其中已有 `scale_step=1` 继续作为完全不限制的哨兵。随包可见光配置 SHA-256 为 `431487f2758c82bdbd0842017ef33619ea94e37da622aaeb0f89a5814eb96a8e`。
+- accepted 宽高现在分别处理：相对最后 accepted 尺寸不超过 2% 时保持；超过时先把原始观察限制在正负 5%，再向限制后目标移动 10%，因此可见光每个 accepted 帧的单维最大变化为 0.5%。中心仍取原始可靠观察中心并由既有 `centered_box` 保证框合法；持续真实尺度变化会逐步收敛，进入 2% 死区后停止。non-accepted 尺度冻结、运行时 `commit_bbox()` 使用最终控制器框的既有语义保持不变。
+- 普通 motion 恢复（含模板分歧触发的确认）只有在已计算的归一化中心残差不超过固定 `0.75` 时才进入两次确认队列，门限不再随搜索倍率放大；失败会清空普通确认队列。detector 确认和 `OCCLUSION_HOLD` probe 确认保持原有独立几何门，未修改。按用户边界，本轮没有新增画面边缘、部分可见或出画处理。
+- 设计文档 `docs/superpowers/specs/2026-11-04-visible-scale-smoothing-recovery-gate-design.md` SHA-256 为 `17fb2b109036e86ae1f353f8e28baf4431e70ad3b98ccbf142557f5e98237028`；实施计划 `docs/superpowers/plans/2026-11-04-visible-scale-smoothing-recovery-gate.md` SHA-256 为 `fc097baab8f9572d317c49dcfd2e335f59038636270a0bbe79a65b23bfd79d38`。
+- TDD RED 依次观察到：配置测试因三个字段和 identity API 不存在而编译失败；旧控制器产生 deadband、0.5% 平滑步长、普通恢复队列清理和 runtime commit 共 21 项断言失败；元数据测试因三个字段不存在而编译失败。最小实现后，配置聚焦测试 `1/1`、控制器/运行时/遮挡聚焦测试 `3/3`、元数据/板端 schema 聚焦测试 `2/2` 均通过。
+- 实际主机命令为 `cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-visible-scale-recovery-host -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF`、`cmake --build /tmp/nanotrack-visible-scale-recovery-host -j4`、`ctest --test-dir /tmp/nanotrack-visible-scale-recovery-host --output-on-failure` 和 `git diff --check`。实施前基线和实现后回归均为 CTest `18/18` 通过、零失败；实现后 `git diff --check` 无输出。session metadata 与板端 verifier 在既有 schema version `9` 下新增并强制三个有效设置，缺失、非有限和越界负例均被测试覆盖。
+
+### 证据边界与下一步
+
+- 本节只证明 RKNN-independent 主机逻辑、配置解析、控制器状态、运行时提交、元数据序列化和板端证据 schema 回归通过。没有执行 A6 生产交叉编译，没有写入 WSL 或开发板/吊舱，没有复制或部署二进制/配置，没有停止或启动远程进程，也没有产生新的板端或真实吊舱测试结果。
+- 本轮未修改协调对话拥有的 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或开发板任务拥有的 `docs/progress/board-validation.md`。公共契约和真实吊舱人工验收边界保持不变；任何交叉编译、隔离部署、进程操作和下一轮实机点选都需要用户另行明确授权。

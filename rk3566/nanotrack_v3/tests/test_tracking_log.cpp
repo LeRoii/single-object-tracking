@@ -92,14 +92,47 @@ void test_adaptive_coast_serialization() {
   config.occlusion_gradual_dimension_ratio = 0.81F;
   config.occlusion_confirmation_iou = 0.61F;
   config.max_accepted_scale_step_ratio = 0.05F;
+  config.accepted_scale_deadband_ratio = 0.02F;
+  config.accepted_scale_smoothing_alpha = 0.10F;
+  config.max_reacquisition_center_distance = 0.75F;
   apply_controller_config_metadata(metadata, config);
   auto json = tracking_session_metadata_json(metadata);
   expect_true(contains(json, "\"occlusion_probe_interval_frames\": 7") &&
                   contains(json, "\"occlusion_gradual_dimension_ratio\": 0.810000") &&
                   contains(json, "\"occlusion_confirmation_iou\": 0.610000") &&
                   metadata.max_accepted_scale_step_ratio == 0.05F &&
-                  contains(json, "\"max_accepted_scale_step_ratio\": 0.050000"),
+                  metadata.accepted_scale_deadband_ratio == 0.02F &&
+                  metadata.accepted_scale_smoothing_alpha == 0.10F &&
+                  metadata.max_reacquisition_center_distance == 0.75F &&
+                  contains(json, "\"max_accepted_scale_step_ratio\": 0.050000") &&
+                  contains(json, "\"accepted_scale_deadband_ratio\": 0.020000") &&
+                  contains(json, "\"accepted_scale_smoothing_alpha\": 0.100000") &&
+                  contains(json, "\"max_reacquisition_center_distance\": 0.750000"),
               "metadata uses effective configuration instead of schema defaults");
+  struct NonfiniteSetting {
+    float TrackingSessionMetadata::*field;
+    float value;
+    const char* message;
+  };
+  const NonfiniteSetting nonfinite_settings[] = {
+      {&TrackingSessionMetadata::accepted_scale_deadband_ratio,
+       std::numeric_limits<float>::quiet_NaN(),
+       "nonfinite accepted scale deadband is rejected before JSON output"},
+      {&TrackingSessionMetadata::accepted_scale_smoothing_alpha,
+       std::numeric_limits<float>::infinity(),
+       "nonfinite accepted scale smoothing alpha is rejected before JSON output"},
+      {&TrackingSessionMetadata::max_reacquisition_center_distance,
+       -std::numeric_limits<float>::infinity(),
+       "nonfinite recovery center distance is rejected before JSON output"},
+  };
+  for (const NonfiniteSetting& setting : nonfinite_settings) {
+    TrackingSessionMetadata invalid = metadata;
+    invalid.*(setting.field) = setting.value;
+    bool rejected = false;
+    try { tracking_session_metadata_json(invalid); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    expect_true(rejected, setting.message);
+  }
   metadata.occlusion_peak_margin_drop = std::numeric_limits<float>::infinity();
   bool rejected = false;
   try { tracking_session_metadata_json(metadata); }
