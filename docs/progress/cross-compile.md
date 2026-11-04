@@ -472,6 +472,7 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 设计文档 `docs/superpowers/specs/2026-11-04-visible-scale-smoothing-recovery-gate-design.md` SHA-256 为 `17fb2b109036e86ae1f353f8e28baf4431e70ad3b98ccbf142557f5e98237028`；实施计划 `docs/superpowers/plans/2026-11-04-visible-scale-smoothing-recovery-gate.md` SHA-256 为 `fc097baab8f9572d317c49dcfd2e335f59038636270a0bbe79a65b23bfd79d38`。
 - TDD RED 依次观察到：配置测试因三个字段和 identity API 不存在而编译失败；旧控制器产生 deadband、0.5% 平滑步长、普通恢复队列清理和 runtime commit 共 21 项断言失败；元数据测试因三个字段不存在而编译失败。最小实现后，配置聚焦测试 `1/1`、控制器/运行时/遮挡聚焦测试 `3/3`、元数据/板端 schema 聚焦测试 `2/2` 均通过。
 - 实际主机命令为 `cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-visible-scale-recovery-host -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF`、`cmake --build /tmp/nanotrack-visible-scale-recovery-host -j4`、`ctest --test-dir /tmp/nanotrack-visible-scale-recovery-host --output-on-failure` 和 `git diff --check`。实施前基线和实现后回归均为 CTest `18/18` 通过、零失败；实现后 `git diff --check` 无输出。session metadata 与板端 verifier 在既有 schema version `9` 下新增并强制三个有效设置，缺失、非有限和越界负例均被测试覆盖。
+- 独立最终代码审查复现了浮点边界缺陷：accepted 宽度为 `60` 时，字面上正负 2% 的 `61.2F/58.8F` 会因两边独立舍入而错误进入平滑。新增这两个精确边界及 `61.2002F/58.7998F` 边界外回归，先观察到聚焦测试 2 项失败；随后改为先计算同一 float deadband allowance，再构造包含式上下界。修正后聚焦测试 `1/1`、完整 CTest `18/18` 通过，`git diff --check` 无输出。
 
 ### 证据边界与下一步
 

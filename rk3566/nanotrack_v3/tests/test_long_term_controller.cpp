@@ -153,6 +153,36 @@ void test_accepted_scale_deadband_smoothing_and_compatibility() {
   expect_near(output.bbox.y + 0.5F * output.bbox.height, 110.0F, 1e-5F,
               "deadband preserves the raw vertical center");
 
+  LongTermController rounded_boundary(config);
+  rounded_boundary.initialize(BBox{100, 70, 60, 60}, 0, 0, {400, 300});
+  plan = rounded_boundary.begin_frame(1, 40, false);
+  output = rounded_boundary.finish_frame(
+      plan, reliable_pair(plan, BBox{99.4F, 70, 61.2F, 60}, 20),
+      std::nullopt);
+  expect_near(output.bbox.width, 60.0F, 1e-5F,
+              "float-rounded exact two-percent growth remains in the deadband");
+  plan = rounded_boundary.begin_frame(2, 80, false);
+  output = rounded_boundary.finish_frame(
+      plan, reliable_pair(plan, BBox{100.6F, 70, 58.8F, 60}, 21),
+      std::nullopt);
+  expect_near(output.bbox.width, 60.0F, 1e-5F,
+              "float-rounded exact two-percent shrink remains in the deadband");
+
+  plan = rounded_boundary.begin_frame(3, 120, false);
+  output = rounded_boundary.finish_frame(
+      plan, reliable_pair(plan, BBox{99.3999F, 70, 61.2002F, 60}, 22),
+      std::nullopt);
+  expect_true(output.bbox.width > 60.0F,
+              "growth just outside the rounded deadband starts smoothing");
+  LongTermController rounded_shrink(config);
+  rounded_shrink.initialize(BBox{100, 70, 60, 60}, 0, 0, {400, 300});
+  plan = rounded_shrink.begin_frame(1, 40, false);
+  output = rounded_shrink.finish_frame(
+      plan, reliable_pair(plan, BBox{100.6001F, 70, 58.7998F, 60}, 23),
+      std::nullopt);
+  expect_true(output.bbox.width < 60.0F,
+              "shrink just outside the rounded deadband starts smoothing");
+
   plan = controller.begin_frame(2, 80, false);
   output = controller.finish_frame(
       plan, reliable_pair(plan, BBox{98.5F, 69, 103, 82}, 2), std::nullopt);

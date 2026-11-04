@@ -475,7 +475,12 @@ BBox LongTermController::stabilize_accepted_bbox(
   }
   const auto stabilize_dimension = [&](float observed, float current,
                                        float frame_limit) {
-    if (std::fabs(observed - current) <= current * deadband) return current;
+    const float deadband_allowance = current * deadband;
+    const float deadband_lower = current - deadband_allowance;
+    const float deadband_upper = current + deadband_allowance;
+    if (observed >= deadband_lower && observed <= deadband_upper) {
+      return current;
+    }
     const float target = std::clamp(
         observed, current * (1.0F - ratio),
         std::min(frame_limit, current * (1.0F + ratio)));
