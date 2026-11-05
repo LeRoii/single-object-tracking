@@ -251,21 +251,35 @@ void test_runtime_commits_stabilized_bbox(const nanotrack::ImageView& image) {
   config.max_accepted_scale_step_ratio = 0.05F;
   config.accepted_scale_deadband_ratio = 0.02F;
   config.accepted_scale_smoothing_alpha = 0.10F;
+  config.accepted_scale_median_window_frames = 5;
+  config.accepted_scale_direction_confirm_frames = 3;
+  config.accepted_scale_output_hysteresis_px = 0.75F;
   config.max_center_distance = 10.0F;
   config.max_area_log_change = 10.0F;
   config.max_aspect_log_change = 10.0F;
   FakeTracker tracker;
   FakeDetector detector;
   LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
-  runtime.initialize(image, BBox{40, 30, 20, 10}, 0, 0);
-  tracker.reliable_bbox = BBox{60, 45, 40, 30};
-
-  const RuntimeFrameResult result = runtime.process_frame(image, 1, 40);
-  expect_true(result.output.accepted && tracker.commit_calls == 1 &&
-                  same_bbox(tracker.committed_bbox, result.output.bbox) &&
-                  std::fabs(result.output.bbox.width - 20.1F) < 1e-5F &&
-                  std::fabs(result.output.bbox.height - 10.05F) < 1e-5F,
-              "runtime commits the exact controller-stabilized accepted box");
+  runtime.initialize(image, BBox{40, 30, 100, 48}, 0, 0);
+  for (int frame = 1; frame <= 16; ++frame) {
+    const float height = frame > 8 && frame % 2 == 1 ? 49.0F : 48.0F;
+    tracker.reliable_bbox = BBox{25, 54.0F - 0.5F * height, 150, height};
+    const RuntimeFrameResult result =
+        runtime.process_frame(image, frame, frame * 40);
+    expect_true(result.output.accepted && tracker.commit_calls == frame &&
+                    same_bbox(tracker.committed_bbox, result.output.bbox),
+                "runtime commits each frame's exact final emitted box");
+    if (frame > 8) {
+      expect_true(result.output.bbox.height == 48.0F,
+                  "runtime commit keeps alternating accepted height sticky");
+    }
+  }
+  const int commits_before_reject = tracker.commit_calls;
+  tracker.emit_reliable = false;
+  const RuntimeFrameResult rejected = runtime.process_frame(image, 17, 680);
+  expect_true(!rejected.output.accepted &&
+                  tracker.commit_calls == commits_before_reject,
+              "runtime cannot commit an unaccepted output");
 }
 
 void test_uncertain_runtime_cadence(const nanotrack::ImageView& image) {

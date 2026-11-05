@@ -496,3 +496,19 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 当前候选实现了“限制单帧大跳”，但以更长时间、更高频率的 1 像素高度呼吸为代价；不能标记尺度稳定问题已解决。阈值不是本轮视觉抖动的主因，不建议继续下调 PSR 或 peak-margin 门限。
 - 下一版应在保持真实尺度可缓慢变化的前提下，增加尺度观测的时间一致性和整数输出迟滞，例如先对 5 帧左右可靠尺度取中值/要求连续同向证据，再更新浮点尺度，并只在跨过明确像素迟滞边界后改变输出宽高；还需明确区分供 NanoTrack 下一帧裁剪的内部尺度状态和供显示/控制的稳定输出，避免未经验证的反馈耦合。未经用户确认，本轮没有继续修改算法或参数。
 - 本轮是人机协同的吊舱功能复测，不是开发板正式 handoff、精度标定或真实吊舱验收。没有修改协调对话拥有的 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或开发板任务拥有的 `docs/progress/board-validation.md`。
+
+## 2026-11-05 可见光尺度时间一致性与输出迟滞本地主机实现
+
+- 时间：`2026-11-05T21:48:25+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；实施前基线：`95231b10b408db689680c38b8abeeed9bcbefd2c`；配置与证据契约提交：`d1320cb14d225788ed7ed83671c4710e0e2e3901`；控制器行为、测试和本节记录随同一后续提交形成，准确提交号以本节所在 Git 提交为准。
+- 用户确认的设计与计划分别为 `docs/superpowers/specs/2026-11-05-visible-scale-temporal-hysteresis-design.md`（SHA-256 `b46658afceee03d575ccdc63690f4f5c3ab68e52d5d36d8164f97df8b71704b9`）和 `docs/superpowers/plans/2026-11-05-visible-scale-temporal-hysteresis.md`（SHA-256 `545e32cad95eceec2abadc1f665b45e0d457a70276d9cbdec01f15eb23052c1f`）。最终随包可见光配置 `rk3566/nanotrack_v3/config/visible-default.conf` SHA-256 为 `dbd412b7df5998fb52b3faa55327754322bb5fcd8a7bdf7c4c0d44127c8871f6`。
+- 保持质量门 `reliable_psr/weak_psr=4.2/4.0`、peak margin `0.04/0.02`，以及已有尺度步长/死区/平滑 `0.05/0.02/0.10` 不变。新增并记录可见光有效设置：`accepted_scale_median_window_frames=5`、`accepted_scale_direction_confirm_frames=3`、`accepted_scale_output_hysteresis_px=0.75`；通用和红外兼容值为 `1/1/0`。三个字段进入配置解析、校验、identity、schema-9 session metadata 和板端证据校验。
+- 控制器现在为宽、高分别保留 accepted 原始尺度窗口、浮点滤波值、最终发射值、方向和连续确认数。窗口填满前保持尺寸；中值超出既有 2% 死区后，需三个同向中值才按既有正负 5% 外限和 0.10 alpha 更新；滤波值与最终值差小于 0.75 像素时保持，达到边界时每帧最多沿该方向移动一像素。最终框仍是控制器、motion、`LongTermRuntime::commit_bbox()`、适配器输出和日志的唯一共同框，没有增加内部/显示双框。
+- 初始化重置全部尺度状态；普通、detector 和遮挡恢复在处理恢复观察前只清空样本/方向证据，保留滤波及最终尺度，因此不会因恢复框直接跳变。non-accepted 和 abort 路径不采样、不更新尺度状态；短间隔保留已有 accepted 历史。`1/1/0` 兼容路径保留原有每帧尺度行为，其中原有 unrestricted `1/0/1` 继续精确输出原始 accepted 尺寸。
+- TDD RED 先观察到：新增私有状态尚不存在导致控制器测试编译失败；改为纯行为回归后，旧实现产生 65 个控制器断言失败和 8 个运行时断言失败，具体覆盖窗口前提前更新、`48/49` 高度往返、0.75 像素边界未迟滞、每帧变化超过一像素、恢复跳变和 runtime 高度提交抖动。最小实现后的聚焦命令 `ctest --test-dir /tmp/nanotrack-visible-temporal-hysteresis-host --output-on-failure -R 'long_term_controller|long_term_runtime'` 为 `2/2` 通过。
+- 实际主机命令：`cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-visible-temporal-hysteresis-host -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF`、`cmake --build /tmp/nanotrack-visible-temporal-hysteresis-host -j4`、`ctest --test-dir /tmp/nanotrack-visible-temporal-hysteresis-host --output-on-failure`、`git diff --check`。修改前基线和实现后完整回归均为 CTest `18/18` 通过、零失败；实现后格式检查无输出。
+
+### 证据边界与下一步
+
+- 本节只证明 RKNN-independent 主机上的配置、时间尺度状态、精确 0.75 像素边界、恢复/失败冻结、运行时最终框提交、元数据和证据 schema 行为。没有写入 WSL，没有执行 A6 交叉编译，没有生成或部署新的二进制/配置，没有连接吊舱，也没有停止或启动任何远程进程。
+- 因此“吊舱框抖动已改善”仍未得到实机证据。后续只有在用户另行明确授权后，才能以准确源码提交和配置哈希进行 A6 交叉编译、隔离部署，并由人执行同目标复测；不得以主机 `18/18` 或编译成功替代真实吊舱验收。
+- 本轮没有修改协调对话拥有的 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或开发板任务拥有的 `docs/progress/board-validation.md`；公共 handoff 与真实吊舱人工验收边界保持不变。

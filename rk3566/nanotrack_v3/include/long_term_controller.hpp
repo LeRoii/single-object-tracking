@@ -197,6 +197,14 @@ class LongTermController {
     float height = 0.0F;
   };
 
+  struct DimensionScaleState {
+    std::deque<float> samples;
+    float filtered = 0.0F;
+    float emitted = 0.0F;
+    int direction = 0;
+    int confirmations = 0;
+  };
+
   TrackingMode mode_for_timestamp(std::int64_t timestamp_ms) const;
   float search_scale_for(TrackingMode mode, std::int64_t timestamp_ms) const;
   EvaluatedObservation evaluate(const TrackerObservation& observation,
@@ -207,7 +215,11 @@ class LongTermController {
   bool detector_geometry_consistent(const BBox& reference,
                                     const BBox& bbox) const;
   bool detector_confirmation_consistent(const BBox& bbox) const;
-  BBox stabilize_accepted_bbox(const BBox& observation) const;
+  void reset_scale_state(const BBox& bbox);
+  static void reset_scale_evidence(DimensionScaleState& state);
+  BBox stabilize_accepted_bbox(const BBox& observation,
+                               DimensionScaleState& width_state,
+                               DimensionScaleState& height_state) const;
   void accept_observation(const SearchPlan& plan,
                           const EvaluatedObservation& selected,
                           bool reacquired,
@@ -223,6 +235,8 @@ class LongTermController {
   OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};
   BBox current_bbox_{};
+  DimensionScaleState width_scale_state_{};
+  DimensionScaleState height_scale_state_{};
   TargetClassState target_class_{};
   TrackingMode mode_ = TrackingMode::kTracking;
   std::optional<std::int64_t> loss_start_ms_;

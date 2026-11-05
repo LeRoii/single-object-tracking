@@ -115,6 +115,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   frame_size_ = frame_size;
   target_class_ = target_class;
   current_bbox_ = initial_bbox;
+  reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   mode_ = TrackingMode::kTracking;
   loss_start_ms_.reset();
@@ -465,33 +466,119 @@ bool LongTermController::detector_geometry_consistent(
              config_.detector_confirmation_max_aspect_log_change;
 }
 
+void LongTermController::reset_scale_state(const BBox& bbox) {
+  width_scale_state_ = DimensionScaleState{};
+  width_scale_state_.filtered = bbox.width;
+  width_scale_state_.emitted = bbox.width;
+  height_scale_state_ = DimensionScaleState{};
+  height_scale_state_.filtered = bbox.height;
+  height_scale_state_.emitted = bbox.height;
+}
+
+void LongTermController::reset_scale_evidence(DimensionScaleState& state) {
+  state.samples.clear();
+  state.direction = 0;
+  state.confirmations = 0;
+}
+
 BBox LongTermController::stabilize_accepted_bbox(
-    const BBox& observation) const {
+    const BBox& observation, DimensionScaleState& width_state,
+    DimensionScaleState& height_state) const {
   const float ratio = config_.max_accepted_scale_step_ratio;
   const float deadband = config_.accepted_scale_deadband_ratio;
   const float alpha = config_.accepted_scale_smoothing_alpha;
-  if (ratio >= 1.0F && deadband == 0.0F && alpha >= 1.0F) {
-    return observation;
-  }
-  const auto stabilize_dimension = [&](float observed, float current,
-                                       float frame_limit) {
-    const float deadband_allowance = current * deadband;
-    const float deadband_lower = current - deadband_allowance;
-    const float deadband_upper = current + deadband_allowance;
-    if (observed >= deadband_lower && observed <= deadband_upper) {
-      return current;
+  const bool compatibility_mode =
+      config_.accepted_scale_median_window_frames == 1 &&
+      config_.accepted_scale_direction_confirm_frames == 1 &&
+      config_.accepted_scale_output_hysteresis_px == 0.0F;
+  const auto legacy_dimension = [&](float observed, float current,
+                                    float frame_limit,
+                                    DimensionScaleState& state) {
+    if (ratio >= 1.0F && deadband == 0.0F && alpha >= 1.0F) {
+      state.samples.clear();
+      state.samples.push_back(observed);
+      state.filtered = observed;
+      state.emitted = observed;
+      state.direction = 0;
+      state.confirmations = 0;
+      return observed;
     }
-    const float target = std::clamp(
-        observed, current * (1.0F - ratio),
-        std::min(frame_limit, current * (1.0F + ratio)));
-    return current + alpha * (target - current);
+    const float allowance = current * deadband;
+    float emitted = current;
+    if (observed < current - allowance || observed > current + allowance) {
+      const float target = std::clamp(
+          observed, current * (1.0F - ratio),
+          std::min(frame_limit, current * (1.0F + ratio)));
+      emitted = current + alpha * (target - current);
+    }
+    state.samples.clear();
+    state.samples.push_back(observed);
+    state.filtered = emitted;
+    state.emitted = emitted;
+    state.direction = 0;
+    state.confirmations = 0;
+    return emitted;
   };
-  const float width = stabilize_dimension(
-      observation.width, current_bbox_.width,
-      static_cast<float>(frame_size_.width));
-  const float height = stabilize_dimension(
-      observation.height, current_bbox_.height,
-      static_cast<float>(frame_size_.height));
+  const auto temporal_dimension = [&](float observed, float frame_limit,
+                                      DimensionScaleState& state) {
+    state.samples.push_back(observed);
+    const auto window = static_cast<std::size_t>(
+        config_.accepted_scale_median_window_frames);
+    while (state.samples.size() > window) state.samples.pop_front();
+    if (state.samples.size() < window) return state.emitted;
+
+    std::vector<float> ordered(state.samples.begin(), state.samples.end());
+    const auto middle = ordered.begin() + ordered.size() / 2;
+    std::nth_element(ordered.begin(), middle, ordered.end());
+    const float median = *middle;
+    const float allowance = state.filtered * deadband;
+    if (median >= state.filtered - allowance &&
+        median <= state.filtered + allowance) {
+      state.direction = 0;
+      state.confirmations = 0;
+      return state.emitted;
+    }
+
+    const int direction = median > state.filtered ? 1 : -1;
+    if (direction != state.direction) {
+      state.direction = direction;
+      state.confirmations = 1;
+    } else if (state.confirmations <
+               config_.accepted_scale_direction_confirm_frames) {
+      ++state.confirmations;
+    }
+    if (state.confirmations <
+        config_.accepted_scale_direction_confirm_frames) {
+      return state.emitted;
+    }
+
+    const float target = std::clamp(
+        median, state.filtered * (1.0F - ratio),
+        std::min(frame_limit, state.filtered * (1.0F + ratio)));
+    state.filtered += alpha * (target - state.filtered);
+    const float delta = state.filtered - state.emitted;
+    if (std::fabs(delta) >= config_.accepted_scale_output_hysteresis_px) {
+      const float step = delta > 0.0F ? 1.0F : -1.0F;
+      state.emitted = std::clamp(state.emitted + step,
+                                 std::numeric_limits<float>::epsilon(),
+                                 frame_limit);
+    }
+    return state.emitted;
+  };
+
+  float width;
+  float height;
+  if (compatibility_mode) {
+    width = legacy_dimension(observation.width, current_bbox_.width,
+                             static_cast<float>(frame_size_.width), width_state);
+    height = legacy_dimension(observation.height, current_bbox_.height,
+                              static_cast<float>(frame_size_.height), height_state);
+  } else {
+    width = temporal_dimension(observation.width,
+                               static_cast<float>(frame_size_.width), width_state);
+    height = temporal_dimension(observation.height,
+                                static_cast<float>(frame_size_.height), height_state);
+  }
   const float center_x = observation.x + 0.5F * observation.width;
   const float center_y = observation.y + 0.5F * observation.height;
   return centered_box(center_x, center_y, BBox{0.0F, 0.0F, width, height},
@@ -501,7 +588,14 @@ BBox LongTermController::stabilize_accepted_bbox(
 void LongTermController::accept_observation(
     const SearchPlan& plan, const EvaluatedObservation& selected,
     bool reacquired, ControllerOutput& output) {
-  output.bbox = stabilize_accepted_bbox(selected.observation.bbox);
+  DimensionScaleState next_width = width_scale_state_;
+  DimensionScaleState next_height = height_scale_state_;
+  if (reacquired) {
+    reset_scale_evidence(next_width);
+    reset_scale_evidence(next_height);
+  }
+  output.bbox = stabilize_accepted_bbox(selected.observation.bbox, next_width,
+                                        next_height);
   output.accepted = true;
   output.control_valid = true;
   output.reacquired = reacquired;
@@ -520,6 +614,8 @@ void LongTermController::accept_observation(
   } else {
     motion_.correct(output.bbox, plan.timestamp_ms);
   }
+  width_scale_state_ = std::move(next_width);
+  height_scale_state_ = std::move(next_height);
   current_bbox_ = output.bbox;
   loss_start_ms_.reset();
   confirmations_.clear();

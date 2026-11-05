@@ -254,6 +254,158 @@ void test_accepted_scale_deadband_smoothing_and_compatibility() {
               "scale-step ratio one preserves legacy unrestricted acceptance");
 }
 
+nanotrack::ControllerConfig temporal_scale_config() {
+  nanotrack::ControllerConfig config;
+  config.max_accepted_scale_step_ratio = 0.05F;
+  config.accepted_scale_deadband_ratio = 0.02F;
+  config.accepted_scale_smoothing_alpha = 0.10F;
+  config.accepted_scale_median_window_frames = 5;
+  config.accepted_scale_direction_confirm_frames = 3;
+  config.accepted_scale_output_hysteresis_px = 0.75F;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  return config;
+}
+
+nanotrack::ControllerOutput accept_scale_frame(
+    nanotrack::LongTermController& controller, int frame,
+    const nanotrack::BBox& bbox, std::uint64_t token = 1) {
+  const auto plan = controller.begin_frame(frame, frame * 40, false);
+  return controller.finish_frame(plan, reliable_pair(plan, bbox, token),
+                                 std::nullopt);
+}
+
+void test_temporal_scale_window_direction_and_hysteresis() {
+  using namespace nanotrack;
+  const ControllerConfig config = temporal_scale_config();
+  LongTermController delayed(config);
+  delayed.initialize(BBox{200, 150, 200, 100}, 0, 0, {1000, 600});
+  const BBox growth{100, 150, 400, 100};
+  ControllerOutput output;
+  for (int frame = 1; frame <= 6; ++frame) {
+    output = accept_scale_frame(delayed, frame, growth, frame);
+    expect_near(output.bbox.width, 200.0F, 1e-5F,
+                "window fill and first two full-window directions hold scale");
+  }
+  output = accept_scale_frame(delayed, 7, growth, 7);
+  expect_near(output.bbox.width, 201.0F, 1e-5F,
+              "third consecutive full-window growth median advances one pixel");
+  expect_near(output.bbox.x + 0.5F * output.bbox.width, 300.0F, 1e-5F,
+              "temporal filtering preserves the accepted raw center");
+
+  LongTermController alternating(config);
+  alternating.initialize(BBox{100, 80, 100, 48}, 0, 0, {500, 300});
+  for (int frame = 1; frame <= 20; ++frame) {
+    const float height = frame % 2 == 0 ? 48.0F : 49.0F;
+    output = accept_scale_frame(
+        alternating, frame, BBox{100, 104.0F - 0.5F * height, 100, height},
+        100 + frame);
+    expect_near(output.bbox.height, 48.0F, 1e-5F,
+                "alternating 48/49 accepted heights do not chatter");
+  }
+
+  ControllerConfig boundary = config;
+  boundary.accepted_scale_median_window_frames = 1;
+  boundary.accepted_scale_direction_confirm_frames = 1;
+  boundary.accepted_scale_deadband_ratio = 0.0F;
+  LongTermController just_inside(boundary);
+  just_inside.initialize(BBox{100, 80, 149, 80}, 0, 0, {600, 400});
+  output = accept_scale_frame(just_inside, 1, BBox{24.5F, 80, 300, 80});
+  expect_near(output.bbox.width, 149.0F, 1e-5F,
+              "filtered movement just inside 0.75 pixels holds emitted size");
+
+  LongTermController exact_boundary(boundary);
+  exact_boundary.initialize(BBox{100, 80, 150, 80}, 0, 0, {600, 400});
+  output = accept_scale_frame(exact_boundary, 1, BBox{25, 80, 300, 80});
+  expect_near(output.bbox.width, 151.0F, 1e-5F,
+              "exact 0.75-pixel boundary advances one emitted pixel");
+}
+
+void test_temporal_scale_persistence_and_state_isolation() {
+  using namespace nanotrack;
+  const ControllerConfig config = temporal_scale_config();
+  LongTermController sustained(config);
+  sustained.initialize(BBox{200, 150, 200, 160}, 0, 0, {1000, 700});
+  float previous_width = 200.0F;
+  float previous_height = 160.0F;
+  ControllerOutput output;
+  for (int frame = 1; frame <= 30; ++frame) {
+    const BBox raw{100, 190, 400, 80};
+    output = accept_scale_frame(sustained, frame, raw, frame);
+    expect_true(output.bbox.width + 1e-5F >= previous_width &&
+                    output.bbox.width - previous_width <= 1.00001F &&
+                    output.bbox.height <= previous_height + 1e-5F &&
+                    previous_height - output.bbox.height <= 1.00001F,
+                "persistent scale change moves monotonically by at most one pixel");
+    expect_near(output.bbox.x + 0.5F * output.bbox.width, 300.0F, 1e-5F,
+                "persistent width response preserves raw center");
+    expect_near(output.bbox.y + 0.5F * output.bbox.height, 230.0F, 1e-5F,
+                "persistent height response preserves raw center");
+    previous_width = output.bbox.width;
+    previous_height = output.bbox.height;
+  }
+  expect_true(output.bbox.width > 200.0F && output.bbox.height < 160.0F,
+              "persistent growth and shrink evidence eventually changes output");
+
+  LongTermController frozen(config);
+  frozen.initialize(BBox{200, 150, 200, 100}, 0, 0, {1000, 600});
+  const BBox growth{100, 150, 400, 100};
+  for (int frame = 1; frame <= 4; ++frame) {
+    accept_scale_frame(frozen, frame, growth, frame);
+  }
+  auto gap_plan = frozen.begin_frame(5, 200, false);
+  output = frozen.finish_frame(gap_plan, {}, std::nullopt);
+  expect_true(!output.accepted, "fixture creates a nonaccepted scale gap");
+  frozen.loss_start_ms_.reset();
+  frozen.mode_ = TrackingMode::kTracking;
+  for (int frame = 6; frame <= 8; ++frame) {
+    output = accept_scale_frame(frozen, frame, growth, frame);
+    expect_near(output.bbox.width, frame < 8 ? 200.0F : 201.0F, 1e-5F,
+                "nonaccepted gap adds no sample and preserves prior history");
+  }
+
+  LongTermController aborted(config);
+  aborted.initialize(BBox{200, 150, 200, 100}, 0, 0, {1000, 600});
+  for (int frame = 1; frame <= 4; ++frame) {
+    accept_scale_frame(aborted, frame, growth, 20 + frame);
+  }
+  const auto abort_plan = aborted.begin_frame(5, 200, false);
+  (void)abort_plan;
+  aborted.abort_frame();
+  for (int frame = 6; frame <= 8; ++frame) {
+    output = accept_scale_frame(aborted, frame, growth, 30 + frame);
+    expect_near(output.bbox.width, frame < 8 ? 200.0F : 201.0F, 1e-5F,
+                "aborted frame adds no sample and preserves prior history");
+  }
+
+  LongTermController recovery(config);
+  recovery.initialize(BBox{200, 150, 200, 100}, 0, 0, {1000, 600});
+  for (int frame = 1; frame <= 6; ++frame) {
+    accept_scale_frame(recovery, frame, growth, 50 + frame);
+  }
+  reject_frame(recovery, 7, 280);
+  accept_scale_frame(recovery, 8, growth, 58);
+  output = accept_scale_frame(recovery, 9, growth, 59);
+  expect_true(output.accepted && output.reacquired,
+              "ordinary reacquisition clears stale window and direction evidence");
+  expect_near(output.bbox.width, 200.0F, 1e-5F,
+              "ordinary reacquisition retains emitted scale without a jump");
+
+  ControllerConfig compatibility = config;
+  compatibility.max_accepted_scale_step_ratio = 1.0F;
+  compatibility.accepted_scale_deadband_ratio = 0.0F;
+  compatibility.accepted_scale_smoothing_alpha = 1.0F;
+  compatibility.accepted_scale_median_window_frames = 1;
+  compatibility.accepted_scale_direction_confirm_frames = 1;
+  compatibility.accepted_scale_output_hysteresis_px = 0.0F;
+  LongTermController direct(compatibility);
+  direct.initialize(BBox{40, 30, 20, 10}, 0, 0, {240, 160});
+  output = accept_scale_frame(direct, 1, BBox{70, 50, 60, 40});
+  expect_true(output.bbox.width == 60.0F && output.bbox.height == 40.0F,
+              "1/1/0 temporal settings emit raw accepted dimensions exactly");
+}
+
 void test_ordinary_recovery_uses_fixed_center_gate() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -1176,6 +1328,8 @@ void test_target_class_gate() {
 int main() {
   using namespace nanotrack;
   test_accepted_scale_deadband_smoothing_and_compatibility();
+  test_temporal_scale_window_direction_and_hysteresis();
+  test_temporal_scale_persistence_and_state_isolation();
   test_ordinary_recovery_uses_fixed_center_gate();
   test_loss_freezes_scale_and_recovery_uses_limited_bbox();
   test_target_class_recovery_request_gate();
