@@ -505,6 +505,7 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 控制器现在为宽、高分别保留 accepted 原始尺度窗口、浮点滤波值、最终发射值、方向和连续确认数。窗口填满前保持尺寸；中值超出既有 2% 死区后，需三个同向中值才按既有正负 5% 外限和 0.10 alpha 更新；滤波值与最终值差小于 0.75 像素时保持，达到边界时每帧最多沿该方向移动一像素。最终框仍是控制器、motion、`LongTermRuntime::commit_bbox()`、适配器输出和日志的唯一共同框，没有增加内部/显示双框。
 - 初始化重置全部尺度状态；普通、detector 和遮挡恢复在处理恢复观察前只清空样本/方向证据，保留滤波及最终尺度，因此不会因恢复框直接跳变。non-accepted 和 abort 路径不采样、不更新尺度状态；短间隔保留已有 accepted 历史。`1/1/0` 兼容路径保留原有每帧尺度行为，其中原有 unrestricted `1/0/1` 继续精确输出原始 accepted 尺寸。
 - TDD RED 先观察到：新增私有状态尚不存在导致控制器测试编译失败；改为纯行为回归后，旧实现产生 65 个控制器断言失败和 8 个运行时断言失败，具体覆盖窗口前提前更新、`48/49` 高度往返、0.75 像素边界未迟滞、每帧变化超过一像素、恢复跳变和 runtime 高度提交抖动。最小实现后的聚焦命令 `ctest --test-dir /tmp/nanotrack-visible-temporal-hysteresis-host --output-on-failure -R 'long_term_controller|long_term_runtime'` 为 `2/2` 通过。
+- 独立整分支审查发现并复现两个重要缺陷：中值进入滤波死区后，最终发射尺寸会停止追赶已有滤波积压；合法 `5/3/0` 配置会因固定一像素步长越过滤波值而反向抖动。新增 600 帧持续增长/缩小收敛测试和零迟滞单调增长测试，先观察到聚焦测试分别出现“长期未收敛”和 8 次反转失败；修正为在死区内继续追赶滤波值，并在迟滞不大于 0.5 像素时采用不越过滤波值的至多一像素步长。选定的 0.75 像素边界仍保持达到边界时移动一整像素。
 - 实际主机命令：`cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-visible-temporal-hysteresis-host -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF`、`cmake --build /tmp/nanotrack-visible-temporal-hysteresis-host -j4`、`ctest --test-dir /tmp/nanotrack-visible-temporal-hysteresis-host --output-on-failure`、`git diff --check`。修改前基线和实现后完整回归均为 CTest `18/18` 通过、零失败；实现后格式检查无输出。
 
 ### 证据边界与下一步

@@ -320,6 +320,18 @@ void test_temporal_scale_window_direction_and_hysteresis() {
   output = accept_scale_frame(exact_boundary, 1, BBox{25, 80, 300, 80});
   expect_near(output.bbox.width, 151.0F, 1e-5F,
               "exact 0.75-pixel boundary advances one emitted pixel");
+
+  ControllerConfig zero_hysteresis = config;
+  zero_hysteresis.accepted_scale_output_hysteresis_px = 0.0F;
+  LongTermController monotonic(zero_hysteresis);
+  monotonic.initialize(BBox{100, 80, 100, 80}, 0, 0, {600, 400});
+  float previous = 100.0F;
+  for (int frame = 1; frame <= 40; ++frame) {
+    output = accept_scale_frame(monotonic, frame, BBox{50, 80, 200, 80});
+    expect_true(output.bbox.width + 1e-5F >= previous,
+                "zero-hysteresis temporal growth cannot reverse");
+    previous = output.bbox.width;
+  }
 }
 
 void test_temporal_scale_persistence_and_state_isolation() {
@@ -330,7 +342,7 @@ void test_temporal_scale_persistence_and_state_isolation() {
   float previous_width = 200.0F;
   float previous_height = 160.0F;
   ControllerOutput output;
-  for (int frame = 1; frame <= 30; ++frame) {
+  for (int frame = 1; frame <= 600; ++frame) {
     const BBox raw{100, 190, 400, 80};
     output = accept_scale_frame(sustained, frame, raw, frame);
     expect_true(output.bbox.width + 1e-5F >= previous_width &&
@@ -347,6 +359,9 @@ void test_temporal_scale_persistence_and_state_isolation() {
   }
   expect_true(output.bbox.width > 200.0F && output.bbox.height < 160.0F,
               "persistent growth and shrink evidence eventually changes output");
+  expect_true(std::fabs(output.bbox.width - 400.0F) <= 400.0F * 0.02F + 0.75F &&
+                  std::fabs(output.bbox.height - 80.0F) <= 80.0F * 0.02F + 0.75F,
+              "persistent scale evidence converges through emission backlog");
 
   LongTermController frozen(config);
   frozen.initialize(BBox{200, 150, 200, 100}, 0, 0, {1000, 600});

@@ -521,6 +521,18 @@ BBox LongTermController::stabilize_accepted_bbox(
   };
   const auto temporal_dimension = [&](float observed, float frame_limit,
                                       DimensionScaleState& state) {
+    const auto emit_toward_filtered = [&]() {
+      const float hysteresis = config_.accepted_scale_output_hysteresis_px;
+      const float delta = state.filtered - state.emitted;
+      if (std::fabs(delta) < hysteresis) return state.emitted;
+      const float step = hysteresis > 0.5F
+          ? (delta > 0.0F ? 1.0F : delta < 0.0F ? -1.0F : 0.0F)
+          : std::clamp(delta, -1.0F, 1.0F);
+      state.emitted = std::clamp(state.emitted + step,
+                                 std::numeric_limits<float>::epsilon(),
+                                 frame_limit);
+      return state.emitted;
+    };
     state.samples.push_back(observed);
     const auto window = static_cast<std::size_t>(
         config_.accepted_scale_median_window_frames);
@@ -536,7 +548,7 @@ BBox LongTermController::stabilize_accepted_bbox(
         median <= state.filtered + allowance) {
       state.direction = 0;
       state.confirmations = 0;
-      return state.emitted;
+      return emit_toward_filtered();
     }
 
     const int direction = median > state.filtered ? 1 : -1;
@@ -556,14 +568,7 @@ BBox LongTermController::stabilize_accepted_bbox(
         median, state.filtered * (1.0F - ratio),
         std::min(frame_limit, state.filtered * (1.0F + ratio)));
     state.filtered += alpha * (target - state.filtered);
-    const float delta = state.filtered - state.emitted;
-    if (std::fabs(delta) >= config_.accepted_scale_output_hysteresis_px) {
-      const float step = delta > 0.0F ? 1.0F : -1.0F;
-      state.emitted = std::clamp(state.emitted + step,
-                                 std::numeric_limits<float>::epsilon(),
-                                 frame_limit);
-    }
-    return state.emitted;
+    return emit_toward_filtered();
   };
 
   float width;
