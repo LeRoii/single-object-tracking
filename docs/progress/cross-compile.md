@@ -478,3 +478,21 @@ BUILD_JOBS=4 ./run.sh --platform A6
 
 - 本节只证明 RKNN-independent 主机逻辑、配置解析、控制器状态、运行时提交、元数据序列化和板端证据 schema 回归通过。没有执行 A6 生产交叉编译，没有写入 WSL 或开发板/吊舱，没有复制或部署二进制/配置，没有停止或启动远程进程，也没有产生新的板端或真实吊舱测试结果。
 - 本轮未修改协调对话拥有的 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或开发板任务拥有的 `docs/progress/board-validation.md`。公共契约和真实吊舱人工验收边界保持不变；任何交叉编译、隔离部署、进程操作和下一轮实机点选都需要用户另行明确授权。
+
+## 2026-11-05 尺度死区/平滑候选 A6 编译、吊舱复测与高度抖动分析
+
+- 时间：`2026-11-05T21:24:48+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；生产输入提交：`4c4511001bad4f28a552e3005a3cad6617256148`。操作前工作树干净，用户明确授权交叉编译、隔离部署、启动测试并在完成后冻结日志。
+- 同步包 `/tmp/nanotrack-scale-smooth-4c45110-vj4ibu.tgz` 为 22,012 bytes、SHA-256 `200372e454a8dee75f16e47bb9c3254d97c635acd2ea7d1b1a8655c0e73029c2`。只同步生产使用的 `controller_config.hpp`、`tracking_log.hpp`、`controller_config.cpp`、`long_term_controller.cpp`、`tracking_log.cpp` 和 `visible-default.conf`；WSL 写入前备份位于 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/ai_alg/backup-before-scale-smooth-4c45110-20261105/`，没有同步测试或主机调试入口。
+- WSL 工程 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker` 实际执行 `BUILD_JOBS=4 ./run.sh --platform A6`，退出码 `0`；日志 `deployment_b827/build-A6-scale-smooth-4c45110.log` 为 2,525 bytes、SHA-256 `0258d737a24901245146d83f49c54611150ea1c622717756f5e3664237e87ca6`。`build_A6/viewlink_app` 为 ARM aarch64 ELF、34,898,056 bytes、SHA-256 `c16c9ad77733a00a5d8a43d3a4879da6c29c097f0a6babd6c283e37f7dfb3cc6`；`build_A6/ai_alg/libAI.a` 为 597,856 bytes、SHA-256 `d60a0775813e0dba4578a1cd1735244b41d5eee7620515de761b412a18943285`。二进制字符串包含 `accepted_scale_deadband_ratio`、`accepted_scale_smoothing_alpha`、`max_reacquisition_center_distance` 和固定生产部署配置路径。
+- 新程序隔离部署到 `/app/nanotrack_4c45110_scale_smooth_20261105/bin/viewlink_app`，板端大小/哈希与 WSL 一致。共享运行配置 `/app/nanotrack_b827_candidate/config/visible-default.conf` 更新为 SHA-256 `431487f2758c82bdbd0842017ef33619ea94e37da622aaeb0f89a5814eb96a8e`；上一轮配置保存在 `visible-default.conf.pre-scale-smooth-4c45110-20261105`，SHA-256 `b2a333ca0cfe8173d63f5cfa71f24304e7cabd08d7656d3ada71b902b32372bf`。受保护的 `/app/bin/viewlink_app` 始终保持 SHA-256 `a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357`。
+- 以 `XDG_RUNTIME_DIR=/var/run`、`LD_LIBRARY_PATH=/app/lib:/usr/lib` 启动隔离候选，PID 为 `2185`。三个 NanoTrack RKNN 和 VisDrone9 RKNN 均报告 API `1.6.0 (9a7b5d24c@2023-12-13T17:31:11)`、driver `0.9.3` 并完成初始化。用户完成同目标重复点选后，先核对 `/proc/2185/exe` 为本轮隔离程序；TERM 等待 10 秒仍未退出，随后只对该 PID 执行 KILL，并确认无 `viewlink_app` 或 `app_watchdog` 残留。
+- 冻结 stdout 为 28,771 bytes、SHA-256 `17f14fd2d19271fcbce93fb055e05bc624daa7e46b5c6575ff0cd998df6b971f`；stderr 为 1,474,217 bytes、SHA-256 `6d8536e5b199a72490e1490b81f6b9917bbed1c14e437cd19572150ca32259f4`。板端原路径为 `/app/nanotrack_4c45110_scale_smooth_20261105/log/`，本地复核副本位于 `/tmp/nanotrack-4c45110-logs/`；板端、WSL 和本地哈希一致。
+- 日志实际包含 10 次初始化和 1,967 个 `DO_TRACK` 帧；`Reliable/Weak/Rejected=1897/18/52`、`accepted=1820`，最长连续未接受为 4 帧，状态模式为 `TRACKING/UNCERTAIN/LOCAL_RECOVERY=1820/145/2`，没有进入 assisted recovery 或 lost。52 个 Rejected 全部满足 `selected_margin < 0.02`，18 个 Weak 全部满足 `selected_margin < 0.04`，没有一帧由 PSR 低于 `4.0/4.2` 主导。
+- 在同一次初始化内部统计最终控制框：宽度变化率由上一轮 `56.6%` 降为 `33.5%`，变化 P95 由 3 像素降为 1 像素；但高度变化率由上一轮 `6.2%` 升到 `24.3%`，共 475 次，其中 472 次为 1 像素，方向反转 303 次，`48<->49` 往返 102 次。475 次高度变化中，448 次发生在 `Reliable && accepted` 帧，故用户观察到的高度“呼吸”真实存在，且不是降低质量门限可以解决的问题。
+- 十组控制框高度都从初始化的 `64` 缓慢收敛到 `48/49`，首次到达不高于 49 像素需要 72..150 帧；上一轮 5% 单帧限制下只需 8..27 帧。当前逻辑对持续偏离死区的原始尺度每个 accepted 帧只移动至多 0.5%，浮点小步累积后在整数输出上形成频繁 1 像素变化和反转；稳定框又由 `LongTermRuntime::process_frame()` 通过 `tracker_.commit_bbox(result.output.bbox)` 写回 NanoTrack，下一帧搜索裁剪和尺度回归随之改变，构成尺度反馈。新日志的 raw 高度变化率为 `45.6%`，与该反馈解释一致，但两轮不是逐帧同步 A/B，不能把全部差异单独归因于本次代码。
+
+### 结论、证据边界与下一步
+
+- 当前候选实现了“限制单帧大跳”，但以更长时间、更高频率的 1 像素高度呼吸为代价；不能标记尺度稳定问题已解决。阈值不是本轮视觉抖动的主因，不建议继续下调 PSR 或 peak-margin 门限。
+- 下一版应在保持真实尺度可缓慢变化的前提下，增加尺度观测的时间一致性和整数输出迟滞，例如先对 5 帧左右可靠尺度取中值/要求连续同向证据，再更新浮点尺度，并只在跨过明确像素迟滞边界后改变输出宽高；还需明确区分供 NanoTrack 下一帧裁剪的内部尺度状态和供显示/控制的稳定输出，避免未经验证的反馈耦合。未经用户确认，本轮没有继续修改算法或参数。
+- 本轮是人机协同的吊舱功能复测，不是开发板正式 handoff、精度标定或真实吊舱验收。没有修改协调对话拥有的 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或开发板任务拥有的 `docs/progress/board-validation.md`。
