@@ -70,14 +70,19 @@ for key, low, high in [
     ("occlusion_gradual_consecutive_frames", 1, 60),
     ("occlusion_min_reference_samples", 1, 60),
     ("occlusion_suspicion_clear_frames", 1, 60),
+    ("accepted_scale_median_window_frames", 1, 31),
+    ("accepted_scale_direction_confirm_frames", 1, 31),
 ]:
     value = metadata.get(key)
     if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
         raise SystemExit(f"invalid metadata {key}")
+if metadata["accepted_scale_median_window_frames"] % 2 == 0:
+    raise SystemExit("invalid metadata accepted_scale_median_window_frames")
 for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
             "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
             "max_accepted_scale_step_ratio",
             "accepted_scale_deadband_ratio", "accepted_scale_smoothing_alpha",
+            "accepted_scale_output_hysteresis_px",
             "max_reacquisition_center_distance",
             "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold",
             "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change",
@@ -85,7 +90,8 @@ for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimensio
     value = metadata.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise SystemExit(f"invalid metadata {key}")
-    if key in {"occlusion_peak_margin_drop", "max_reacquisition_center_distance"}:
+    if key in {"occlusion_peak_margin_drop", "max_reacquisition_center_distance",
+               "accepted_scale_output_hysteresis_px"}:
         valid = value >= 0
     elif key == "accepted_scale_deadband_ratio":
         valid = 0 <= value < 1
@@ -316,6 +322,9 @@ for key in {
     "occlusion_trigger_min_dimension_ratio", "occlusion_reference_window",
     "max_accepted_scale_step_ratio",
     "accepted_scale_deadband_ratio", "accepted_scale_smoothing_alpha",
+    "accepted_scale_median_window_frames",
+    "accepted_scale_direction_confirm_frames",
+    "accepted_scale_output_hysteresis_px",
     "max_reacquisition_center_distance",
     "occlusion_probe_interval_frames", "occlusion_gradual_dimension_ratio", "occlusion_gradual_consecutive_frames", "occlusion_min_reference_samples", "occlusion_shrink_step_ratio", "occlusion_suspicion_clear_frames", "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold", "occlusion_confirmation_iou", "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change", "occlusion_confirmation_max_aspect_log_change",
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",

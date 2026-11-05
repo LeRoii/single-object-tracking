@@ -120,6 +120,9 @@ metadata = {
     "max_accepted_scale_step_ratio": 0.05,
     "accepted_scale_deadband_ratio": 0.02,
     "accepted_scale_smoothing_alpha": 0.10,
+    "accepted_scale_median_window_frames": 5,
+    "accepted_scale_direction_confirm_frames": 3,
+    "accepted_scale_output_hysteresis_px": 0.75,
     "max_reacquisition_center_distance": 0.75,
     "occlusion_probe_interval_frames": 5, "occlusion_gradual_dimension_ratio": 1, "occlusion_gradual_consecutive_frames": 1, "occlusion_min_reference_samples": 1, "occlusion_shrink_step_ratio": 1, "occlusion_suspicion_clear_frames": 1, "occlusion_peak_margin_drop": 1, "occlusion_motion_residual_threshold": 1, "occlusion_confirmation_iou": 1, "occlusion_confirmation_center_distance": 1, "occlusion_confirmation_max_area_log_change": 1, "occlusion_confirmation_max_aspect_log_change": 1,
     "rknn_api_version": "api", "rknn_driver_version": "driver",
@@ -289,6 +292,8 @@ cp "$artifact_dir/session-metadata.json" "$artifact_dir/metadata.valid.json"
 for invalid_case in nan_threshold interval0 missing_scale_step invalid_scale_step \
     missing_deadband deadband_negative deadband_one deadband_inf \
     missing_alpha alpha_zero alpha_large alpha_nan \
+    missing_median median_even median_large missing_direction direction_zero direction_large \
+    missing_output_hysteresis output_hysteresis_negative output_hysteresis_inf \
     missing_reacquisition reacquisition_negative reacquisition_inf; do
   cp "$artifact_dir/metadata.valid.json" "$artifact_dir/session-metadata.json"
   python3 - "$artifact_dir/session-metadata.json" "$invalid_case" <<'PY'
@@ -319,6 +324,24 @@ elif case == "alpha_large":
     data["accepted_scale_smoothing_alpha"] = 1.01
 elif case == "alpha_nan":
     data["accepted_scale_smoothing_alpha"] = float("nan")
+elif case == "missing_median":
+    del data["accepted_scale_median_window_frames"]
+elif case == "median_even":
+    data["accepted_scale_median_window_frames"] = 2
+elif case == "median_large":
+    data["accepted_scale_median_window_frames"] = 33
+elif case == "missing_direction":
+    del data["accepted_scale_direction_confirm_frames"]
+elif case == "direction_zero":
+    data["accepted_scale_direction_confirm_frames"] = 0
+elif case == "direction_large":
+    data["accepted_scale_direction_confirm_frames"] = 32
+elif case == "missing_output_hysteresis":
+    del data["accepted_scale_output_hysteresis_px"]
+elif case == "output_hysteresis_negative":
+    data["accepted_scale_output_hysteresis_px"] = -0.01
+elif case == "output_hysteresis_inf":
+    data["accepted_scale_output_hysteresis_px"] = float("inf")
 elif case == "missing_reacquisition":
     del data["max_reacquisition_center_distance"]
 elif case == "reacquisition_negative":

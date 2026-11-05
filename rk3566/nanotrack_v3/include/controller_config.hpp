@@ -27,6 +27,9 @@ struct ControllerConfig {
   float max_accepted_scale_step_ratio = 1.00F;
   float accepted_scale_deadband_ratio = 0.00F;
   float accepted_scale_smoothing_alpha = 1.00F;
+  int accepted_scale_median_window_frames = 1;
+  int accepted_scale_direction_confirm_frames = 1;
+  float accepted_scale_output_hysteresis_px = 0.00F;
   float max_reacquisition_center_distance = 0.00F;
 
   std::int64_t uncertain_ms = 200;

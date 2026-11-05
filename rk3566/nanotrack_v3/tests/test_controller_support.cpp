@@ -100,6 +100,11 @@ int main() {
               "visible accepted scale suppresses changes through two percent");
   expect_near(default_visible.accepted_scale_smoothing_alpha, 0.10F, 1e-6F,
               "visible accepted scale moves ten percent toward its bounded target");
+  expect_true(default_visible.accepted_scale_median_window_frames == 5 &&
+                  default_visible.accepted_scale_direction_confirm_frames == 3,
+              "visible accepted scale requires five samples and three directions");
+  expect_near(default_visible.accepted_scale_output_hysteresis_px, 0.75F,
+              1e-6F, "visible accepted scale uses subpixel output hysteresis");
   expect_near(default_visible.max_reacquisition_center_distance, 0.75F,
               1e-6F,
               "visible ordinary recovery uses the fixed center residual gate");
@@ -107,6 +112,9 @@ int main() {
               "generic controller behavior remains unrestricted");
   expect_true(ControllerConfig{}.accepted_scale_deadband_ratio == 0.0F &&
                   ControllerConfig{}.accepted_scale_smoothing_alpha == 1.0F &&
+                  ControllerConfig{}.accepted_scale_median_window_frames == 1 &&
+                  ControllerConfig{}.accepted_scale_direction_confirm_frames == 1 &&
+                  ControllerConfig{}.accepted_scale_output_hysteresis_px == 0.0F &&
                   ControllerConfig{}.max_reacquisition_center_distance == 0.0F,
               "generic controller defaults preserve legacy scale and recovery behavior");
   expect_near(default_visible.detector_candidate_max_center_ratio, 0.15F,
@@ -127,6 +135,9 @@ int main() {
               "infrared accepted dimensions retain existing unrestricted behavior");
   expect_true(default_infrared.accepted_scale_deadband_ratio == 0.0F &&
                   default_infrared.accepted_scale_smoothing_alpha == 1.0F &&
+                  default_infrared.accepted_scale_median_window_frames == 1 &&
+                  default_infrared.accepted_scale_direction_confirm_frames == 1 &&
+                  default_infrared.accepted_scale_output_hysteresis_px == 0.0F &&
                   default_infrared.max_reacquisition_center_distance == 0.0F,
               "infrared retains compatibility scale and recovery settings");
   expect_near(default_infrared.detector_candidate_max_center_ratio, 0.15F,
@@ -154,6 +165,11 @@ int main() {
               "shipped visible config suppresses two-percent scale noise");
   expect_near(shipped_visible.accepted_scale_smoothing_alpha, 0.10F, 1e-6F,
               "shipped visible config smooths bounded scale updates");
+  expect_true(shipped_visible.accepted_scale_median_window_frames == 5 &&
+                  shipped_visible.accepted_scale_direction_confirm_frames == 3,
+              "shipped visible config enables temporal scale confirmation");
+  expect_near(shipped_visible.accepted_scale_output_hysteresis_px, 0.75F,
+              1e-6F, "shipped visible config enables sticky integer output");
   expect_near(shipped_visible.max_reacquisition_center_distance, 0.75F,
               1e-6F,
               "shipped visible config fixes the ordinary recovery center gate");
@@ -187,6 +203,9 @@ int main() {
              "max_accepted_scale_step_ratio=0.25\n"
              "accepted_scale_deadband_ratio=0.03\n"
              "accepted_scale_smoothing_alpha=0.20\n"
+             "accepted_scale_median_window_frames=7\n"
+             "accepted_scale_direction_confirm_frames=4\n"
+             "accepted_scale_output_hysteresis_px=0.65\n"
              "max_reacquisition_center_distance=0.80\n"
              "uncertain_ms=200\n"
              "local_recovery_ms=1000\n"
@@ -216,6 +235,11 @@ int main() {
               "accepted scale deadband parses explicitly");
   expect_near(visible.accepted_scale_smoothing_alpha, 0.20F, 1e-6F,
               "accepted scale smoothing alpha parses explicitly");
+  expect_true(visible.accepted_scale_median_window_frames == 7 &&
+                  visible.accepted_scale_direction_confirm_frames == 4,
+              "accepted scale temporal counts parse explicitly");
+  expect_near(visible.accepted_scale_output_hysteresis_px, 0.65F, 1e-6F,
+              "accepted scale output hysteresis parses explicitly");
   expect_near(visible.max_reacquisition_center_distance, 0.80F, 1e-6F,
               "ordinary recovery center distance parses explicitly");
   expect_true(visible.uncertain_ms == 200 &&
@@ -242,6 +266,18 @@ int main() {
   identity_variant.accepted_scale_smoothing_alpha = 0.20F;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes accepted scale smoothing alpha");
+  identity_variant = default_visible;
+  identity_variant.accepted_scale_median_window_frames = 7;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale median window");
+  identity_variant = default_visible;
+  identity_variant.accepted_scale_direction_confirm_frames = 4;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale direction confirmation");
+  identity_variant = default_visible;
+  identity_variant.accepted_scale_output_hysteresis_px = 0.5F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale output hysteresis");
   identity_variant = default_visible;
   identity_variant.max_reacquisition_center_distance = 0.80F;
   expect_true(controller_config_identity(identity_variant) != default_identity,
@@ -450,6 +486,40 @@ int main() {
                       std::string(limit.key) + " rejects invalid file values");
       }
     }
+  }
+  for (int value : {1, 3, 31}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_median_window_frames = value;
+    validate_controller_config(candidate);
+  }
+  for (int value : {0, 2, 32}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_median_window_frames = value;
+    expect_throws([&] { validate_controller_config(candidate); },
+                  "accepted scale median window must be odd and within [1,31]");
+  }
+  for (int value : {1, 31}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_direction_confirm_frames = value;
+    validate_controller_config(candidate);
+  }
+  for (int value : {0, 32}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_direction_confirm_frames = value;
+    expect_throws([&] { validate_controller_config(candidate); },
+                  "accepted scale direction confirmation must stay within [1,31]");
+  }
+  for (float value : {0.0F, 0.75F, 100.0F}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_output_hysteresis_px = value;
+    validate_controller_config(candidate);
+  }
+  for (float value : {-0.01F, std::numeric_limits<float>::quiet_NaN(),
+                      std::numeric_limits<float>::infinity()}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_output_hysteresis_px = value;
+    expect_throws([&] { validate_controller_config(candidate); },
+                  "accepted scale output hysteresis must be finite and nonnegative");
   }
   for (float value : {0.0F, 0.01F, 0.75F, 100.0F, -0.01F,
                       std::numeric_limits<float>::quiet_NaN(),

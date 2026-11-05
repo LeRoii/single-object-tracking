@@ -79,6 +79,9 @@ void set_value(ControllerConfig& config,
   else if (key == "max_accepted_scale_step_ratio") config.max_accepted_scale_step_ratio = parse_float(key, value);
   else if (key == "accepted_scale_deadband_ratio") config.accepted_scale_deadband_ratio = parse_float(key, value);
   else if (key == "accepted_scale_smoothing_alpha") config.accepted_scale_smoothing_alpha = parse_float(key, value);
+  else if (key == "accepted_scale_median_window_frames") config.accepted_scale_median_window_frames = parse_int(key, value);
+  else if (key == "accepted_scale_direction_confirm_frames") config.accepted_scale_direction_confirm_frames = parse_int(key, value);
+  else if (key == "accepted_scale_output_hysteresis_px") config.accepted_scale_output_hysteresis_px = parse_float(key, value);
   else if (key == "max_reacquisition_center_distance") config.max_reacquisition_center_distance = parse_float(key, value);
   else if (key == "uncertain_ms") config.uncertain_ms = parse_integer(key, value);
   else if (key == "local_recovery_ms") config.local_recovery_ms = parse_integer(key, value);
@@ -142,6 +145,9 @@ ControllerConfig default_controller_config(const std::string& sensor) {
     config.max_accepted_scale_step_ratio = 0.05F;
     config.accepted_scale_deadband_ratio = 0.02F;
     config.accepted_scale_smoothing_alpha = 0.10F;
+    config.accepted_scale_median_window_frames = 5;
+    config.accepted_scale_direction_confirm_frames = 3;
+    config.accepted_scale_output_hysteresis_px = 0.75F;
     config.max_reacquisition_center_distance = 0.75F;
   }
   validate_controller_config(config);
@@ -197,6 +203,22 @@ void validate_controller_config(const ControllerConfig& config) {
       config.accepted_scale_smoothing_alpha > 1.0F) {
     throw std::invalid_argument(
         "accepted scale smoothing alpha must be finite and in (0,1]");
+  }
+  if (config.accepted_scale_median_window_frames < 1 ||
+      config.accepted_scale_median_window_frames > 31 ||
+      config.accepted_scale_median_window_frames % 2 == 0) {
+    throw std::invalid_argument(
+        "accepted scale median window must be odd and in [1,31]");
+  }
+  if (config.accepted_scale_direction_confirm_frames < 1 ||
+      config.accepted_scale_direction_confirm_frames > 31) {
+    throw std::invalid_argument(
+        "accepted scale direction confirmation must be in [1,31]");
+  }
+  if (!std::isfinite(config.accepted_scale_output_hysteresis_px) ||
+      config.accepted_scale_output_hysteresis_px < 0.0F) {
+    throw std::invalid_argument(
+        "accepted scale output hysteresis must be finite and non-negative");
   }
   if (!std::isfinite(config.max_reacquisition_center_distance) ||
       config.max_reacquisition_center_distance < 0.0F) {
@@ -328,6 +350,9 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.max_accepted_scale_step_ratio << '|'
          << config.accepted_scale_deadband_ratio << '|'
          << config.accepted_scale_smoothing_alpha << '|'
+         << config.accepted_scale_median_window_frames << '|'
+         << config.accepted_scale_direction_confirm_frames << '|'
+         << config.accepted_scale_output_hysteresis_px << '|'
          << config.max_reacquisition_center_distance << '|'
          << config.detector_candidate_max_center_ratio << '|'
          << config.occlusion_hold_frames << '|'

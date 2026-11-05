@@ -646,6 +646,12 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.max_accepted_scale_step_ratio = config.max_accepted_scale_step_ratio;
   metadata.accepted_scale_deadband_ratio = config.accepted_scale_deadband_ratio;
   metadata.accepted_scale_smoothing_alpha = config.accepted_scale_smoothing_alpha;
+  metadata.accepted_scale_median_window_frames =
+      config.accepted_scale_median_window_frames;
+  metadata.accepted_scale_direction_confirm_frames =
+      config.accepted_scale_direction_confirm_frames;
+  metadata.accepted_scale_output_hysteresis_px =
+      config.accepted_scale_output_hysteresis_px;
   metadata.max_reacquisition_center_distance =
       config.max_reacquisition_center_distance;
 }
@@ -661,6 +667,7 @@ std::string tracking_session_metadata_json(
       metadata.max_accepted_scale_step_ratio,
       metadata.accepted_scale_deadband_ratio,
       metadata.accepted_scale_smoothing_alpha,
+      metadata.accepted_scale_output_hysteresis_px,
       metadata.max_reacquisition_center_distance,
       metadata.detector_candidate_max_center_ratio,
       metadata.occlusion_trigger_min_dimension_ratio,
@@ -789,6 +796,12 @@ std::string tracking_session_metadata_json(
          << metadata.accepted_scale_deadband_ratio << ",\n"
          << "  \"accepted_scale_smoothing_alpha\": "
          << metadata.accepted_scale_smoothing_alpha << ",\n"
+         << "  \"accepted_scale_median_window_frames\": "
+         << metadata.accepted_scale_median_window_frames << ",\n"
+         << "  \"accepted_scale_direction_confirm_frames\": "
+         << metadata.accepted_scale_direction_confirm_frames << ",\n"
+         << "  \"accepted_scale_output_hysteresis_px\": "
+         << metadata.accepted_scale_output_hysteresis_px << ",\n"
          << "  \"max_reacquisition_center_distance\": "
          << metadata.max_reacquisition_center_distance << ",\n"
          << "  \"uncertain_ms\": " << metadata.uncertain_ms << ",\n"
