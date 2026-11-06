@@ -52,6 +52,12 @@ struct ControllerOutput {
   TemplateKind selected_template = TemplateKind::kAnchor;
   TemplateAction template_action = TemplateAction::kNone;
   ResponseMetrics selected_metrics{};
+  std::optional<BBox> selected_observation_bbox;
+  float center_innovation_x = 0.0F;
+  float center_innovation_y = 0.0F;
+  float center_correction_x = 0.0F;
+  float center_correction_y = 0.0F;
+  bool center_correction_limited = false;
   float template_iou = 0.0F;
   float normalized_center_residual = 0.0F;
   float area_log_change = 0.0F;
@@ -220,6 +226,11 @@ class LongTermController {
   BBox stabilize_accepted_bbox(const BBox& observation,
                                DimensionScaleState& width_state,
                                DimensionScaleState& height_state) const;
+  BBox stabilize_accepted_center(const SearchPlan& plan,
+                                 const BBox& observation,
+                                 const BBox& scaled_bbox,
+                                 bool reacquired,
+                                 ControllerOutput& output) const;
   void accept_observation(const SearchPlan& plan,
                           const EvaluatedObservation& selected,
                           bool reacquired,

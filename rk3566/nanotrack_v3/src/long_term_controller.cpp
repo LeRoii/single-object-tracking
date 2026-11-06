@@ -590,6 +590,47 @@ BBox LongTermController::stabilize_accepted_bbox(
                       frame_size_);
 }
 
+BBox LongTermController::stabilize_accepted_center(
+    const SearchPlan& plan, const BBox& observation, const BBox& scaled_bbox,
+    bool reacquired, ControllerOutput& output) const {
+  output.selected_observation_bbox = observation;
+  const float predicted_center_x =
+      plan.motion_predicted_bbox.x + 0.5F * plan.motion_predicted_bbox.width;
+  const float predicted_center_y =
+      plan.motion_predicted_bbox.y + 0.5F * plan.motion_predicted_bbox.height;
+  const float observed_center_x = observation.x + 0.5F * observation.width;
+  const float observed_center_y = observation.y + 0.5F * observation.height;
+  output.center_innovation_x = observed_center_x - predicted_center_x;
+  output.center_innovation_y = observed_center_y - predicted_center_y;
+
+  float bounded_x = output.center_innovation_x;
+  float bounded_y = output.center_innovation_y;
+  if (!reacquired && config_.accepted_center_max_correction_ratio > 0.0F) {
+    const float maximum = config_.accepted_center_max_correction_ratio *
+                          std::sqrt(scaled_bbox.width * scaled_bbox.height);
+    const float magnitude = std::hypot(bounded_x, bounded_y);
+    if (magnitude > maximum) {
+      const float factor = maximum / magnitude;
+      bounded_x *= factor;
+      bounded_y *= factor;
+      output.center_correction_limited = true;
+    }
+  }
+
+  const float alpha = reacquired ? 1.0F
+                                 : config_.accepted_center_smoothing_alpha;
+  const float requested_center_x = predicted_center_x + alpha * bounded_x;
+  const float requested_center_y = predicted_center_y + alpha * bounded_y;
+  const BBox stabilized = centered_box(
+      requested_center_x, requested_center_y,
+      BBox{0.0F, 0.0F, scaled_bbox.width, scaled_bbox.height}, frame_size_);
+  output.center_correction_x =
+      stabilized.x + 0.5F * stabilized.width - predicted_center_x;
+  output.center_correction_y =
+      stabilized.y + 0.5F * stabilized.height - predicted_center_y;
+  return stabilized;
+}
+
 void LongTermController::accept_observation(
     const SearchPlan& plan, const EvaluatedObservation& selected,
     bool reacquired, ControllerOutput& output) {
@@ -599,8 +640,10 @@ void LongTermController::accept_observation(
     reset_scale_evidence(next_width);
     reset_scale_evidence(next_height);
   }
-  output.bbox = stabilize_accepted_bbox(selected.observation.bbox, next_width,
-                                        next_height);
+  const BBox scaled_bbox = stabilize_accepted_bbox(
+      selected.observation.bbox, next_width, next_height);
+  output.bbox = stabilize_accepted_center(
+      plan, selected.observation.bbox, scaled_bbox, reacquired, output);
   output.accepted = true;
   output.control_valid = true;
   output.reacquired = reacquired;

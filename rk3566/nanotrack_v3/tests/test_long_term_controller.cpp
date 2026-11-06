@@ -421,6 +421,184 @@ void test_temporal_scale_persistence_and_state_isolation() {
               "1/1/0 temporal settings emit raw accepted dimensions exactly");
 }
 
+nanotrack::ControllerConfig center_filter_config() {
+  nanotrack::ControllerConfig config;
+  config.accepted_center_smoothing_alpha = 0.35F;
+  config.accepted_center_max_correction_ratio = 0.25F;
+  config.max_center_distance = 100.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  config.max_reacquisition_center_distance = 100.0F;
+  return config;
+}
+
+float center_x(const nanotrack::BBox& bbox) {
+  return bbox.x + 0.5F * bbox.width;
+}
+
+float center_y(const nanotrack::BBox& bbox) {
+  return bbox.y + 0.5F * bbox.height;
+}
+
+void test_motion_aware_accepted_center_filter() {
+  using namespace nanotrack;
+  const BBox initial{80, 80, 40, 40};
+
+  ControllerConfig compatibility = center_filter_config();
+  compatibility.accepted_center_smoothing_alpha = 1.0F;
+  compatibility.accepted_center_max_correction_ratio = 0.0F;
+  LongTermController direct(compatibility);
+  direct.initialize(initial, 0, 0, {400, 300});
+  auto plan = direct.begin_frame(1, 40, false);
+  const BBox direct_raw{110, 70, 40, 40};
+  auto output = direct.finish_frame(
+      plan, reliable_pair(plan, direct_raw, 1), std::nullopt);
+  expect_true(output.accepted && output.selected_observation_bbox.has_value(),
+              "accepted output retains the selected raw bbox");
+  expect_near(center_x(output.bbox), 130.0F, 1e-5F,
+              "1/0 center compatibility emits the exact raw horizontal center");
+  expect_near(center_y(output.bbox), 90.0F, 1e-5F,
+              "1/0 center compatibility emits the exact raw vertical center");
+  expect_near(output.center_innovation_x, 30.0F, 1e-5F,
+              "compatibility diagnostics retain raw horizontal innovation");
+  expect_near(output.center_correction_x, 30.0F, 1e-5F,
+              "compatibility diagnostics report the full applied correction");
+  expect_true(!output.center_correction_limited,
+              "zero correction ratio disables limiting");
+
+  LongTermController alternating(center_filter_config());
+  alternating.initialize(initial, 0, 0, {400, 300});
+  float previous_final = center_x(initial);
+  float maximum_final_step = 0.0F;
+  for (int frame = 1; frame <= 12; ++frame) {
+    plan = alternating.begin_frame(frame, frame * 40, false);
+    const float raw_center = frame % 2 == 0 ? 80.0F : 120.0F;
+    const BBox raw{raw_center - 20.0F, 80, 40, 40};
+    output = alternating.finish_frame(
+        plan, reliable_pair(plan, raw, 10 + frame), std::nullopt);
+    maximum_final_step =
+        std::max(maximum_final_step, std::fabs(center_x(output.bbox) - previous_final));
+    previous_final = center_x(output.bbox);
+  }
+  expect_true(maximum_final_step < 10.0F,
+              "motion-aware blend materially reduces alternating forty-pixel raw steps");
+
+  LongTermController exact_limit(center_filter_config());
+  exact_limit.initialize(initial, 0, 0, {400, 300});
+  plan = exact_limit.begin_frame(1, 40, false);
+  output = exact_limit.finish_frame(
+      plan, reliable_pair(plan, BBox{90, 80, 40, 40}, 30), std::nullopt);
+  expect_near(output.center_innovation_x, 10.0F, 1e-5F,
+              "exact limit fixture has a ten-pixel innovation");
+  expect_near(output.center_correction_x, 3.5F, 1e-5F,
+              "exact limit applies alpha after preserving the full innovation");
+  expect_true(!output.center_correction_limited,
+              "innovation exactly at the target-relative limit is not clipped");
+
+  LongTermController over_limit(center_filter_config());
+  over_limit.initialize(initial, 0, 0, {400, 300});
+  plan = over_limit.begin_frame(1, 40, false);
+  output = over_limit.finish_frame(
+      plan, reliable_pair(plan, BBox{90.001F, 80, 40, 40}, 31),
+      std::nullopt);
+  expect_near(output.center_innovation_x, 10.001F, 1e-4F,
+              "over-limit diagnostics retain the unbounded raw innovation");
+  expect_near(output.center_correction_x, 3.5F, 1e-4F,
+              "over-limit innovation is isotropically bounded before blending");
+  expect_near(output.center_correction_y, 0.0F, 1e-5F,
+              "horizontal limiting does not invent vertical correction");
+  expect_true(output.center_correction_limited,
+              "just-over-boundary innovation reports limiting");
+
+  LongTermController diagonal(center_filter_config());
+  diagonal.initialize(initial, 0, 0, {400, 300});
+  plan = diagonal.begin_frame(1, 40, false);
+  output = diagonal.finish_frame(
+      plan, reliable_pair(plan, BBox{96, 92, 40, 40}, 32), std::nullopt);
+  expect_true(output.center_correction_limited,
+              "large diagonal innovation activates one vector-magnitude bound");
+  expect_near(std::hypot(output.center_correction_x, output.center_correction_y),
+              3.5F, 1e-4F,
+              "isotropic correction magnitude equals alpha times the ten-pixel bound");
+  expect_near(output.center_correction_x / output.center_correction_y,
+              8.0F / 6.0F, 1e-4F,
+              "isotropic limiting preserves innovation direction");
+
+  LongTermController moving(center_filter_config());
+  moving.initialize(initial, 0, 0, {500, 300});
+  float moving_center = center_x(initial);
+  for (int frame = 1; frame <= 8; ++frame) {
+    plan = moving.begin_frame(frame, frame * 40, false);
+    const float raw_center = 100.0F + 5.0F * frame;
+    output = moving.finish_frame(
+        plan,
+        reliable_pair(plan, BBox{raw_center - 20.0F, 80, 40, 40}, 40 + frame),
+        std::nullopt);
+    expect_true(center_x(output.bbox) > moving_center,
+                "persistent same-direction measurements advance every accepted frame");
+    moving_center = center_x(output.bbox);
+  }
+  expect_true(moving_center > 110.0F,
+              "motion-aware filtering follows sustained target motion with bounded lag");
+
+  LongTermController tiny(center_filter_config());
+  tiny.initialize(BBox{50, 50, 1, 1}, 0, 0, {100, 100});
+  plan = tiny.begin_frame(1, 40, false);
+  output = tiny.finish_frame(
+      plan, reliable_pair(plan, BBox{51, 51, 1, 1}, 60), std::nullopt);
+  expect_true(std::isfinite(output.bbox.x) && std::isfinite(output.bbox.y) &&
+                  output.bbox.width == 1.0F && output.bbox.height == 1.0F,
+              "one-pixel target produces a finite positive bounded correction");
+
+  LongTermController edge(center_filter_config());
+  edge.initialize(BBox{90, 90, 10, 10}, 0, 0, {100, 100});
+  plan = edge.begin_frame(1, 40, false);
+  output = edge.finish_frame(
+      plan, reliable_pair(plan, BBox{0, 0, 10, 10}, 61), std::nullopt);
+  expect_true(output.bbox.x >= 0.0F && output.bbox.y >= 0.0F &&
+                  output.bbox.x + output.bbox.width <= 100.0F &&
+                  output.bbox.y + output.bbox.height <= 100.0F,
+              "center state estimation remains frame-safe near an image edge");
+
+  LongTermController isolated(center_filter_config());
+  isolated.initialize(initial, 0, 0, {400, 300});
+  plan = isolated.begin_frame(1, 40, false);
+  output = isolated.finish_frame(
+      plan,
+      {rejected_observation(plan, TemplateKind::kAnchor, BBox{130, 80, 40, 40})},
+      std::nullopt);
+  expect_true(!output.accepted && !output.selected_observation_bbox.has_value() &&
+                  output.center_correction_x == 0.0F &&
+                  output.center_correction_y == 0.0F &&
+                  isolated.current_bbox().x == initial.x,
+              "rejected observations cannot apply or publish a center correction");
+  isolated.begin_frame(2, 80, false);
+  isolated.abort_frame();
+  expect_true(isolated.current_bbox().x == initial.x &&
+                  isolated.current_bbox().y == initial.y,
+              "aborting an open frame cannot mutate the accepted center state");
+
+  LongTermController recovery(center_filter_config());
+  recovery.initialize(initial, 0, 0, {400, 300});
+  reject_frame(recovery, 1, 40);
+  recovery.motion_.velocity_x_ = 100.0F;
+  const BBox recovered_raw{120, 80, 40, 40};
+  plan = recovery.begin_frame(2, 80, false);
+  output = recovery.finish_frame(
+      plan, reliable_pair(plan, recovered_raw, 70), std::nullopt);
+  expect_true(!output.accepted,
+              "first reliable recovery hit only enters confirmation");
+  plan = recovery.begin_frame(3, 120, false);
+  output = recovery.finish_frame(
+      plan, reliable_pair(plan, recovered_raw, 71), std::nullopt);
+  expect_true(output.accepted && output.reacquired,
+              "second consistent recovery hit confirms reacquisition");
+  expect_near(center_x(output.bbox), center_x(recovered_raw), 1e-5F,
+              "confirmed reacquisition uses the raw center instead of stale prediction");
+  expect_near(center_y(output.bbox), center_y(recovered_raw), 1e-5F,
+              "confirmed reacquisition resets both center coordinates from raw evidence");
+}
+
 void test_ordinary_recovery_uses_fixed_center_gate() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -1345,6 +1523,7 @@ int main() {
   test_accepted_scale_deadband_smoothing_and_compatibility();
   test_temporal_scale_window_direction_and_hysteresis();
   test_temporal_scale_persistence_and_state_isolation();
+  test_motion_aware_accepted_center_filter();
   test_ordinary_recovery_uses_fixed_center_gate();
   test_loss_freezes_scale_and_recovery_uses_limited_bbox();
   test_target_class_recovery_request_gate();
