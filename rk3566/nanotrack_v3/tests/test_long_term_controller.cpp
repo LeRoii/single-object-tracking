@@ -402,10 +402,10 @@ void test_temporal_scale_persistence_and_state_isolation() {
   reject_frame(recovery, 7, 280);
   accept_scale_frame(recovery, 8, growth, 58);
   output = accept_scale_frame(recovery, 9, growth, 59);
-  expect_true(output.accepted && output.reacquired,
-              "ordinary reacquisition clears stale window and direction evidence");
-  expect_near(output.bbox.width, 200.0F, 1e-5F,
-              "ordinary reacquisition retains emitted scale without a jump");
+  expect_true(output.accepted && !output.reacquired,
+              "short confirmation returns to tracking without a recovery reset");
+  expect_near(output.bbox.width, 201.0F, 1e-5F,
+              "short confirmation preserves accepted scale history");
 
   ControllerConfig compatibility = config;
   compatibility.max_accepted_scale_step_ratio = 1.0F;
@@ -578,17 +578,44 @@ void test_motion_aware_accepted_center_filter() {
                   isolated.current_bbox().y == initial.y,
               "aborting an open frame cannot mutate the accepted center state");
 
+  LongTermController short_confirmation(center_filter_config());
+  short_confirmation.initialize(initial, 0, 0, {400, 300});
+  reject_frame(short_confirmation, 1, 40);
+  const BBox short_confirmed_raw{120, 80, 40, 40};
+  plan = short_confirmation.begin_frame(2, 80, false);
+  output = short_confirmation.finish_frame(
+      plan, reliable_pair(plan, short_confirmed_raw, 68), std::nullopt);
+  expect_true(!output.accepted,
+              "first reliable short-gap hit only enters confirmation");
+  plan = short_confirmation.begin_frame(3, 120, false);
+  output = short_confirmation.finish_frame(
+      plan, reliable_pair(plan, short_confirmed_raw, 69), std::nullopt);
+  expect_true(output.accepted && !output.reacquired &&
+                  output.center_correction_limited,
+              "short uncertain confirmation remains on the bounded center path");
+  expect_true(center_x(output.bbox) < center_x(short_confirmed_raw) &&
+                  center_x(output.bbox) > center_x(initial),
+              "short uncertain confirmation blends instead of snapping to raw center");
+  plan = short_confirmation.begin_frame(4, 160, false);
+  output = short_confirmation.finish_frame(
+      plan, reliable_pair(plan, short_confirmed_raw, 70), std::nullopt);
+  expect_true(output.accepted && !output.reacquired &&
+                  short_confirmation.confirmations_.empty(),
+              "short confirmation clears loss state for ordinary direct tracking");
+
   LongTermController recovery(center_filter_config());
   recovery.initialize(initial, 0, 0, {400, 300});
   reject_frame(recovery, 1, 40);
   recovery.motion_.velocity_x_ = 100.0F;
   const BBox recovered_raw{120, 80, 40, 40};
-  plan = recovery.begin_frame(2, 80, false);
+  plan = recovery.begin_frame(2, 240, false);
+  expect_true(plan.mode == TrackingMode::kLocalRecovery,
+              "stale-motion recovery fixture reaches local recovery");
   output = recovery.finish_frame(
       plan, reliable_pair(plan, recovered_raw, 70), std::nullopt);
   expect_true(!output.accepted,
               "first reliable recovery hit only enters confirmation");
-  plan = recovery.begin_frame(3, 120, false);
+  plan = recovery.begin_frame(3, 280, false);
   output = recovery.finish_frame(
       plan, reliable_pair(plan, recovered_raw, 71), std::nullopt);
   expect_true(output.accepted && output.reacquired,
@@ -638,8 +665,8 @@ void test_ordinary_recovery_uses_fixed_center_gate() {
   plan = controller.begin_frame(5, 200, false);
   output = controller.finish_frame(
       plan, reliable_pair(plan, in_view_recovery, 5), std::nullopt);
-  expect_true(output.accepted && output.reacquired && output.control_valid,
-              "two fresh in-view hits complete ordinary recovery");
+  expect_true(output.accepted && !output.reacquired && output.control_valid,
+              "two fresh in-view hits complete short confirmation without reset");
 
   LongTermController template_conflict(config);
   template_conflict.initialize(stable, 0, 0, {240, 160});
@@ -662,13 +689,14 @@ void test_ordinary_recovery_uses_fixed_center_gate() {
     output = compatibility.finish_frame(
         plan, reliable_pair(plan, center_jump, frame), std::nullopt);
   }
-  expect_true(output.accepted && output.reacquired,
-              "zero sentinel preserves legacy ordinary confirmation behavior");
+  expect_true(output.accepted && !output.reacquired,
+              "zero sentinel preserves the confirmation gate without forcing reset");
 }
 
 void test_loss_freezes_scale_and_recovery_uses_limited_bbox() {
   using namespace nanotrack;
   ControllerConfig config;
+  config.uncertain_ms = 80;
   config.max_accepted_scale_step_ratio = 0.05F;
   config.max_center_distance = 10.0F;
   config.max_area_log_change = 10.0F;
@@ -1775,8 +1803,8 @@ int main() {
   output = normal.finish_frame(
       plan, {reliable_observation(plan, TemplateKind::kAnchor, plan.predicted_bbox)},
       std::nullopt);
-  expect_true(output.control_valid && output.accepted && output.reacquired,
-              "second consistent candidate in three frames reacquires");
+  expect_true(output.control_valid && output.accepted && !output.reacquired,
+              "second consistent short-gap candidate resumes tracking without reset");
 
   LongTermController conflict(config);
   conflict.initialize(BBox{40, 30, 20, 20}, 0, 0, FrameSize{200, 120},

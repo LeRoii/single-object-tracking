@@ -954,8 +954,9 @@ int main() {
   tracker.emit_reliable = true;
   runtime.process_frame(image, 3, 120);
   result = runtime.process_frame(image, 4, 160);
-  expect_true(result.output.reacquired && tracker.commit_calls == 2,
-              "confirmed recovery commits exactly once");
+  expect_true(result.output.accepted && !result.output.reacquired &&
+                  tracker.commit_calls == 2,
+              "short confirmation commits exactly once without a recovery reset");
 
   FakeTracker template_tracker;
   NullDetectorAdapter null_detector;

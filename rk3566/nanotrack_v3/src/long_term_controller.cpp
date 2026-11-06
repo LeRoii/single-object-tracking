@@ -1126,7 +1126,9 @@ ControllerOutput LongTermController::finish_frame(
         } else if (add_confirmation(plan.frame_id,
                                     selected->observation.bbox)) {
           accepted = true;
-          reacquired = true;
+          reacquired = plan.mode == TrackingMode::kLocalRecovery ||
+                       plan.mode == TrackingMode::kAssistedRecovery ||
+                       plan.mode == TrackingMode::kLost;
         }
       }
     }
