@@ -83,6 +83,8 @@ for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimensio
             "max_accepted_scale_step_ratio",
             "accepted_scale_deadband_ratio", "accepted_scale_smoothing_alpha",
             "accepted_scale_output_hysteresis_px",
+            "accepted_center_smoothing_alpha",
+            "accepted_center_max_correction_ratio",
             "max_reacquisition_center_distance",
             "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold",
             "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change",
@@ -91,13 +93,15 @@ for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimensio
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise SystemExit(f"invalid metadata {key}")
     if key in {"occlusion_peak_margin_drop", "max_reacquisition_center_distance",
-               "accepted_scale_output_hysteresis_px"}:
+               "accepted_scale_output_hysteresis_px",
+               "accepted_center_max_correction_ratio"}:
         valid = value >= 0
     elif key == "accepted_scale_deadband_ratio":
         valid = 0 <= value < 1
     elif key in {"occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
                  "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
-                 "max_accepted_scale_step_ratio", "accepted_scale_smoothing_alpha"}:
+                 "max_accepted_scale_step_ratio", "accepted_scale_smoothing_alpha",
+                 "accepted_center_smoothing_alpha"}:
         valid = 0 < value <= 1
     else:
         valid = value > 0
@@ -325,6 +329,8 @@ for key in {
     "accepted_scale_median_window_frames",
     "accepted_scale_direction_confirm_frames",
     "accepted_scale_output_hysteresis_px",
+    "accepted_center_smoothing_alpha",
+    "accepted_center_max_correction_ratio",
     "max_reacquisition_center_distance",
     "occlusion_probe_interval_frames", "occlusion_gradual_dimension_ratio", "occlusion_gradual_consecutive_frames", "occlusion_min_reference_samples", "occlusion_shrink_step_ratio", "occlusion_suspicion_clear_frames", "occlusion_peak_margin_drop", "occlusion_motion_residual_threshold", "occlusion_confirmation_iou", "occlusion_confirmation_center_distance", "occlusion_confirmation_max_area_log_change", "occlusion_confirmation_max_aspect_log_change",
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",

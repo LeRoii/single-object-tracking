@@ -214,6 +214,8 @@ struct TrackingSessionMetadata {
   int accepted_scale_median_window_frames = 1;
   int accepted_scale_direction_confirm_frames = 1;
   float accepted_scale_output_hysteresis_px = 0.0F;
+  float accepted_center_smoothing_alpha = 1.0F;
+  float accepted_center_max_correction_ratio = 0.0F;
   float max_reacquisition_center_distance = 0.0F;
   std::int64_t uncertain_ms = 0;
   std::int64_t local_recovery_ms = 0;

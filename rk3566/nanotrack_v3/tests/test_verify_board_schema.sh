@@ -123,6 +123,8 @@ metadata = {
     "accepted_scale_median_window_frames": 5,
     "accepted_scale_direction_confirm_frames": 3,
     "accepted_scale_output_hysteresis_px": 0.75,
+    "accepted_center_smoothing_alpha": 0.35,
+    "accepted_center_max_correction_ratio": 0.25,
     "max_reacquisition_center_distance": 0.75,
     "occlusion_probe_interval_frames": 5, "occlusion_gradual_dimension_ratio": 1, "occlusion_gradual_consecutive_frames": 1, "occlusion_min_reference_samples": 1, "occlusion_shrink_step_ratio": 1, "occlusion_suspicion_clear_frames": 1, "occlusion_peak_margin_drop": 1, "occlusion_motion_residual_threshold": 1, "occlusion_confirmation_iou": 1, "occlusion_confirmation_center_distance": 1, "occlusion_confirmation_max_area_log_change": 1, "occlusion_confirmation_max_aspect_log_change": 1,
     "rknn_api_version": "api", "rknn_driver_version": "driver",
@@ -294,6 +296,8 @@ for invalid_case in nan_threshold interval0 missing_scale_step invalid_scale_ste
     missing_alpha alpha_zero alpha_large alpha_nan \
     missing_median median_even median_large missing_direction direction_zero direction_large \
     missing_output_hysteresis output_hysteresis_negative output_hysteresis_inf \
+    missing_center_alpha center_alpha_zero center_alpha_large center_alpha_nan \
+    missing_center_ratio center_ratio_negative center_ratio_inf \
     missing_reacquisition reacquisition_negative reacquisition_inf; do
   cp "$artifact_dir/metadata.valid.json" "$artifact_dir/session-metadata.json"
   python3 - "$artifact_dir/session-metadata.json" "$invalid_case" <<'PY'
@@ -342,6 +346,20 @@ elif case == "output_hysteresis_negative":
     data["accepted_scale_output_hysteresis_px"] = -0.01
 elif case == "output_hysteresis_inf":
     data["accepted_scale_output_hysteresis_px"] = float("inf")
+elif case == "missing_center_alpha":
+    del data["accepted_center_smoothing_alpha"]
+elif case == "center_alpha_zero":
+    data["accepted_center_smoothing_alpha"] = 0.0
+elif case == "center_alpha_large":
+    data["accepted_center_smoothing_alpha"] = 1.01
+elif case == "center_alpha_nan":
+    data["accepted_center_smoothing_alpha"] = float("nan")
+elif case == "missing_center_ratio":
+    del data["accepted_center_max_correction_ratio"]
+elif case == "center_ratio_negative":
+    data["accepted_center_max_correction_ratio"] = -0.01
+elif case == "center_ratio_inf":
+    data["accepted_center_max_correction_ratio"] = float("inf")
 elif case == "missing_reacquisition":
     del data["max_reacquisition_center_distance"]
 elif case == "reacquisition_negative":

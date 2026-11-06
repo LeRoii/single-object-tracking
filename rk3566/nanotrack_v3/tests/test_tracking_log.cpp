@@ -97,6 +97,8 @@ void test_adaptive_coast_serialization() {
   config.accepted_scale_median_window_frames = 5;
   config.accepted_scale_direction_confirm_frames = 3;
   config.accepted_scale_output_hysteresis_px = 0.75F;
+  config.accepted_center_smoothing_alpha = 0.35F;
+  config.accepted_center_max_correction_ratio = 0.25F;
   config.max_reacquisition_center_distance = 0.75F;
   apply_controller_config_metadata(metadata, config);
   auto json = tracking_session_metadata_json(metadata);
@@ -109,6 +111,8 @@ void test_adaptive_coast_serialization() {
                   metadata.accepted_scale_median_window_frames == 5 &&
                   metadata.accepted_scale_direction_confirm_frames == 3 &&
                   metadata.accepted_scale_output_hysteresis_px == 0.75F &&
+                  metadata.accepted_center_smoothing_alpha == 0.35F &&
+                  metadata.accepted_center_max_correction_ratio == 0.25F &&
                   metadata.max_reacquisition_center_distance == 0.75F &&
                   contains(json, "\"max_accepted_scale_step_ratio\": 0.050000") &&
                   contains(json, "\"accepted_scale_deadband_ratio\": 0.020000") &&
@@ -116,6 +120,8 @@ void test_adaptive_coast_serialization() {
                   contains(json, "\"accepted_scale_median_window_frames\": 5") &&
                   contains(json, "\"accepted_scale_direction_confirm_frames\": 3") &&
                   contains(json, "\"accepted_scale_output_hysteresis_px\": 0.750000") &&
+                  contains(json, "\"accepted_center_smoothing_alpha\": 0.350000") &&
+                  contains(json, "\"accepted_center_max_correction_ratio\": 0.250000") &&
                   contains(json, "\"max_reacquisition_center_distance\": 0.750000"),
               "metadata uses effective configuration instead of schema defaults");
   struct NonfiniteSetting {
@@ -133,6 +139,12 @@ void test_adaptive_coast_serialization() {
       {&TrackingSessionMetadata::accepted_scale_output_hysteresis_px,
        std::numeric_limits<float>::quiet_NaN(),
        "nonfinite accepted scale output hysteresis is rejected before JSON output"},
+      {&TrackingSessionMetadata::accepted_center_smoothing_alpha,
+       std::numeric_limits<float>::quiet_NaN(),
+       "nonfinite accepted center smoothing alpha is rejected before JSON output"},
+      {&TrackingSessionMetadata::accepted_center_max_correction_ratio,
+       std::numeric_limits<float>::infinity(),
+       "nonfinite accepted center correction ratio is rejected before JSON output"},
       {&TrackingSessionMetadata::max_reacquisition_center_distance,
        -std::numeric_limits<float>::infinity(),
        "nonfinite recovery center distance is rejected before JSON output"},
