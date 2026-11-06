@@ -231,11 +231,44 @@ void test_initialization_events() {
               "verified multiword class labels remain one structured field");
 }
 
+void test_center_filter_events() {
+  using namespace nanotrack;
+  DebugTelemetry telemetry(1000);
+  RuntimeFrameResult accepted = frame_result(90);
+  accepted.plan.motion_predicted_bbox = BBox{8, 18, 30, 40};
+  accepted.output.selected_observation_bbox = BBox{12, 22, 30, 40};
+  accepted.output.center_innovation_x = 4.0F;
+  accepted.output.center_innovation_y = 4.0F;
+  accepted.output.center_correction_x = 2.0F;
+  accepted.output.center_correction_y = 2.0F;
+  accepted.output.center_correction_limited = true;
+  auto events = telemetry.frame_events(accepted, 7.0F, false);
+  expect_true(event_count(events, "center_filter") == 1 &&
+                  contains(events, "event=center_filter frame=90") &&
+                  contains(events, "raw_bbox=12.00,22.00,30.00,40.00") &&
+                  contains(events, "motion_bbox=8.00,18.00,30.00,40.00") &&
+                  contains(events, "innovation=4.000,4.000") &&
+                  contains(events, "correction=2.000,2.000") &&
+                  contains(events, "limited=1") &&
+                  contains(events, "final_bbox=10.00,20.00,30.00,40.00"),
+              "accepted center event retains raw prediction correction and final box");
+
+  RuntimeFrameResult rejected = accepted;
+  rejected.output.frame_id = 91;
+  rejected.plan.frame_id = 91;
+  rejected.output.accepted = false;
+  rejected.output.control_valid = false;
+  events = telemetry.frame_events(rejected, 7.0F, false);
+  expect_true(event_count(events, "center_filter") == 0,
+              "unaccepted frames never publish a center correction event");
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
   test_adaptive_coast_events();
+  test_center_filter_events();
 
   DebugTelemetry telemetry(3);
   RuntimeFrameResult first = frame_result(1);

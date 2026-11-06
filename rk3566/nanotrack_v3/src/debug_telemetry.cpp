@@ -247,6 +247,19 @@ std::vector<std::string> DebugTelemetry::frame_events(
     events.push_back(stream.str());
   };
   const auto& o = result.output;
+  if (o.accepted && o.selected_observation_bbox) {
+    std::ostringstream stream = event_stream("center_filter");
+    stream << " frame=" << o.frame_id
+           << " raw_bbox=" << bbox_value(*o.selected_observation_bbox)
+           << " motion_bbox=" << bbox_value(result.plan.motion_predicted_bbox)
+           << " innovation=" << o.center_innovation_x << ','
+           << o.center_innovation_y
+           << " correction=" << o.center_correction_x << ','
+           << o.center_correction_y
+           << " limited=" << (o.center_correction_limited ? 1 : 0)
+           << " final_bbox=" << bbox_value(o.bbox);
+    events.push_back(stream.str());
+  }
   if (o.occlusion_suspicion_started) emit_coast("occlusion_suspicion_start");
   if (o.occlusion_suspicion_cleared) emit_coast("occlusion_suspicion_clear");
   if (o.occlusion_hold_triggered) emit_coast("occlusion_coast_enter");

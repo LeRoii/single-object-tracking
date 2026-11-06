@@ -1,6 +1,7 @@
 #include "long_term_runtime.hpp"
 #include "target_class_session.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -254,6 +255,8 @@ void test_runtime_commits_stabilized_bbox(const nanotrack::ImageView& image) {
   config.accepted_scale_median_window_frames = 5;
   config.accepted_scale_direction_confirm_frames = 3;
   config.accepted_scale_output_hysteresis_px = 0.75F;
+  config.accepted_center_smoothing_alpha = 0.35F;
+  config.accepted_center_max_correction_ratio = 0.25F;
   config.max_center_distance = 10.0F;
   config.max_area_log_change = 10.0F;
   config.max_aspect_log_change = 10.0F;
@@ -261,19 +264,30 @@ void test_runtime_commits_stabilized_bbox(const nanotrack::ImageView& image) {
   FakeDetector detector;
   LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
   runtime.initialize(image, BBox{40, 30, 100, 48}, 0, 0);
+  float previous_center = 90.0F;
+  float maximum_final_center_step = 0.0F;
   for (int frame = 1; frame <= 16; ++frame) {
     const float height = frame > 8 && frame % 2 == 1 ? 49.0F : 48.0F;
-    tracker.reliable_bbox = BBox{25, 54.0F - 0.5F * height, 150, height};
+    const float raw_center = frame > 8 && frame % 2 == 1 ? 80.0F : 100.0F;
+    tracker.reliable_bbox =
+        BBox{raw_center - 75.0F, 54.0F - 0.5F * height, 150, height};
     const RuntimeFrameResult result =
         runtime.process_frame(image, frame, frame * 40);
     expect_true(result.output.accepted && tracker.commit_calls == frame &&
                     same_bbox(tracker.committed_bbox, result.output.bbox),
                 "runtime commits each frame's exact final emitted box");
+    const float final_center =
+        result.output.bbox.x + 0.5F * result.output.bbox.width;
+    maximum_final_center_step = std::max(
+        maximum_final_center_step, std::fabs(final_center - previous_center));
+    previous_center = final_center;
     if (frame > 8) {
       expect_true(result.output.bbox.height == 48.0F,
                   "runtime commit keeps alternating accepted height sticky");
     }
   }
+  expect_true(maximum_final_center_step < 10.0F,
+              "runtime commit follows stabilized center rather than alternating raw center");
   const int commits_before_reject = tracker.commit_calls;
   tracker.emit_reliable = false;
   const RuntimeFrameResult rejected = runtime.process_frame(image, 17, 680);

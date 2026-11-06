@@ -554,3 +554,20 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 当前证据支持的根因是：新目标小且纹理/边缘歧义更强，anchor/recent 两模板定位中心明显分歧；现有控制器逐帧按质量/分数选择观测后，对 accepted 中心没有时间滤波或迟滞，所选峰值直接成为最终框并反馈给下一帧，所以用户看到明显位置抖动。PSR/peak-margin 对单张响应图的可靠性判断不能表达双模板中心分歧，继续降低或提高现有质量门都不是位置抖动的直接修复。
 - 最小后续方向应保持现有尺度和质量参数不变，先为 accepted 中心增加基于 motion prediction 的单一时间稳定层，并用“交替位置噪声应抑制、真实匀速移动应缓慢跟随、non-accepted/恢复路径不错误推进”的主机失败测试约束；先处理选择后的共同输出可同时覆盖同模板噪声和模板切换放大，避免同时改模板选择和中心滤波而无法归因。未经用户明确确认，本节没有修改代码、配置、阈值或远程状态。
 - 这是无位置真值的人工功能诊断，能够证明输出中心高频变化与用户观感一致，不能给出像素精度或断言第 8 次遮挡行为已正确实现。板上当前没有运行中的候选或正式程序。
+
+## 2026-11-06 可见光 accepted 中心运动感知稳定层本地主机实现
+
+- 时间：`2026-11-06T21:59:28+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；诊断后的源码基线为 `8972d6ff9badae9675f8eba7149eca5d8064900e`，设计提交为 `9a53c90`，计划提交为 `a10f389`，配置/证据契约提交为 `f44bb78`，中心状态估计提交为 `0fa4740`；遥测、运行时回归和本节记录随同一后续提交形成，准确提交号以本节所在 Git 提交为准。
+- 用户确认的设计与实施计划分别为 `docs/superpowers/specs/2026-11-06-visible-center-state-estimation-design.md`（SHA-256 `d8b08618fe3d5ff91be003ae68ddcb8660a08833658a83d32d683ed0a70e5509`）和 `docs/superpowers/plans/2026-11-06-visible-center-state-estimation.md`（SHA-256 `6e339c8f6e46cf3a1405c1624ceb9b999505369bc6889fb35c922c8140a67dce`）。最终随包可见光配置 `rk3566/nanotrack_v3/config/visible-default.conf` SHA-256 为 `54dcc973feed11ad3e9e7838c8f35e86b0d587d5aa143863a625c849fa5dae19`。
+- 保持可见光质量门 `reliable_psr/weak_psr=4.2/4.0`、peak margin `0.04/0.02`、双模板选择、恢复门、motion 参数以及既有尺度时间滤波全部不变。新增可见光有效设置 `accepted_center_smoothing_alpha=0.35` 和 `accepted_center_max_correction_ratio=0.25`；通用及红外兼容值为 `1.0/0.0`，其中零 ratio 表示不限制修正，故兼容配置仍精确输出所选原始中心。两个字段进入配置解析、合法性校验、identity、schema-9 session metadata 和板端证据校验；没有改变 tracking CSV 列或 schema 版本。
+- 普通 accepted 帧现在以 `SearchPlan::motion_predicted_bbox` 中心为先验，计算所选原始观察中心的二维 innovation；先把 innovation 的欧氏长度限制为 `0.25 * sqrt(final_width * final_height)`，再以 `0.35` 融合，最后用既有 frame-safe centering helper 重建最终框。尺度仍由既有时间滤波独立产生。确认重捕帧不与丢失前预测混合，而是一次采用已确认原始中心并由该唯一最终框重置 motion。rejected、coast 和 abort 路径不产生 accepted 中心修正。
+- 最终框仍是控制器当前状态、motion correction、runtime `commit_bbox()`、模板暂存、适配器输出和既有显示/控制路径的唯一共同框；没有引入“显示平滑但 NanoTrack 继续提交原始框”的双框。`ControllerOutput` 同时保留 selected 原始 bbox、原始 innovation、实际 correction 和是否触发限幅。accepted 帧新增 `DEBUG_EVENT event=center_filter`，逐帧同时输出 `raw_bbox`、`motion_bbox`、`innovation`、`correction`、`limited` 和 `final_bbox`，便于实机复测时判断网络/模板选择原始噪声是否仍存在，避免平滑掩盖根因。
+- TDD 第一轮 RED：新增配置字段不存在，`test_controller_support.cpp` 编译明确报字段缺失；板端 schema 负例同时显示校验器错误放行 `missing_center_alpha`。最小契约实现后，`controller_support|tracking_log|verify_board_schema` 为 `3/3` 通过，随后完整 CTest `18/18` 通过。
+- TDD 第二轮 RED：中心诊断字段尚不存在，`test_long_term_controller.cpp` 编译失败。最小实现后，聚焦测试覆盖并通过：`1.0/0.0` 精确兼容、交替 40 像素原始跳变的最终单帧位移小于 10 像素、精确/略超限幅边界、对角限幅保持方向、持续同向移动逐帧推进、1 像素目标有限性、画面边缘、rejected/abort 隔离和带陈旧速度的确认重捕原始中心重置。
+- TDD 第三轮 RED：运行时最终框提交回归已经通过，但 `debug_telemetry` 因不存在 `center_filter` 事件失败；这符合运行时提交路径本身未改、只新增集成回归的边界。加入 accepted-only 遥测后，`debug_telemetry|long_term_runtime` 为 `2/2` 通过。最终实际执行 `cmake --build /tmp/nanotrack-visible-center-state-host -j4`、`ctest --test-dir /tmp/nanotrack-visible-center-state-host --output-on-failure` 和 `git diff --check`，结果 CTest `18/18` 通过、零失败，格式检查无输出。
+
+### 证据边界与下一步
+
+- 本节只证明 RKNN-independent 主机上的配置契约、二维限幅公式、兼容行为、恢复/失败隔离、单一最终框提交和可审计遥测。没有写入 WSL，没有执行 A6 交叉编译，没有生成或部署新二进制/配置，没有连接吊舱，也没有停止或启动任何远程进程。
+- 因此当前不能声明小目标框位置抖动已经在吊舱上改善，也不能凭主机测试断言跟踪精度、响应延迟或快速真实运动表现合格。下一步只有在用户另行明确授权后，才能按准确源码提交和配置哈希交叉编译、隔离部署，并由人使用同目标复测；应同时保留 `center_filter` 原始/最终日志以量化 P50/P95 位移、限幅比例和真实运动滞后。
+- 本轮只修改本任务拥有的 `docs/progress/cross-compile.md`，没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`；公共 handoff 和真实吊舱人工验收边界保持不变。
