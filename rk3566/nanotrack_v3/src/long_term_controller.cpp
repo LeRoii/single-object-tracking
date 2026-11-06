@@ -633,7 +633,10 @@ BBox LongTermController::stabilize_accepted_center(
 
 void LongTermController::accept_observation(
     const SearchPlan& plan, const EvaluatedObservation& selected,
-    bool reacquired, ControllerOutput& output) {
+    AcceptedObservationPath acceptance_path, ControllerOutput& output) {
+  const bool reacquired =
+      acceptance_path != AcceptedObservationPath::kDirect &&
+      acceptance_path != AcceptedObservationPath::kShortConfirmation;
   DimensionScaleState next_width = width_scale_state_;
   DimensionScaleState next_height = height_scale_state_;
   if (reacquired) {
@@ -647,14 +650,17 @@ void LongTermController::accept_observation(
   output.accepted = true;
   output.control_valid = true;
   output.reacquired = reacquired;
+  output.accepted_observation_path = acceptance_path;
+  // Any accepted observation closes an exhausted coast episode. A true
+  // reacquisition additionally resets its evidence and motion state below.
+  hold_used_for_loss_ = false;
+  hold_remaining_frames_ = 0;
+  occlusion_coast_age_frames_ = 0;
+  coast_probe_candidate_.reset();
+  frozen_scale_reference_.reset();
   if (reacquired) {
     motion_.initialize(output.bbox, plan.timestamp_ms, frame_size_.width,
                        frame_size_.height);
-    hold_used_for_loss_ = false;
-    hold_remaining_frames_ = 0;
-    occlusion_coast_age_frames_ = 0;
-    coast_probe_candidate_.reset();
-    frozen_scale_reference_.reset();
     occlusion_evidence_.reset();
     occlusion_suspicion_frames_ = 0;
     occlusion_decision_ = occlusion_evidence_.observe(OcclusionEvidenceInput{
@@ -1000,7 +1006,9 @@ ControllerOutput LongTermController::finish_frame(
       output.occlusion_probe_confirmation_hits = 1;
     } else if (plan.occlusion_probe_type == OcclusionProbeType::kConfirm && probe_hit &&
                output.occlusion_probe_cross_gate.value_or(false)) {
-      accept_observation(plan, *selected, true, output);
+      accept_observation(plan, *selected,
+                         AcceptedObservationPath::kOcclusionProbeRecovery,
+                         output);
       output.motion_control_authorized = false;
       output.occlusion_hold_remaining_frames = 0;
       output.occlusion_probe_confirmation_hits = 2;
@@ -1022,7 +1030,7 @@ ControllerOutput LongTermController::finish_frame(
   }
 
   bool accepted = false;
-  bool reacquired = false;
+  AcceptedObservationPath acceptance_path = AcceptedObservationPath::kDirect;
   const bool detector_verification_active =
       plan.hypothesis_source == HypothesisSource::kDetector ||
       active_detector_candidate_.has_value();
@@ -1126,9 +1134,12 @@ ControllerOutput LongTermController::finish_frame(
         } else if (add_confirmation(plan.frame_id,
                                     selected->observation.bbox)) {
           accepted = true;
-          reacquired = plan.mode == TrackingMode::kLocalRecovery ||
-                       plan.mode == TrackingMode::kAssistedRecovery ||
-                       plan.mode == TrackingMode::kLost;
+          acceptance_path =
+              plan.mode == TrackingMode::kLocalRecovery ||
+                      plan.mode == TrackingMode::kAssistedRecovery ||
+                      plan.mode == TrackingMode::kLost
+                  ? AcceptedObservationPath::kLocalOrDeeperRecovery
+                  : AcceptedObservationPath::kShortConfirmation;
         }
       }
     }
@@ -1174,7 +1185,7 @@ ControllerOutput LongTermController::finish_frame(
         active.confirmation_boxes.size() >=
             static_cast<std::size_t>(config_.confirmation_required)) {
       accepted = true;
-      reacquired = true;
+      acceptance_path = AcceptedObservationPath::kDetectorRecovery;
     } else if (active.locked &&
                active.confirmation_attempts >=
                    static_cast<std::size_t>(config_.confirmation_window)) {
@@ -1183,7 +1194,7 @@ ControllerOutput LongTermController::finish_frame(
   }
 
   if (accepted) {
-    accept_observation(plan, *selected, reacquired, output);
+    accept_observation(plan, *selected, acceptance_path, output);
   } else {
     motion_.freeze_scale(current_bbox_.width, current_bbox_.height);
     output.bbox = motion_.current_bbox();
@@ -1207,7 +1218,7 @@ ControllerOutput LongTermController::finish_frame(
         recent->quality == QualityLevel::kReliable &&
         output.template_iou >= config_.template_agreement_iou;
     if (accepted && templates_confirm_staged_recent &&
-        output.quality == QualityLevel::kReliable && !reacquired &&
+        output.quality == QualityLevel::kReliable && !output.reacquired &&
         !force_confirmation) {
       ++probation_reliable_frames_;
       if (probation_reliable_frames_ >= config_.recent_probation_frames) {
@@ -1223,7 +1234,7 @@ ControllerOutput LongTermController::finish_frame(
       probation_reliable_frames_ = 0;
       stable_frames_ = 0;
     }
-  } else if (accepted && !reacquired && !force_confirmation &&
+  } else if (accepted && !output.reacquired && !force_confirmation &&
              stable_frames_ >= config_.stable_frames_for_update &&
              plan.timestamp_ms - last_recent_update_ms_ >=
                  config_.recent_update_interval_ms) {

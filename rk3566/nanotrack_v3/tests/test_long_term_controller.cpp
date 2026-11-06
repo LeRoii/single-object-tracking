@@ -509,6 +509,9 @@ void test_motion_aware_accepted_center_filter() {
               "horizontal limiting does not invent vertical correction");
   expect_true(output.center_correction_limited,
               "just-over-boundary innovation reports limiting");
+  expect_true(output.accepted_observation_path ==
+                  AcceptedObservationPath::kDirect,
+              "ordinary reliable tracking reports the direct acceptance path");
 
   LongTermController diagonal(center_filter_config());
   diagonal.initialize(initial, 0, 0, {400, 300});
@@ -591,7 +594,9 @@ void test_motion_aware_accepted_center_filter() {
   output = short_confirmation.finish_frame(
       plan, reliable_pair(plan, short_confirmed_raw, 69), std::nullopt);
   expect_true(output.accepted && !output.reacquired &&
-                  output.center_correction_limited,
+                  output.center_correction_limited &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kShortConfirmation,
               "short uncertain confirmation remains on the bounded center path");
   expect_true(center_x(output.bbox) < center_x(short_confirmed_raw) &&
                   center_x(output.bbox) > center_x(initial),
@@ -618,7 +623,9 @@ void test_motion_aware_accepted_center_filter() {
   plan = recovery.begin_frame(3, 280, false);
   output = recovery.finish_frame(
       plan, reliable_pair(plan, recovered_raw, 71), std::nullopt);
-  expect_true(output.accepted && output.reacquired,
+  expect_true(output.accepted && output.reacquired &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kLocalOrDeeperRecovery,
               "second consistent recovery hit confirms reacquisition");
   expect_near(center_x(output.bbox), center_x(recovered_raw), 1e-5F,
               "confirmed reacquisition uses the raw center instead of stale prediction");
@@ -1176,6 +1183,8 @@ void test_coast_probe_gates_and_recovery() {
                     output.occlusion_probe_cross_gate.value_or(false),
                 "confirmed recovery exposes successful cross-frame gate");
     expect_true(output.accepted && output.reacquired && output.control_valid &&
+                    output.accepted_observation_path ==
+                        AcceptedObservationPath::kOcclusionProbeRecovery &&
                     !output.motion_control_authorized &&
                     output.mode == TrackingMode::kTracking && output.bbox.x == 64 &&
                     output.occlusion_probe_type == OcclusionProbeType::kConfirm &&
@@ -1908,6 +1917,8 @@ int main() {
   output = candidate_lock.finish_frame(
       plan, reliable_pair(plan, plan.predicted_bbox, 32), std::nullopt);
   expect_true(output.control_valid && output.accepted && output.reacquired &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kDetectorRecovery &&
                   output.detector_confirmation_hits == 2 &&
                   output.detector_confirmation_attempts == 3,
               "two agreeing hits in three locked frames reacquire");

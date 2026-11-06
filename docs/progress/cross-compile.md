@@ -595,3 +595,17 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 最小后续方向应先拆分短暂确认恢复与真正重捕获：1--2 帧 uncertain 后的可靠确认继续走受限中心修正，只有 detector/遮挡确认、local/assisted recovery 或明确长间隔恢复才一次采用原始中心。其次再用连续同向创新的时间证据增加追赶速度，避免简单整体提高 alpha 后重新放大静止目标噪声。两项应分开做失败测试和单变量实机验证。
 - A6 生产适配层没有编入主机 `DebugTelemetry` 的 `center_filter` 事件，因此板端日志没有直接输出 `limited` 标志；本轮通过 `AI_TRACK_DIAG` 与两个 `AI_TRACK_OBS` 的指标匹配重建 selected 观察并完成统计。这不影响上述跳变证据，但后续若修改状态语义，应把 selected raw、实际 correction、limited 和 `reacquired` 原因直接加入生产诊断，减少离线推断。
 - 本轮没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`。共享测试配置仍是本轮候选配置，但板上没有运行中的正式或候选程序；正式 `/app/bin/viewlink_app` 未替换。真实吊舱体验仍只能由人验收。
+
+## 2026-11-06 短暂 uncertain 与真正重捕获分流的本地主机实现
+
+- 时间：`2026-11-06T22:48:44+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；实施基线为 `db5ee1cb26d101bcd343d54403c0e8d32c35204e`，第一阶段行为提交为 `b38731c3e5733b7a7fdaff7dd66a0cc3b31bb997`，路径遥测和本节记录随下一提交形成。
+- 保持可见光中心参数 `accepted_center_smoothing_alpha=0.35`、`accepted_center_max_correction_ratio=0.25` 以及质量、模板、尺度、恢复时间、detector 和伺服参数全部不变。普通 direct accepted 行为不变；在 `kTracking`/`kUncertain` 中完成的两帧确认现在标为短确认，继续使用尺度历史、受限中心融合和 `motion_.correct()`，不再把中心直接贴回原始观察。只有 `kLocalRecovery`、`kAssistedRecovery`、`kLost`、detector 确认及遮挡 probe 确认仍标为真正重捕获，并保留原始中心、尺度证据重置和 motion reinitialize。
+- 新增 `AcceptedObservationPath`，将 accepted 输出区分为 `direct`、`short_confirmation`、`local_or_deeper_recovery`、`detector_recovery` 和 `occlusion_probe_recovery`。主机 `center_filter` 遥测新增 `acceptance_path` 与 `reacquired`，同时保留 raw/motion/innovation/correction/limited/final 字段。短 coast 配置暴露出一个既有状态耦合：若短确认不再走重捕获分支，过期 coast latch 会阻止以后重新触发遮挡 coast；现已让任一 accepted 路径关闭过期 coast 临时状态，而只有真正重捕获才重置遮挡证据和 motion。
+- TDD RED 先在一帧 gap 后确认用例中复现旧实现的 `reacquired=true` 和原始中心跳变；最小分类改动后 `long_term_controller|long_term_runtime` 为 `2/2` 通过，形成提交 `b38731c`。路径测试随后因 enum/输出字段不存在按预期编译失败；实现五类路径和遥测后聚焦测试 `3/3` 通过。第一次完整回归为 `17/18`，唯一失败是旧 replay 仍把短 gap 和一帧 coast 结束后的确认断言为 motion reinitialize；按新语义更新断言并修复过期 coast latch 后，`long_term_controller|long_term_runtime|debug_telemetry|long_term_replay` 为 `4/4` 通过。
+- 最终实际执行 `cmake --build /tmp/nanotrack-visible-center-state-host -j4`、`ctest --test-dir /tmp/nanotrack-visible-center-state-host --output-on-failure` 和 `git diff --check`；结果 CTest `18/18` 通过、零失败，格式检查无输出。测试覆盖 direct、短确认、local-or-deeper、detector、遮挡 probe 五类输出，短确认后的下一帧恢复 direct，以及短 coast 结束后仍可重新触发新的 coast。
+
+### 证据边界与下一步
+
+- 本节只证明 RKNN-independent 主机控制器语义、运行时最终框提交、回放状态和调试遥测。没有写入 WSL，没有执行新的 A6 交叉编译，没有生成或部署新的吊舱程序/配置，也没有启动或停止远程进程；因此不能据此宣称小目标框抖动已在吊舱上改善。
+- 下一步应在额度充足并获得用户明确授权后，以最终准确提交同步生产输入、交叉编译并隔离部署，再由人使用同一小目标复测。生产 `AI_TRACK_DIAG` 适配层还需在 A6 集成时加入 acceptance path、reacquired、selected raw center、实际 correction 和 limited，才能直接量化短确认跳点是否消失。
+- 本轮只修改本任务拥有的 `docs/progress/cross-compile.md`，没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`；真实吊舱验收仍只能由人报告。

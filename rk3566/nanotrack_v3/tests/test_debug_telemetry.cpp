@@ -242,6 +242,8 @@ void test_center_filter_events() {
   accepted.output.center_correction_x = 2.0F;
   accepted.output.center_correction_y = 2.0F;
   accepted.output.center_correction_limited = true;
+  accepted.output.accepted_observation_path =
+      AcceptedObservationPath::kShortConfirmation;
   auto events = telemetry.frame_events(accepted, 7.0F, false);
   expect_true(event_count(events, "center_filter") == 1 &&
                   contains(events, "event=center_filter frame=90") &&
@@ -250,12 +252,25 @@ void test_center_filter_events() {
                   contains(events, "innovation=4.000,4.000") &&
                   contains(events, "correction=2.000,2.000") &&
                   contains(events, "limited=1") &&
+                  contains(events, "acceptance_path=short_confirmation") &&
+                  contains(events, "reacquired=0") &&
                   contains(events, "final_bbox=10.00,20.00,30.00,40.00"),
               "accepted center event retains raw prediction correction and final box");
 
+  RuntimeFrameResult recovery = accepted;
+  recovery.output.frame_id = 91;
+  recovery.plan.frame_id = 91;
+  recovery.output.reacquired = true;
+  recovery.output.accepted_observation_path =
+      AcceptedObservationPath::kDetectorRecovery;
+  events = telemetry.frame_events(recovery, 7.0F, false);
+  expect_true(contains(events, "acceptance_path=detector_recovery") &&
+                  contains(events, "reacquired=1"),
+              "true recovery center event identifies its reset path");
+
   RuntimeFrameResult rejected = accepted;
-  rejected.output.frame_id = 91;
-  rejected.plan.frame_id = 91;
+  rejected.output.frame_id = 92;
+  rejected.plan.frame_id = 92;
   rejected.output.accepted = false;
   rejected.output.control_valid = false;
   events = telemetry.frame_events(rejected, 7.0F, false);

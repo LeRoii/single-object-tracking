@@ -72,6 +72,21 @@ const char* rejection_name(DetectorCandidateRejection rejection) {
   return "UNKNOWN";
 }
 
+const char* acceptance_path_name(AcceptedObservationPath path) {
+  switch (path) {
+    case AcceptedObservationPath::kDirect: return "direct";
+    case AcceptedObservationPath::kShortConfirmation:
+      return "short_confirmation";
+    case AcceptedObservationPath::kLocalOrDeeperRecovery:
+      return "local_or_deeper_recovery";
+    case AcceptedObservationPath::kDetectorRecovery:
+      return "detector_recovery";
+    case AcceptedObservationPath::kOcclusionProbeRecovery:
+      return "occlusion_probe_recovery";
+  }
+  return "unknown";
+}
+
 std::string sanitized_value(const std::string& value) {
   std::string sanitized;
   sanitized.reserve(value.size());
@@ -257,6 +272,9 @@ std::vector<std::string> DebugTelemetry::frame_events(
            << " correction=" << o.center_correction_x << ','
            << o.center_correction_y
            << " limited=" << (o.center_correction_limited ? 1 : 0)
+           << " acceptance_path="
+           << acceptance_path_name(o.accepted_observation_path)
+           << " reacquired=" << (o.reacquired ? 1 : 0)
            << " final_bbox=" << bbox_value(o.bbox);
     events.push_back(stream.str());
   }

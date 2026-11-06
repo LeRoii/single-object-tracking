@@ -40,6 +40,14 @@ struct SearchPlan {
   bool motion_control_authorized = false;
 };
 
+enum class AcceptedObservationPath {
+  kDirect,
+  kShortConfirmation,
+  kLocalOrDeeperRecovery,
+  kDetectorRecovery,
+  kOcclusionProbeRecovery,
+};
+
 struct ControllerOutput {
   std::uint64_t frame_id = 0;
   std::int64_t timestamp_ms = 0;
@@ -49,6 +57,8 @@ struct ControllerOutput {
   bool control_valid = false;
   bool accepted = false;
   bool reacquired = false;
+  AcceptedObservationPath accepted_observation_path =
+      AcceptedObservationPath::kDirect;
   TemplateKind selected_template = TemplateKind::kAnchor;
   TemplateAction template_action = TemplateAction::kNone;
   ResponseMetrics selected_metrics{};
@@ -233,7 +243,7 @@ class LongTermController {
                                  ControllerOutput& output) const;
   void accept_observation(const SearchPlan& plan,
                           const EvaluatedObservation& selected,
-                          bool reacquired,
+                          AcceptedObservationPath acceptance_path,
                           ControllerOutput& output);
   DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,

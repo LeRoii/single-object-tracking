@@ -91,8 +91,10 @@ int main() {
   expect_true(!output.control_valid,
               "first post-occlusion match remains under confirmation");
   output = step(normal, 13, 520, initial);
-  expect_true(output.reacquired && output.control_valid,
-              "short occlusion recovers after two consistent frames");
+  expect_true(!output.reacquired && output.control_valid &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kShortConfirmation,
+              "short gap resumes through bounded confirmation after two consistent frames");
 
   LongTermController assisted(config);
   assisted.initialize(initial, 0, 0, frame_size,
@@ -284,8 +286,14 @@ int main() {
     tick = coast.begin_frame(11 + duration, 440 + duration * 40, false);
     output = coast.finish_frame(
         tick, {reliable_for_plan(tick, initial, 11 + duration)}, std::nullopt);
-    expect_true(output.reacquired && output.control_valid,
-                "confirmed NanoTrack recovery reinitializes motion after coast");
+    const bool reached_local_recovery = duration > 1;
+    const auto expected_path = reached_local_recovery
+        ? AcceptedObservationPath::kLocalOrDeeperRecovery
+        : AcceptedObservationPath::kShortConfirmation;
+    expect_true(output.reacquired == reached_local_recovery &&
+                    output.control_valid &&
+                    output.accepted_observation_path == expected_path,
+                "post-coast confirmation resets only at local-or-deeper recovery");
     for (int frame = 12 + duration; frame <= 18 + duration; ++frame)
       step(coast, frame, frame * 40, initial);
     tick = coast.begin_frame(19 + duration, (19 + duration) * 40, false);
