@@ -571,3 +571,27 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 本节只证明 RKNN-independent 主机上的配置契约、二维限幅公式、兼容行为、恢复/失败隔离、单一最终框提交和可审计遥测。没有写入 WSL，没有执行 A6 交叉编译，没有生成或部署新二进制/配置，没有连接吊舱，也没有停止或启动任何远程进程。
 - 因此当前不能声明小目标框位置抖动已经在吊舱上改善，也不能凭主机测试断言跟踪精度、响应延迟或快速真实运动表现合格。下一步只有在用户另行明确授权后，才能按准确源码提交和配置哈希交叉编译、隔离部署，并由人使用同目标复测；应同时保留 `center_filter` 原始/最终日志以量化 P50/P95 位移、限幅比例和真实运动滞后。
 - 本轮只修改本任务拥有的 `docs/progress/cross-compile.md`，没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`；公共 handoff 和真实吊舱人工验收边界保持不变。
+
+## 2026-11-06 accepted 中心稳定层 A6 编译与吊舱实测
+
+- 时间：`2026-11-06T22:27:00+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；生产输入提交：`216d88c558a0c2f2812620ee5e32c6dbd7d20761`。操作前工作树干净。同步到 WSL `ai_alg/nanotrack/` 并逐一核对的生产输入为：`controller_config.hpp` `d0c95e971c32880dda91dba14948eac9e98dd87d37bae8d7cb1f2b758a9eff9d`、`long_term_controller.hpp` `d515ce34c8e109c7eec324989fee3048d7b6c78a243c21832e239322eecdc8f9`、`tracking_log.hpp` `9956d7c6913d2afa70dbe08d7e6cfb9b2cb2018503a82d935f34f68d28b22791`、`controller_config.cpp` `95aad4617adadf1308a2319edeaf5065f3ce864a91edd16f968748a0d1364f6e`、`long_term_controller.cpp` `369c4dab97d81604b80e5ee342c643ab6e80dbf7b2d4db3b4e32b447466cda06`、`tracking_log.cpp` `1201f87910150b1dea9a12c017273316971123b362db0e90652c2fbd905e4995` 和 `visible-default.conf` `54dcc973feed11ad3e9e7838c8f35e86b0d587d5aa143863a625c849fa5dae19`。写入前备份位于 `ai_alg/backup-before-center-216d88c-20261106/`。
+- 实际执行 `BUILD_JOBS=4 ./run.sh --platform A6`，退出码为 `0`。构建日志 `deployment_b827/build-A6-center-216d88c.log` 为 2,525 bytes、SHA-256 `377abb4ce18fdbee0d3bdc1a2f128297eb728df69fa5197e9beee8c94fce63d4`。`build_A6/viewlink_app` 为 ARM aarch64 ELF、34,907,504 bytes、SHA-256 `78608bea1c9dfcb4151331c50c4c8cca497e04fd6ddc9c671bd7017087c600e5`；`build_A6/ai_alg/libAI.a` 为 614,606 bytes、SHA-256 `e075f6ca90956f849a24532333bbb481c4f9791214a93f33daf5107b8b5b16a7`。程序字符串包含 `accepted_center_smoothing_alpha` 和 `accepted_center_max_correction_ratio`。
+- 候选只部署到 `/app/nanotrack_216d88c_center_state_20261106/bin/viewlink_app`，板端程序和配置哈希与 WSL 一致。共享测试配置原版本备份为候选目录 `config/visible-default.pre-216d88c.conf`，SHA-256 `dbd412b7df5998fb52b3faa55327754322bb5fcd8a7bdf7c4c0d44127c8871f6`；测试时共享配置更新为 `54dcc973feed11ad3e9e7838c8f35e86b0d587d5aa143863a625c849fa5dae19`。受保护的 `/app/bin/viewlink_app` 始终保持 SHA-256 `a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357`。
+- 隔离候选以 PID `17914` 启动；`/proc/17914/exe` 哈希与候选一致，RTSP `554` 由该 PID 监听。三个 NanoTrack RKNN 与 VisDrone9 RKNN 均记录 API `1.6.0 (9a7b5d24c@2023-12-13T17:31:11)`、driver `0.9.3` 并完成初始化。用户报告测试完成后再次核验 PID 路径；TERM 等待 10 秒仍未退出，只对 PID `17914` 执行 KILL，并确认无 `viewlink_app` 或 `app_watchdog` 残留。
+- 冻结 stdout 为 32,867 bytes、SHA-256 `f1d5a077b64a9c1e6a785181446f8d7c327c4546334a59627731290f6b2cecb1`；stderr 为 2,262,022 bytes、SHA-256 `a6abd5b4c434e99c7ceefc76e69fa854c9a95eb0926ed28060a173ab1bd5aae5`。板端日志位于 `/app/nanotrack_216d88c_center_state_20261106/log/`。含日志、实际配置和旧配置副本的冻结包在板端 `/tmp/nanotrack-216d88c-center-test-20261106.tgz`、WSL `deployment_b827/nanotrack-216d88c-center-test-20261106.tgz` 和本地 `/tmp/nanotrack-216d88c-center-analysis/` 均为 382,890 bytes、SHA-256 `a3e19a3176ffbdb397c90325ef1ab429de1ad0787cdc22a2b990da785ba1a7fe`。
+
+### 十二次点选的中心、质量和恢复结果
+
+- 日志实际包含 12 次初始化和 3,017 个 `DO_TRACK` 帧。`Reliable/Weak/Rejected=2951/40/26`，accepted 2,617；模式为 `TRACKING/UNCERTAIN/LOCAL_RECOVERY=2617/382/18`，没有 assisted recovery、lost 或 occlusion hold，最长连续未接受为 7 帧。全部十二段均重新进入 tracking，但这是无位置真值的功能日志，不能据此证明像素精度或长期吊舱验收通过。
+- 连续 accepted 帧中，最终中心相邻位移 P50/P95/最大为 `5.00/7.50/11.72` 像素；上一轮未加中心稳定层的非同步对照为 `6.95/20.62/46.62` 像素。该结果直接证明平滑在连续 accepted 状态内大幅压低了尖峰；但两轮输入和吊舱轨迹未逐帧同步，不能把差值解释为精度提升。
+- 当前仍有 400 个 non-accepted 帧，其中 334 帧本身仍是 Reliable。两模板 IoU 低于 `0.30` 的比例为 300/3,017，即 `9.9%`；在 334 个 Reliable-but-not-accepted 帧中有 198 个低于该门，即 `59.3%`，两模板中心距离 P50/P95/最大为 `27.7/41.1/126.1` 像素。故本轮大量 uncertain/确认不是 PSR `4.2/4.0` 过高，而主要与 anchor/recent 位置分歧及其后续确认状态有关。
+- 关键剩余问题是 `reacquired` 语义过宽：源码在任一 non-accepted 帧后设置 `loss_start_ms_`，之后确认接受即 `reacquired=true`；中心稳定层对所有该类帧均按设计以 alpha `1.0` 绕过限幅和平滑。日志中共有 275 次这种恢复接受，占全部跟踪帧 `9.1%`，其中 189 次只经历 1 个 non-accepted 帧、70 次只经历 2 个。恢复接受跳变 P50/P95/最大为 `21.10/36.12/45.79` 像素；203/275 超过 10 像素，186/275 超过 15 像素。反之，2,331 个连续 accepted 修正相对 motion prediction 的 P95 仅 `5.83` 像素。也就是说，当前高频常态噪声已被压住，但短暂 uncertain 后周期性直接贴回原始中心，形成新的显著跳点。
+- 连续 accepted 帧所选观察中心与最终中心的距离 P50/P95/最大为 `7.57/36.03/57.72` 像素；按最终框面积计算，2,331 帧中有 1,000 帧即 `42.9%` 的观察创新超过名义 `0.25*sqrt(area)` 上限。说明固定 `0.35/0.25` 在吊舱持续缓慢运动时经常进入限幅，可能积累跟随滞后；该现象与本轮两模板低 IoU 和确认次数同时上升相关，但非同步测试不足以证明因果。
+- 尺度路径没有回归：最终宽度变化 289/3,005，即 `9.6%`，高度变化 234/3,005，即 `7.8%`，宽高单帧最大变化均为 1 像素。全部诊断仍为中心控制框 `control_err=(0,0)`；本轮分析针对的是内部真实/最终跟踪框，不是已经固定到画面中心的伺服控制框。
+
+### 诊断结论与下一步
+
+- 本轮不支持继续调低 PSR 或 peak-margin。直接问题不是网络每帧都坏，也不是尺度再次抖动，而是“双模板位置分歧触发短暂 uncertain”与“所有确认恢复帧都无条件绕过中心稳定层”组合后，约每十一帧出现一次恢复跳变。中心平滑没有掩盖原始问题：原始双模板分歧仍完整保留在 `AI_TRACK_OBS`，并且日志已经定位到稳定层在哪类状态失效。
+- 最小后续方向应先拆分短暂确认恢复与真正重捕获：1--2 帧 uncertain 后的可靠确认继续走受限中心修正，只有 detector/遮挡确认、local/assisted recovery 或明确长间隔恢复才一次采用原始中心。其次再用连续同向创新的时间证据增加追赶速度，避免简单整体提高 alpha 后重新放大静止目标噪声。两项应分开做失败测试和单变量实机验证。
+- A6 生产适配层没有编入主机 `DebugTelemetry` 的 `center_filter` 事件，因此板端日志没有直接输出 `limited` 标志；本轮通过 `AI_TRACK_DIAG` 与两个 `AI_TRACK_OBS` 的指标匹配重建 selected 观察并完成统计。这不影响上述跳变证据，但后续若修改状态语义，应把 selected raw、实际 correction、limited 和 `reacquired` 原因直接加入生产诊断，减少离线推断。
+- 本轮没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`。共享测试配置仍是本轮候选配置，但板上没有运行中的正式或候选程序；正式 `/app/bin/viewlink_app` 未替换。真实吊舱体验仍只能由人验收。
