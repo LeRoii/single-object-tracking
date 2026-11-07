@@ -1,9 +1,9 @@
-schema_version: 1
-updated_at: "2026-10-22T22:11:26+08:00"
+schema_version: 2
+updated_at: "2026-11-07T22:55:06+08:00"
 coordinator_baseline:
   branch: main
-  commit: "062dd5b1c8adfe7e79ca4fe4100f299bf5e8cc9f"
-  note: "Four task progress branches are integrated through this commit; the coordinator status update is built on top of it."
+  commit: "40002ba22bda62cffa8519f323abab5f970e0836"
+  note: "The canonical non-training test-data contract is based on this main commit; prior task-update identities remain historical records below."
 
 integrated_task_updates:
   detector_training: "700da83459b742e0d83ea28493feef6cd3103cca"
@@ -25,6 +25,69 @@ workflow:
   - publish_latest_board_validated_handoff
   - cross_compile_latest_handoff_for_production
   - human_deploy_and_test_on_real_gimbal_pod
+
+test_data:
+  policy: canonical_for_all_non_training_algorithm_tests
+  training_excluded: true
+  canonical_dataset:
+    name: occ_video_1
+    host_root: /home/u20/single-object-tracking/data/occ_video_1
+    target_environment_path: null
+    video:
+      path: /home/u20/single-object-tracking/data/occ_video_1/1.mp4
+      sha256: "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d"
+      width: 1920
+      height: 1080
+      fps_num: 30
+      fps_den: 1
+      frame_count: 271
+    annotation_metadata:
+      path: /home/u20/single-object-tracking/data/occ_video_1/annotation_metadata.json
+      sha256: "5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076"
+    occlusion_events:
+      path: /home/u20/single-object-tracking/data/occ_video_1/occlusion_events.json
+      sha256: "a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256"
+    annotation_status:
+      path: /home/u20/single-object-tracking/data/occ_video_1/annotation_status.csv
+      sha256: "e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036"
+    labels:
+      path: /home/u20/single-object-tracking/data/occ_video_1/labels
+      format: yolo_normalized_xywh
+      class_id: 0
+      class_name: car
+      target_scope: full_object
+      file_count: 271
+      manifest: /home/u20/single-object-tracking/data/occ_video_1/labels.sha256
+      manifest_sha256: "9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648"
+    occlusion_contract:
+      partial_pre_frames: [169, 171]
+      full_frames: [172, 180]
+      partial_reappearance_frame: 181
+      first_reliable_reappearance_frame: 182
+      stable_reappearance_frame: 184
+      estimated_bbox_frames: [169, 181]
+      estimated_bbox_is_observable_ground_truth: false
+      ordinary_iou_allowed_for_estimated_bbox: false
+  required_consumers:
+    - host_algorithm_regression
+    - development_board_native_validation
+    - cross_compiled_runtime_smoke_and_parity
+  deprecated_for_new_non_training_evidence:
+    - sot-v1.mp4
+    - girl_dance.mp4
+  historical_evidence_policy: >-
+    Existing reports retain their original video identities and conclusions, but
+    neither deprecated video may be used for new non-training algorithm evidence
+    after this contract update.
+  transfer_rule: >-
+    Before board or target-environment use, copy the canonical dataset, record the
+    actual destination path, and verify the video, metadata, event, status, and
+    label-manifest hashes against this contract.
+  evidence_boundary: >-
+    This is one short visible-light full-car episode with one pedestrian-overpass
+    occlusion. It is the canonical functional and regression input, but by itself
+    does not prove cross-scene generalization, long-duration stability, infrared
+    performance, or real-gimbal-pod acceptance.
 
 nanotrack:
   canonical_board_model:
