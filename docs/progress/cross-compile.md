@@ -635,3 +635,21 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 只读核对确认 WSL 工程不是 Git 仓库；当前生产适配层、控制配置、控制器、NanoTrack 源码和最新 A6 程序哈希分别为 `6cc6261a9a82d93ef571e790f2793a7d6a2a7258765c52b8478a2acb24bcb79d`、`54dcc973feed11ad3e9e7838c8f35e86b0d587d5aa143863a625c849fa5dae19`、`b9a1d875f4fae6d386c0c88da805dc338692f04454f2bb7dcf7846af91a57e2a`、`b6c5da83c280a823111a4116be728ff7e9ac6e673ccffd75116faa4280dcce8c` 和 `221c00e32ed0b59f4ea4c9e27b122dd43248cb9d7147ede2823f412dd77725ad`。
 - `deployment_b827/` 被确认是混合历史目录：其 `bin/viewlink_app` 哈希为 `80554ffe9bde5c0ea0a729c56902d657d548214018eee84a445f3203c22f4692`，不是当前 `build_A6/viewlink_app`；其 `config/visible-default.conf` 也缺少两个最新中心平滑字段。指南明确禁止把该目录或任何 `backup-*` 当作最新源码/程序。
 - 本轮只编写文档，没有修改 WSL 源码、配置或二进制，没有执行新的交叉编译、板端部署或远程进程操作，也没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`。
+
+## 2026-11-07 真实 `rect[0]` 吊舱闭环复测
+
+- 时间：`2026-11-07T10:26:35+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；输入 HEAD 为 `b75deac6f1601b56e701a502093a4bd0dbc053ef`，开始时工作树干净。本轮没有修改源码、配置或二进制。
+- 启动前确认板端无 `viewlink_app`，并复核隔离候选 `/app/nanotrack_f5023b3_real_rect0_20261107/bin/viewlink_app` SHA-256 为 `221c00e32ed0b59f4ea4c9e27b122dd43248cb9d7147ede2823f412dd77725ad`；受保护的 `/app/bin/viewlink_app` 仍为 `a60b61a34cdaf0b43d27726a5ce311e9e995a8d34bb874657c944eabd86fb357`。运行配置 `/app/nanotrack_b827_candidate/config/visible-default.conf` 为 `54dcc973feed11ad3e9e7838c8f35e86b0d587d5aa143863a625c849fa5dae19`。
+- 实际启动 PID `7996`，`/proc/7996/exe` 路径和哈希均与候选一致；三个 NanoTrack 模型和 VisDrone9 detector 均记录 RKNN API `1.6.0`、driver `0.9.3` 并完成加载，RTSP 客户端完成 OPTIONS/DESCRIBE/SETUP。用户点选静止目标并报告吊舱开始移动但框未锁住目标。
+- 日志记录 5 次初始化和 83 个跟踪帧。五段 accepted/总帧分别为 `6/14`、`3/17`、`8/19`、`7/18`、`7/15`；合计 Reliable/Weak/Rejected=`34/5/44`，accepted/control_valid=`31/31`，52/83（62.7%）帧 `control_valid=0`。每段只在最初约 3–8 个接受帧后进入 UNCERTAIN/LOCAL，最长连续未接受分别为 `6/10/11/11/8` 帧，说明现象可重复，不是单次误点。
+- 五次初始化的真实控制误差约为 `x=-391..-425`、`y=-218..-224`；各段结束时仍约为 `x=-384..-410`、`y=-193..-216`，伺服看到的误差没有随吊舱运动明显收敛。所有 52 个 `control_valid=0` 帧仍向 `rect[0]` 写入非中心的预测/最终框，当前 C ABI 没有把控制有效性传给宿主，因此宿主没有可见的停止条件。
+- 接受帧的观测创新 P50/P95/最大为 `10.27/33.43/45.84` 像素；除一次真正重捕外，最终中心 correction 最大只有 `5.60` 像素，31 个接受帧中 9 次触发限幅。配置 `accepted_center_max_correction_ratio=0.25`、`accepted_center_smoothing_alpha=0.35` 对 64×64 框恰好给出约 `64×0.25×0.35=5.6` 像素/帧的最大普通修正。所有帧 raw-final 中心差 P50/P95/最大为 `24.05/100.33/151.61` 像素。
+- 源码链路确认 `stabilize_accepted_center()` 产生的慢速平滑 `output.bbox` 同时被 `tracker_.commit_bbox(result.output.bbox)` 回写为下一帧 NanoTrack 搜索状态，并由 adapter 写入真实 `rect[0]`。因此吊舱造成的快速画面位移远大于状态修正速度时，搜索中心逐帧落后；PSR 从初始约 `5.8–7.3` 下降到 `2–3`，随后拒绝观测，而非中心 `rect[0]` 又继续驱动吊舱，形成闭环正反馈。当前证据不支持把根因归为单纯阈值不合适或网络无法识别静止目标。
+- 冻结 stdout/stderr 分别为 24,675/81,345 bytes，SHA-256 为 `2467f55f57fa58d7b6cd7449cb96c75f3cb0058569317aa53e2bfafce7e3036c` / `505b9961d17712cb752c3545225b6177a75e912ba3db8e742390e073e462634c`。日志包位于板端和 WSL `/tmp/nanotrack-real-rect0-test-20261107-1019.tgz`，本地同名 `/tmp` 文件为 16,280 bytes、SHA-256 `735dadf96f0675cc1fd508c437c482d29a6644d80bcaaa86b5d187b39ff65f03`。
+- 停止前复核 PID 对应的精确程序路径和哈希；TERM 等待 10 秒未退出后只对 PID `7996` 执行 KILL，随后确认板端无 `viewlink_app`。下一步应先设计并验证“内部跟踪状态、显示平滑框、伺服控制框”三者解耦，以及 `control_valid=0` 时的明确零速/中心控制语义；未经用户确认不修改源码或再次运行吊舱。
+
+### 证据边界
+
+- 本轮证明当前平滑和控制复用会在真实吊舱闭环下稳定复现失锁，并证明真实 `rect[0]` 会触发吊舱运动；没有宿主 yaw/pitch 命令日志，不能仅凭算法日志裁定宿主速度增益、PID 或设备侧命令是否还有独立问题。
+- 真实目标在世界坐标中静止，但相机由吊舱驱动，因此图像中的目标不是静止的。初始高质量响应表明网络能够定位该目标；后续低质量是快速画面运动、慢速状态回写和持续控制共同作用下的结果，不能外推为网络在所有动态场景下均无问题。
+- 本轮没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`，没有覆盖正式程序，也不构成真实吊舱验收通过。
