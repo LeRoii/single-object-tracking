@@ -670,3 +670,8 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 本节证明主机逻辑回归、Git/WSL 精确源码身份和 A6 交叉编译成功；没有部署新程序，没有启动或停止开发板/吊舱进程，也没有证明真实吊舱已经锁定目标。
 - 按用户明确要求，`control_valid=false` 时 `rect[0]` 仍会输出运动预测 tracking box，并可能继续驱动吊舱。这是当前选定接口语义，不应误解为控制安全门已经传递到宿主。
 - 本轮只修改本任务拥有的 `docs/progress/cross-compile.md`，没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`；公共 handoff 和真实吊舱人工验收边界保持不变。
+
+### 主线集成
+
+- 用户明确要求把最近修改合入 `main`。本地 `main@bc047461545ae0efba2abf81d7eb924dd1a1290c` 与任务分支 `47b4d38433145fe7c558cd10d72496769b0c2de5` 合并为 `99d3d1b61ca6b915905425892afb66dff6730167`；两个父提交均保留。四个冲突均来自 `4.5/4.5` 阈值提交在两条历史中的重复及任务分支后续演进，解决结果逐文件与任务分支一致，保留后续实测形成的 `reliable_psr=4.2`、`weak_psr=4.0`、peak margin `0.04/0.02` 和全部尺度/中心稳定参数。
+- 合并提交形成后，在 `main` 上重新执行完整 RKNN-independent CTest，结果 `18/18` 通过、零失败；`git diff --check` 无输出，任务分支已被 `main` 包含。该结果不替代 A6 模型加载、板端运行或真实吊舱人工测试。
