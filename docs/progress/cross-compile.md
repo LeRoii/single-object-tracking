@@ -653,3 +653,20 @@ BUILD_JOBS=4 ./run.sh --platform A6
 - 本轮证明当前平滑和控制复用会在真实吊舱闭环下稳定复现失锁，并证明真实 `rect[0]` 会触发吊舱运动；没有宿主 yaw/pitch 命令日志，不能仅凭算法日志裁定宿主速度增益、PID 或设备侧命令是否还有独立问题。
 - 真实目标在世界坐标中静止，但相机由吊舱驱动，因此图像中的目标不是静止的。初始高质量响应表明网络能够定位该目标；后续低质量是快速画面运动、慢速状态回写和持续控制共同作用下的结果，不能外推为网络在所有动态场景下均无问题。
 - 本轮没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`，没有覆盖正式程序，也不构成真实吊舱验收通过。
+
+## 2026-11-07 跟踪、显示与 `rect[0]` 状态解耦及 A6 编译
+
+- 时间：`2026-11-07T19:58:23+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；实现提交为 `e03c0053181c2f9ca17bbdf613249753a17b3735`，本节记录随下一提交形成。开始时任务工作树和主工作树均干净；任务分支相对 `main` 多 62 个提交，`main` 另有独立阈值提交 `bc047461545ae0efba2abf81d7eb924dd1a1290c`，未执行重置或覆盖。
+- 用户在 WSL 手工实现了 `tracking_bbox/display_bbox/control_bbox` 初稿。只读复核确认其控制器和运行时方向正确，但生产 `native-lib_impl.cpp` 仍把 `rect[0]` 写成旧的 `output.bbox`，且初稿让显示平滑继续引用快速 tracking motion prediction；交替 40 像素测试实测显示框在约 `87.9/112.0` 中心间反向摆动，单帧约 24 像素，故未直接把该副本作为完成证据。
+- 最终控制器把 `tracking_bbox` 定义为所选真实观察中心加既有稳定宽高，写入 `current_bbox_`、motion correction/reinitialize、NanoTrack `commit_bbox()` 和 recent-template staging；`display_bbox` 使用独立持久状态继续执行 `0.35/0.25` 中心平滑，兼容字段 `bbox` 等于 `display_bbox`；`control_bbox` 当前等于 `tracking_bbox`。质量阈值、尺度参数、模型和 detector 行为均未修改。
+- 用户随后明确要求当前 `rect[0]` 始终输出真实跟踪框。最终外部生产适配层普通帧明确执行 `info.track_box_result.rect[0] = tracking_box`，不按 `control_valid` 改写为中心框；`control_valid` 只保留为诊断。`rect[1]` 和 `rect_show` 使用 `display_bbox`。旧中心赋值保留为注释 `// info.track_box_result.rect[0] = legacy_center_rect;`；初始化帧继续输出真实 `initial_rect`，其旧中心赋值也继续以注释保留。
+- TDD RED 在本地未实现树上编译失败，明确报告 `ControllerOutput` 缺少三个新字段。最小实现第一次运行时，`long_term_controller` 暴露上述显示框反向摆动，`long_term_runtime` 的测试夹具因持续 10 像素位移在第 13 帧越界；依据实际中心日志加入独立显示状态，并将夹具改为仍可区分两框但不会越界的 2 像素持续创新。最终聚焦 `long_term_controller|long_term_runtime` 为 `2/2` 通过；完整 RKNN-independent 构建及 CTest 为 `18/18` 通过，零失败。
+- WSL 工程 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker` 不是 Git 仓库。写入前四文件备份位于 `ai_alg/backup-before-bbox-split-e03c005-20261107/`；备份哈希分别为：头文件 `a81c5560621214bd2446fe542f475bb0fb06dec7bea6dc40ca3ed39e29487ca1`、控制器 `c3f0b01734e0594a2cc928ad1f256679d29054437f599cb4a561f30084303c1a`、运行时 `70583e8230660543278614edc56b641c97abbe011b5742916fa419a420370478`、适配层 `48e8fa203adc277199b07adb91da3163fcd5171e746c296cb3be80e49b5b54ea`。
+- Git 精确源码同步到 WSL 后逐文件 SHA-256 一致：`long_term_controller.hpp` `1060735b7a59701381932be0be2cb21ae9841123a27cbe28946b8b726037fb04`、`long_term_controller.cpp` `422f3e0dfecefe7e6adf00bf96b8b73704518e022a892529dfdec33badf2347f`、`long_term_runtime.cpp` `a2f4adae0c7940dfbce3403562d1a01c01841523bff961486ea7fbf7df74d5c4`；最终外部 `native-lib_impl.cpp` SHA-256 为 `6270159723281f05da6202b5fff3ad638805fcf18ad5f42e58b4d6d3fb51a47d`。
+- 在 WSL 实际执行 `BUILD_JOBS=4 ./run.sh --platform A6`，退出码 `0`；控制器、运行时和生产适配层均重新编译，`libAI.a` 和 `viewlink_app` 链接成功。`build_A6/viewlink_app` 为 ARM aarch64 ELF、34,907,536 bytes、SHA-256 `e6bdce97d1b29d44331ade503e4a78b07b718b83ca0b018f5ac41e2894de0a0f`；`build_A6/ai_alg/libAI.a` 为 615,770 bytes、SHA-256 `57dd57fd01f06590f5d1ce14f5ad3255c0871a64acad77b2d8251ed53262f7c7`。构建仅出现既有 `centered_control_box` 模板内部未使用 `frame_width/frame_height` 的警告，无编译或链接错误。
+
+### 证据边界
+
+- 本节证明主机逻辑回归、Git/WSL 精确源码身份和 A6 交叉编译成功；没有部署新程序，没有启动或停止开发板/吊舱进程，也没有证明真实吊舱已经锁定目标。
+- 按用户明确要求，`control_valid=false` 时 `rect[0]` 仍会输出运动预测 tracking box，并可能继续驱动吊舱。这是当前选定接口语义，不应误解为控制安全门已经传递到宿主。
+- 本轮只修改本任务拥有的 `docs/progress/cross-compile.md`，没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`；公共 handoff 和真实吊舱人工验收边界保持不变。
