@@ -151,11 +151,13 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   }
   result.output =
       controller_.finish_frame(result.plan, result.observations, detector_batch);
-  if (result.output.accepted) tracker_.commit_bbox(result.output.bbox);
+  if (result.output.accepted) {
+    tracker_.commit_bbox(result.output.tracking_bbox);
+  }
   switch (result.output.template_action) {
     case TemplateAction::kNone: break;
     case TemplateAction::kStageRecent:
-      tracker_.stage_recent(image, result.output.bbox);
+      tracker_.stage_recent(image, result.output.tracking_bbox);
       break;
     case TemplateAction::kCommitRecent: tracker_.commit_recent(); break;
     case TemplateAction::kRollbackRecent: tracker_.rollback_recent(); break;

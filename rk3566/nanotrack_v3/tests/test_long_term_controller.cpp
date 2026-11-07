@@ -501,6 +501,22 @@ void test_motion_aware_accepted_center_filter() {
   output = over_limit.finish_frame(
       plan, reliable_pair(plan, BBox{90.001F, 80, 40, 40}, 31),
       std::nullopt);
+  expect_near(center_x(output.tracking_bbox), 110.001F, 1e-4F,
+              "tracking state follows the accepted raw center without display limiting");
+  expect_near(center_y(output.tracking_bbox), 100.0F, 1e-5F,
+              "tracking state preserves the accepted raw vertical center");
+  expect_true(output.control_bbox.x == output.tracking_bbox.x &&
+                  output.control_bbox.y == output.tracking_bbox.y &&
+                  output.control_bbox.width == output.tracking_bbox.width &&
+                  output.control_bbox.height == output.tracking_bbox.height,
+              "authorized control box uses the fast tracking state");
+  expect_true(output.display_bbox.x == output.bbox.x &&
+                  output.display_bbox.y == output.bbox.y &&
+                  output.display_bbox.width == output.bbox.width &&
+                  output.display_bbox.height == output.bbox.height,
+              "legacy bbox remains the smoothed display box");
+  expect_true(center_x(output.display_bbox) < center_x(output.tracking_bbox),
+              "display smoothing cannot slow the tracking feedback state");
   expect_near(output.center_innovation_x, 10.001F, 1e-4F,
               "over-limit diagnostics retain the unbounded raw innovation");
   expect_near(output.center_correction_x, 3.5F, 1e-4F,
@@ -771,15 +787,15 @@ void test_loss_freezes_scale_and_recovery_uses_limited_bbox() {
               "accepted recovery keeps the observed horizontal center");
   expect_near(output.bbox.y + 0.5F * output.bbox.height, 70.0F, 1e-5F,
               "accepted recovery keeps the observed vertical center");
-  expect_true(controller.current_bbox_.x == output.bbox.x &&
-                  controller.current_bbox_.y == output.bbox.y &&
-                  controller.current_bbox_.width == output.bbox.width &&
-                  controller.current_bbox_.height == output.bbox.height &&
-                  controller.motion_.current_bbox().x == output.bbox.x &&
-                  controller.motion_.current_bbox().y == output.bbox.y &&
-                  controller.motion_.current_bbox().width == output.bbox.width &&
-                  controller.motion_.current_bbox().height == output.bbox.height,
-              "accepted recovery installs the same stabilized controller and motion box");
+  expect_true(controller.current_bbox_.x == output.tracking_bbox.x &&
+                  controller.current_bbox_.y == output.tracking_bbox.y &&
+                  controller.current_bbox_.width == output.tracking_bbox.width &&
+                  controller.current_bbox_.height == output.tracking_bbox.height &&
+                  controller.motion_.current_bbox().x == output.tracking_bbox.x &&
+                  controller.motion_.current_bbox().y == output.tracking_bbox.y &&
+                  controller.motion_.current_bbox().width == output.tracking_bbox.width &&
+                  controller.motion_.current_bbox().height == output.tracking_bbox.height,
+              "accepted recovery installs the fast tracking box into controller and motion state");
 }
 
 void test_suspicion_event_pulses_are_single_shot() {

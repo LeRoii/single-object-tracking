@@ -65,8 +65,9 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
     if (on_commit) on_commit();
   }
   void stage_recent(const nanotrack::ImageView&,
-                    const nanotrack::BBox&) override {
+                    const nanotrack::BBox& bbox) override {
     ++stage_calls;
+    staged_bbox = bbox;
     if (on_stage) on_stage();
   }
   void commit_recent() override {
@@ -94,6 +95,7 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
   int rollback_calls = 0;
   std::uint64_t search_token = 0;
   nanotrack::BBox committed_bbox{};
+  nanotrack::BBox staged_bbox{};
   std::function<void()> on_initialize;
   std::function<void()> on_infer;
   std::function<void()> on_commit;
@@ -274,8 +276,11 @@ void test_runtime_commits_stabilized_bbox(const nanotrack::ImageView& image) {
     const RuntimeFrameResult result =
         runtime.process_frame(image, frame, frame * 40);
     expect_true(result.output.accepted && tracker.commit_calls == frame &&
-                    same_bbox(tracker.committed_bbox, result.output.bbox),
-                "runtime commits each frame's exact final emitted box");
+                    same_bbox(tracker.committed_bbox,
+                              result.output.tracking_bbox),
+                "runtime commits each frame's fast tracking state");
+    expect_true(same_bbox(result.output.display_bbox, result.output.bbox),
+                "runtime preserves bbox as the display compatibility alias");
     const float final_center =
         result.output.bbox.x + 0.5F * result.output.bbox.width;
     maximum_final_center_step = std::max(
@@ -962,14 +967,29 @@ int main() {
 
   FakeTracker template_tracker;
   NullDetectorAdapter null_detector;
-  LongTermRuntime template_runtime(config, template_tracker, null_detector);
+  ControllerConfig template_config = config;
+  template_config.accepted_center_smoothing_alpha = 0.35F;
+  template_config.accepted_center_max_correction_ratio = 0.25F;
+  template_config.max_center_distance = 100.0F;
+  LongTermRuntime template_runtime(
+      template_config, template_tracker, null_detector);
   template_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  template_tracker.on_infer = [&template_tracker]() {
+    const SearchPlan& plan = template_tracker.inferred_plans.back();
+    template_tracker.reliable_bbox = BBox{
+        plan.predicted_bbox.x + 2.0F, plan.predicted_bbox.y,
+        plan.predicted_bbox.width, plan.predicted_bbox.height};
+  };
   for (int index = 1; index <= 15; ++index) {
     result = template_runtime.process_frame(image, index, index * 100);
   }
   expect_true(result.output.template_action == TemplateAction::kStageRecent &&
-                  template_tracker.stage_calls == 1,
-              "runtime stages recent template on policy action");
+                  template_tracker.stage_calls == 1 &&
+                  same_bbox(template_tracker.staged_bbox,
+                            result.output.tracking_bbox) &&
+                  !same_bbox(template_tracker.staged_bbox,
+                             result.output.display_bbox),
+              "runtime stages recent template at the fast tracking state");
   for (int index = 16; index <= 18; ++index) {
     result = template_runtime.process_frame(image, index, index * 100);
   }

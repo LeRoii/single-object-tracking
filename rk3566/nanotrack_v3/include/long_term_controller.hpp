@@ -54,6 +54,9 @@ struct ControllerOutput {
   TrackingMode mode = TrackingMode::kTracking;
   QualityLevel quality = QualityLevel::kRejected;
   BBox bbox{};
+  BBox tracking_bbox{};
+  BBox display_bbox{};
+  BBox control_bbox{};
   bool control_valid = false;
   bool accepted = false;
   bool reacquired = false;
@@ -256,6 +259,7 @@ class LongTermController {
   OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};
   BBox current_bbox_{};
+  BBox display_bbox_{};
   DimensionScaleState width_scale_state_{};
   DimensionScaleState height_scale_state_{};
   TargetClassState target_class_{};

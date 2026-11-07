@@ -115,6 +115,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   frame_size_ = frame_size;
   target_class_ = target_class;
   current_bbox_ = initial_bbox;
+  display_bbox_ = initial_bbox;
   reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   mode_ = TrackingMode::kTracking;
@@ -603,8 +604,12 @@ BBox LongTermController::stabilize_accepted_center(
   output.center_innovation_x = observed_center_x - predicted_center_x;
   output.center_innovation_y = observed_center_y - predicted_center_y;
 
-  float bounded_x = output.center_innovation_x;
-  float bounded_y = output.center_innovation_y;
+  const float display_center_x =
+      display_bbox_.x + 0.5F * display_bbox_.width;
+  const float display_center_y =
+      display_bbox_.y + 0.5F * display_bbox_.height;
+  float bounded_x = observed_center_x - display_center_x;
+  float bounded_y = observed_center_y - display_center_y;
   if (!reacquired && config_.accepted_center_max_correction_ratio > 0.0F) {
     const float maximum = config_.accepted_center_max_correction_ratio *
                           std::sqrt(scaled_bbox.width * scaled_bbox.height);
@@ -619,15 +624,15 @@ BBox LongTermController::stabilize_accepted_center(
 
   const float alpha = reacquired ? 1.0F
                                  : config_.accepted_center_smoothing_alpha;
-  const float requested_center_x = predicted_center_x + alpha * bounded_x;
-  const float requested_center_y = predicted_center_y + alpha * bounded_y;
+  const float requested_center_x = display_center_x + alpha * bounded_x;
+  const float requested_center_y = display_center_y + alpha * bounded_y;
   const BBox stabilized = centered_box(
       requested_center_x, requested_center_y,
       BBox{0.0F, 0.0F, scaled_bbox.width, scaled_bbox.height}, frame_size_);
   output.center_correction_x =
-      stabilized.x + 0.5F * stabilized.width - predicted_center_x;
+      stabilized.x + 0.5F * stabilized.width - display_center_x;
   output.center_correction_y =
-      stabilized.y + 0.5F * stabilized.height - predicted_center_y;
+      stabilized.y + 0.5F * stabilized.height - display_center_y;
   return stabilized;
 }
 
@@ -645,8 +650,11 @@ void LongTermController::accept_observation(
   }
   const BBox scaled_bbox = stabilize_accepted_bbox(
       selected.observation.bbox, next_width, next_height);
-  output.bbox = stabilize_accepted_center(
+  output.tracking_bbox = scaled_bbox;
+  output.display_bbox = stabilize_accepted_center(
       plan, selected.observation.bbox, scaled_bbox, reacquired, output);
+  output.control_bbox = output.tracking_bbox;
+  output.bbox = output.display_bbox;
   output.accepted = true;
   output.control_valid = true;
   output.reacquired = reacquired;
@@ -659,18 +667,20 @@ void LongTermController::accept_observation(
   coast_probe_candidate_.reset();
   frozen_scale_reference_.reset();
   if (reacquired) {
-    motion_.initialize(output.bbox, plan.timestamp_ms, frame_size_.width,
-                       frame_size_.height);
+    motion_.initialize(output.tracking_bbox, plan.timestamp_ms,
+                       frame_size_.width, frame_size_.height);
     occlusion_evidence_.reset();
     occlusion_suspicion_frames_ = 0;
     occlusion_decision_ = occlusion_evidence_.observe(OcclusionEvidenceInput{
-        output.bbox, output.bbox, selected.observation.metrics, true, false, false});
+        output.tracking_bbox, output.tracking_bbox,
+        selected.observation.metrics, true, false, false});
   } else {
-    motion_.correct(output.bbox, plan.timestamp_ms);
+    motion_.correct(output.tracking_bbox, plan.timestamp_ms);
   }
   width_scale_state_ = std::move(next_width);
   height_scale_state_ = std::move(next_height);
-  current_bbox_ = output.bbox;
+  current_bbox_ = output.tracking_bbox;
+  display_bbox_ = output.display_bbox;
   loss_start_ms_.reset();
   confirmations_.clear();
   active_detector_candidate_.reset();
@@ -865,6 +875,9 @@ ControllerOutput LongTermController::finish_frame(
   output.timestamp_ms = plan.timestamp_ms;
   output.mode = plan.mode;
   output.bbox = plan.predicted_bbox;
+  output.tracking_bbox = plan.predicted_bbox;
+  output.display_bbox = plan.predicted_bbox;
+  output.control_bbox = plan.predicted_bbox;
   output.search_scale = plan.search_scale;
   output.hypothesis_source = plan.hypothesis_source;
   output.detector_candidate_id = plan.detector_candidate_id;
@@ -1085,7 +1098,10 @@ ControllerOutput LongTermController::finish_frame(
     output.normalized_center_residual = selected->center_residual;
     output.area_log_change = selected->area_log_change;
     output.aspect_log_change = selected->aspect_log_change;
-    output.bbox = motion_.current_bbox();
+    output.tracking_bbox = motion_.current_bbox();
+    output.display_bbox = output.tracking_bbox;
+    output.control_bbox = output.tracking_bbox;
+    output.bbox = output.display_bbox;
     output.hypothesis_source = HypothesisSource::kMotion;
     output.motion_control_authorized = true;
     output.control_valid = true;
@@ -1197,7 +1213,10 @@ ControllerOutput LongTermController::finish_frame(
     accept_observation(plan, *selected, acceptance_path, output);
   } else {
     motion_.freeze_scale(current_bbox_.width, current_bbox_.height);
-    output.bbox = motion_.current_bbox();
+    output.tracking_bbox = motion_.current_bbox();
+    output.display_bbox = output.tracking_bbox;
+    output.control_bbox = output.tracking_bbox;
+    output.bbox = output.display_bbox;
     ++consecutive_unreliable_frames_;
     if (!loss_start_ms_) loss_start_ms_ = plan.timestamp_ms;
     mode_ = mode_for_timestamp(plan.timestamp_ms);
