@@ -246,7 +246,46 @@ std::string tracking_csv_header() {
          "occlusion_hold_triggered,occlusion_hold_remaining_frames,"
          "occlusion_reference_width,occlusion_reference_height,"
          "occlusion_width_ratio,occlusion_height_ratio,tracker_skipped,"
-         "detector_suppressed_by_hold,target_class_status,target_class_id,"
+         "detector_suppressed_by_hold,"
+         "occlusion_reference_source,"
+         "occlusion_suspicion_active,"
+         "occlusion_suspicion_started,"
+         "occlusion_suspicion_cleared,"
+         "occlusion_suspicion_frames,"
+         "occlusion_clean_frames,"
+         "occlusion_width_shrink_frames,"
+         "occlusion_height_shrink_frames,"
+         "occlusion_severe_evidence,"
+         "occlusion_gradual_evidence,"
+         "occlusion_template_evidence,"
+         "occlusion_peak_margin_evidence,"
+         "occlusion_motion_residual_evidence,"
+         "occlusion_trigger_reason,"
+         "occlusion_coast_age_frames,"
+         "occlusion_probe_type,"
+         "occlusion_probe_confirmation_hits,"
+         "occlusion_probe_confirmation_required,"
+         "motion_control_authorized,"
+         "occlusion_probe_rejection,occlusion_probe_motion_x,occlusion_probe_motion_y,"
+         "occlusion_probe_motion_width,occlusion_probe_motion_height,"
+         "occlusion_probe_x,occlusion_probe_y,occlusion_probe_width,occlusion_probe_height,"
+         "occlusion_probe_anchor_reliable,"
+         "occlusion_probe_recent_reliable,"
+         "occlusion_probe_template_gate,"
+         "occlusion_probe_cross_gate,"
+         "occlusion_probe_cross_iou,"
+         "occlusion_probe_cross_center,"
+         "occlusion_probe_cross_area,"
+         "occlusion_probe_cross_aspect,"
+         "occlusion_probe_anchor_score_gate,"
+         "occlusion_probe_anchor_center_gate,"
+         "occlusion_probe_anchor_area_gate,"
+         "occlusion_probe_anchor_aspect_gate,"
+         "occlusion_probe_recent_score_gate,"
+         "occlusion_probe_recent_center_gate,"
+         "occlusion_probe_recent_area_gate,"
+         "occlusion_probe_recent_aspect_gate,"
+         "target_class_status,target_class_id,"
          "target_class_reason,detector_recovery_enabled";
 }
 
@@ -322,6 +361,50 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                  optional_number(row.occlusion_height_ratio),
                  row.tracker_skipped ? "1" : "0",
                  row.detector_suppressed_by_hold ? "1" : "0",
+                 to_string(row.occlusion_reference_source),
+                 row.occlusion_suspicion_active ? "1" : "0",
+                 row.occlusion_suspicion_started ? "1" : "0",
+                 row.occlusion_suspicion_cleared ? "1" : "0",
+                 std::to_string(row.occlusion_suspicion_frames),
+                 std::to_string(row.occlusion_clean_frames),
+                 std::to_string(row.occlusion_width_shrink_frames),
+                 std::to_string(row.occlusion_height_shrink_frames),
+                 row.occlusion_severe_evidence ? "1" : "0",
+                 row.occlusion_gradual_evidence ? "1" : "0",
+                 row.occlusion_template_evidence ? "1" : "0",
+                 row.occlusion_peak_margin_evidence ? "1" : "0",
+                 row.occlusion_motion_residual_evidence ? "1" : "0",
+                 to_string(row.occlusion_trigger_reason),
+                 std::to_string(row.occlusion_coast_age_frames),
+                 to_string(row.occlusion_probe_type),
+                 std::to_string(row.occlusion_probe_confirmation_hits),
+                 std::to_string(row.occlusion_probe_confirmation_required),
+                 row.motion_control_authorized ? "1" : "0",
+                 row.occlusion_probe_rejection,
+                 row.occlusion_probe_motion_bbox ? number(row.occlusion_probe_motion_bbox->x) : "",
+                 row.occlusion_probe_motion_bbox ? number(row.occlusion_probe_motion_bbox->y) : "",
+                 row.occlusion_probe_motion_bbox ? number(row.occlusion_probe_motion_bbox->width) : "",
+                 row.occlusion_probe_motion_bbox ? number(row.occlusion_probe_motion_bbox->height) : "",
+                 row.occlusion_probe_bbox ? number(row.occlusion_probe_bbox->x) : "",
+                 row.occlusion_probe_bbox ? number(row.occlusion_probe_bbox->y) : "",
+                 row.occlusion_probe_bbox ? number(row.occlusion_probe_bbox->width) : "",
+                 row.occlusion_probe_bbox ? number(row.occlusion_probe_bbox->height) : "",
+                 optional_integer(row.occlusion_probe_anchor_reliable),
+                 optional_integer(row.occlusion_probe_recent_reliable),
+                 optional_integer(row.occlusion_probe_template_gate),
+                 optional_integer(row.occlusion_probe_cross_gate),
+                 optional_integer(row.occlusion_probe_cross_iou),
+                 optional_integer(row.occlusion_probe_cross_center),
+                 optional_integer(row.occlusion_probe_cross_area),
+                 optional_integer(row.occlusion_probe_cross_aspect),
+                 optional_integer(row.occlusion_probe_anchor_score_gate),
+                 optional_integer(row.occlusion_probe_anchor_center_gate),
+                 optional_integer(row.occlusion_probe_anchor_area_gate),
+                 optional_integer(row.occlusion_probe_anchor_aspect_gate),
+                 optional_integer(row.occlusion_probe_recent_score_gate),
+                 optional_integer(row.occlusion_probe_recent_center_gate),
+                 optional_integer(row.occlusion_probe_recent_area_gate),
+                 optional_integer(row.occlusion_probe_recent_aspect_gate),
                  to_string(row.target_class.status),
                  optional_integer(row.target_class.target_class_id),
                  to_string(row.target_class.reason),
@@ -444,6 +527,44 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.detector_position_rejected_count =
       output.detector_position_rejected_count;
   row.occlusion_hold_triggered = output.occlusion_hold_triggered;
+  row.occlusion_reference_source = output.occlusion_reference_source;
+  row.occlusion_suspicion_active = output.occlusion_suspicion_active;
+  row.occlusion_suspicion_started = output.occlusion_suspicion_started;
+  row.occlusion_suspicion_cleared = output.occlusion_suspicion_cleared;
+  row.occlusion_suspicion_frames = output.occlusion_suspicion_frames;
+  row.occlusion_clean_frames = output.occlusion_clean_frames;
+  row.occlusion_width_shrink_frames = output.occlusion_width_shrink_frames;
+  row.occlusion_height_shrink_frames = output.occlusion_height_shrink_frames;
+  row.occlusion_severe_evidence = output.occlusion_severe_evidence;
+  row.occlusion_gradual_evidence = output.occlusion_gradual_evidence;
+  row.occlusion_template_evidence = output.occlusion_template_evidence;
+  row.occlusion_peak_margin_evidence = output.occlusion_peak_margin_evidence;
+  row.occlusion_motion_residual_evidence = output.occlusion_motion_residual_evidence;
+  row.occlusion_trigger_reason = output.occlusion_trigger_reason;
+  row.occlusion_coast_age_frames = output.occlusion_coast_age_frames;
+  row.occlusion_probe_type = output.occlusion_probe_type;
+  row.occlusion_probe_confirmation_hits = output.occlusion_probe_confirmation_hits;
+  row.occlusion_probe_confirmation_required = output.occlusion_probe_confirmation_required;
+  row.motion_control_authorized = output.motion_control_authorized;
+  row.occlusion_probe_rejection = output.occlusion_probe_rejection;
+  row.occlusion_probe_motion_bbox = output.occlusion_probe_motion_bbox;
+  row.occlusion_probe_bbox = output.occlusion_probe_bbox;
+  row.occlusion_probe_anchor_reliable = output.occlusion_probe_anchor_reliable;
+  row.occlusion_probe_recent_reliable = output.occlusion_probe_recent_reliable;
+  row.occlusion_probe_template_gate = output.occlusion_probe_template_gate;
+  row.occlusion_probe_cross_gate = output.occlusion_probe_cross_gate;
+  row.occlusion_probe_cross_iou = output.occlusion_probe_cross_iou;
+  row.occlusion_probe_cross_center = output.occlusion_probe_cross_center;
+  row.occlusion_probe_cross_area = output.occlusion_probe_cross_area;
+  row.occlusion_probe_cross_aspect = output.occlusion_probe_cross_aspect;
+  row.occlusion_probe_anchor_score_gate = output.occlusion_probe_anchor_score_gate;
+  row.occlusion_probe_anchor_center_gate = output.occlusion_probe_anchor_center_gate;
+  row.occlusion_probe_anchor_area_gate = output.occlusion_probe_anchor_area_gate;
+  row.occlusion_probe_anchor_aspect_gate = output.occlusion_probe_anchor_aspect_gate;
+  row.occlusion_probe_recent_score_gate = output.occlusion_probe_recent_score_gate;
+  row.occlusion_probe_recent_center_gate = output.occlusion_probe_recent_center_gate;
+  row.occlusion_probe_recent_area_gate = output.occlusion_probe_recent_area_gate;
+  row.occlusion_probe_recent_aspect_gate = output.occlusion_probe_recent_aspect_gate;
   row.occlusion_hold_remaining_frames =
       output.occlusion_hold_remaining_frames;
   row.occlusion_reference_width = output.occlusion_reference_width;
@@ -508,6 +629,37 @@ void record_target_class_initialization(
   if (!initialization.detector_error.empty()) ++summary.error_count;
 }
 
+void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
+                                      const ControllerConfig& config) {
+  metadata.occlusion_probe_interval_frames = config.occlusion_probe_interval_frames;
+  metadata.occlusion_gradual_dimension_ratio = config.occlusion_gradual_dimension_ratio;
+  metadata.occlusion_gradual_consecutive_frames = config.occlusion_gradual_consecutive_frames;
+  metadata.occlusion_min_reference_samples = config.occlusion_min_reference_samples;
+  metadata.occlusion_shrink_step_ratio = config.occlusion_shrink_step_ratio;
+  metadata.occlusion_suspicion_clear_frames = config.occlusion_suspicion_clear_frames;
+  metadata.occlusion_peak_margin_drop = config.occlusion_peak_margin_drop;
+  metadata.occlusion_motion_residual_threshold = config.occlusion_motion_residual_threshold;
+  metadata.occlusion_confirmation_iou = config.occlusion_confirmation_iou;
+  metadata.occlusion_confirmation_center_distance = config.occlusion_confirmation_center_distance;
+  metadata.occlusion_confirmation_max_area_log_change = config.occlusion_confirmation_max_area_log_change;
+  metadata.occlusion_confirmation_max_aspect_log_change = config.occlusion_confirmation_max_aspect_log_change;
+  metadata.max_accepted_scale_step_ratio = config.max_accepted_scale_step_ratio;
+  metadata.accepted_scale_deadband_ratio = config.accepted_scale_deadband_ratio;
+  metadata.accepted_scale_smoothing_alpha = config.accepted_scale_smoothing_alpha;
+  metadata.accepted_scale_median_window_frames =
+      config.accepted_scale_median_window_frames;
+  metadata.accepted_scale_direction_confirm_frames =
+      config.accepted_scale_direction_confirm_frames;
+  metadata.accepted_scale_output_hysteresis_px =
+      config.accepted_scale_output_hysteresis_px;
+  metadata.accepted_center_smoothing_alpha =
+      config.accepted_center_smoothing_alpha;
+  metadata.accepted_center_max_correction_ratio =
+      config.accepted_center_max_correction_ratio;
+  metadata.max_reacquisition_center_distance =
+      config.max_reacquisition_center_distance;
+}
+
 std::string tracking_session_metadata_json(
     const TrackingSessionMetadata& metadata) {
   const double numeric_values[] = {
@@ -516,8 +668,23 @@ std::string tracking_session_metadata_json(
       metadata.reliable_psr,
       metadata.reliable_apce,
       metadata.reliable_peak_margin,
+      metadata.max_accepted_scale_step_ratio,
+      metadata.accepted_scale_deadband_ratio,
+      metadata.accepted_scale_smoothing_alpha,
+      metadata.accepted_scale_output_hysteresis_px,
+      metadata.accepted_center_smoothing_alpha,
+      metadata.accepted_center_max_correction_ratio,
+      metadata.max_reacquisition_center_distance,
       metadata.detector_candidate_max_center_ratio,
       metadata.occlusion_trigger_min_dimension_ratio,
+      metadata.occlusion_gradual_dimension_ratio,
+      metadata.occlusion_shrink_step_ratio,
+      metadata.occlusion_peak_margin_drop,
+      metadata.occlusion_motion_residual_threshold,
+      metadata.occlusion_confirmation_iou,
+      metadata.occlusion_confirmation_center_distance,
+      metadata.occlusion_confirmation_max_area_log_change,
+      metadata.occlusion_confirmation_max_aspect_log_change,
       metadata.latency.mean_runtime_ms,
       metadata.latency.p50_runtime_ms,
       metadata.latency.p95_runtime_ms,
@@ -604,6 +771,18 @@ std::string tracking_session_metadata_json(
          << metadata.occlusion_trigger_min_dimension_ratio << ",\n"
          << "  \"occlusion_reference_window\": "
          << metadata.occlusion_reference_window << ",\n"
+         << "  \"occlusion_probe_interval_frames\": " << metadata.occlusion_probe_interval_frames << ",\n"
+         << "  \"occlusion_gradual_dimension_ratio\": " << metadata.occlusion_gradual_dimension_ratio << ",\n"
+         << "  \"occlusion_gradual_consecutive_frames\": " << metadata.occlusion_gradual_consecutive_frames << ",\n"
+         << "  \"occlusion_min_reference_samples\": " << metadata.occlusion_min_reference_samples << ",\n"
+         << "  \"occlusion_shrink_step_ratio\": " << metadata.occlusion_shrink_step_ratio << ",\n"
+         << "  \"occlusion_suspicion_clear_frames\": " << metadata.occlusion_suspicion_clear_frames << ",\n"
+         << "  \"occlusion_peak_margin_drop\": " << metadata.occlusion_peak_margin_drop << ",\n"
+         << "  \"occlusion_motion_residual_threshold\": " << metadata.occlusion_motion_residual_threshold << ",\n"
+         << "  \"occlusion_confirmation_iou\": " << metadata.occlusion_confirmation_iou << ",\n"
+         << "  \"occlusion_confirmation_center_distance\": " << metadata.occlusion_confirmation_center_distance << ",\n"
+         << "  \"occlusion_confirmation_max_area_log_change\": " << metadata.occlusion_confirmation_max_area_log_change << ",\n"
+         << "  \"occlusion_confirmation_max_aspect_log_change\": " << metadata.occlusion_confirmation_max_aspect_log_change << ",\n"
          << "  \"rknn_api_version\": \""
          << json_escape(metadata.rknn_api_version) << "\",\n"
          << "  \"rknn_driver_version\": \""
@@ -617,6 +796,24 @@ std::string tracking_session_metadata_json(
          << "  \"reliable_apce\": " << metadata.reliable_apce << ",\n"
          << "  \"reliable_peak_margin\": " << metadata.reliable_peak_margin
          << ",\n"
+         << "  \"max_accepted_scale_step_ratio\": "
+         << metadata.max_accepted_scale_step_ratio << ",\n"
+         << "  \"accepted_scale_deadband_ratio\": "
+         << metadata.accepted_scale_deadband_ratio << ",\n"
+         << "  \"accepted_scale_smoothing_alpha\": "
+         << metadata.accepted_scale_smoothing_alpha << ",\n"
+         << "  \"accepted_scale_median_window_frames\": "
+         << metadata.accepted_scale_median_window_frames << ",\n"
+         << "  \"accepted_scale_direction_confirm_frames\": "
+         << metadata.accepted_scale_direction_confirm_frames << ",\n"
+         << "  \"accepted_scale_output_hysteresis_px\": "
+         << metadata.accepted_scale_output_hysteresis_px << ",\n"
+         << "  \"accepted_center_smoothing_alpha\": "
+         << metadata.accepted_center_smoothing_alpha << ",\n"
+         << "  \"accepted_center_max_correction_ratio\": "
+         << metadata.accepted_center_max_correction_ratio << ",\n"
+         << "  \"max_reacquisition_center_distance\": "
+         << metadata.max_reacquisition_center_distance << ",\n"
          << "  \"uncertain_ms\": " << metadata.uncertain_ms << ",\n"
          << "  \"local_recovery_ms\": " << metadata.local_recovery_ms << ",\n"
          << "  \"assisted_recovery_ms\": " << metadata.assisted_recovery_ms

@@ -64,6 +64,35 @@ int main() {
   expect_near(clipped.width, 100.0F, 1e-6F, "clipped width");
   expect_near(clipped.height, 5.0F, 1e-6F, "clipped height");
 
+  const BBox stabilized = constrain_bbox_dimensions(
+      BBox{720.0F, 380.0F, 109.0F, 1.0F},
+      BBox{700.0F, 320.0F, 64.0F, 64.0F}, 0.75F, 1.33F, 1920, 1080);
+  expect_near(stabilized.x + 0.5F * stabilized.width, 774.5F, 1e-5F,
+              "dimension guard preserves candidate center x");
+  expect_near(stabilized.y + 0.5F * stabilized.height, 380.5F, 1e-5F,
+              "dimension guard preserves candidate center y");
+  expect_near(stabilized.width, 85.12F, 1e-4F,
+              "dimension guard caps cumulative width growth");
+  expect_near(stabilized.height, 48.0F, 1e-4F,
+              "dimension guard prevents cumulative height collapse");
+  const BBox stabilized_at_edge = constrain_bbox_dimensions(
+      BBox{0.0F, 0.0F, 20.0F, 20.0F},
+      BBox{10.0F, 10.0F, 64.0F, 64.0F}, 0.75F, 1.33F, 100, 80);
+  expect_near(stabilized_at_edge.x, 0.0F, 1e-6F,
+              "dimension guard keeps resized box inside left edge");
+  expect_near(stabilized_at_edge.y, 0.0F, 1e-6F,
+              "dimension guard keeps resized box inside top edge");
+  expect_near(stabilized_at_edge.width, 48.0F, 1e-6F,
+              "dimension guard preserves bounded width at frame edge");
+  expect_near(stabilized_at_edge.height, 48.0F, 1e-6F,
+              "dimension guard preserves bounded height at frame edge");
+  expect_throws(
+      [] {
+        constrain_bbox_dimensions(BBox{0, 0, 10, 10}, BBox{0, 0, 10, 10},
+                                  1.1F, 1.0F, 100, 100);
+      },
+      "dimension guard rejects inverted scale bounds");
+
   expect_near(percentile_ms({1, 2, 3, 4}, 0.5F), 2.5F, 1e-6F, "p50");
   expect_near(percentile_ms({1, 2, 3, 4}, 0.95F), 3.85F, 1e-5F, "p95");
   expect_throws([] { percentile_ms({}, 0.5F); }, "empty percentile must fail");

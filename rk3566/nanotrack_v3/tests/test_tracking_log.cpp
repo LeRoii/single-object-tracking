@@ -39,10 +39,136 @@ bool contains(const std::string& value, const std::string& expected) {
   return value.find(expected) != std::string::npos;
 }
 
+void test_adaptive_coast_serialization() {
+  using namespace nanotrack;
+  RuntimeFrameResult result;
+  auto& o = result.output;
+  o.occlusion_reference_source = OcclusionReferenceSource::kPartialStableMedian;
+  o.occlusion_suspicion_active = true;
+  o.occlusion_suspicion_started = true;
+  o.occlusion_suspicion_frames = 3;
+  o.occlusion_clean_frames = 1;
+  o.occlusion_width_shrink_frames = 2;
+  o.occlusion_height_shrink_frames = 4;
+  o.occlusion_severe_evidence = true;
+  o.occlusion_gradual_evidence = true;
+  o.occlusion_template_evidence = true;
+  o.occlusion_peak_margin_evidence = true;
+  o.occlusion_motion_residual_evidence = true;
+  o.occlusion_trigger_reason = OcclusionTriggerReason::kGradualWidthPeak;
+  o.occlusion_coast_age_frames = 5;
+  o.occlusion_probe_type = OcclusionProbeType::kSearch;
+  o.occlusion_probe_confirmation_hits = 1;
+  o.occlusion_probe_confirmation_required = 2;
+  o.motion_control_authorized = true;
+  o.occlusion_probe_rejection = "CONFIRM_GEOMETRY";
+  o.occlusion_probe_cross_iou = false;
+  o.occlusion_probe_cross_center = true;
+  o.occlusion_probe_bbox = BBox{1, 2, 3, 4};
+  const auto encoded = tracking_csv_row(make_tracking_log_row(result));
+  expect_true(contains(encoded,
+      "PARTIAL_STABLE_MEDIAN,1,1,0,3,1,2,4,1,1,1,1,1,GRADUAL_WIDTH_PEAK,5,SEARCH,1,2,1"),
+      "all adaptive diagnostics are copied from output and serialized in schema order");
+  expect_true(contains(encoded, "CONFIRM_GEOMETRY,,,,,1.000000,2.000000,3.000000,4.000000") &&
+                  contains(tracking_csv_header(), "occlusion_probe_cross_iou"),
+              "probe reason, box, and gate columns survive CSV serialization");
+  for (const auto age : {1, 5, 6, 10, 11, 12, 0}) {
+    o.occlusion_coast_age_frames = age;
+    o.occlusion_probe_type = age == 5 || age == 10 ? OcclusionProbeType::kSearch :
+        age == 6 || age == 11 ? OcclusionProbeType::kConfirm : OcclusionProbeType::kNone;
+    const auto row = make_tracking_log_row(result);
+    expect_true(row.occlusion_coast_age_frames == static_cast<std::size_t>(age) &&
+                    row.occlusion_probe_type == o.occlusion_probe_type,
+                "presentation preserves trigger/probe/recovery/timeout ages without scheduling");
+  }
+  o.occlusion_suspicion_cleared = true;
+  o.occlusion_reference_source = OcclusionReferenceSource::kFullStableMedian;
+  expect_true(make_tracking_log_row(result).occlusion_suspicion_cleared &&
+                  contains(tracking_csv_row(make_tracking_log_row(result)), "FULL_STABLE_MEDIAN"),
+              "clear pulse and full reference source survive serialization");
+  TrackingSessionMetadata metadata;
+  ControllerConfig config;
+  config.occlusion_probe_interval_frames = 7;
+  config.occlusion_gradual_dimension_ratio = 0.81F;
+  config.occlusion_confirmation_iou = 0.61F;
+  config.max_accepted_scale_step_ratio = 0.05F;
+  config.accepted_scale_deadband_ratio = 0.02F;
+  config.accepted_scale_smoothing_alpha = 0.10F;
+  config.accepted_scale_median_window_frames = 5;
+  config.accepted_scale_direction_confirm_frames = 3;
+  config.accepted_scale_output_hysteresis_px = 0.75F;
+  config.accepted_center_smoothing_alpha = 0.35F;
+  config.accepted_center_max_correction_ratio = 0.25F;
+  config.max_reacquisition_center_distance = 0.75F;
+  apply_controller_config_metadata(metadata, config);
+  auto json = tracking_session_metadata_json(metadata);
+  expect_true(contains(json, "\"occlusion_probe_interval_frames\": 7") &&
+                  contains(json, "\"occlusion_gradual_dimension_ratio\": 0.810000") &&
+                  contains(json, "\"occlusion_confirmation_iou\": 0.610000") &&
+                  metadata.max_accepted_scale_step_ratio == 0.05F &&
+                  metadata.accepted_scale_deadband_ratio == 0.02F &&
+                  metadata.accepted_scale_smoothing_alpha == 0.10F &&
+                  metadata.accepted_scale_median_window_frames == 5 &&
+                  metadata.accepted_scale_direction_confirm_frames == 3 &&
+                  metadata.accepted_scale_output_hysteresis_px == 0.75F &&
+                  metadata.accepted_center_smoothing_alpha == 0.35F &&
+                  metadata.accepted_center_max_correction_ratio == 0.25F &&
+                  metadata.max_reacquisition_center_distance == 0.75F &&
+                  contains(json, "\"max_accepted_scale_step_ratio\": 0.050000") &&
+                  contains(json, "\"accepted_scale_deadband_ratio\": 0.020000") &&
+                  contains(json, "\"accepted_scale_smoothing_alpha\": 0.100000") &&
+                  contains(json, "\"accepted_scale_median_window_frames\": 5") &&
+                  contains(json, "\"accepted_scale_direction_confirm_frames\": 3") &&
+                  contains(json, "\"accepted_scale_output_hysteresis_px\": 0.750000") &&
+                  contains(json, "\"accepted_center_smoothing_alpha\": 0.350000") &&
+                  contains(json, "\"accepted_center_max_correction_ratio\": 0.250000") &&
+                  contains(json, "\"max_reacquisition_center_distance\": 0.750000"),
+              "metadata uses effective configuration instead of schema defaults");
+  struct NonfiniteSetting {
+    float TrackingSessionMetadata::*field;
+    float value;
+    const char* message;
+  };
+  const NonfiniteSetting nonfinite_settings[] = {
+      {&TrackingSessionMetadata::accepted_scale_deadband_ratio,
+       std::numeric_limits<float>::quiet_NaN(),
+       "nonfinite accepted scale deadband is rejected before JSON output"},
+      {&TrackingSessionMetadata::accepted_scale_smoothing_alpha,
+       std::numeric_limits<float>::infinity(),
+       "nonfinite accepted scale smoothing alpha is rejected before JSON output"},
+      {&TrackingSessionMetadata::accepted_scale_output_hysteresis_px,
+       std::numeric_limits<float>::quiet_NaN(),
+       "nonfinite accepted scale output hysteresis is rejected before JSON output"},
+      {&TrackingSessionMetadata::accepted_center_smoothing_alpha,
+       std::numeric_limits<float>::quiet_NaN(),
+       "nonfinite accepted center smoothing alpha is rejected before JSON output"},
+      {&TrackingSessionMetadata::accepted_center_max_correction_ratio,
+       std::numeric_limits<float>::infinity(),
+       "nonfinite accepted center correction ratio is rejected before JSON output"},
+      {&TrackingSessionMetadata::max_reacquisition_center_distance,
+       -std::numeric_limits<float>::infinity(),
+       "nonfinite recovery center distance is rejected before JSON output"},
+  };
+  for (const NonfiniteSetting& setting : nonfinite_settings) {
+    TrackingSessionMetadata invalid = metadata;
+    invalid.*(setting.field) = setting.value;
+    bool rejected = false;
+    try { tracking_session_metadata_json(invalid); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    expect_true(rejected, setting.message);
+  }
+  metadata.occlusion_peak_margin_drop = std::numeric_limits<float>::infinity();
+  bool rejected = false;
+  try { tracking_session_metadata_json(metadata); }
+  catch (const std::invalid_argument&) { rejected = true; }
+  expect_true(rejected, "nonfinite adaptive configuration is rejected before JSON output");
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
+  test_adaptive_coast_serialization();
 
   MonotonicVideoClock clock(30.0);
   expect_true(clock.next(10.0) == 10, "valid first PTS is preserved");
@@ -147,8 +273,8 @@ int main() {
         "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("8,", 0) == 0,
-              "tracking rows carry schema version 8 exactly once");
+  expect_true(encoded.rfind("9,", 0) == 0,
+              "tracking rows carry schema version 9 exactly once");
   expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
               "CSV writes established class and recovery gate");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
@@ -426,7 +552,7 @@ int main() {
                   contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
                   contains(json, "\"detector_ms\": 15.000000"),
               "same-frame initialization history retains order, result diagnostics and null optionals");
-  expect_true(contains(json, "\"schema_version\": 8") &&
+  expect_true(contains(json, "\"schema_version\": 9") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&

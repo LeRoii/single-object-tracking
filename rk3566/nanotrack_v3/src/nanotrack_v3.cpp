@@ -10,6 +10,9 @@
 namespace nanotrack {
 namespace {
 
+constexpr float kMinimumInitialDimensionRatio = 0.75F;
+constexpr float kMaximumInitialDimensionRatio = 1.33F;
+
 std::size_t tensor_elements(const rknn_tensor_attr& attr) {
   return static_cast<std::size_t>(attr.n_elems);
 }
@@ -118,6 +121,7 @@ void NanoTrackV3::initialize(const cv::Mat& frame, const BBox& bbox) {
   state_.center_y = bbox.y + (bbox.height - 1.0F) / 2.0F;
   state_.width = bbox.width;
   state_.height = bbox.height;
+  initial_bbox_ = bbox;
   channel_average_ = cv::mean(frame);
   anchor_feature_ = extract_template_feature(frame, bbox);
   recent_feature_ = anchor_feature_;
@@ -160,8 +164,19 @@ std::optional<DecodeResult> NanoTrackV3::run_head(
   if (head_outputs.size() != 2) {
     throw std::runtime_error("head returned an unexpected output count");
   }
-  return try_decode_head(head_outputs[0], head_outputs[1], reference_state,
-                         config_, scale_z, frame_width_, frame_height_);
+  std::optional<DecodeResult> decoded =
+      try_decode_head(head_outputs[0], head_outputs[1], reference_state,
+                      config_, scale_z, frame_width_, frame_height_);
+  if (decoded) {
+    decoded->bbox = constrain_bbox_dimensions(
+        decoded->bbox, initial_bbox_, kMinimumInitialDimensionRatio,
+        kMaximumInitialDimensionRatio, frame_width_, frame_height_);
+    decoded->state.center_x = decoded->bbox.x + 0.5F * decoded->bbox.width;
+    decoded->state.center_y = decoded->bbox.y + 0.5F * decoded->bbox.height;
+    decoded->state.width = decoded->bbox.width;
+    decoded->state.height = decoded->bbox.height;
+  }
+  return decoded;
 }
 
 cv::Mat NanoTrackV3::mat_view(const ImageView& image) const {

@@ -114,6 +114,10 @@ cv::Mat render_interactive(const cv::Mat& source,
           return cv::Scalar(0, 255, 255);
         case nanotrack::DebugBoxKind::kAcceptedControl:
           return cv::Scalar(0, 255, 0);
+        case nanotrack::DebugBoxKind::kCoastSearchProbe:
+          return cv::Scalar(255, 0, 0);
+        case nanotrack::DebugBoxKind::kCoastConfirmProbe:
+          return cv::Scalar(0, 165, 255);
         case nanotrack::DebugBoxKind::kTargetClassInitializationSelected:
           return cv::Scalar(255, 255, 255);
       }
@@ -318,30 +322,6 @@ std::string fnv1a64_text(const std::string& text) {
   return encoded.str();
 }
 
-std::string builtin_config_identity(const nanotrack::ControllerConfig& config) {
-  std::ostringstream stream;
-  stream << config.sensor << '|' << config.calibrated << '|'
-         << config.reliable_score << '|' << config.reliable_psr << '|'
-         << config.reliable_apce << '|' << config.reliable_peak_margin << '|'
-         << config.weak_score << '|' << config.weak_psr << '|'
-         << config.weak_apce << '|' << config.weak_peak_margin << '|'
-         << config.detector_candidate_max_center_ratio << '|'
-         << config.occlusion_hold_frames << '|'
-         << config.occlusion_trigger_consecutive_unreliable << '|'
-         << config.occlusion_trigger_min_dimension_ratio << '|'
-         << config.occlusion_reference_window << '|'
-         << nanotrack::to_string(config.detector_target_mode) << '|'
-         << config.detector_search_scale << '|'
-         << config.detector_subtarget_max_probes << '|'
-         << config.detector_confirmation_iou << '|'
-         << config.detector_confirmation_center_distance << '|'
-         << config.detector_confirmation_max_area_log_change << '|'
-         << config.detector_confirmation_max_aspect_log_change << '|'
-         << config.uncertain_ms << '|' << config.local_recovery_ms << '|'
-         << config.assisted_recovery_ms;
-  return stream.str();
-}
-
 void write_session_metadata(const std::string& path,
                             const nanotrack::Options& options,
                             const nanotrack::ControllerConfig& config,
@@ -358,7 +338,7 @@ void write_session_metadata(const std::string& path,
       std::filesystem::path(options.model_dir) / "manifest.json";
   const std::string config_hash =
       options.controller_config.empty()
-          ? fnv1a64_text(builtin_config_identity(config))
+          ? fnv1a64_text(nanotrack::controller_config_identity(config))
           : fnv1a64_file(options.controller_config);
   const double finite_source_fps =
       std::isfinite(source_fps) && source_fps > 0.0 ? source_fps : 0.0;
@@ -382,6 +362,7 @@ void write_session_metadata(const std::string& path,
   metadata.occlusion_trigger_min_dimension_ratio =
       config.occlusion_trigger_min_dimension_ratio;
   metadata.occlusion_reference_window = config.occlusion_reference_window;
+  nanotrack::apply_controller_config_metadata(metadata, config);
   metadata.rknn_api_version = tracker.api_version();
   metadata.rknn_driver_version = tracker.driver_version();
   metadata.source_fps = finite_source_fps;

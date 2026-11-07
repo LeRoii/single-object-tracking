@@ -5,6 +5,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -75,6 +76,15 @@ void set_value(ControllerConfig& config,
   else if (key == "max_center_distance") config.max_center_distance = parse_float(key, value);
   else if (key == "max_area_log_change") config.max_area_log_change = parse_float(key, value);
   else if (key == "max_aspect_log_change") config.max_aspect_log_change = parse_float(key, value);
+  else if (key == "max_accepted_scale_step_ratio") config.max_accepted_scale_step_ratio = parse_float(key, value);
+  else if (key == "accepted_scale_deadband_ratio") config.accepted_scale_deadband_ratio = parse_float(key, value);
+  else if (key == "accepted_scale_smoothing_alpha") config.accepted_scale_smoothing_alpha = parse_float(key, value);
+  else if (key == "accepted_scale_median_window_frames") config.accepted_scale_median_window_frames = parse_int(key, value);
+  else if (key == "accepted_scale_direction_confirm_frames") config.accepted_scale_direction_confirm_frames = parse_int(key, value);
+  else if (key == "accepted_scale_output_hysteresis_px") config.accepted_scale_output_hysteresis_px = parse_float(key, value);
+  else if (key == "accepted_center_smoothing_alpha") config.accepted_center_smoothing_alpha = parse_float(key, value);
+  else if (key == "accepted_center_max_correction_ratio") config.accepted_center_max_correction_ratio = parse_float(key, value);
+  else if (key == "max_reacquisition_center_distance") config.max_reacquisition_center_distance = parse_float(key, value);
   else if (key == "uncertain_ms") config.uncertain_ms = parse_integer(key, value);
   else if (key == "local_recovery_ms") config.local_recovery_ms = parse_integer(key, value);
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
@@ -82,6 +92,18 @@ void set_value(ControllerConfig& config,
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
   else if (key == "occlusion_reference_window") config.occlusion_reference_window = parse_int(key, value);
+  else if (key == "occlusion_probe_interval_frames") config.occlusion_probe_interval_frames = parse_int(key, value);
+  else if (key == "occlusion_gradual_dimension_ratio") config.occlusion_gradual_dimension_ratio = parse_float(key, value);
+  else if (key == "occlusion_gradual_consecutive_frames") config.occlusion_gradual_consecutive_frames = parse_int(key, value);
+  else if (key == "occlusion_min_reference_samples") config.occlusion_min_reference_samples = parse_int(key, value);
+  else if (key == "occlusion_shrink_step_ratio") config.occlusion_shrink_step_ratio = parse_float(key, value);
+  else if (key == "occlusion_suspicion_clear_frames") config.occlusion_suspicion_clear_frames = parse_int(key, value);
+  else if (key == "occlusion_peak_margin_drop") config.occlusion_peak_margin_drop = parse_float(key, value);
+  else if (key == "occlusion_motion_residual_threshold") config.occlusion_motion_residual_threshold = parse_float(key, value);
+  else if (key == "occlusion_confirmation_iou") config.occlusion_confirmation_iou = parse_float(key, value);
+  else if (key == "occlusion_confirmation_center_distance") config.occlusion_confirmation_center_distance = parse_float(key, value);
+  else if (key == "occlusion_confirmation_max_area_log_change") config.occlusion_confirmation_max_area_log_change = parse_float(key, value);
+  else if (key == "occlusion_confirmation_max_aspect_log_change") config.occlusion_confirmation_max_aspect_log_change = parse_float(key, value);
   else if (key == "detector_interval_ms") config.detector_interval_ms = parse_integer(key, value);
   else if (key == "detector_stale_ms") config.detector_stale_ms = parse_integer(key, value);
   else if (key == "detector_max_candidates") config.detector_max_candidates = static_cast<std::size_t>(parse_integer(key, value));
@@ -118,9 +140,19 @@ ControllerConfig default_controller_config(const std::string& sensor) {
   ControllerConfig config;
   config.sensor = sensor;
   if (sensor == "visible") {
-    config.reliable_psr = 4.5F;
-    config.weak_psr = 4.5F;
-    config.reliable_peak_margin = 0.06F;
+    config.reliable_psr = 4.2F;
+    config.weak_psr = 4.0F;
+    config.reliable_peak_margin = 0.04F;
+    config.weak_peak_margin = 0.02F;
+    config.max_accepted_scale_step_ratio = 0.05F;
+    config.accepted_scale_deadband_ratio = 0.02F;
+    config.accepted_scale_smoothing_alpha = 0.10F;
+    config.accepted_scale_median_window_frames = 5;
+    config.accepted_scale_direction_confirm_frames = 3;
+    config.accepted_scale_output_hysteresis_px = 0.75F;
+    config.accepted_center_smoothing_alpha = 0.35F;
+    config.accepted_center_max_correction_ratio = 0.25F;
+    config.max_reacquisition_center_distance = 0.75F;
   }
   validate_controller_config(config);
   return config;
@@ -158,6 +190,56 @@ void validate_controller_config(const ControllerConfig& config) {
       config.reliable_peak_margin < config.weak_peak_margin) {
     throw std::invalid_argument("reliable thresholds must not be weaker than weak thresholds");
   }
+  if (!std::isfinite(config.max_accepted_scale_step_ratio) ||
+      config.max_accepted_scale_step_ratio <= 0.0F ||
+      config.max_accepted_scale_step_ratio > 1.0F) {
+    throw std::invalid_argument(
+        "accepted scale step ratio must be finite and in (0,1]");
+  }
+  if (!std::isfinite(config.accepted_scale_deadband_ratio) ||
+      config.accepted_scale_deadband_ratio < 0.0F ||
+      config.accepted_scale_deadband_ratio >= 1.0F) {
+    throw std::invalid_argument(
+        "accepted scale deadband ratio must be finite and in [0,1)");
+  }
+  if (!std::isfinite(config.accepted_scale_smoothing_alpha) ||
+      config.accepted_scale_smoothing_alpha <= 0.0F ||
+      config.accepted_scale_smoothing_alpha > 1.0F) {
+    throw std::invalid_argument(
+        "accepted scale smoothing alpha must be finite and in (0,1]");
+  }
+  if (config.accepted_scale_median_window_frames < 1 ||
+      config.accepted_scale_median_window_frames > 31 ||
+      config.accepted_scale_median_window_frames % 2 == 0) {
+    throw std::invalid_argument(
+        "accepted scale median window must be odd and in [1,31]");
+  }
+  if (config.accepted_scale_direction_confirm_frames < 1 ||
+      config.accepted_scale_direction_confirm_frames > 31) {
+    throw std::invalid_argument(
+        "accepted scale direction confirmation must be in [1,31]");
+  }
+  if (!std::isfinite(config.accepted_scale_output_hysteresis_px) ||
+      config.accepted_scale_output_hysteresis_px < 0.0F) {
+    throw std::invalid_argument(
+        "accepted scale output hysteresis must be finite and non-negative");
+  }
+  if (!std::isfinite(config.accepted_center_smoothing_alpha) ||
+      config.accepted_center_smoothing_alpha <= 0.0F ||
+      config.accepted_center_smoothing_alpha > 1.0F) {
+    throw std::invalid_argument(
+        "accepted center smoothing alpha must be finite and in (0,1]");
+  }
+  if (!std::isfinite(config.accepted_center_max_correction_ratio) ||
+      config.accepted_center_max_correction_ratio < 0.0F) {
+    throw std::invalid_argument(
+        "accepted center correction ratio must be finite and non-negative");
+  }
+  if (!std::isfinite(config.max_reacquisition_center_distance) ||
+      config.max_reacquisition_center_distance < 0.0F) {
+    throw std::invalid_argument(
+        "reacquisition center distance must be finite and non-negative");
+  }
   if (config.uncertain_ms <= 0 ||
       config.local_recovery_ms <= config.uncertain_ms ||
       config.assisted_recovery_ms <= config.local_recovery_ms) {
@@ -174,10 +256,42 @@ void validate_controller_config(const ControllerConfig& config) {
       config.occlusion_reference_window > 60) {
     throw std::invalid_argument("occlusion hold counts are invalid");
   }
-  if (!std::isfinite(config.occlusion_trigger_min_dimension_ratio) ||
-      config.occlusion_trigger_min_dimension_ratio <= 0.0F ||
-      config.occlusion_trigger_min_dimension_ratio > 1.0F) {
-    throw std::invalid_argument("occlusion dimension ratio must be in (0,1]");
+  if (config.occlusion_probe_interval_frames < 1 ||
+      config.occlusion_probe_interval_frames > 300) {
+    throw std::invalid_argument("occlusion probe interval must be in [1,300]");
+  }
+  const int occlusion_counts[] = {
+      config.occlusion_gradual_consecutive_frames,
+      config.occlusion_min_reference_samples,
+      config.occlusion_suspicion_clear_frames};
+  for (const int value : occlusion_counts) {
+    if (value < 1 || value > 60) {
+      throw std::invalid_argument("occlusion evidence counts must be in [1,60]");
+    }
+  }
+  const float occlusion_ratios[] = {
+      config.occlusion_trigger_min_dimension_ratio,
+      config.occlusion_gradual_dimension_ratio,
+      config.occlusion_shrink_step_ratio,
+      config.occlusion_confirmation_iou};
+  for (const float value : occlusion_ratios) {
+    if (!std::isfinite(value) || value <= 0.0F || value > 1.0F) {
+      throw std::invalid_argument("occlusion ratios must be in (0,1]");
+    }
+  }
+  if (!std::isfinite(config.occlusion_peak_margin_drop) ||
+      config.occlusion_peak_margin_drop < 0.0F) {
+    throw std::invalid_argument("occlusion peak margin drop must be finite and non-negative");
+  }
+  const float occlusion_positive[] = {
+      config.occlusion_motion_residual_threshold,
+      config.occlusion_confirmation_center_distance,
+      config.occlusion_confirmation_max_area_log_change,
+      config.occlusion_confirmation_max_aspect_log_change};
+  for (const float value : occlusion_positive) {
+    if (!std::isfinite(value) || value <= 0.0F) {
+      throw std::invalid_argument("occlusion residual and confirmation deltas must be finite and positive");
+    }
   }
   if (!std::isfinite(config.detector_search_scale) ||
       config.detector_search_scale < 1.0F ||
@@ -239,6 +353,51 @@ ControllerConfig load_controller_config(const std::string& path) {
   }
   validate_controller_config(config);
   return config;
+}
+
+std::string controller_config_identity(const ControllerConfig& config) {
+  std::ostringstream stream;
+  stream << config.sensor << '|' << config.calibrated << '|'
+         << config.reliable_score << '|' << config.reliable_psr << '|'
+         << config.reliable_apce << '|' << config.reliable_peak_margin << '|'
+         << config.weak_score << '|' << config.weak_psr << '|'
+         << config.weak_apce << '|' << config.weak_peak_margin << '|'
+         << config.max_accepted_scale_step_ratio << '|'
+         << config.accepted_scale_deadband_ratio << '|'
+         << config.accepted_scale_smoothing_alpha << '|'
+         << config.accepted_scale_median_window_frames << '|'
+         << config.accepted_scale_direction_confirm_frames << '|'
+         << config.accepted_scale_output_hysteresis_px << '|'
+         << config.accepted_center_smoothing_alpha << '|'
+         << config.accepted_center_max_correction_ratio << '|'
+         << config.max_reacquisition_center_distance << '|'
+         << config.detector_candidate_max_center_ratio << '|'
+         << config.occlusion_hold_frames << '|'
+         << config.occlusion_trigger_consecutive_unreliable << '|'
+         << config.occlusion_trigger_min_dimension_ratio << '|'
+         << config.occlusion_reference_window << '|'
+         << config.occlusion_probe_interval_frames << '|'
+         << config.occlusion_gradual_dimension_ratio << '|'
+         << config.occlusion_gradual_consecutive_frames << '|'
+         << config.occlusion_min_reference_samples << '|'
+         << config.occlusion_shrink_step_ratio << '|'
+         << config.occlusion_suspicion_clear_frames << '|'
+         << config.occlusion_peak_margin_drop << '|'
+         << config.occlusion_motion_residual_threshold << '|'
+         << config.occlusion_confirmation_iou << '|'
+         << config.occlusion_confirmation_center_distance << '|'
+         << config.occlusion_confirmation_max_area_log_change << '|'
+         << config.occlusion_confirmation_max_aspect_log_change << '|'
+         << to_string(config.detector_target_mode) << '|'
+         << config.detector_search_scale << '|'
+         << config.detector_subtarget_max_probes << '|'
+         << config.detector_confirmation_iou << '|'
+         << config.detector_confirmation_center_distance << '|'
+         << config.detector_confirmation_max_area_log_change << '|'
+         << config.detector_confirmation_max_aspect_log_change << '|'
+         << config.uncertain_ms << '|' << config.local_recovery_ms << '|'
+         << config.assisted_recovery_ms;
+  return stream.str();
 }
 
 }  // namespace nanotrack

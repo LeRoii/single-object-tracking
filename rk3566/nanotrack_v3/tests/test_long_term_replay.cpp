@@ -91,8 +91,10 @@ int main() {
   expect_true(!output.control_valid,
               "first post-occlusion match remains under confirmation");
   output = step(normal, 13, 520, initial);
-  expect_true(output.reacquired && output.control_valid,
-              "short occlusion recovers after two consistent frames");
+  expect_true(!output.reacquired && output.control_valid &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kShortConfirmation,
+              "short gap resumes through bounded confirmation after two consistent frames");
 
   LongTermController assisted(config);
   assisted.initialize(initial, 0, 0, frame_size,
@@ -237,194 +239,140 @@ int main() {
                   output.quality == QualityLevel::kRejected,
               "high-response distant distractor fails the motion gate");
 
-  const auto accept_reliable = [](LongTermController& controller,
-                                  std::uint64_t frame_id,
-                                  std::int64_t timestamp_ms,
-                                  const BBox& bbox) {
-    const SearchPlan plan =
-        controller.begin_frame(frame_id, timestamp_ms, false);
-    return controller.finish_frame(
-        plan, {reliable_for_plan(plan, bbox, frame_id)}, std::nullopt);
-  };
-  const auto reject_shrunken = [](LongTermController& controller,
-                                  std::uint64_t frame_id,
-                                  std::int64_t timestamp_ms,
-                                  const BBox& bbox) {
-    const SearchPlan plan =
-        controller.begin_frame(frame_id, timestamp_ms, false);
-    return controller.finish_frame(
-        plan, {weak_for_plan(plan, bbox, frame_id)}, std::nullopt);
-  };
-
-  ControllerConfig hold_one_config = config;
-  hold_one_config.occlusion_hold_frames = 1;
-  hold_one_config.uncertain_ms = 200;
-  hold_one_config.local_recovery_ms = 1000;
-  hold_one_config.assisted_recovery_ms = 3000;
-  LongTermController one_frame_hold(hold_one_config);
-  one_frame_hold.initialize(initial, 0, 0, frame_size,
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    accept_reliable(one_frame_hold, frame, frame * 40, initial);
-  }
-  reject_shrunken(one_frame_hold, 9, 360, BBox{43, 33, 14, 14});
-  SearchPlan trigger_plan = one_frame_hold.begin_frame(10, 400, false);
-  expect_true(trigger_plan.run_tracker,
-              "the trigger frame still permits NanoTrack inference");
-  output = one_frame_hold.finish_frame(
-      trigger_plan,
-      {weak_for_plan(trigger_plan, BBox{43, 33, 14, 14}, 10)},
-      std::nullopt);
-  expect_true(output.occlusion_hold_triggered && !output.control_valid,
-              "triggering hold never authorizes motion-only control");
-  SearchPlan hold_plan = one_frame_hold.begin_frame(11, 440, true);
-  expect_true(hold_plan.mode == TrackingMode::kOcclusionHold &&
-                  !hold_plan.run_tracker && !hold_plan.request_detector &&
-                  !hold_plan.detector_request &&
-                  hold_plan.hold_remaining_frames == 1 &&
-                  hold_plan.predicted_bbox.width == 20.0F &&
-                  hold_plan.predicted_bbox.height == 20.0F,
-              "N=1 produces exactly one complete frozen-scale hold plan");
-  output = one_frame_hold.finish_frame(hold_plan, {}, std::nullopt);
-  expect_true(!output.control_valid && !output.accepted &&
-                  output.mode == TrackingMode::kOcclusionHold,
-              "hold output remains explicitly invalid");
-  SearchPlan resumed_plan = one_frame_hold.begin_frame(12, 480, false);
-  expect_true(resumed_plan.mode == TrackingMode::kUncertain &&
-                  resumed_plan.run_tracker &&
-                  resumed_plan.predicted_bbox.width == 20.0F &&
-                  resumed_plan.predicted_bbox.height == 20.0F,
-              "the frame after N=1 resumes recovery with frozen scale");
-  one_frame_hold.finish_frame(resumed_plan, {}, std::nullopt);
-  resumed_plan = one_frame_hold.begin_frame(13, 520, false);
-  expect_true(resumed_plan.predicted_bbox.width == 20.0F &&
-                  resumed_plan.predicted_bbox.height == 20.0F,
-              "scale remains frozen after hold exit until reacquisition");
-  one_frame_hold.finish_frame(resumed_plan, {}, std::nullopt);
-
-  ControllerConfig hold_twelve_config = hold_one_config;
-  hold_twelve_config.occlusion_hold_frames = 12;
-  LongTermController twelve_frame_hold(hold_twelve_config);
-  twelve_frame_hold.initialize(initial, 0, 0, frame_size,
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    accept_reliable(twelve_frame_hold, frame, frame * 40, initial);
-  }
-  reject_shrunken(twelve_frame_hold, 9, 360, BBox{43, 33, 14, 14});
-  reject_shrunken(twelve_frame_hold, 10, 400, BBox{43, 33, 14, 14});
-  for (std::uint64_t offset = 1; offset <= 12; ++offset) {
-    const SearchPlan tick = twelve_frame_hold.begin_frame(
-        10 + offset, 400 + static_cast<std::int64_t>(offset) * 40, true);
-    expect_true(tick.mode == TrackingMode::kOcclusionHold &&
-                    !tick.run_tracker && !tick.request_detector &&
-                    tick.hold_remaining_frames == 13 - offset &&
-                    tick.predicted_bbox.width == 20.0F &&
-                    tick.predicted_bbox.height == 20.0F,
-                "N=12 keeps every complete hold frame frozen and detector-free");
-    output = twelve_frame_hold.finish_frame(tick, {}, std::nullopt);
+  // This replay catches an extra thirteenth control frame and accidental
+  // adoption of a shrunken observation while the coast is open.
+  struct CoastBudget { int configured; int expected; };
+  for (CoastBudget budget : {CoastBudget{1, 1}, CoastBudget{12, 12}, CoastBudget{300, 12}}) {
+    const int duration = budget.expected;
+    ControllerConfig coast_config = config;
+    coast_config.occlusion_hold_frames = budget.configured;
+    LongTermController coast(coast_config);
+    coast.initialize(initial, 0, 0, frame_size);
+    for (int frame = 1; frame <= 8; ++frame)
+      step(coast, frame, frame * 40, initial);
+    SearchPlan tick = coast.begin_frame(9, 360, true);
+    output = coast.finish_frame(
+        tick, {reliable_for_plan(tick, BBox{43, 30, 14, 20}, 9)}, std::nullopt);
+    expect_true(output.occlusion_hold_triggered && output.control_valid &&
+                    output.motion_control_authorized && !output.accepted &&
+                    output.occlusion_coast_age_frames == 1 &&
+                    output.bbox.width == 20,
+                "the severe RELIABLE trigger is the first authorized coast frame");
+    for (int age = 2; age <= duration; ++age) {
+      tick = coast.begin_frame(8 + age, 320 + age * 40, true);
+      expect_true(tick.mode == TrackingMode::kOcclusionHold &&
+                      tick.run_tracker == (age == 5 || age == 10) && !tick.request_detector &&
+                      tick.occlusion_coast_age_frames == static_cast<std::size_t>(age),
+                  "coast runs only periodic probes and never requests detector work");
+      output = coast.finish_frame(
+          tick, {reliable_for_plan(tick, BBox{43, 30, 14, 20}, 8 + age)},
+          std::nullopt);
+      expect_true(output.control_valid && !output.accepted &&
+                      output.bbox.width == 20 && output.bbox.height == 20,
+                  "unconfirmed observations cannot replace frozen motion control");
+    }
+    tick = coast.begin_frame(9 + duration, 360 + duration * 40, false);
+    expect_true(tick.run_tracker && tick.mode != TrackingMode::kOcclusionHold &&
+                    !tick.motion_control_authorized && tick.predicted_bbox.width == 20,
+                "the first frame after the inclusive budget resumes frozen recovery");
+    output = coast.finish_frame(tick, {}, std::nullopt);
     expect_true(!output.control_valid,
-                "every N=12 hold frame keeps control invalid");
+                "exhausted motion coast does not silently extend control");
+    tick = coast.begin_frame(10 + duration, 400 + duration * 40, false);
+    output = coast.finish_frame(
+        tick, {reliable_for_plan(tick, initial, 10 + duration)}, std::nullopt);
+    expect_true(!output.control_valid && !output.accepted,
+                "the first visual match after coast requires confirmation");
+    tick = coast.begin_frame(11 + duration, 440 + duration * 40, false);
+    output = coast.finish_frame(
+        tick, {reliable_for_plan(tick, initial, 11 + duration)}, std::nullopt);
+    const bool reached_local_recovery = duration > 1;
+    const auto expected_path = reached_local_recovery
+        ? AcceptedObservationPath::kLocalOrDeeperRecovery
+        : AcceptedObservationPath::kShortConfirmation;
+    expect_true(output.reacquired == reached_local_recovery &&
+                    output.control_valid &&
+                    output.accepted_observation_path == expected_path,
+                "post-coast confirmation resets only at local-or-deeper recovery");
+    for (int frame = 12 + duration; frame <= 18 + duration; ++frame)
+      step(coast, frame, frame * 40, initial);
+    tick = coast.begin_frame(19 + duration, (19 + duration) * 40, false);
+    output = coast.finish_frame(
+        tick, {reliable_for_plan(tick, BBox{43, 30, 14, 20}, 19 + duration)},
+        std::nullopt);
+    expect_true(output.occlusion_hold_triggered && output.control_valid,
+                "confirmed recovery clears old evidence and rearms a fresh coast");
   }
-  resumed_plan = twelve_frame_hold.begin_frame(23, 920, false);
-  expect_true(resumed_plan.mode == TrackingMode::kLocalRecovery &&
-                  resumed_plan.run_tracker &&
-                  resumed_plan.predicted_bbox.width == 20.0F &&
-                  resumed_plan.predicted_bbox.height == 20.0F,
-              "the thirteenth frame resumes after twelve holds at frozen scale");
-  twelve_frame_hold.finish_frame(resumed_plan, {}, std::nullopt);
 
-  reject_shrunken(twelve_frame_hold, 24, 960, BBox{43, 33, 14, 14});
-  output = reject_shrunken(twelve_frame_hold, 25, 1000,
-                           BBox{43, 33, 14, 14});
-  expect_true(!output.occlusion_hold_triggered &&
-                  twelve_frame_hold.mode() != TrackingMode::kOcclusionHold,
-              "one loss episode cannot enter hold twice");
+  // A target reappearing at age four recovers at 5/6; reappearing at age
+  // seven misses probe five and recovers at 10/11. Search alone never moves
+  // the control box, and a failed confirm cannot shift the periodic schedule.
+  for (int reappearance_age : {4, 7}) {
+    LongTermController coast(config);
+    coast.initialize(initial, 0, 0, frame_size);
+    for (int frame = 1; frame <= 8; ++frame)
+      step(coast, frame, frame * 40, initial);
+    auto plan = coast.begin_frame(9, 360, false);
+    output = coast.finish_frame(plan,
+        reliable_pair_for_plan(plan, BBox{41, 30, 18, 20}, 9), std::nullopt);
+    expect_true(!output.occlusion_hold_triggered && output.accepted,
+                "gradual replay starts with one suspicious accepted shrink");
+    plan = coast.begin_frame(10, 400, false);
+    auto shrink = reliable_pair_for_plan(plan, BBox{42, 30, 16, 20}, 10);
+    for (auto& observation : shrink) observation.metrics.peak_margin = 0.17F;
+    output = coast.finish_frame(plan, shrink, std::nullopt);
+    expect_true(output.occlusion_hold_triggered && output.occlusion_coast_age_frames == 1 &&
+                    output.control_valid && output.bbox.width == 20,
+                "second adjacent shrink plus peak evidence starts bounded motion coast");
+    const int search_age = reappearance_age == 4 ? 5 : 10;
+    const BBox recovered{44, 30, 20, 20};
+    for (int age = 2; age <= search_age + 1; ++age) {
+      plan = coast.begin_frame(9 + age, 360 + age * 40, true);
+      const bool confirming = age == search_age + 1;
+      const auto expected = confirming ? OcclusionProbeType::kConfirm
+          : age == 5 || age == 10 ? OcclusionProbeType::kSearch : OcclusionProbeType::kNone;
+      expect_true(plan.occlusion_probe_type == expected &&
+                      plan.run_tracker == (expected != OcclusionProbeType::kNone) &&
+                      !plan.request_detector && plan.predicted_bbox.width == 20,
+                  "reappearance replay follows five-frame search and immediate confirm plans");
+      std::vector<TrackerObservation> observations;
+      if (plan.run_tracker && age >= reappearance_age)
+        observations = reliable_pair_for_plan(plan, recovered, plan.frame_id);
+      output = coast.finish_frame(plan, observations, std::nullopt);
+      expect_true(output.accepted == confirming && output.reacquired == confirming &&
+                      output.control_valid && output.motion_control_authorized == !confirming &&
+                      output.mode == (confirming ? TrackingMode::kTracking
+                                                : TrackingMode::kOcclusionHold),
+                  "only the consistent confirm changes from motion coast to accepted tracking");
+      if (age == search_age) {
+        expect_true(output.bbox.x < 42 && output.bbox.width == 20 &&
+                        output.occlusion_probe_confirmation_hits == 1,
+                    "search hit stays isolated from the motion control box");
+      }
+    }
+    expect_true(output.bbox.x == 44 && output.bbox.width == 20,
+                "confirm publishes the recovered NanoTrack box immediately");
+    plan = coast.begin_frame(30, 1200, true);
+    expect_true(plan.mode == TrackingMode::kTracking &&
+                    plan.occlusion_coast_age_frames == 0 &&
+                    plan.occlusion_probe_type == OcclusionProbeType::kNone &&
+                    plan.predicted_bbox.x == 44 && !plan.request_detector,
+                "early recovery resets velocity, probe schedule and loss time");
+    coast.finish_frame(plan, reliable_pair_for_plan(plan, recovered, 30), std::nullopt);
+  }
 
-  LongTermController assisted_no_hold(hold_one_config);
-  assisted_no_hold.initialize(initial, 0, 0, frame_size,
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    accept_reliable(assisted_no_hold, frame, frame * 40, initial);
+  for (std::int64_t timestamp : {1400, 4000}) {
+    LongTermController late(config);
+    late.initialize(initial, 0, 0, frame_size);
+    for (int frame = 1; frame <= 8; ++frame)
+      step(late, frame, frame * 40, initial);
+    step(late, 9, 360, std::nullopt);
+    const SearchPlan tick = late.begin_frame(10, timestamp, false);
+    output = late.finish_frame(
+        tick, {weak_for_plan(tick, BBox{43, 30, 14, 20}, 10)}, std::nullopt);
+    expect_true(!output.occlusion_hold_triggered && !output.control_valid,
+                "assisted or lost recovery cannot newly authorize a coast");
   }
-  step(assisted_no_hold, 9, 360, std::nullopt);
-  trigger_plan = assisted_no_hold.begin_frame(10, 1400, false);
-  expect_true(trigger_plan.mode == TrackingMode::kAssistedRecovery,
-              "boundary test reaches assisted recovery before shrink observation");
-  assisted_no_hold.finish_frame(
-      trigger_plan,
-      {weak_for_plan(trigger_plan, BBox{43, 33, 14, 14}, 10)},
-      std::nullopt);
-  trigger_plan = assisted_no_hold.begin_frame(11, 1440, false);
-  output = assisted_no_hold.finish_frame(
-      trigger_plan,
-      {weak_for_plan(trigger_plan, BBox{43, 33, 14, 14}, 11)},
-      std::nullopt);
-  expect_true(!output.occlusion_hold_triggered &&
-                  assisted_no_hold.mode() == TrackingMode::kAssistedRecovery,
-              "assisted recovery cannot first enter occlusion hold");
-
-  LongTermController lost_no_hold(hold_one_config);
-  lost_no_hold.initialize(initial, 0, 0, frame_size,
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    accept_reliable(lost_no_hold, frame, frame * 40, initial);
-  }
-  step(lost_no_hold, 9, 360, std::nullopt);
-  trigger_plan = lost_no_hold.begin_frame(10, 3400, false);
-  expect_true(trigger_plan.mode == TrackingMode::kLost,
-              "boundary test reaches lost before shrink observation");
-  lost_no_hold.finish_frame(
-      trigger_plan,
-      {weak_for_plan(trigger_plan, BBox{43, 33, 14, 14}, 10)},
-      std::nullopt);
-  trigger_plan = lost_no_hold.begin_frame(11, 3440, false);
-  output = lost_no_hold.finish_frame(
-      trigger_plan,
-      {weak_for_plan(trigger_plan, BBox{43, 33, 14, 14}, 11)},
-      std::nullopt);
-  expect_true(!output.occlusion_hold_triggered &&
-                  lost_no_hold.mode() == TrackingMode::kLost,
-              "lost cannot first enter occlusion hold");
-
-  LongTermController rearmed(hold_one_config);
-  rearmed.initialize(initial, 0, 0, frame_size,
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 1; frame <= 8; ++frame) {
-    accept_reliable(rearmed, frame, frame * 40, initial);
-  }
-  reject_shrunken(rearmed, 9, 360, BBox{43, 33, 14, 14});
-  reject_shrunken(rearmed, 10, 400, BBox{43, 33, 14, 14});
-  hold_plan = rearmed.begin_frame(11, 440, false);
-  rearmed.finish_frame(hold_plan, {}, std::nullopt);
-  resumed_plan = rearmed.begin_frame(12, 480, false);
-  output = rearmed.finish_frame(
-      resumed_plan, {reliable_for_plan(resumed_plan, initial, 12)},
-      std::nullopt);
-  expect_true(!output.accepted,
-              "first reliable post-hold observation remains under confirmation");
-  resumed_plan = rearmed.begin_frame(13, 520, false);
-  output = rearmed.finish_frame(
-      resumed_plan, {reliable_for_plan(resumed_plan, initial, 13)},
-      std::nullopt);
-  expect_true(output.reacquired && output.control_valid,
-              "accepted reacquisition re-arms the hold episode");
-  for (std::uint64_t frame = 14; frame <= 20; ++frame) {
-    accept_reliable(rearmed, frame, frame * 40, initial);
-  }
-  reject_shrunken(rearmed, 21, 840, BBox{43, 33, 14, 14});
-  output = reject_shrunken(rearmed, 22, 880, BBox{43, 33, 14, 14});
-  expect_true(output.occlusion_hold_triggered,
-              "reacquisition seeds a fresh reference window and permits a later hold");
-
-  rearmed.initialize(initial, 30, 1200, frame_size,
-      make_unknown_target_class(TargetClassReason::kNoMatch));
-  for (std::uint64_t frame = 31; frame <= 38; ++frame) {
-    accept_reliable(rearmed, frame, frame * 40, initial);
-  }
-  reject_shrunken(rearmed, 39, 1560, BBox{43, 33, 14, 14});
-  output = reject_shrunken(rearmed, 40, 1600, BBox{43, 33, 14, 14});
-  expect_true(output.occlusion_hold_triggered,
-              "explicit initialize clears and re-arms hold without seeding the manual box");
 
   if (failures != 0) {
     std::cerr << failures << " replay test(s) failed\n";

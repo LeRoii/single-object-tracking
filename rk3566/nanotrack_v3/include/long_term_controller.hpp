@@ -3,6 +3,7 @@
 #include "controller_config.hpp"
 #include "long_term_types.hpp"
 #include "motion_estimator.hpp"
+#include "occlusion_evidence.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +35,17 @@ struct SearchPlan {
   std::optional<DetectorRequest> detector_request;
   bool run_tracker = true;
   std::size_t hold_remaining_frames = 0;
+  std::size_t occlusion_coast_age_frames = 0;
+  OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
+  bool motion_control_authorized = false;
+};
+
+enum class AcceptedObservationPath {
+  kDirect,
+  kShortConfirmation,
+  kLocalOrDeeperRecovery,
+  kDetectorRecovery,
+  kOcclusionProbeRecovery,
 };
 
 struct ControllerOutput {
@@ -42,12 +54,23 @@ struct ControllerOutput {
   TrackingMode mode = TrackingMode::kTracking;
   QualityLevel quality = QualityLevel::kRejected;
   BBox bbox{};
+  BBox tracking_bbox{};
+  BBox display_bbox{};
+  BBox control_bbox{};
   bool control_valid = false;
   bool accepted = false;
   bool reacquired = false;
+  AcceptedObservationPath accepted_observation_path =
+      AcceptedObservationPath::kDirect;
   TemplateKind selected_template = TemplateKind::kAnchor;
   TemplateAction template_action = TemplateAction::kNone;
   ResponseMetrics selected_metrics{};
+  std::optional<BBox> selected_observation_bbox;
+  float center_innovation_x = 0.0F;
+  float center_innovation_y = 0.0F;
+  float center_correction_x = 0.0F;
+  float center_correction_y = 0.0F;
+  bool center_correction_limited = false;
   float template_iou = 0.0F;
   float normalized_center_residual = 0.0F;
   float area_log_change = 0.0F;
@@ -74,6 +97,44 @@ struct ControllerOutput {
   std::size_t occlusion_consecutive_unreliable_frames = 0;
   std::optional<float> occlusion_observation_width;
   std::optional<float> occlusion_observation_height;
+  OcclusionReferenceSource occlusion_reference_source = OcclusionReferenceSource::kNone;
+  bool occlusion_suspicion_active = false;
+  bool occlusion_suspicion_started = false;
+  bool occlusion_suspicion_cleared = false;
+  std::size_t occlusion_suspicion_frames = 0;
+  std::size_t occlusion_clean_frames = 0;
+  std::size_t occlusion_width_shrink_frames = 0;
+  std::size_t occlusion_height_shrink_frames = 0;
+  bool occlusion_severe_evidence = false;
+  bool occlusion_gradual_evidence = false;
+  bool occlusion_template_evidence = false;
+  bool occlusion_peak_margin_evidence = false;
+  bool occlusion_motion_residual_evidence = false;
+  OcclusionTriggerReason occlusion_trigger_reason = OcclusionTriggerReason::kNone;
+  std::size_t occlusion_coast_age_frames = 0;
+  OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
+  std::size_t occlusion_probe_confirmation_hits = 0;
+  std::size_t occlusion_probe_confirmation_required = 0;
+  std::string occlusion_probe_rejection = "NONE";
+  std::optional<BBox> occlusion_probe_motion_bbox;
+  std::optional<BBox> occlusion_probe_bbox;
+  std::optional<bool> occlusion_probe_anchor_reliable;
+  std::optional<bool> occlusion_probe_recent_reliable;
+  std::optional<bool> occlusion_probe_template_gate;
+  std::optional<bool> occlusion_probe_cross_gate;
+  std::optional<bool> occlusion_probe_cross_iou;
+  std::optional<bool> occlusion_probe_cross_center;
+  std::optional<bool> occlusion_probe_cross_area;
+  std::optional<bool> occlusion_probe_cross_aspect;
+  std::optional<bool> occlusion_probe_anchor_score_gate;
+  std::optional<bool> occlusion_probe_anchor_center_gate;
+  std::optional<bool> occlusion_probe_anchor_area_gate;
+  std::optional<bool> occlusion_probe_anchor_aspect_gate;
+  std::optional<bool> occlusion_probe_recent_score_gate;
+  std::optional<bool> occlusion_probe_recent_center_gate;
+  std::optional<bool> occlusion_probe_recent_area_gate;
+  std::optional<bool> occlusion_probe_recent_aspect_gate;
+  bool motion_control_authorized = false;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};
 };
@@ -94,7 +155,8 @@ class LongTermController {
       const SearchPlan& plan,
       const std::vector<TrackerObservation>& observations,
       const std::optional<DetectorBatch>& detector_batch);
-  // Abandon an unfinished frame. Already-finished controller state is retained.
+  // Abandon an unfinished frame and revoke its coast budget. Already-finished
+  // controller state is retained.
   void abort_frame() noexcept;
 
   TrackingMode mode() const { return mode_; }
@@ -108,9 +170,18 @@ class LongTermController {
     float center_residual = 0.0F;
     float area_log_change = 0.0F;
     float aspect_log_change = 0.0F;
+    bool score_gate = false;
+    bool center_gate = false;
+    bool area_gate = false;
+    bool aspect_gate = false;
   };
 
   struct Confirmation {
+    std::uint64_t frame_id = 0;
+    BBox bbox{};
+  };
+
+  struct CoastProbeCandidate {
     std::uint64_t frame_id = 0;
     BBox bbox{};
   };
@@ -145,6 +216,14 @@ class LongTermController {
     float height = 0.0F;
   };
 
+  struct DimensionScaleState {
+    std::deque<float> samples;
+    float filtered = 0.0F;
+    float emitted = 0.0F;
+    int direction = 0;
+    int confirmations = 0;
+  };
+
   TrackingMode mode_for_timestamp(std::int64_t timestamp_ms) const;
   float search_scale_for(TrackingMode mode, std::int64_t timestamp_ms) const;
   EvaluatedObservation evaluate(const TrackerObservation& observation,
@@ -155,16 +234,34 @@ class LongTermController {
   bool detector_geometry_consistent(const BBox& reference,
                                     const BBox& bbox) const;
   bool detector_confirmation_consistent(const BBox& bbox) const;
+  void reset_scale_state(const BBox& bbox);
+  static void reset_scale_evidence(DimensionScaleState& state);
+  BBox stabilize_accepted_bbox(const BBox& observation,
+                               DimensionScaleState& width_state,
+                               DimensionScaleState& height_state) const;
+  BBox stabilize_accepted_center(const SearchPlan& plan,
+                                 const BBox& observation,
+                                 const BBox& scaled_bbox,
+                                 bool reacquired,
+                                 ControllerOutput& output) const;
+  void accept_observation(const SearchPlan& plan,
+                          const EvaluatedObservation& selected,
+                          AcceptedObservationPath acceptance_path,
+                          ControllerOutput& output);
   DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
-  std::optional<ScaleReference> occlusion_scale_reference() const;
-  void record_reliable_scale(const BBox& bbox);
+  void publish_occlusion_evidence(ControllerOutput& output);
 
   ControllerConfig config_;
   MotionEstimator motion_;
+  OcclusionEvidenceTracker occlusion_evidence_;
+  OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};
   BBox current_bbox_{};
+  BBox display_bbox_{};
+  DimensionScaleState width_scale_state_{};
+  DimensionScaleState height_scale_state_{};
   TargetClassState target_class_{};
   TrackingMode mode_ = TrackingMode::kTracking;
   std::optional<std::int64_t> loss_start_ms_;
@@ -174,6 +271,7 @@ class LongTermController {
   std::optional<ActiveDetectorCandidate> active_detector_candidate_;
   std::uint64_t next_detector_candidate_id_ = 1;
   std::deque<Confirmation> confirmations_;
+  std::optional<CoastProbeCandidate> coast_probe_candidate_;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_timestamp_ms_ = 0;
   SearchPlan active_plan_{};
@@ -181,12 +279,17 @@ class LongTermController {
   std::int64_t last_recent_update_ms_ = 0;
   bool recent_probation_ = false;
   int probation_reliable_frames_ = 0;
-  std::deque<BBox> reliable_scale_history_;
   int consecutive_unreliable_frames_ = 0;
   std::size_t hold_remaining_frames_ = 0;
+  std::size_t occlusion_coast_age_frames_ = 0;
+  std::size_t occlusion_suspicion_frames_ = 0;
   bool hold_used_for_loss_ = false;
   std::optional<ScaleReference> frozen_scale_reference_;
   std::uint64_t detector_eligibility_generation_ = 0;
+  // Within one initialized session only coast entry advances eligibility.
+  // Keep that interval so late completions retain their invalidation reason
+  // after coast expiry/recovery, without retaining an unbounded generation set.
+  std::uint64_t detector_session_generation_ = 0;
   bool initialized_ = false;
   bool frame_open_ = false;
 };

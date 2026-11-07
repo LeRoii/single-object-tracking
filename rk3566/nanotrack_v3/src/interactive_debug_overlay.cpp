@@ -1,5 +1,6 @@
 #include "interactive_debug_overlay.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <locale>
@@ -203,15 +204,52 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
     }
   }
 
-  overlay.control_valid = result.output.accepted &&
-                          result.output.control_valid;
+  if (result.output.occlusion_probe_type != OcclusionProbeType::kNone) {
+    for (const auto& observation : result.observations) {
+      std::ostringstream label;
+      label << "COAST " << to_string(result.output.occlusion_probe_type)
+            << " " << to_string(observation.template_kind)
+            << " selected_quality=" << to_string(result.output.quality)
+            << " iou=" << formatted_float(result.output.template_iou)
+            << " selected_center=" << formatted_float(result.output.normalized_center_residual)
+            << " selected_area=" << formatted_float(result.output.area_log_change)
+            << " selected_aspect=" << formatted_float(result.output.aspect_log_change)
+            << " hits=" << result.output.occlusion_probe_confirmation_hits
+            << "/" << result.output.occlusion_probe_confirmation_required
+            << " reason=" << result.output.occlusion_probe_rejection
+            << " anchor=" << (result.output.occlusion_probe_anchor_reliable
+                ? (*result.output.occlusion_probe_anchor_reliable ? "1" : "0") : "NA")
+            << " recent=" << (result.output.occlusion_probe_recent_reliable
+                ? (*result.output.occlusion_probe_recent_reliable ? "1" : "0") : "NA")
+            << " template=" << (result.output.occlusion_probe_template_gate
+                ? (*result.output.occlusion_probe_template_gate ? "1" : "0") : "NA")
+            << " cross=" << (result.output.occlusion_probe_cross_gate
+                ? (*result.output.occlusion_probe_cross_gate ? "1" : "0") : "NA");
+      if (drawable_bbox(observation.bbox)) {
+        overlay.boxes.push_back(DebugBoxDescriptor{
+            result.output.occlusion_probe_type == OcclusionProbeType::kSearch
+                ? DebugBoxKind::kCoastSearchProbe : DebugBoxKind::kCoastConfirmProbe,
+            observation.bbox, label.str(), 2});
+      } else {
+        overlay.texts.push_back(DebugTextDescriptor{label.str()});
+      }
+    }
+  }
+
+  const bool coast_control = result.output.mode == TrackingMode::kOcclusionHold &&
+                             result.output.motion_control_authorized &&
+                             result.output.control_valid;
+  overlay.control_valid = (result.output.accepted && result.output.control_valid) ||
+                          coast_control;
   if (overlay.control_valid) {
-    overlay.boxes.push_back(DebugBoxDescriptor{
-        DebugBoxKind::kAcceptedControl,
-        result.output.bbox,
-        "ACCEPTED CTRL",
-        3});
-    overlay.status_label = "ACCEPTED CTRL";
+    const std::string label = coast_control ? "CTRL MOTION COAST" : "ACCEPTED CTRL";
+    if (drawable_bbox(result.output.bbox)) {
+      overlay.boxes.push_back(DebugBoxDescriptor{
+          DebugBoxKind::kAcceptedControl, result.output.bbox, label, 3});
+    } else {
+      overlay.texts.push_back(DebugTextDescriptor{label});
+    }
+    overlay.status_label = label;
   } else if (result.output.mode == TrackingMode::kOcclusionHold) {
     overlay.status_label = "OCCLUSION HOLD remaining=" +
                            std::to_string(
@@ -221,6 +259,12 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
   }
   overlay.texts.push_back(DebugTextDescriptor{
       target_class_label(result.target_class, labels)});
+  overlay.boxes.erase(std::remove_if(overlay.boxes.begin(), overlay.boxes.end(),
+      [&](const DebugBoxDescriptor& box) {
+        if (drawable_bbox(box.bbox)) return false;
+        overlay.texts.push_back(DebugTextDescriptor{box.label});
+        return true;
+      }), overlay.boxes.end());
   return overlay;
 }
 

@@ -9,7 +9,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 8;
+constexpr int kTrackingSchemaVersion = 9;
 
 class MonotonicVideoClock {
  public:
@@ -74,6 +74,44 @@ struct TrackingLogRow {
   std::size_t detector_position_valid_count = 0;
   std::size_t detector_position_rejected_count = 0;
   bool occlusion_hold_triggered = false;
+  OcclusionReferenceSource occlusion_reference_source = OcclusionReferenceSource::kNone;
+  bool occlusion_suspicion_active = false;
+  bool occlusion_suspicion_started = false;
+  bool occlusion_suspicion_cleared = false;
+  std::size_t occlusion_suspicion_frames = 0;
+  std::size_t occlusion_clean_frames = 0;
+  std::size_t occlusion_width_shrink_frames = 0;
+  std::size_t occlusion_height_shrink_frames = 0;
+  bool occlusion_severe_evidence = false;
+  bool occlusion_gradual_evidence = false;
+  bool occlusion_template_evidence = false;
+  bool occlusion_peak_margin_evidence = false;
+  bool occlusion_motion_residual_evidence = false;
+  OcclusionTriggerReason occlusion_trigger_reason = OcclusionTriggerReason::kNone;
+  std::size_t occlusion_coast_age_frames = 0;
+  OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
+  std::size_t occlusion_probe_confirmation_hits = 0;
+  std::size_t occlusion_probe_confirmation_required = 0;
+  bool motion_control_authorized = false;
+  std::string occlusion_probe_rejection = "NONE";
+  std::optional<BBox> occlusion_probe_motion_bbox;
+  std::optional<BBox> occlusion_probe_bbox;
+  std::optional<bool> occlusion_probe_anchor_reliable;
+  std::optional<bool> occlusion_probe_recent_reliable;
+  std::optional<bool> occlusion_probe_template_gate;
+  std::optional<bool> occlusion_probe_cross_gate;
+  std::optional<bool> occlusion_probe_cross_iou;
+  std::optional<bool> occlusion_probe_cross_center;
+  std::optional<bool> occlusion_probe_cross_area;
+  std::optional<bool> occlusion_probe_cross_aspect;
+  std::optional<bool> occlusion_probe_anchor_score_gate;
+  std::optional<bool> occlusion_probe_anchor_center_gate;
+  std::optional<bool> occlusion_probe_anchor_area_gate;
+  std::optional<bool> occlusion_probe_anchor_aspect_gate;
+  std::optional<bool> occlusion_probe_recent_score_gate;
+  std::optional<bool> occlusion_probe_recent_center_gate;
+  std::optional<bool> occlusion_probe_recent_area_gate;
+  std::optional<bool> occlusion_probe_recent_aspect_gate;
   std::size_t occlusion_hold_remaining_frames = 0;
   std::optional<float> occlusion_reference_width;
   std::optional<float> occlusion_reference_height;
@@ -149,6 +187,18 @@ struct TrackingSessionMetadata {
   int occlusion_trigger_consecutive_unreliable = 2;
   float occlusion_trigger_min_dimension_ratio = 0.70F;
   int occlusion_reference_window = 8;
+  int occlusion_probe_interval_frames = 5;
+  float occlusion_gradual_dimension_ratio = 0.85F;
+  int occlusion_gradual_consecutive_frames = 2;
+  int occlusion_min_reference_samples = 3;
+  float occlusion_shrink_step_ratio = 0.97F;
+  int occlusion_suspicion_clear_frames = 2;
+  float occlusion_peak_margin_drop = 0.02F;
+  float occlusion_motion_residual_threshold = 0.75F;
+  float occlusion_confirmation_iou = 0.50F;
+  float occlusion_confirmation_center_distance = 0.35F;
+  float occlusion_confirmation_max_area_log_change = 0.50F;
+  float occlusion_confirmation_max_aspect_log_change = 0.40F;
   std::string rknn_api_version;
   std::string rknn_driver_version;
   double source_fps = 0.0;
@@ -158,6 +208,15 @@ struct TrackingSessionMetadata {
   float reliable_psr = 0.0F;
   float reliable_apce = 0.0F;
   float reliable_peak_margin = 0.0F;
+  float max_accepted_scale_step_ratio = 1.0F;
+  float accepted_scale_deadband_ratio = 0.0F;
+  float accepted_scale_smoothing_alpha = 1.0F;
+  int accepted_scale_median_window_frames = 1;
+  int accepted_scale_direction_confirm_frames = 1;
+  float accepted_scale_output_hysteresis_px = 0.0F;
+  float accepted_center_smoothing_alpha = 1.0F;
+  float accepted_center_max_correction_ratio = 0.0F;
+  float max_reacquisition_center_distance = 0.0F;
   std::int64_t uncertain_ms = 0;
   std::int64_t local_recovery_ms = 0;
   std::int64_t assisted_recovery_ms = 0;
@@ -167,6 +226,8 @@ struct TrackingSessionMetadata {
 };
 
 std::string tracking_csv_header();
+void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
+                                      const ControllerConfig& config);
 std::string tracking_csv_row(const TrackingLogRow& row);
 TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     std::int64_t timestamp_ms,

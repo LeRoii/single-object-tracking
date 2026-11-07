@@ -9,6 +9,9 @@
 
 namespace nanotrack {
 namespace {
+std::string optional_integer(const std::optional<bool>& value) {
+  return value ? (*value ? "1" : "0") : "none";
+}
 
 std::ostringstream event_stream(const char* event) {
   std::ostringstream stream;
@@ -67,6 +70,21 @@ const char* rejection_name(DetectorCandidateRejection rejection) {
       return "CAPACITY_REJECTED";
   }
   return "UNKNOWN";
+}
+
+const char* acceptance_path_name(AcceptedObservationPath path) {
+  switch (path) {
+    case AcceptedObservationPath::kDirect: return "direct";
+    case AcceptedObservationPath::kShortConfirmation:
+      return "short_confirmation";
+    case AcceptedObservationPath::kLocalOrDeeperRecovery:
+      return "local_or_deeper_recovery";
+    case AcceptedObservationPath::kDetectorRecovery:
+      return "detector_recovery";
+    case AcceptedObservationPath::kOcclusionProbeRecovery:
+      return "occlusion_probe_recovery";
+  }
+  return "unknown";
 }
 
 std::string sanitized_value(const std::string& value) {
@@ -181,6 +199,100 @@ std::vector<std::string> DebugTelemetry::frame_events(
   ++observed_frames_;
   const bool was_hold = has_previous_state_ &&
                         previous_mode_ == TrackingMode::kOcclusionHold;
+  const auto emit_coast = [&](const char* name, const char* extra = "") {
+    const auto& o = result.output;
+    std::ostringstream stream = event_stream(name);
+    stream << " frame=" << o.frame_id
+           << " coast_age=" << o.occlusion_coast_age_frames
+           << " reference_source=" << to_string(o.occlusion_reference_source)
+           << " reference_width=" << optional_ratio(o.occlusion_reference_width)
+           << " reference_height=" << optional_ratio(o.occlusion_reference_height)
+           << " width_ratio=" << optional_ratio(o.occlusion_width_ratio)
+           << " height_ratio=" << optional_ratio(o.occlusion_height_ratio)
+           << " suspicion_active=" << o.occlusion_suspicion_active
+           << " suspicion_started=" << o.occlusion_suspicion_started
+           << " suspicion_cleared=" << o.occlusion_suspicion_cleared
+           << " suspicion_frames=" << o.occlusion_suspicion_frames
+           << " clean_frames=" << o.occlusion_clean_frames
+           << " width_shrink_frames=" << o.occlusion_width_shrink_frames
+           << " height_shrink_frames=" << o.occlusion_height_shrink_frames
+           << " remaining=" << o.occlusion_hold_remaining_frames
+           << " severe=" << o.occlusion_severe_evidence
+           << " gradual=" << o.occlusion_gradual_evidence
+           << " template=" << o.occlusion_template_evidence
+           << " peak=" << o.occlusion_peak_margin_evidence
+           << " motion_residual=" << o.occlusion_motion_residual_evidence
+           << " trigger_reason=" << to_string(o.occlusion_trigger_reason)
+           << " probe=" << to_string(o.occlusion_probe_type)
+           << " confirmation=" << o.occlusion_probe_confirmation_hits
+           << '/' << o.occlusion_probe_confirmation_required
+           << " rejection=" << o.occlusion_probe_rejection
+           << " probe_bbox=" << optional_bbox(o.occlusion_probe_bbox)
+           << " anchor_reliable=" << optional_integer(o.occlusion_probe_anchor_reliable)
+           << " recent_reliable=" << optional_integer(o.occlusion_probe_recent_reliable)
+           << " template_gate=" << optional_integer(o.occlusion_probe_template_gate)
+           << " cross_gate=" << optional_integer(o.occlusion_probe_cross_gate)
+           << " cross_iou=" << optional_integer(o.occlusion_probe_cross_iou)
+           << " cross_center=" << optional_integer(o.occlusion_probe_cross_center)
+           << " cross_area=" << optional_integer(o.occlusion_probe_cross_area)
+           << " cross_aspect=" << optional_integer(o.occlusion_probe_cross_aspect)
+           << " occlusion_probe_anchor_score_gate=" << optional_integer(o.occlusion_probe_anchor_score_gate)
+           << " occlusion_probe_anchor_center_gate=" << optional_integer(o.occlusion_probe_anchor_center_gate)
+           << " occlusion_probe_anchor_area_gate=" << optional_integer(o.occlusion_probe_anchor_area_gate)
+           << " occlusion_probe_anchor_aspect_gate=" << optional_integer(o.occlusion_probe_anchor_aspect_gate)
+           << " occlusion_probe_recent_score_gate=" << optional_integer(o.occlusion_probe_recent_score_gate)
+           << " occlusion_probe_recent_center_gate=" << optional_integer(o.occlusion_probe_recent_center_gate)
+           << " occlusion_probe_recent_area_gate=" << optional_integer(o.occlusion_probe_recent_area_gate)
+           << " occlusion_probe_recent_aspect_gate=" << optional_integer(o.occlusion_probe_recent_aspect_gate)
+           << " quality=" << to_string(o.quality)
+           << " template_iou=" << o.template_iou
+           << " center_residual=" << o.normalized_center_residual
+           << " area_change=" << o.area_log_change
+           << " aspect_change=" << o.aspect_log_change
+           << " motion_control_authorized=" << o.motion_control_authorized
+           << " control_valid=" << o.control_valid
+           << " motion_bbox=" << bbox_value(result.plan.motion_predicted_bbox)
+           << " control_bbox=" << bbox_value(o.bbox)
+           << extra;
+    for (const auto& observation : result.observations) {
+      stream << (observation.template_kind == TemplateKind::kAnchor
+                     ? " anchor_bbox=" : " recent_bbox=")
+             << bbox_value(observation.bbox);
+    }
+    events.push_back(stream.str());
+  };
+  const auto& o = result.output;
+  if (o.accepted && o.selected_observation_bbox) {
+    std::ostringstream stream = event_stream("center_filter");
+    stream << " frame=" << o.frame_id
+           << " raw_bbox=" << bbox_value(*o.selected_observation_bbox)
+           << " motion_bbox=" << bbox_value(result.plan.motion_predicted_bbox)
+           << " innovation=" << o.center_innovation_x << ','
+           << o.center_innovation_y
+           << " correction=" << o.center_correction_x << ','
+           << o.center_correction_y
+           << " limited=" << (o.center_correction_limited ? 1 : 0)
+           << " acceptance_path="
+           << acceptance_path_name(o.accepted_observation_path)
+           << " reacquired=" << (o.reacquired ? 1 : 0)
+           << " final_bbox=" << bbox_value(o.bbox);
+    events.push_back(stream.str());
+  }
+  if (o.occlusion_suspicion_started) emit_coast("occlusion_suspicion_start");
+  if (o.occlusion_suspicion_cleared) emit_coast("occlusion_suspicion_clear");
+  if (o.occlusion_hold_triggered) emit_coast("occlusion_coast_enter");
+  if (o.mode == TrackingMode::kOcclusionHold && !o.occlusion_hold_triggered)
+    emit_coast("occlusion_coast_tick");
+  if (o.occlusion_probe_type != OcclusionProbeType::kNone) {
+    emit_coast(o.occlusion_probe_type == OcclusionProbeType::kSearch
+                   ? "occlusion_probe_search" : "occlusion_probe_confirm");
+    if (o.occlusion_probe_rejection != "NONE")
+      emit_coast("occlusion_probe_rejected");
+  }
+  if (was_hold && o.reacquired) emit_coast("occlusion_reacquired");
+  if (was_hold && o.mode != TrackingMode::kOcclusionHold)
+    emit_coast("occlusion_coast_exit",
+               o.reacquired ? " exit_reason=REACQUIRED" : " exit_reason=TIMEOUT_OR_ABORT");
   if (!result.output.control_valid && !loss_start_timestamp_ms_) {
     loss_start_timestamp_ms_ = result.output.timestamp_ms;
   }

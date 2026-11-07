@@ -52,6 +52,27 @@ void expect_occlusion_defaults(const nanotrack::ControllerConfig& config,
               context + " defaults to a 0.70 dimension ratio");
   expect_true(config.occlusion_reference_window == 8,
               context + " defaults to eight reference observations");
+  expect_true(config.occlusion_probe_interval_frames == 5 &&
+                  config.occlusion_gradual_consecutive_frames == 2 &&
+                  config.occlusion_min_reference_samples == 3 &&
+                  config.occlusion_suspicion_clear_frames == 2,
+              context + " defaults to adaptive coast frame counts");
+  expect_near(config.occlusion_gradual_dimension_ratio, 0.85F, 1e-6F,
+              context + " defaults to a 0.85 gradual dimension ratio");
+  expect_near(config.occlusion_shrink_step_ratio, 0.97F, 1e-6F,
+              context + " defaults to a 0.97 shrink step ratio");
+  expect_near(config.occlusion_peak_margin_drop, 0.02F, 1e-6F,
+              context + " defaults to a 0.02 peak margin drop");
+  expect_near(config.occlusion_motion_residual_threshold, 0.75F, 1e-6F,
+              context + " defaults to a 0.75 motion residual threshold");
+  expect_near(config.occlusion_confirmation_iou, 0.50F, 1e-6F,
+              context + " defaults to a 0.50 coast confirmation IoU");
+  expect_near(config.occlusion_confirmation_center_distance, 0.35F, 1e-6F,
+              context + " defaults to a 0.35 coast confirmation center delta");
+  expect_near(config.occlusion_confirmation_max_area_log_change, 0.50F, 1e-6F,
+              context + " defaults to a 0.50 coast confirmation area delta");
+  expect_near(config.occlusion_confirmation_max_aspect_log_change, 0.40F, 1e-6F,
+              context + " defaults to a 0.40 coast confirmation aspect delta");
 }
 
 }  // namespace
@@ -65,12 +86,43 @@ int main() {
   expect_true(default_visible.detector_target_mode ==
                   DetectorTargetMode::kFullObject,
               "whole-object detector hypotheses remain the default");
-  expect_near(default_visible.reliable_psr, 4.5F, 1e-6F,
-              "visible bring-up default accepts observed RKNN PSR range");
-  expect_near(default_visible.weak_psr, 4.5F, 1e-6F,
-              "visible bring-up weak PSR matches the validated candidate");
-  expect_near(default_visible.reliable_peak_margin, 0.06F, 1e-6F,
-              "visible bring-up default accepts observed RKNN peak margin");
+  expect_near(default_visible.reliable_psr, 4.2F, 1e-6F,
+              "visible candidate accepts confirmed static-target PSR range");
+  expect_near(default_visible.weak_psr, 4.0F, 1e-6F,
+              "visible weak PSR retains a lower staging boundary");
+  expect_near(default_visible.reliable_peak_margin, 0.04F, 1e-6F,
+              "visible candidate accepts confirmed static-target peak margins");
+  expect_near(default_visible.weak_peak_margin, 0.02F, 1e-6F,
+              "visible weak peak margin retains a lower staging boundary");
+  expect_near(default_visible.max_accepted_scale_step_ratio, 0.05F, 1e-6F,
+              "visible accepted dimensions are limited to five percent per frame");
+  expect_near(default_visible.accepted_scale_deadband_ratio, 0.02F, 1e-6F,
+              "visible accepted scale suppresses changes through two percent");
+  expect_near(default_visible.accepted_scale_smoothing_alpha, 0.10F, 1e-6F,
+              "visible accepted scale moves ten percent toward its bounded target");
+  expect_true(default_visible.accepted_scale_median_window_frames == 5 &&
+                  default_visible.accepted_scale_direction_confirm_frames == 3,
+              "visible accepted scale requires five samples and three directions");
+  expect_near(default_visible.accepted_scale_output_hysteresis_px, 0.75F,
+              1e-6F, "visible accepted scale uses subpixel output hysteresis");
+  expect_near(default_visible.accepted_center_smoothing_alpha, 0.35F, 1e-6F,
+              "visible accepted centers blend bounded motion innovation");
+  expect_near(default_visible.accepted_center_max_correction_ratio, 0.25F,
+              1e-6F, "visible accepted centers bound one-frame correction");
+  expect_near(default_visible.max_reacquisition_center_distance, 0.75F,
+              1e-6F,
+              "visible ordinary recovery uses the fixed center residual gate");
+  expect_near(ControllerConfig{}.max_accepted_scale_step_ratio, 1.0F, 1e-6F,
+              "generic controller behavior remains unrestricted");
+  expect_true(ControllerConfig{}.accepted_scale_deadband_ratio == 0.0F &&
+                  ControllerConfig{}.accepted_scale_smoothing_alpha == 1.0F &&
+                  ControllerConfig{}.accepted_scale_median_window_frames == 1 &&
+                  ControllerConfig{}.accepted_scale_direction_confirm_frames == 1 &&
+                  ControllerConfig{}.accepted_scale_output_hysteresis_px == 0.0F &&
+                  ControllerConfig{}.accepted_center_smoothing_alpha == 1.0F &&
+                  ControllerConfig{}.accepted_center_max_correction_ratio == 0.0F &&
+                  ControllerConfig{}.max_reacquisition_center_distance == 0.0F,
+              "generic controller defaults preserve legacy scale, center and recovery behavior");
   expect_near(default_visible.detector_candidate_max_center_ratio, 0.15F,
               1e-6F,
               "visible default strictly limits detector center jumps");
@@ -81,6 +133,21 @@ int main() {
               "visible evidence does not alter infrared PSR default");
   expect_near(default_infrared.reliable_peak_margin, 0.10F, 1e-6F,
               "visible evidence does not alter infrared peak-margin default");
+  expect_near(default_infrared.weak_psr, 5.0F, 1e-6F,
+              "visible evidence does not alter infrared weak PSR default");
+  expect_near(default_infrared.weak_peak_margin, 0.04F, 1e-6F,
+              "visible evidence does not alter infrared weak peak-margin default");
+  expect_near(default_infrared.max_accepted_scale_step_ratio, 1.0F, 1e-6F,
+              "infrared accepted dimensions retain existing unrestricted behavior");
+  expect_true(default_infrared.accepted_scale_deadband_ratio == 0.0F &&
+                  default_infrared.accepted_scale_smoothing_alpha == 1.0F &&
+                  default_infrared.accepted_scale_median_window_frames == 1 &&
+                  default_infrared.accepted_scale_direction_confirm_frames == 1 &&
+                  default_infrared.accepted_scale_output_hysteresis_px == 0.0F &&
+                  default_infrared.accepted_center_smoothing_alpha == 1.0F &&
+                  default_infrared.accepted_center_max_correction_ratio == 0.0F &&
+                  default_infrared.max_reacquisition_center_distance == 0.0F,
+              "infrared retains compatibility scale, center and recovery settings");
   expect_near(default_infrared.detector_candidate_max_center_ratio, 0.15F,
               1e-6F,
               "infrared default uses the same strict detector position gate");
@@ -92,10 +159,32 @@ int main() {
   const ControllerConfig shipped_visible =
       load_controller_config(config_dir + "visible-default.conf");
   expect_occlusion_defaults(shipped_visible, "shipped visible configuration");
-  expect_near(shipped_visible.reliable_psr, 4.5F, 1e-6F,
-              "shipped visible config uses the validated reliable PSR");
-  expect_near(shipped_visible.weak_psr, 4.5F, 1e-6F,
-              "shipped visible config uses the validated weak PSR");
+  expect_near(shipped_visible.reliable_psr, 4.2F, 1e-6F,
+              "shipped visible config uses the static-target reliable PSR candidate");
+  expect_near(shipped_visible.weak_psr, 4.0F, 1e-6F,
+              "shipped visible config uses the staged weak PSR candidate");
+  expect_near(shipped_visible.reliable_peak_margin, 0.04F, 1e-6F,
+              "shipped visible config uses the reliable peak-margin candidate");
+  expect_near(shipped_visible.weak_peak_margin, 0.02F, 1e-6F,
+              "shipped visible config uses the weak peak-margin candidate");
+  expect_near(shipped_visible.max_accepted_scale_step_ratio, 0.05F, 1e-6F,
+              "shipped visible config limits accepted scale steps to five percent");
+  expect_near(shipped_visible.accepted_scale_deadband_ratio, 0.02F, 1e-6F,
+              "shipped visible config suppresses two-percent scale noise");
+  expect_near(shipped_visible.accepted_scale_smoothing_alpha, 0.10F, 1e-6F,
+              "shipped visible config smooths bounded scale updates");
+  expect_true(shipped_visible.accepted_scale_median_window_frames == 5 &&
+                  shipped_visible.accepted_scale_direction_confirm_frames == 3,
+              "shipped visible config enables temporal scale confirmation");
+  expect_near(shipped_visible.accepted_scale_output_hysteresis_px, 0.75F,
+              1e-6F, "shipped visible config enables sticky integer output");
+  expect_near(shipped_visible.accepted_center_smoothing_alpha, 0.35F, 1e-6F,
+              "shipped visible config blends accepted center innovation");
+  expect_near(shipped_visible.accepted_center_max_correction_ratio, 0.25F,
+              1e-6F, "shipped visible config bounds accepted center correction");
+  expect_near(shipped_visible.max_reacquisition_center_distance, 0.75F,
+              1e-6F,
+              "shipped visible config fixes the ordinary recovery center gate");
   expect_occlusion_defaults(
       load_controller_config(config_dir + "infrared-default.conf"),
       "shipped infrared configuration");
@@ -123,6 +212,15 @@ int main() {
              "reliable_score=0.82\n"
              "reliable_psr=8.5\n"
              "weak_score=0.57\n"
+             "max_accepted_scale_step_ratio=0.25\n"
+             "accepted_scale_deadband_ratio=0.03\n"
+             "accepted_scale_smoothing_alpha=0.20\n"
+             "accepted_scale_median_window_frames=7\n"
+             "accepted_scale_direction_confirm_frames=4\n"
+             "accepted_scale_output_hysteresis_px=0.65\n"
+             "accepted_center_smoothing_alpha=0.45\n"
+             "accepted_center_max_correction_ratio=0.30\n"
+             "max_reacquisition_center_distance=0.80\n"
              "uncertain_ms=200\n"
              "local_recovery_ms=1000\n"
              "assisted_recovery_ms=3000\n"
@@ -145,6 +243,23 @@ int main() {
               "detector center ratio parses at the boundary");
   expect_near(visible.reliable_score, 0.82F, 1e-6F,
               "visible reliable score override");
+  expect_near(visible.max_accepted_scale_step_ratio, 0.25F, 1e-6F,
+              "accepted scale-step ratio parses explicitly");
+  expect_near(visible.accepted_scale_deadband_ratio, 0.03F, 1e-6F,
+              "accepted scale deadband parses explicitly");
+  expect_near(visible.accepted_scale_smoothing_alpha, 0.20F, 1e-6F,
+              "accepted scale smoothing alpha parses explicitly");
+  expect_true(visible.accepted_scale_median_window_frames == 7 &&
+                  visible.accepted_scale_direction_confirm_frames == 4,
+              "accepted scale temporal counts parse explicitly");
+  expect_near(visible.accepted_scale_output_hysteresis_px, 0.65F, 1e-6F,
+              "accepted scale output hysteresis parses explicitly");
+  expect_near(visible.accepted_center_smoothing_alpha, 0.45F, 1e-6F,
+              "accepted center smoothing alpha parses explicitly");
+  expect_near(visible.accepted_center_max_correction_ratio, 0.30F, 1e-6F,
+              "accepted center correction ratio parses explicitly");
+  expect_near(visible.max_reacquisition_center_distance, 0.80F, 1e-6F,
+              "ordinary recovery center distance parses explicitly");
   expect_true(visible.uncertain_ms == 200 &&
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
@@ -159,6 +274,40 @@ int main() {
               "infrared config keeps a separate identity");
   expect_near(infrared.reliable_score, 0.74F, 1e-6F,
               "infrared override does not inherit visible values");
+
+  const std::string default_identity = controller_config_identity(default_visible);
+  ControllerConfig identity_variant = default_visible;
+  identity_variant.accepted_scale_deadband_ratio = 0.03F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale deadband");
+  identity_variant = default_visible;
+  identity_variant.accepted_scale_smoothing_alpha = 0.20F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale smoothing alpha");
+  identity_variant = default_visible;
+  identity_variant.accepted_scale_median_window_frames = 7;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale median window");
+  identity_variant = default_visible;
+  identity_variant.accepted_scale_direction_confirm_frames = 4;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale direction confirmation");
+  identity_variant = default_visible;
+  identity_variant.accepted_scale_output_hysteresis_px = 0.5F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted scale output hysteresis");
+  identity_variant = default_visible;
+  identity_variant.accepted_center_smoothing_alpha = 0.45F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted center smoothing alpha");
+  identity_variant = default_visible;
+  identity_variant.accepted_center_max_correction_ratio = 0.30F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes accepted center correction ratio");
+  identity_variant = default_visible;
+  identity_variant.max_reacquisition_center_distance = 0.80F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes ordinary recovery center distance");
 
   const std::string unknown_path = "/tmp/nanotrack_unknown_test.conf";
   write_file(unknown_path, "sensor=visible\nunknown_key=1\n");
@@ -243,6 +392,14 @@ int main() {
        &ControllerConfig::occlusion_trigger_consecutive_unreliable, 1, 10},
       {"occlusion_reference_window", &ControllerConfig::occlusion_reference_window,
        3, 60},
+      {"occlusion_probe_interval_frames",
+       &ControllerConfig::occlusion_probe_interval_frames, 1, 300},
+      {"occlusion_gradual_consecutive_frames",
+       &ControllerConfig::occlusion_gradual_consecutive_frames, 1, 60},
+      {"occlusion_min_reference_samples",
+       &ControllerConfig::occlusion_min_reference_samples, 1, 60},
+      {"occlusion_suspicion_clear_frames",
+       &ControllerConfig::occlusion_suspicion_clear_frames, 1, 60},
   };
   for (const CountLimit& limit : occlusion_counts) {
     for (int value : {limit.minimum, limit.maximum}) {
@@ -267,24 +424,165 @@ int main() {
                     std::string(limit.key) + " requires an in-range integer");
     }
   }
-  for (float ratio : {0.01F, 1.0F}) {
-    write_file(occlusion_path, "occlusion_trigger_min_dimension_ratio=" +
-                                   std::to_string(ratio) + "\n");
-    expect_near(load_controller_config(occlusion_path)
-                    .occlusion_trigger_min_dimension_ratio,
-                ratio, 1e-6F, "occlusion ratio accepts (0,1] values");
+  struct FloatLimit {
+    const char* key;
+    float ControllerConfig::*field;
+    bool allow_zero;
+    bool bounded_at_one;
+  };
+  const FloatLimit occlusion_floats[] = {
+      {"max_accepted_scale_step_ratio",
+       &ControllerConfig::max_accepted_scale_step_ratio, false, true},
+      {"occlusion_trigger_min_dimension_ratio",
+       &ControllerConfig::occlusion_trigger_min_dimension_ratio, false, true},
+      {"occlusion_gradual_dimension_ratio",
+       &ControllerConfig::occlusion_gradual_dimension_ratio, false, true},
+      {"occlusion_shrink_step_ratio",
+       &ControllerConfig::occlusion_shrink_step_ratio, false, true},
+      {"occlusion_confirmation_iou",
+       &ControllerConfig::occlusion_confirmation_iou, false, true},
+      {"occlusion_peak_margin_drop",
+       &ControllerConfig::occlusion_peak_margin_drop, true, false},
+      {"occlusion_motion_residual_threshold",
+       &ControllerConfig::occlusion_motion_residual_threshold, false, false},
+      {"occlusion_confirmation_center_distance",
+       &ControllerConfig::occlusion_confirmation_center_distance, false, false},
+      {"occlusion_confirmation_max_area_log_change",
+       &ControllerConfig::occlusion_confirmation_max_area_log_change, false, false},
+      {"occlusion_confirmation_max_aspect_log_change",
+       &ControllerConfig::occlusion_confirmation_max_aspect_log_change, false, false},
+  };
+  for (const FloatLimit& limit : occlusion_floats) {
+    for (float value : {0.0F, 0.01F, 0.63F, 1.0F, 1.01F, 100.0F, -0.01F,
+                        std::numeric_limits<float>::quiet_NaN(),
+                        std::numeric_limits<float>::infinity(),
+                        -std::numeric_limits<float>::infinity()}) {
+      const bool valid = std::isfinite(value) &&
+                         (limit.allow_zero ? value >= 0.0F : value > 0.0F) &&
+                         (!limit.bounded_at_one || value <= 1.0F);
+      ControllerConfig candidate = default_visible;
+      candidate.*(limit.field) = value;
+      write_file(occlusion_path,
+                 std::string(limit.key) + "=" + std::to_string(value) + "\n");
+      if (valid) {
+        validate_controller_config(candidate);
+        expect_near(load_controller_config(occlusion_path).*(limit.field), value,
+                    1e-6F, std::string(limit.key) + " accepts valid file values");
+      } else {
+        expect_throws([&] { validate_controller_config(candidate); },
+                      std::string(limit.key) + " rejects invalid direct values");
+        expect_throws([&] { load_controller_config(occlusion_path); },
+                      std::string(limit.key) + " rejects invalid file values");
+      }
+    }
   }
-  for (float ratio : {-0.01F, 0.0F, 1.01F,
-                      std::numeric_limits<float>::quiet_NaN(),
+
+  struct NewFloatLimit {
+    const char* key;
+    float ControllerConfig::*field;
+  };
+  const NewFloatLimit new_unit_limits[] = {
+      {"accepted_scale_deadband_ratio",
+       &ControllerConfig::accepted_scale_deadband_ratio},
+      {"accepted_scale_smoothing_alpha",
+       &ControllerConfig::accepted_scale_smoothing_alpha},
+      {"accepted_center_smoothing_alpha",
+       &ControllerConfig::accepted_center_smoothing_alpha},
+  };
+  for (const NewFloatLimit& limit : new_unit_limits) {
+    for (float value : {0.0F, 0.01F, 0.99F, 1.0F, 1.01F, -0.01F,
+                        std::numeric_limits<float>::quiet_NaN(),
+                        std::numeric_limits<float>::infinity(),
+                        -std::numeric_limits<float>::infinity()}) {
+      const bool deadband = std::string(limit.key) ==
+                            "accepted_scale_deadband_ratio";
+      const bool valid = std::isfinite(value) &&
+                         (deadband ? value >= 0.0F : value > 0.0F) &&
+                         (deadband ? value < 1.0F : value <= 1.0F);
+      ControllerConfig candidate = default_visible;
+      candidate.*(limit.field) = value;
+      write_file(occlusion_path,
+                 std::string(limit.key) + "=" + std::to_string(value) + "\n");
+      if (valid) {
+        validate_controller_config(candidate);
+        expect_near(load_controller_config(occlusion_path).*(limit.field), value,
+                    1e-6F, std::string(limit.key) + " accepts its exact range");
+      } else {
+        expect_throws([&] { validate_controller_config(candidate); },
+                      std::string(limit.key) + " rejects invalid direct values");
+        expect_throws([&] { load_controller_config(occlusion_path); },
+                      std::string(limit.key) + " rejects invalid file values");
+      }
+    }
+  }
+  for (int value : {1, 3, 31}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_median_window_frames = value;
+    validate_controller_config(candidate);
+  }
+  for (int value : {0, 2, 32}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_median_window_frames = value;
+    expect_throws([&] { validate_controller_config(candidate); },
+                  "accepted scale median window must be odd and within [1,31]");
+  }
+  for (int value : {1, 31}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_direction_confirm_frames = value;
+    validate_controller_config(candidate);
+  }
+  for (int value : {0, 32}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_direction_confirm_frames = value;
+    expect_throws([&] { validate_controller_config(candidate); },
+                  "accepted scale direction confirmation must stay within [1,31]");
+  }
+  for (float value : {0.0F, 0.75F, 100.0F}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_output_hysteresis_px = value;
+    validate_controller_config(candidate);
+  }
+  for (float value : {-0.01F, std::numeric_limits<float>::quiet_NaN(),
                       std::numeric_limits<float>::infinity()}) {
-    ControllerConfig invalid = default_visible;
-    invalid.occlusion_trigger_min_dimension_ratio = ratio;
-    expect_throws([&] { validate_controller_config(invalid); },
-                  "occlusion ratio rejects out-of-range or non-finite values");
-    write_file(occlusion_path, "occlusion_trigger_min_dimension_ratio=" +
-                                   std::to_string(ratio) + "\n");
-    expect_throws([&] { load_controller_config(occlusion_path); },
-                  "occlusion ratio rejects invalid file values");
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_scale_output_hysteresis_px = value;
+    expect_throws([&] { validate_controller_config(candidate); },
+                  "accepted scale output hysteresis must be finite and nonnegative");
+  }
+  for (float value : {0.0F, 0.25F, 100.0F}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_center_max_correction_ratio = value;
+    validate_controller_config(candidate);
+  }
+  for (float value : {-0.01F, std::numeric_limits<float>::quiet_NaN(),
+                      std::numeric_limits<float>::infinity()}) {
+    ControllerConfig candidate = default_visible;
+    candidate.accepted_center_max_correction_ratio = value;
+    expect_throws([&] { validate_controller_config(candidate); },
+                  "accepted center correction ratio must be finite and nonnegative");
+  }
+  for (float value : {0.0F, 0.01F, 0.75F, 100.0F, -0.01F,
+                      std::numeric_limits<float>::quiet_NaN(),
+                      std::numeric_limits<float>::infinity(),
+                      -std::numeric_limits<float>::infinity()}) {
+    const bool valid = std::isfinite(value) && value >= 0.0F;
+    ControllerConfig candidate = default_visible;
+    candidate.max_reacquisition_center_distance = value;
+    write_file(occlusion_path,
+               "max_reacquisition_center_distance=" + std::to_string(value) +
+                   "\n");
+    if (valid) {
+      validate_controller_config(candidate);
+      expect_near(load_controller_config(occlusion_path)
+                      .max_reacquisition_center_distance,
+                  value, 1e-6F,
+                  "ordinary recovery center distance accepts zero or positive finite values");
+    } else {
+      expect_throws([&] { validate_controller_config(candidate); },
+                    "ordinary recovery center distance rejects invalid direct values");
+      expect_throws([&] { load_controller_config(occlusion_path); },
+                    "ordinary recovery center distance rejects invalid file values");
+    }
   }
 
   ControllerConfig motion_config;

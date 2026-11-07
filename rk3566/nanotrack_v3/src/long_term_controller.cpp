@@ -97,7 +97,7 @@ float bbox_iou(const BBox& first, const BBox& second) {
 }
 
 LongTermController::LongTermController(const ControllerConfig& config)
-    : config_(config), motion_(config) {
+    : config_(config), motion_(config), occlusion_evidence_(config) {
   validate_controller_config(config_);
 }
 
@@ -111,9 +111,12 @@ void LongTermController::initialize(const BBox& initial_bbox,
   }
   validate_bbox(initial_bbox, frame_size.width, frame_size.height);
   if (initialized_) ++detector_eligibility_generation_;
+  detector_session_generation_ = detector_eligibility_generation_;
   frame_size_ = frame_size;
   target_class_ = target_class;
   current_bbox_ = initial_bbox;
+  display_bbox_ = initial_bbox;
+  reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   mode_ = TrackingMode::kTracking;
   loss_start_ms_.reset();
@@ -123,13 +126,17 @@ void LongTermController::initialize(const BBox& initial_bbox,
   active_detector_candidate_.reset();
   next_detector_candidate_id_ = 1;
   confirmations_.clear();
+  coast_probe_candidate_.reset();
   last_frame_id_ = frame_id;
   last_timestamp_ms_ = timestamp_ms;
   stable_frames_ = 0;
   last_recent_update_ms_ = timestamp_ms;
   recent_probation_ = false;
   probation_reliable_frames_ = 0;
-  reliable_scale_history_.clear();
+  occlusion_evidence_.reset();
+  occlusion_decision_ = {};
+  occlusion_suspicion_frames_ = 0;
+  occlusion_coast_age_frames_ = 0;
   consecutive_unreliable_frames_ = 0;
   hold_remaining_frames_ = 0;
   hold_used_for_loss_ = false;
@@ -182,7 +189,19 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   }
 
   const TrackingMode timestamp_mode = mode_for_timestamp(timestamp_ms);
-  const BBox motion_predicted = motion_.predict(timestamp_ms);
+  BBox motion_predicted;
+  try {
+    // MotionEstimator clips finite predictions while retaining the frozen size.
+    // Internal prediction failures abort this frame; no output may authorize it.
+    motion_predicted = motion_.predict(timestamp_ms);
+    validate_bbox(motion_predicted, frame_size_.width, frame_size_.height);
+  } catch (...) {
+    hold_remaining_frames_ = 0;
+    occlusion_coast_age_frames_ = 0;
+    coast_probe_candidate_.reset();
+    mode_ = timestamp_mode;
+    throw;
+  }
   if (hold_remaining_frames_ > 0) {
     mode_ = TrackingMode::kOcclusionHold;
     SearchPlan plan;
@@ -194,13 +213,26 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.search_scale = search_scale_for(timestamp_mode, timestamp_ms);
     plan.hypothesis_source = HypothesisSource::kMotion;
     plan.detector_target_mode = config_.detector_target_mode;
-    plan.run_tracker = false;
     plan.hold_remaining_frames = hold_remaining_frames_;
+    plan.occlusion_coast_age_frames = occlusion_coast_age_frames_ + 1;
+    // Confirmation belongs to the immediately next processed frame. Decoded
+    // frame IDs and timestamps need not be consecutive.
+    if (coast_probe_candidate_ && coast_probe_candidate_->frame_id != last_frame_id_)
+      coast_probe_candidate_.reset();
+    if (coast_probe_candidate_) {
+      plan.occlusion_probe_type = OcclusionProbeType::kConfirm;
+    } else if (plan.occlusion_coast_age_frames %
+                   static_cast<std::size_t>(config_.occlusion_probe_interval_frames) == 0) {
+      plan.occlusion_probe_type = OcclusionProbeType::kSearch;
+    }
+    plan.run_tracker = plan.occlusion_probe_type != OcclusionProbeType::kNone;
+    plan.motion_control_authorized = true;
     active_plan_ = plan;
     frame_open_ = true;
     return plan;
   }
 
+  coast_probe_candidate_.reset();
   mode_ = timestamp_mode;
   BBox predicted = motion_predicted;
   HypothesisSource source = HypothesisSource::kMotion;
@@ -252,7 +284,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   const bool interval_ready =
       !last_detector_request_ms_ ||
       timestamp_ms - *last_detector_request_ms_ >= config_.detector_interval_ms;
-  if (detector_ready && recovery_uses_detector && interval_ready) {
+  if (detector_ready && recovery_uses_detector && interval_ready &&
+      target_class_.target_class_allows_recovery) {
     plan.request_detector = true;
     plan.detector_request = DetectorRequest{
         frame_id,
@@ -272,36 +305,40 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
 void LongTermController::abort_frame() noexcept {
   if (!frame_open_) return;
   frame_open_ = false;
+  if (active_plan_.mode == TrackingMode::kOcclusionHold) {
+    hold_remaining_frames_ = 0;
+    occlusion_coast_age_frames_ = 0;
+    coast_probe_candidate_.reset();
+    mode_ = mode_for_timestamp(active_plan_.timestamp_ms);
+  }
 }
 
-std::optional<LongTermController::ScaleReference>
-LongTermController::occlusion_scale_reference() const {
-  if (reliable_scale_history_.size() !=
-      static_cast<std::size_t>(config_.occlusion_reference_window)) {
-    return std::nullopt;
-  }
-  std::vector<float> widths;
-  std::vector<float> heights;
-  widths.reserve(reliable_scale_history_.size());
-  heights.reserve(reliable_scale_history_.size());
-  for (const BBox& bbox : reliable_scale_history_) {
-    widths.push_back(bbox.width);
-    heights.push_back(bbox.height);
-  }
-  std::sort(widths.begin(), widths.end());
-  std::sort(heights.begin(), heights.end());
-  const std::size_t upper = widths.size() / 2;
-  const std::size_t lower = (widths.size() - 1) / 2;
-  return ScaleReference{0.5F * (widths[lower] + widths[upper]),
-                        0.5F * (heights[lower] + heights[upper])};
-}
-
-void LongTermController::record_reliable_scale(const BBox& bbox) {
-  reliable_scale_history_.push_back(bbox);
-  while (reliable_scale_history_.size() >
-         static_cast<std::size_t>(config_.occlusion_reference_window)) {
-    reliable_scale_history_.pop_front();
-  }
+void LongTermController::publish_occlusion_evidence(ControllerOutput& output) {
+  const auto& decision = occlusion_decision_;
+  output.occlusion_reference_source = decision.reference_source;
+  output.occlusion_reference_width = decision.reference_width;
+  output.occlusion_reference_height = decision.reference_height;
+  output.occlusion_width_ratio = decision.width_ratio;
+  output.occlusion_height_ratio = decision.height_ratio;
+  output.occlusion_suspicion_active = decision.suspicion_active;
+  output.occlusion_suspicion_started = decision.suspicion_started;
+  output.occlusion_suspicion_cleared = decision.suspicion_cleared;
+  output.occlusion_suspicion_frames = occlusion_suspicion_frames_;
+  output.occlusion_clean_frames = static_cast<std::size_t>(decision.clean_frames);
+  output.occlusion_width_shrink_frames =
+      static_cast<std::size_t>(decision.width_shrink_frames);
+  output.occlusion_height_shrink_frames =
+      static_cast<std::size_t>(decision.height_shrink_frames);
+  output.occlusion_severe_evidence = decision.severe_evidence;
+  output.occlusion_gradual_evidence = decision.gradual_evidence;
+  output.occlusion_template_evidence = decision.template_evidence;
+  output.occlusion_peak_margin_evidence = decision.peak_margin_evidence;
+  output.occlusion_motion_residual_evidence = decision.motion_residual_evidence;
+  output.occlusion_trigger_reason = decision.trigger_reason;
+  // The reference and reason persist through coast and recovery; event pulses
+  // belong only to the output frame on which they were first published.
+  occlusion_decision_.suspicion_started = false;
+  occlusion_decision_.suspicion_cleared = false;
 }
 
 LongTermController::EvaluatedObservation LongTermController::evaluate(
@@ -327,16 +364,17 @@ LongTermController::EvaluatedObservation LongTermController::evaluate(
       normalized_center_distance(observation.bbox, plan.predicted_bbox);
   result.area_log_change = area_log_delta(observation.bbox, plan.predicted_bbox);
   result.aspect_log_change = aspect_log_delta(observation.bbox, plan.predicted_bbox);
-  const bool hard_gate =
-      result.center_residual <= config_.max_center_distance * plan.search_scale &&
-      result.area_log_change <= config_.max_area_log_change &&
-      result.aspect_log_change <= config_.max_aspect_log_change;
+  result.center_gate = result.center_residual <= config_.max_center_distance * plan.search_scale;
+  result.area_gate = result.area_log_change <= config_.max_area_log_change;
+  result.aspect_gate = result.aspect_log_change <= config_.max_aspect_log_change;
+  result.score_gate = metrics.raw_score >= config_.reliable_score &&
+                      metrics.psr >= config_.reliable_psr &&
+                      metrics.apce >= config_.reliable_apce &&
+                      metrics.peak_margin >= config_.reliable_peak_margin;
+  const bool hard_gate = result.center_gate && result.area_gate && result.aspect_gate;
   if (!hard_gate) {
     result.quality = QualityLevel::kRejected;
-  } else if (metrics.raw_score >= config_.reliable_score &&
-             metrics.psr >= config_.reliable_psr &&
-             metrics.apce >= config_.reliable_apce &&
-             metrics.peak_margin >= config_.reliable_peak_margin) {
+  } else if (result.score_gate) {
     result.quality = QualityLevel::kReliable;
   } else if (metrics.raw_score >= config_.weak_score &&
              metrics.psr >= config_.weak_psr &&
@@ -429,6 +467,238 @@ bool LongTermController::detector_geometry_consistent(
              config_.detector_confirmation_max_aspect_log_change;
 }
 
+void LongTermController::reset_scale_state(const BBox& bbox) {
+  width_scale_state_ = DimensionScaleState{};
+  width_scale_state_.filtered = bbox.width;
+  width_scale_state_.emitted = bbox.width;
+  height_scale_state_ = DimensionScaleState{};
+  height_scale_state_.filtered = bbox.height;
+  height_scale_state_.emitted = bbox.height;
+}
+
+void LongTermController::reset_scale_evidence(DimensionScaleState& state) {
+  state.samples.clear();
+  state.direction = 0;
+  state.confirmations = 0;
+}
+
+BBox LongTermController::stabilize_accepted_bbox(
+    const BBox& observation, DimensionScaleState& width_state,
+    DimensionScaleState& height_state) const {
+  const float ratio = config_.max_accepted_scale_step_ratio;
+  const float deadband = config_.accepted_scale_deadband_ratio;
+  const float alpha = config_.accepted_scale_smoothing_alpha;
+  const bool compatibility_mode =
+      config_.accepted_scale_median_window_frames == 1 &&
+      config_.accepted_scale_direction_confirm_frames == 1 &&
+      config_.accepted_scale_output_hysteresis_px == 0.0F;
+  const auto legacy_dimension = [&](float observed, float current,
+                                    float frame_limit,
+                                    DimensionScaleState& state) {
+    if (ratio >= 1.0F && deadband == 0.0F && alpha >= 1.0F) {
+      state.samples.clear();
+      state.samples.push_back(observed);
+      state.filtered = observed;
+      state.emitted = observed;
+      state.direction = 0;
+      state.confirmations = 0;
+      return observed;
+    }
+    const float allowance = current * deadband;
+    float emitted = current;
+    if (observed < current - allowance || observed > current + allowance) {
+      const float target = std::clamp(
+          observed, current * (1.0F - ratio),
+          std::min(frame_limit, current * (1.0F + ratio)));
+      emitted = current + alpha * (target - current);
+    }
+    state.samples.clear();
+    state.samples.push_back(observed);
+    state.filtered = emitted;
+    state.emitted = emitted;
+    state.direction = 0;
+    state.confirmations = 0;
+    return emitted;
+  };
+  const auto temporal_dimension = [&](float observed, float frame_limit,
+                                      DimensionScaleState& state) {
+    const auto emit_toward_filtered = [&]() {
+      const float hysteresis = config_.accepted_scale_output_hysteresis_px;
+      const float delta = state.filtered - state.emitted;
+      if (std::fabs(delta) < hysteresis) return state.emitted;
+      const float step = hysteresis > 0.5F
+          ? (delta > 0.0F ? 1.0F : delta < 0.0F ? -1.0F : 0.0F)
+          : std::clamp(delta, -1.0F, 1.0F);
+      state.emitted = std::clamp(state.emitted + step,
+                                 std::numeric_limits<float>::epsilon(),
+                                 frame_limit);
+      return state.emitted;
+    };
+    state.samples.push_back(observed);
+    const auto window = static_cast<std::size_t>(
+        config_.accepted_scale_median_window_frames);
+    while (state.samples.size() > window) state.samples.pop_front();
+    if (state.samples.size() < window) return state.emitted;
+
+    std::vector<float> ordered(state.samples.begin(), state.samples.end());
+    const auto middle = ordered.begin() + ordered.size() / 2;
+    std::nth_element(ordered.begin(), middle, ordered.end());
+    const float median = *middle;
+    const float allowance = state.filtered * deadband;
+    if (median >= state.filtered - allowance &&
+        median <= state.filtered + allowance) {
+      state.direction = 0;
+      state.confirmations = 0;
+      return emit_toward_filtered();
+    }
+
+    const int direction = median > state.filtered ? 1 : -1;
+    if (direction != state.direction) {
+      state.direction = direction;
+      state.confirmations = 1;
+    } else if (state.confirmations <
+               config_.accepted_scale_direction_confirm_frames) {
+      ++state.confirmations;
+    }
+    if (state.confirmations <
+        config_.accepted_scale_direction_confirm_frames) {
+      return state.emitted;
+    }
+
+    const float target = std::clamp(
+        median, state.filtered * (1.0F - ratio),
+        std::min(frame_limit, state.filtered * (1.0F + ratio)));
+    state.filtered += alpha * (target - state.filtered);
+    return emit_toward_filtered();
+  };
+
+  float width;
+  float height;
+  if (compatibility_mode) {
+    width = legacy_dimension(observation.width, current_bbox_.width,
+                             static_cast<float>(frame_size_.width), width_state);
+    height = legacy_dimension(observation.height, current_bbox_.height,
+                              static_cast<float>(frame_size_.height), height_state);
+  } else {
+    width = temporal_dimension(observation.width,
+                               static_cast<float>(frame_size_.width), width_state);
+    height = temporal_dimension(observation.height,
+                                static_cast<float>(frame_size_.height), height_state);
+  }
+  const float center_x = observation.x + 0.5F * observation.width;
+  const float center_y = observation.y + 0.5F * observation.height;
+  return centered_box(center_x, center_y, BBox{0.0F, 0.0F, width, height},
+                      frame_size_);
+}
+
+BBox LongTermController::stabilize_accepted_center(
+    const SearchPlan& plan, const BBox& observation, const BBox& scaled_bbox,
+    bool reacquired, ControllerOutput& output) const {
+  output.selected_observation_bbox = observation;
+  const float predicted_center_x =
+      plan.motion_predicted_bbox.x + 0.5F * plan.motion_predicted_bbox.width;
+  const float predicted_center_y =
+      plan.motion_predicted_bbox.y + 0.5F * plan.motion_predicted_bbox.height;
+  const float observed_center_x = observation.x + 0.5F * observation.width;
+  const float observed_center_y = observation.y + 0.5F * observation.height;
+  output.center_innovation_x = observed_center_x - predicted_center_x;
+  output.center_innovation_y = observed_center_y - predicted_center_y;
+
+  const float display_center_x =
+      display_bbox_.x + 0.5F * display_bbox_.width;
+  const float display_center_y =
+      display_bbox_.y + 0.5F * display_bbox_.height;
+  float bounded_x = observed_center_x - display_center_x;
+  float bounded_y = observed_center_y - display_center_y;
+  if (!reacquired && config_.accepted_center_max_correction_ratio > 0.0F) {
+    const float maximum = config_.accepted_center_max_correction_ratio *
+                          std::sqrt(scaled_bbox.width * scaled_bbox.height);
+    const float magnitude = std::hypot(bounded_x, bounded_y);
+    if (magnitude > maximum) {
+      const float factor = maximum / magnitude;
+      bounded_x *= factor;
+      bounded_y *= factor;
+      output.center_correction_limited = true;
+    }
+  }
+
+  const float alpha = reacquired ? 1.0F
+                                 : config_.accepted_center_smoothing_alpha;
+  const float requested_center_x = display_center_x + alpha * bounded_x;
+  const float requested_center_y = display_center_y + alpha * bounded_y;
+  const BBox stabilized = centered_box(
+      requested_center_x, requested_center_y,
+      BBox{0.0F, 0.0F, scaled_bbox.width, scaled_bbox.height}, frame_size_);
+  output.center_correction_x =
+      stabilized.x + 0.5F * stabilized.width - display_center_x;
+  output.center_correction_y =
+      stabilized.y + 0.5F * stabilized.height - display_center_y;
+  return stabilized;
+}
+
+void LongTermController::accept_observation(
+    const SearchPlan& plan, const EvaluatedObservation& selected,
+    AcceptedObservationPath acceptance_path, ControllerOutput& output) {
+  const bool reacquired =
+      acceptance_path != AcceptedObservationPath::kDirect &&
+      acceptance_path != AcceptedObservationPath::kShortConfirmation;
+  DimensionScaleState next_width = width_scale_state_;
+  DimensionScaleState next_height = height_scale_state_;
+  if (reacquired) {
+    reset_scale_evidence(next_width);
+    reset_scale_evidence(next_height);
+  }
+  const BBox scaled_bbox = stabilize_accepted_bbox(
+      selected.observation.bbox, next_width, next_height);
+  output.tracking_bbox = scaled_bbox;
+  output.display_bbox = stabilize_accepted_center(
+      plan, selected.observation.bbox, scaled_bbox, reacquired, output);
+  output.control_bbox = output.tracking_bbox;
+  output.bbox = output.display_bbox;
+  output.accepted = true;
+  output.control_valid = true;
+  output.reacquired = reacquired;
+  output.accepted_observation_path = acceptance_path;
+  // Any accepted observation closes an exhausted coast episode. A true
+  // reacquisition additionally resets its evidence and motion state below.
+  hold_used_for_loss_ = false;
+  hold_remaining_frames_ = 0;
+  occlusion_coast_age_frames_ = 0;
+  coast_probe_candidate_.reset();
+  frozen_scale_reference_.reset();
+  if (reacquired) {
+    motion_.initialize(output.tracking_bbox, plan.timestamp_ms,
+                       frame_size_.width, frame_size_.height);
+    occlusion_evidence_.reset();
+    occlusion_suspicion_frames_ = 0;
+    occlusion_decision_ = occlusion_evidence_.observe(OcclusionEvidenceInput{
+        output.tracking_bbox, output.tracking_bbox,
+        selected.observation.metrics, true, false, false});
+  } else {
+    motion_.correct(output.tracking_bbox, plan.timestamp_ms);
+  }
+  width_scale_state_ = std::move(next_width);
+  height_scale_state_ = std::move(next_height);
+  current_bbox_ = output.tracking_bbox;
+  display_bbox_ = output.display_bbox;
+  loss_start_ms_.reset();
+  confirmations_.clear();
+  active_detector_candidate_.reset();
+  detector_candidates_.clear();
+  mode_ = TrackingMode::kTracking;
+  output.mode = mode_;
+  ++stable_frames_;
+  consecutive_unreliable_frames_ = 0;
+  // As in ordinary recovery, an old staged recent template cannot be
+  // committed using evidence from a different tracking episode.
+  if (reacquired && recent_probation_) {
+    output.template_action = TemplateAction::kRollbackRecent;
+    recent_probation_ = false;
+    probation_reliable_frames_ = 0;
+    stable_frames_ = 0;
+  }
+}
+
 LongTermController::DetectorIngestResult
 LongTermController::ingest_detector_batch(
     const SearchPlan& plan,
@@ -467,7 +737,12 @@ LongTermController::ingest_detector_batch(
       };
 
   if (batch->generation != detector_eligibility_generation_) {
-    reject_eligible_candidates(DetectorCandidateRejection::kGenerationInvalidated);
+    const bool invalidated_by_coast =
+        batch->generation >= detector_session_generation_ &&
+        batch->generation < detector_eligibility_generation_;
+    reject_eligible_candidates(invalidated_by_coast
+        ? DetectorCandidateRejection::kHoldInvalidated
+        : DetectorCandidateRejection::kGenerationInvalidated);
     result.status = DetectorBatchStatus::kInvalid;
     return result;
   }
@@ -585,19 +860,24 @@ LongTermController::ingest_detector_batch(
 ControllerOutput LongTermController::finish_frame(
     const SearchPlan& plan,
     const std::vector<TrackerObservation>& observations,
-    const std::optional<DetectorBatch>& detector_batch) {
+    const std::optional<DetectorBatch>& detector_batch) try {
+  // Consume the candidate before validating input: stale plans or malformed
+  // template/frame identities must never retain a hit for a later confirm.
+  const auto pending_coast_candidate = coast_probe_candidate_;
+  coast_probe_candidate_.reset();
   if (!frame_open_ || plan.frame_id != active_plan_.frame_id ||
       plan.timestamp_ms != active_plan_.timestamp_ms) {
     throw std::logic_error("finish_frame does not match active search plan");
   }
-  frame_open_ = false;
-
   ControllerOutput output;
   output.frame_id = plan.frame_id;
   output.target_class = target_class_;
   output.timestamp_ms = plan.timestamp_ms;
   output.mode = plan.mode;
   output.bbox = plan.predicted_bbox;
+  output.tracking_bbox = plan.predicted_bbox;
+  output.display_bbox = plan.predicted_bbox;
+  output.control_bbox = plan.predicted_bbox;
   output.search_scale = plan.search_scale;
   output.hypothesis_source = plan.hypothesis_source;
   output.detector_candidate_id = plan.detector_candidate_id;
@@ -617,27 +897,12 @@ ControllerOutput LongTermController::finish_frame(
       ingest_result.position_rejected_count;
   output.detector_candidate_diagnostics = ingest_result.diagnostics;
 
-  if (plan.mode == TrackingMode::kOcclusionHold) {
-    output.quality = QualityLevel::kRejected;
-    output.control_valid = false;
-    output.accepted = false;
-    output.occlusion_hold_remaining_frames = plan.hold_remaining_frames;
-    if (frozen_scale_reference_) {
-      output.occlusion_reference_width = frozen_scale_reference_->width;
-      output.occlusion_reference_height = frozen_scale_reference_->height;
-    }
-    if (hold_remaining_frames_ > 0) --hold_remaining_frames_;
-    mode_ = hold_remaining_frames_ > 0 ? TrackingMode::kOcclusionHold
-                                      : mode_for_timestamp(plan.timestamp_ms);
-    last_frame_id_ = plan.frame_id;
-    last_timestamp_ms_ = plan.timestamp_ms;
-    return output;
-  }
-
   std::optional<EvaluatedObservation> anchor;
   std::optional<EvaluatedObservation> recent;
   std::optional<std::uint64_t> token;
   for (const TrackerObservation& observation : observations) {
+    // Skipped coast frames retain their existing observation-isolation contract.
+    if (plan.mode == TrackingMode::kOcclusionHold && !plan.run_tracker) break;
     if (token && observation.search_token != *token) {
       throw std::invalid_argument("template observations must share one search token");
     }
@@ -684,19 +949,182 @@ ControllerOutput LongTermController::finish_frame(
     if (recent->quality == QualityLevel::kReliable) force_confirmation = true;
   }
 
-  bool accepted = false;
-  bool reacquired = false;
-  const std::optional<ScaleReference> scale_reference =
-      occlusion_scale_reference();
-  if (scale_reference) {
-    output.occlusion_reference_width = scale_reference->width;
-    output.occlusion_reference_height = scale_reference->height;
+  if (plan.mode == TrackingMode::kOcclusionHold) {
+    output.motion_control_authorized = plan.motion_control_authorized;
+    output.control_valid = output.motion_control_authorized;
+    output.occlusion_coast_age_frames = plan.occlusion_coast_age_frames;
+    output.occlusion_hold_remaining_frames = plan.hold_remaining_frames;
+    output.occlusion_probe_type = plan.occlusion_probe_type;
+    publish_occlusion_evidence(output);
+    output.occlusion_suspicion_started = false;
+    output.occlusion_suspicion_cleared = false;
     if (selected) {
-      output.occlusion_width_ratio =
-          selected->observation.bbox.width / scale_reference->width;
-      output.occlusion_height_ratio =
-          selected->observation.bbox.height / scale_reference->height;
+      output.quality = selected->quality;
+      output.selected_template = selected->observation.template_kind;
+      output.selected_metrics = selected->observation.metrics;
+      output.normalized_center_residual = selected->center_residual;
+      output.area_log_change = selected->area_log_change;
+      output.aspect_log_change = selected->aspect_log_change;
     }
+    const bool probe_hit = selected && anchor && recent &&
+        anchor->quality == QualityLevel::kReliable &&
+        recent->quality == QualityLevel::kReliable &&
+        output.template_iou >= config_.template_agreement_iou;
+    if (plan.occlusion_probe_type != OcclusionProbeType::kNone) {
+      output.occlusion_probe_motion_bbox = plan.motion_predicted_bbox;
+      if (selected) output.occlusion_probe_bbox = selected->observation.bbox;
+      if (anchor) output.occlusion_probe_anchor_reliable = anchor->quality == QualityLevel::kReliable;
+      if (recent) output.occlusion_probe_recent_reliable = recent->quality == QualityLevel::kReliable;
+      if (anchor) {
+        output.occlusion_probe_anchor_score_gate = anchor->score_gate;
+        output.occlusion_probe_anchor_center_gate = anchor->center_gate;
+        output.occlusion_probe_anchor_area_gate = anchor->area_gate;
+        output.occlusion_probe_anchor_aspect_gate = anchor->aspect_gate;
+      }
+      if (recent) {
+        output.occlusion_probe_recent_score_gate = recent->score_gate;
+        output.occlusion_probe_recent_center_gate = recent->center_gate;
+        output.occlusion_probe_recent_area_gate = recent->area_gate;
+        output.occlusion_probe_recent_aspect_gate = recent->aspect_gate;
+      }
+      if (anchor && recent)
+        output.occlusion_probe_template_gate = output.template_iou >= config_.template_agreement_iou;
+      if (!anchor || !recent) output.occlusion_probe_rejection = "MISSING_TEMPLATE";
+      else if (anchor->quality != QualityLevel::kReliable ||
+               recent->quality != QualityLevel::kReliable)
+        output.occlusion_probe_rejection = "QUALITY_OR_MOTION_GEOMETRY";
+      else if (!*output.occlusion_probe_template_gate)
+        output.occlusion_probe_rejection = "TEMPLATE_AGREEMENT";
+      if (plan.occlusion_probe_type == OcclusionProbeType::kConfirm && probe_hit) {
+        if (!pending_coast_candidate || pending_coast_candidate->frame_id != last_frame_id_) {
+          output.occlusion_probe_rejection = "MISSING_CANDIDATE";
+        } else {
+          const auto& reference = pending_coast_candidate->bbox;
+          const auto& bbox = selected->observation.bbox;
+          output.occlusion_probe_cross_iou = bbox_iou(reference, bbox) >= config_.occlusion_confirmation_iou;
+          output.occlusion_probe_cross_center = normalized_center_distance(bbox, reference) <= config_.occlusion_confirmation_center_distance;
+          output.occlusion_probe_cross_area = area_log_delta(bbox, reference) <= config_.occlusion_confirmation_max_area_log_change;
+          output.occlusion_probe_cross_aspect = aspect_log_delta(bbox, reference) <= config_.occlusion_confirmation_max_aspect_log_change;
+          output.occlusion_probe_cross_gate = *output.occlusion_probe_cross_iou &&
+              *output.occlusion_probe_cross_center && *output.occlusion_probe_cross_area &&
+              *output.occlusion_probe_cross_aspect;
+          if (!*output.occlusion_probe_cross_gate) output.occlusion_probe_rejection = "CONFIRM_GEOMETRY";
+        }
+      }
+    }
+    if (plan.occlusion_probe_type != OcclusionProbeType::kNone)
+      output.occlusion_probe_confirmation_required = 2;
+    if (plan.occlusion_probe_type == OcclusionProbeType::kSearch && probe_hit) {
+      coast_probe_candidate_ = CoastProbeCandidate{plan.frame_id, selected->observation.bbox};
+      output.occlusion_probe_confirmation_hits = 1;
+    } else if (plan.occlusion_probe_type == OcclusionProbeType::kConfirm && probe_hit &&
+               output.occlusion_probe_cross_gate.value_or(false)) {
+      accept_observation(plan, *selected,
+                         AcceptedObservationPath::kOcclusionProbeRecovery,
+                         output);
+      output.motion_control_authorized = false;
+      output.occlusion_hold_remaining_frames = 0;
+      output.occlusion_probe_confirmation_hits = 2;
+      last_frame_id_ = plan.frame_id;
+      last_timestamp_ms_ = plan.timestamp_ms;
+      frame_open_ = false;
+      return output;
+    }
+    // No observation-side effects are allowed before two consistent hits.
+    occlusion_coast_age_frames_ = plan.occlusion_coast_age_frames;
+    if (hold_remaining_frames_ > 0) --hold_remaining_frames_;
+    if (hold_remaining_frames_ == 0) coast_probe_candidate_.reset();
+    mode_ = hold_remaining_frames_ > 0 ? TrackingMode::kOcclusionHold
+                                      : mode_for_timestamp(plan.timestamp_ms);
+    last_frame_id_ = plan.frame_id;
+    last_timestamp_ms_ = plan.timestamp_ms;
+    frame_open_ = false;
+    return output;
+  }
+
+  bool accepted = false;
+  AcceptedObservationPath acceptance_path = AcceptedObservationPath::kDirect;
+  const bool detector_verification_active =
+      plan.hypothesis_source == HypothesisSource::kDetector ||
+      active_detector_candidate_.has_value();
+  const bool hold_source_mode =
+      plan.mode == TrackingMode::kTracking ||
+      plan.mode == TrackingMode::kUncertain ||
+      plan.mode == TrackingMode::kLocalRecovery;
+  if (selected && !hold_used_for_loss_) {
+    // Only normal, accepted tracking observations may enter stable history.
+    // Confirmation and all motion/template effects happen after evidence.
+    const bool directly_accepted =
+        selected->quality == QualityLevel::kReliable && !loss_start_ms_ &&
+        plan.mode == TrackingMode::kTracking && !force_confirmation &&
+        !detector_verification_active;
+    occlusion_decision_ = occlusion_evidence_.observe(OcclusionEvidenceInput{
+        selected->observation.bbox, plan.motion_predicted_bbox,
+        selected->observation.metrics, directly_accepted,
+        anchor && recent && output.template_iou < config_.template_agreement_iou,
+        detector_verification_active});
+    occlusion_suspicion_frames_ = occlusion_decision_.suspicion_active
+        ? occlusion_suspicion_frames_ + 1 : 0;
+  } else if (!selected) {
+    occlusion_decision_ = occlusion_evidence_.observe_gap();
+  }
+  publish_occlusion_evidence(output);
+  if (selected && !hold_used_for_loss_ && hold_source_mode &&
+      !detector_verification_active && occlusion_decision_.triggered) {
+    const ScaleReference reference{*occlusion_decision_.reference_width,
+                                   *occlusion_decision_.reference_height};
+    motion_.freeze_scale(reference.width, reference.height);
+    validate_bbox(motion_.current_bbox(), frame_size_.width, frame_size_.height);
+    frozen_scale_reference_ = reference;
+    // A configuration retained for compatibility may exceed twelve; it cannot
+    // expand the control authorization ceiling.
+    const auto budget = static_cast<std::size_t>(
+        std::min(12, config_.occlusion_hold_frames));
+    occlusion_coast_age_frames_ = 1;
+    hold_remaining_frames_ = budget - 1;
+    hold_used_for_loss_ = true;
+    loss_start_ms_ = plan.timestamp_ms;
+    ++detector_eligibility_generation_;
+    confirmations_.clear();
+    coast_probe_candidate_.reset();
+    detector_candidates_.clear();
+    active_detector_candidate_.reset();
+    stable_frames_ = 0;
+    mode_ = TrackingMode::kOcclusionHold;
+    output.mode = mode_;
+    output.quality = selected->quality;
+    output.selected_template = selected->observation.template_kind;
+    output.selected_metrics = selected->observation.metrics;
+    output.normalized_center_residual = selected->center_residual;
+    output.area_log_change = selected->area_log_change;
+    output.aspect_log_change = selected->aspect_log_change;
+    output.tracking_bbox = motion_.current_bbox();
+    output.display_bbox = output.tracking_bbox;
+    output.control_bbox = output.tracking_bbox;
+    output.bbox = output.display_bbox;
+    output.hypothesis_source = HypothesisSource::kMotion;
+    output.motion_control_authorized = true;
+    output.control_valid = true;
+    output.occlusion_hold_triggered = true;
+    output.occlusion_coast_age_frames = 1;
+    output.occlusion_hold_remaining_frames = budget;
+    output.occlusion_consecutive_unreliable_frames =
+        selected->quality == QualityLevel::kReliable
+            ? 0 : static_cast<std::size_t>(consecutive_unreliable_frames_ + 1);
+    output.occlusion_observation_width = selected->observation.bbox.width;
+    output.occlusion_observation_height = selected->observation.bbox.height;
+    for (auto& diagnostic : output.detector_candidate_diagnostics) {
+      if (!diagnostic.batch_eligible) continue;
+      diagnostic.batch_eligible = false;
+      diagnostic.position_gate_pass = false;
+      diagnostic.queued = false;
+      diagnostic.candidate_id.reset();
+      diagnostic.rejection = DetectorCandidateRejection::kHoldInvalidated;
+    }
+    last_frame_id_ = plan.frame_id;
+    last_timestamp_ms_ = plan.timestamp_ms;
+    frame_open_ = false;
+    return output;
   }
   if (selected) {
     output.quality = selected->quality;
@@ -712,9 +1140,23 @@ ControllerOutput LongTermController::finish_frame(
                             force_confirmation;
       if (!recovery) {
         accepted = true;
-      } else if (add_confirmation(plan.frame_id, selected->observation.bbox)) {
-        accepted = true;
-        reacquired = true;
+      } else {
+        const bool fixed_center_gate =
+            config_.max_reacquisition_center_distance == 0.0F ||
+            selected->center_residual <=
+                config_.max_reacquisition_center_distance;
+        if (!fixed_center_gate) {
+          confirmations_.clear();
+        } else if (add_confirmation(plan.frame_id,
+                                    selected->observation.bbox)) {
+          accepted = true;
+          acceptance_path =
+              plan.mode == TrackingMode::kLocalRecovery ||
+                      plan.mode == TrackingMode::kAssistedRecovery ||
+                      plan.mode == TrackingMode::kLost
+                  ? AcceptedObservationPath::kLocalOrDeeperRecovery
+                  : AcceptedObservationPath::kShortConfirmation;
+        }
       }
     }
   }
@@ -759,7 +1201,7 @@ ControllerOutput LongTermController::finish_frame(
         active.confirmation_boxes.size() >=
             static_cast<std::size_t>(config_.confirmation_required)) {
       accepted = true;
-      reacquired = true;
+      acceptance_path = AcceptedObservationPath::kDetectorRecovery;
     } else if (active.locked &&
                active.confirmation_attempts >=
                    static_cast<std::size_t>(config_.confirmation_window)) {
@@ -768,33 +1210,13 @@ ControllerOutput LongTermController::finish_frame(
   }
 
   if (accepted) {
-    output.bbox = selected->observation.bbox;
-    output.accepted = true;
-    output.control_valid = true;
-    output.reacquired = reacquired;
-    if (reacquired) {
-      motion_.initialize(output.bbox, plan.timestamp_ms, frame_size_.width,
-                         frame_size_.height);
-    } else {
-      motion_.correct(output.bbox, plan.timestamp_ms);
-    }
-    current_bbox_ = output.bbox;
-    loss_start_ms_.reset();
-    confirmations_.clear();
-    active_detector_candidate_.reset();
-    detector_candidates_.clear();
-    mode_ = TrackingMode::kTracking;
-    output.mode = mode_;
-    ++stable_frames_;
-    consecutive_unreliable_frames_ = 0;
-    if (reacquired) {
-      hold_used_for_loss_ = false;
-      hold_remaining_frames_ = 0;
-      frozen_scale_reference_.reset();
-      reliable_scale_history_.clear();
-    }
-    record_reliable_scale(output.bbox);
+    accept_observation(plan, *selected, acceptance_path, output);
   } else {
+    motion_.freeze_scale(current_bbox_.width, current_bbox_.height);
+    output.tracking_bbox = motion_.current_bbox();
+    output.display_bbox = output.tracking_bbox;
+    output.control_bbox = output.tracking_bbox;
+    output.bbox = output.display_bbox;
     ++consecutive_unreliable_frames_;
     if (!loss_start_ms_) loss_start_ms_ = plan.timestamp_ms;
     mode_ = mode_for_timestamp(plan.timestamp_ms);
@@ -802,52 +1224,6 @@ ControllerOutput LongTermController::finish_frame(
     output.control_valid = false;
     output.accepted = false;
     stable_frames_ = 0;
-  }
-
-  const bool hold_source_mode =
-      plan.mode == TrackingMode::kTracking ||
-      plan.mode == TrackingMode::kUncertain ||
-      plan.mode == TrackingMode::kLocalRecovery;
-  const bool selected_non_reliable =
-      selected && (selected->quality == QualityLevel::kWeak ||
-                   selected->quality == QualityLevel::kRejected);
-  const bool detector_verification_active =
-      plan.hypothesis_source == HypothesisSource::kDetector ||
-      active_detector_candidate_.has_value();
-  if (!accepted && hold_source_mode && !detector_verification_active &&
-      !hold_used_for_loss_ && scale_reference && selected_non_reliable &&
-      consecutive_unreliable_frames_ >=
-          config_.occlusion_trigger_consecutive_unreliable &&
-      output.occlusion_width_ratio && output.occlusion_height_ratio &&
-      std::min(*output.occlusion_width_ratio, *output.occlusion_height_ratio) <=
-          config_.occlusion_trigger_min_dimension_ratio) {
-    motion_.freeze_scale(scale_reference->width, scale_reference->height);
-    frozen_scale_reference_ = scale_reference;
-    hold_remaining_frames_ =
-        static_cast<std::size_t>(config_.occlusion_hold_frames);
-    ++detector_eligibility_generation_;
-    hold_used_for_loss_ = true;
-    confirmations_.clear();
-    detector_candidates_.clear();
-    active_detector_candidate_.reset();
-    output.occlusion_hold_triggered = true;
-    output.occlusion_hold_remaining_frames = hold_remaining_frames_;
-    output.occlusion_consecutive_unreliable_frames =
-        static_cast<std::size_t>(consecutive_unreliable_frames_);
-    output.occlusion_observation_width = selected->observation.bbox.width;
-    output.occlusion_observation_height = selected->observation.bbox.height;
-    output.bbox = motion_.current_bbox();
-    mode_ = TrackingMode::kOcclusionHold;
-    output.mode = mode_;
-    for (DetectorCandidateDiagnostic& diagnostic :
-         output.detector_candidate_diagnostics) {
-      if (!diagnostic.batch_eligible) continue;
-      diagnostic.batch_eligible = false;
-      diagnostic.position_gate_pass = false;
-      diagnostic.queued = false;
-      diagnostic.candidate_id.reset();
-      diagnostic.rejection = DetectorCandidateRejection::kHoldInvalidated;
-    }
   }
 
   if (!accepted && discard_active_detector) {
@@ -861,7 +1237,7 @@ ControllerOutput LongTermController::finish_frame(
         recent->quality == QualityLevel::kReliable &&
         output.template_iou >= config_.template_agreement_iou;
     if (accepted && templates_confirm_staged_recent &&
-        output.quality == QualityLevel::kReliable && !reacquired &&
+        output.quality == QualityLevel::kReliable && !output.reacquired &&
         !force_confirmation) {
       ++probation_reliable_frames_;
       if (probation_reliable_frames_ >= config_.recent_probation_frames) {
@@ -877,7 +1253,7 @@ ControllerOutput LongTermController::finish_frame(
       probation_reliable_frames_ = 0;
       stable_frames_ = 0;
     }
-  } else if (accepted && !reacquired && !force_confirmation &&
+  } else if (accepted && !output.reacquired && !force_confirmation &&
              stable_frames_ >= config_.stable_frames_for_update &&
              plan.timestamp_ms - last_recent_update_ms_ >=
                  config_.recent_update_interval_ms) {
@@ -890,7 +1266,13 @@ ControllerOutput LongTermController::finish_frame(
   output.detector_candidates_queued = detector_candidates_.size();
   last_frame_id_ = plan.frame_id;
   last_timestamp_ms_ = plan.timestamp_ms;
+  frame_open_ = false;
   return output;
+} catch (...) {
+  // Keep the frame open until it has a complete result so malformed probe
+  // identities and validation errors revoke coast just like inference errors.
+  abort_frame();
+  throw;
 }
 
 }  // namespace nanotrack

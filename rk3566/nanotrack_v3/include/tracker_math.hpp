@@ -47,6 +47,12 @@ BBox parse_bbox(const std::string& text);
 void validate_bbox(const BBox& bbox, int frame_width, int frame_height);
 std::vector<float> make_hann_window(int size);
 BBox clip_bbox(const BBox& bbox, int frame_width, int frame_height);
+BBox constrain_bbox_dimensions(const BBox& candidate,
+                               const BBox& reference,
+                               float minimum_ratio,
+                               float maximum_ratio,
+                               int frame_width,
+                               int frame_height);
 float percentile_ms(std::vector<float> values, float percentile);
 std::vector<float> nchw_to_nhwc(const std::vector<float>& input,
                                 int channels,
