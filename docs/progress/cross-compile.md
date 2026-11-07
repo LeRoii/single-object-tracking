@@ -627,3 +627,11 @@ BUILD_JOBS=4 ./run.sh --platform A6
 
 - 本节实测支持“选择性短确认显著消除了旧式重置跳点”，并有用户“基本可以”的人工观感；没有位置真值，不能据此声明精度、长期稳定或吊舱整体验收通过。真实 `rect[0]` 候选目前只有静态要求测试、A6 编译和板端哈希证据，尚无启动、模型加载或物理控制测试证据。
 - 本轮没有修改协调对话拥有的 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或开发板任务拥有的 `docs/progress/board-validation.md`。正式程序未覆盖，板端当前没有运行中的候选或 watchdog。
+
+## 2026-11-07 WSL 生产源码自助修改指南
+
+- 时间：`2026-11-07T09:21:53+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`；输入 HEAD 为 `5dbeffecbe15b8a67ca817cfdabfe0697ec0596b`，开始时工作树干净。
+- 新增 `docs/wsl-production-source-guide.md`，依据 WSL `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker` 的实际文件、生产 CMake 清单、函数位置和 SHA-256 编写。指南覆盖当前编辑入口、关键功能到源码的映射、配置/模型路径、A6 编译流程、输出字段和物理控制安全边界。
+- 只读核对确认 WSL 工程不是 Git 仓库；当前生产适配层、控制配置、控制器、NanoTrack 源码和最新 A6 程序哈希分别为 `6cc6261a9a82d93ef571e790f2793a7d6a2a7258765c52b8478a2acb24bcb79d`、`54dcc973feed11ad3e9e7838c8f35e86b0d587d5aa143863a625c849fa5dae19`、`b9a1d875f4fae6d386c0c88da805dc338692f04454f2bb7dcf7846af91a57e2a`、`b6c5da83c280a823111a4116be728ff7e9ac6e673ccffd75116faa4280dcce8c` 和 `221c00e32ed0b59f4ea4c9e27b122dd43248cb9d7147ede2823f412dd77725ad`。
+- `deployment_b827/` 被确认是混合历史目录：其 `bin/viewlink_app` 哈希为 `80554ffe9bde5c0ea0a729c56902d657d548214018eee84a445f3203c22f4692`，不是当前 `build_A6/viewlink_app`；其 `config/visible-default.conf` 也缺少两个最新中心平滑字段。指南明确禁止把该目录或任何 `backup-*` 当作最新源码/程序。
+- 本轮只编写文档，没有修改 WSL 源码、配置或二进制，没有执行新的交叉编译、板端部署或远程进程操作，也没有修改 `docs/progress/STATUS.md`、`docs/progress/integration-contract.yaml` 或 `docs/progress/board-validation.md`。
