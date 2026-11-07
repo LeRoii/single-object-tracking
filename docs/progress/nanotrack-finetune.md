@@ -1,11 +1,11 @@
 # NanoTrack 微调任务进度
 
 - 任务状态：`ready_for_downstream_evaluation`
-- 最近核对：`2026-10-28T00:48:50+08:00`。
+- 最近核对：`2026-11-07T21:13:32+08:00`。
 - 核对基线：`35119d7d57467821f3290dbd3b58f242698501a1`（context 过渡复审修复及受控恢复源码）。
 - 当前任务分支：`codex/nanotrack-factorial-v3`。
 - 当前任务工作树：`/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。
-- 状态说明：既有 g5000 可交付下游评估；任务 6 主矩阵断电前完成基线及 44/72 节点。首次恢复因映射顺序引发一 ULP 误差，错误失效一个已完成节点后保护停止。确定性修复和显式 context 过渡已分别通过任务复审及最终整体复审；受控恢复仍在运行，已完成旧 `b32_g0` 因前驱变化而必须重建的完整轨迹及断电中的 `b64_g30` 轨迹，当前为 50/72，仍不能据部分结果选择最优 batch/GOT 或切换模型。
+- 状态说明：既有 g5000 可交付下游评估；任务 6 九格主矩阵已完成 72/72 并通过只读 verifier，但九个 cell 均未同时满足两个终点 seed 的安全门，结果为 `no_safe_cell`、未启动 extension、未授权替换 g5000。UAV123-val 失败集中于四条高影响序列，已生成不改动原标注和评分的人工核验包，等待人工判断数据/标注与真实跟丢边界。
 - 责任边界：数据准备、训练、模型选择、桌面评测，以及向转换/板端链路交付冻结模型身份。
 
 ## 已观察证据
@@ -39,25 +39,78 @@
 
 ## Blockers
 
-- 任务 6 已解除源码身份门并开始受控恢复；当前阻塞为九格初筛尚未完成，不能冻结 extension 或进入确认阶段。断电、误失效及保护停止 attempt 全部保留，不得手工删除或改写。
+- 任务 6 九格初筛已完成，但没有 safe cell，不能冻结 extension 或进入确认阶段。断电、误失效及保护停止 attempt 全部保留，不得手工删除或改写。
 - 尚未在集成契约中批准 g5000 取代当前板端 NanoTrack 模型。
 - 尚无绑定 g5000 的 RKNN 模型与真实 RK3566 验收记录。
-- 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新控制器已接入 `T_v3`，目前只有伪端到端结果，不能宣称新实验已实际训练或产生性能提升。
+- 历史控制器评分仍为 `0.70*T + 0.15*GOT + 0.15*UAV123`；新控制器已用 `T_v3` 完成真实 72 节点矩阵，但结果为 `no_safe_cell`，不能宣称产生可晋级的性能提升。
 - 外部 NanoTrack 数据加载器保留历史列表索引语义；受控训练入口已可用显式 `--pair-policy` 在构造数据集前仅为匹配的 GOT 子池安装原始帧号策略，尚未用于真实新训练。
-- batch `{8,32,64}` 已各完成 50 步 CUDA 容量探测，但九格主矩阵和困难样本强化对照尚未完成；探测不是等样本性能比较，不能声明 batch 64 或任何配比最优。
+- batch `{8,32,64}` × GOT `{0%,10%,30%}` 等样本九格矩阵已完成，但没有 safe cell；不能从单个通过 seed 宣布 batch 或 GOT 配比最优，困难样本强化对照尚未开始。
 - 后续独立目标域留出集的可用性与隔离性尚需核查；已查看的历史隐藏集不能重新称为未触碰测试集。
 
 ## Next action
 
-0. 当前优先事项：继续监控受控恢复直至 72/72；当前正在执行 `b8_g0`、seed `123456`、7680 samples 节点的 GOT-10K 验证。不中断正常训练，不手工改写 journal，也不再次提交已经登记的一次性 context transition。
+0. 当前优先事项：人工核验 `uav123-manual-review` 中 `person10`、`car2_s`、`car16_1`、`car1_2` 四条高影响序列，并把结论填入 `人工核验结果.csv`；在人工反馈前不修改 UAV123 标注、门槛或历史评分。
 1. 已在 `codex/nanotrack-factorial-v3` 基于 `main@bb297504070b3dfcf2fd4b4da05ebb1503e309db`
    编写下一轮规格与实施计划：
    `docs/superpowers/specs/2026-10-24-nanotrack-factorial-v3.md`、
    `docs/superpowers/plans/2026-10-24-nanotrack-factorial-v3.md`；已获准开始实施，任务 1 评分策略和任务 2 配对策略及审计已完成局部验证。
-2. 九单元格精确样本配置和可恢复控制器已实现；验证失败诊断与训练集困难池已通过独立复审，
-   任务 6 已完成三档真实 CUDA 探测，下一步执行等样本交叉实验、训练集困难样本对照和
-   最终报告。没有启动隐藏集评测或 `sot-v1.mp4` 回归。
+2. 九单元格精确样本配置和可恢复控制器已实现并完成真实 72 节点交叉实验；下一步根据人工
+   核验结果区分评测协议问题与真实模型失稳，再决定是否设计训练集困难样本对照。没有启动
+   隐藏集评测或 `sot-v1.mp4` 回归。
 3. g5000 保持只读候选；下游 ONNX/RKNN/开发板链路不因新实验计划自动切换。
+
+## 2026-11-07 任务 6：72/72 完成及 UAV123-val 人工核验包
+
+- 时间：`2026-11-07T21:13:32+08:00`；记录基线 HEAD
+  `ea05fd177d77707ca879e6c50b22f02d807a5447`，分支/工作树仍为
+  `codex/nanotrack-factorial-v3` /
+  `/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3`。开始检查时工作树干净；
+  公共 `STATUS.md`、`integration-contract.yaml` 和其他任务文件未修改。
+- 受控恢复于 `2026-10-28T08:54:30.705629+08:00` 正常结束，return code 0、elapsed
+  44329.651 s。最终 `screening/candidate_table.json` 为 72 candidates、4 retained
+  invalidated candidates、79 attempts（73 complete、6 invalidated、0 running），SHA
+  `84e37f68052f124145c7c7f14f1fb76934a5fb5e3a1da5e5b8e8e739e9ad9a04`，3046197 bytes。
+  process result SHA
+  `ecf5b3b55f06ab5b51f0f1c982bced3af40086af087a438f5d387c1aecf53bde`。
+- 独立只读命令
+  `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python -B scripts/verify_nanotrack_factorial.py
+  --manifest configs/nanotrack_factorial_v3/experiment-manifest.json --output-root
+  /home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/screening`
+  实测 exit 0，输出 `valid=true`、`completed_nodes=72`、`state=no_safe_cell`、
+  `expansion_cells=[]`、`promotion_authorized=false`。`cell_summary.json` SHA
+  `d18bf08d49b2bc8845360704267b47a3354bbacadcde21e7e8bc276ca971d846`，859 bytes。
+- 九个 cell 均 complete，但安全定义要求两个 10240-sample seed 都 qualified；没有 cell
+  满足。`b8_g10` 和 `b8_g30` 各只有 seed `20261011` 通过，配对 seed `123456` 失败，
+  因此不能把单 seed 结果晋级。主要门为 UAV123-val AUC 相对 g5000 下降超过 0.01。
+- UAV123-val 固定 split 含 17 条逻辑序列、13 个物理视频：other 5、person 5、vehicle 7、
+  bike 0。同物理视频分段会分别计入逻辑序列宏平均；当前证据提示小面板和少数序列的影响
+  较大，但这本身不证明数据错误。四条优先人工核验序列为：
+  `person10`（AUC 0.8001 -> 0.1940，另一 seed 0.7966；无效标注源帧 69--90、190--221，
+  异常 seed 在源帧 91 起跟丢）、`car2_s`（0.5381 -> 0.3013，另一 seed 0.6315；15/18
+  个终点候选显著下降）、`car16_1`（0.6269 -> 0.5224，另一 seed 0.6375；与 `car16_2`
+  同源）、`car1_2`（0.7582 -> 0.7071，另一 seed 0.7060；18/18 候选下降、与
+  `car1_1/car1_3` 同源、无效标注源帧 509--515）。这些现象同时可能包含真实模型失稳、
+  无效标注期间的 tracker 状态传播和逻辑分段计权效应，必须由人工看图/视频后区分。
+- 人工核验包目录：
+  `/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/uav123-manual-review`。
+  `review-manifest.json` SHA
+  `3798526607a0b5d0b8746fa5aafa57c67b31ceca22f776335f71e85c9969efb4`；
+  `README.zh-CN.md` SHA
+  `1384213adda30ca67ea24202641fe4b3645ac96c205ddde34516fc4a6717c897`；
+  `人工核验结果.csv` SHA
+  `e2ab4d0341d9fe6818bb5b5dc70eb72c6e9218a68b13ddcb9023698f6259b7cd`；
+  复现脚本 `build_review_package.py` SHA
+  `ee495efa82163bfc93e4f8db341ac72fc7acd25ad48914144089f51e80189b51`。
+  每例包含全序列叠框 MP4 和关键帧 contact sheet，颜色为 GT 绿、g5000 青、异常候选红、
+  同配置另一 seed 黄；manifest 绑定原始 GT、三组 prediction、checkpoint 和全部输出 SHA。
+- 验证：四段 MP4 分别为 341/107/139/293 帧、10 FPS，`ffprobe` 帧数与原序列一致；
+  `ffmpeg -v error -i <video> -f null -` 全量解码均 exit 0；manifest 对 source state 和所有
+  input/output 重新计算 SHA 后 `identity_errors=[]`；四张 contact sheet 已实际查看，框、
+  图例、源帧号及失效点可读。
+- 边界：核验包只复制已有预测并绘制对照，不修改原始 UAV123 标注、split、candidate table、
+  安全门或模型；没有访问 UAV123 test/hidden、运行 `sot-v1.mp4`、训练新模型、转换或板端测试。
+  人工结论返回前，`no_safe_cell` 和 g5000 保持不变；若确认标注/协议问题，必须新建版本化协议
+  后重算，不得回写或重标历史证据。
 
 ## 2026-10-28 任务 6：受控恢复推进至 50/72
 
