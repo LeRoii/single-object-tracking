@@ -78,6 +78,34 @@
 本次核对没有产生新的模型身份、状态变化或公共契约字段，因而不请求
 修改 `integration-contract.yaml`；协调对话只需集成本任务进度提交。
 
+### 2026-11-08 统一非训练测试数据消费约束
+
+- 时间：`2026-11-08T22:07:03+08:00`。
+- 分支/工作树：`codex/detector-occ-video-contract` /
+  `/home/u20/single-object-tracking/.worktrees/detector-occ-video-contract`。
+- 生效基线：`main@9d0085f63e5e332db2142bfff71bfcef5f20b8c7`；本次仅记录
+  下游消费约束，不改变 detector 的训练数据、训练流程、候选模型身份或 promotion 状态。
+- 从该基线起，所有非训练用途的 detector/长时跟踪集成功能测试、回归测试和开发板
+  证据必须使用 `/home/u20/single-object-tracking/data/occ_video_1`。复制到开发板或其他
+  目标环境后，必须先按公共契约核对以下身份：`1.mp4`
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，
+  `annotation_metadata.json`
+  `5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076`，
+  `occlusion_events.json`
+  `a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256`，
+  `annotation_status.csv`
+  `e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036`，
+  `labels.sha256`
+  `9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648`；并验证
+  manifest 中 271 个标签文件。
+- `sot-v1.mp4` 和 `girl_dance.mp4` 不得再形成新的非训练证据；已有历史证据保留原有
+  输入身份和边界。`occ_video_1` 的 169--181 帧估计框不得作为普通 IoU ground truth。
+- 已在主机端核对上述五个契约哈希、`checksums.sha256`、271 个标签哈希和视频属性
+  `1920x1080 @ 30/1 fps, 271 frames`。本次未复制数据到开发板，也未运行 detector、
+  长时跟踪或板端测试，因而不形成新的功能、性能或板端证据。
+- 公共契约已经包含该约束，无需协调对话修改 `integration-contract.yaml`；协调对话只需
+  集成本任务提交，并要求相关消费任务按契约记录输入哈希。
+
 ## 后续更新模板
 
 ```text
