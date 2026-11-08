@@ -675,3 +675,25 @@ BUILD_JOBS=4 ./run.sh --platform A6
 
 - 用户明确要求把最近修改合入 `main`。本地 `main@bc047461545ae0efba2abf81d7eb924dd1a1290c` 与任务分支 `47b4d38433145fe7c558cd10d72496769b0c2de5` 合并为 `99d3d1b61ca6b915905425892afb66dff6730167`；两个父提交均保留。四个冲突均来自 `4.5/4.5` 阈值提交在两条历史中的重复及任务分支后续演进，解决结果逐文件与任务分支一致，保留后续实测形成的 `reliable_psr=4.2`、`weak_psr=4.0`、peak margin `0.04/0.02` 和全部尺度/中心稳定参数。
 - 合并提交形成后，在 `main` 上重新执行完整 RKNN-independent CTest，结果 `18/18` 通过、零失败；`git diff --check` 无输出，任务分支已被 `main` 包含。该结果不替代 A6 模型加载、板端运行或真实吊舱人工测试。
+
+## 2026-11-08 统一非训练测试数据契约同步
+
+- 时间：`2026-11-08T22:06:07+08:00`；分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`。开始时工作树干净，任务分支由 `47b4d38433145fe7c558cd10d72496769b0c2de5` 以 fast-forward 同步到 `main@9d0085f63e5e332db2142bfff71bfcef5f20b8c7`。
+- 只读消费了该提交的 `docs/progress/STATUS.md` 和 `docs/progress/integration-contract.yaml`，SHA-256 分别为 `a9cc25901727e8be2e5f767dd1a65b7707ef808e0fd697ee83e6f9476738cb91` 和 `cd9137fdf15618cd70eb87e8231e48b57f16d2caf5733d00c6761b63b8159fdb`。公共契约仍为 `development_board_validation.latest_handoff.available=false`，本节没有取得新的协调者批准生产输入，也没有执行交叉编译。
+- 纯交叉编译/链接检查不要求视频。以后若对交叉编译产物执行新增运行冒烟、板端/生产版本一致性检查或算法回归，只允许使用统一数据集 `occ_video_1`；`sot-v1.mp4` 和 `girl_dance.mp4` 不得产生新的非训练算法证据，既有历史记录保持原样。
+- 数据集只存在于契约指定的宿主路径 `/home/u20/single-object-tracking/data/occ_video_1`，没有复制到本任务工作树。实际只读核验结果如下：
+
+| 输入 | 实际宿主路径 | SHA-256 / 观察结果 |
+| --- | --- | --- |
+| 视频 | `/home/u20/single-object-tracking/data/occ_video_1/1.mp4` | `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d` |
+| 标注元数据 | `/home/u20/single-object-tracking/data/occ_video_1/annotation_metadata.json` | `5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076` |
+| 遮挡事件 | `/home/u20/single-object-tracking/data/occ_video_1/occlusion_events.json` | `a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256` |
+| 标注状态 | `/home/u20/single-object-tracking/data/occ_video_1/annotation_status.csv` | `e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036` |
+| 标签清单 | `/home/u20/single-object-tracking/data/occ_video_1/labels.sha256` | `9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648` |
+| 标签目录 | `/home/u20/single-object-tracking/data/occ_video_1/labels` | 271 个文件；`sha256sum -c labels.sha256` 全部通过 |
+
+### Handoff
+
+- 本轮实际消费路径仅为宿主 `/home/u20/single-object-tracking/data/occ_video_1`，消费动作仅限上述文件和标签清单的只读哈希核验；没有解码视频、运行算法或形成新回归结论。
+- 目标环境消费路径为 `null`：本轮没有把数据复制到 WSL、RK3566 板端或生产吊舱，也没有运行交叉编译产物冒烟或版本一致性检查。将来执行这些检查时，必须记录实际目标路径，并在目标环境重新核对视频、元数据、遮挡事件、标注状态和标签清单哈希后才可运行。
+- 数据集只覆盖一个短时、可见光、整车目标和一次行人经过遮挡的片段；不能据此证明跨场景、长时、红外或真实吊舱验收。真实吊舱部署和测试仍只能由人完成。
