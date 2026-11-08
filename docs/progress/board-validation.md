@@ -1,5 +1,41 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-08T22:52:30+08:00 统一非训练测试数据板端落盘核验
+
+- 协调基线为 `main@9d0085f63e5e332db2142bfff71bfcef5f20b8c7`；任务工作树
+  `/home/u20/single-object-tracking/.worktrees/board-validation-progress-sync`、分支
+  `codex/board-validation-progress-sync` 在核验前干净并快进到该提交。本轮只核验用户已上传的
+  数据并更新本任务文件，没有运行算法、修改源码、模型、公共 `STATUS.md` 或
+  `integration-contract.yaml`。
+- 板端实际路径为 `/home/cat/Project/SOT/data/occ_video_1`。在真实 RK3566 板端执行
+  `sha256sum 1.mp4 annotation_metadata.json occlusion_events.json annotation_status.csv labels.sha256 checksums.sha256`，
+  得到：视频 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`、
+  元数据 `5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076`、
+  遮挡事件 `a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256`、
+  逐帧状态 `e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036`、
+  标签清单 `9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648`、
+  顶层清单 `872483add3bb9ae3ddc4172b689e224ccf3e65b51bd0ab07268ee02957c3254f`，
+  与 schema v2 集成契约逐项一致。
+- 板端继续执行 `sha256sum -c --quiet --strict checksums.sha256` 和
+  `sha256sum -c --quiet --strict labels.sha256`，两者均退出成功；`labels.sha256` 为
+  271 项，`labels/` 实际 271 个 `frame_*.txt`，共 271 行有效 YOLO 记录，均为
+  `class_id=0` 且每行 5 字段。`annotation_status.csv` 为连续 frame 0～270 的 271 条
+  状态记录；169～181 的来源均为 `bidirectional_interpolation`。
+- 板端 `ffprobe` 实测 `1.mp4` 为 1920×1080、`30/1` FPS、271 帧。解析元数据与事件记录
+  确认目标为完整 `car`，169～171 部分遮挡、172～180 完全遮挡、181 首次可见、182
+  首次可靠重现、184 稳定重现，遮挡物为人行天桥。169～181 是人工确认估计框，
+  `ordinary_iou_metrics_allowed=false`，后续普通 IoU 统计不得包含这些帧。
+
+### Handoff
+
+- 请求协调对话采纳板端实际路径
+  `/home/cat/Project/SOT/data/occ_video_1` 及上述哈希，补全公共契约的
+  `test_data.canonical_dataset.target_environment_path`。后续新增开发板非训练算法证据只使用
+  该数据；`sot-v1.mp4` 和 `girl_dance.mp4` 只保留历史输入身份，不再新增验证结论。
+- 本轮仅证明冻结数据已完整落盘并与契约一致，不证明算法运行、遮挡恢复、精度、性能、
+  阈值标定、生产交叉编译或吊舱验收。任务仍保持
+  `functional_pass_promotion_held`，`development_board_validation.latest_handoff.available=false`。
+
 ## 2026-10-31T10:43:00+08:00 最终源码事件脉冲板端复测
 
 - 被测源码 `codex/adaptive-occlusion-coast@d589215f1c0319f2686d6364edfec86a67a0c63e`，工作树干净；相对 `e3ec19615a0d931544fa9567f288be62a0935551` 的 `git diff --binary e3ec196 HEAD -- rk3566/nanotrack_v3` SHA-256 `64a0f8ab085a4e067618944b9e3899b0e7cedbf6df392d5e72b971efd57b01c7`。本进度提交结果身份见 Git 日志。
