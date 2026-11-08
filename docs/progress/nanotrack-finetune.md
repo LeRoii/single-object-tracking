@@ -1345,6 +1345,31 @@ git worktree add .worktrees/nanotrack-factorial-v3 \
 建议的契约变更必须由协调对话审核后写入
 `docs/progress/integration-contract.yaml`。本任务对话不得直接把候选状态改成已部署。
 
+- **采纳 `main@9d0085f63e5e332db2142bfff71bfcef5f20b8c7` 的统一非训练测试数据契约**
+  （核对时间 `2026-11-08T22:05:25+08:00`）：NanoTrack 训练数据、训练评测和训练过程不受
+  该契约影响；从该同步点起，所有训练之外的算法功能测试、回归、导出后验证和板端运行证据
+  必须统一使用 `/home/u20/single-object-tracking/data/occ_video_1`。不得再用
+  `sot-v1.mp4` 或 `girl_dance.mp4` 产生新的非训练算法证据；既有历史结果保留其原输入身份，
+  不删除、不改名、不重新解释为新基准结果。
+- 已从 `main@9d0085f` 只读检查 `docs/progress/STATUS.md` 和 schema-v2
+  `docs/progress/integration-contract.yaml`，并对本地数据实测复核：`1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，1920×1080、
+  30 FPS、271 帧；`annotation_metadata.json`、`occlusion_events.json`、
+  `annotation_status.csv`、`labels.sha256` 的 SHA-256 分别为
+  `5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076`、
+  `a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256`、
+  `e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036`、
+  `9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648`；271 个
+  YOLO 标签逐项 `sha256sum -c labels.sha256` 全部 `OK`，与公共契约一致。
+- 消费边界：169～171 帧为部分遮挡、172～180 帧为完全遮挡、181 帧部分重现、182 帧
+  首次可靠重现、184 帧稳定重现；169～181 帧框为人工确认的双向插值估计，不属于可观测
+  真值，不得混入普通 IoU。开发板或其他目标环境使用前必须复制整组数据，记录实际目标路径，
+  并重新核对视频、元数据、事件、状态和标签清单哈希。本任务尚未以该数据生成新的推理、导出、
+  板端或吊舱证据；单个短可见光遮挡片段也不证明跨场景、长时、红外或真实吊舱性能。
+- 本分支 HEAD 与 `main@9d0085f` 的 merge-base 仍为
+  `bb297504070b3dfcf2fd4b4da05ebb1503e309db`，本次没有 merge/reset 或复制公共文件；只在
+  owner 文件中记录已核验的消费约束。公共契约已经由协调对话冻结，本任务不请求再次改写契约；
+  协调对话只需集成本次任务提交，使该约束成为 NanoTrack 微调任务的持久 Handoff。
 - **无需切换公共模型身份或放开 promotion gate**：checkpoint 与 selection 哈希已重新匹配当前契约，`onnx/rknn/board_validation` 应继续保持未验证状态。
 - 建议协调对话在公共状态说明中区分“g5000 已冻结可供下游评估”和“下一轮优化仍待实施”。
 - 可补充公共契约中的候选配置身份：`configs/nanotrack_v3_three_stage_stage1.yaml`，SHA-256 `cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e`；它与已保存 UAV123 评测 provenance 一致，不是 RKNN 导出或板端配置验证。
