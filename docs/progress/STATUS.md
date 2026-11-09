@@ -112,6 +112,7 @@
   `74f2bc8485b2054341979e53562a71d4cbc71d4e` 的最新已提交回传。
 - 同时集成 `999f346c6df19be2e96abe9a32f413f0b93cee7c` 的长时跟踪真值数据要求文档。
 - NanoTrack 完整单测在其链接工作树运行 `277` 项，只有 4 个历史绝对路径比较失败；
-  相同路径测试在主工作树为 `6/6` 通过。合并结果仍需执行完整主工作树回归后才能作为最终验证结论。
+  合并后的主工作树重新运行同一完整套件，结果为 `277/277` 通过。detector Python
+  回归为 `76/76` 通过，RKNN-independent C++ 构建及 CTest 为 `18/18` 通过。
 - 保持 `development_board_validation.latest_handoff.available=false`；候选交叉编译和板端诊断
   不升级为批准 handoff、生产部署或真实吊舱验收。
