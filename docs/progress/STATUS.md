@@ -5,8 +5,8 @@
 
 - 初始化时间：`2026-10-22T21:05:39+08:00`
 - 初始化基线：`main@352018bd588a999d03f2685dc7b71266f396b39d`
-- 最近汇总：`2026-10-22T22:11:26+08:00`，四个任务回传已集成至
-  `main@062dd5b1c8adfe7e79ca4fe4100f299bf5e8cc9f`
+- 最近汇总：`2026-11-09T21:23:05+08:00`，四个任务的最新已提交回传已集成至
+  `main@e0b59f4936ce074c1d263624745d975df52bdef3`
 - 最近协调契约更新：`2026-11-07T22:55:06+08:00`，基于
   `main@40002ba22bda62cffa8519f323abab5f970e0836` 冻结统一非训练算法测试数据
   `data/occ_video_1`
@@ -16,10 +16,10 @@
 
 | 任务 | 当前状态 | 当前可交付物 | 主要边界或阻塞 | 详情 |
 | --- | --- | --- | --- | --- |
-| NanoTrack 微调 | `ready_for_downstream_evaluation` | g5000 候选身份已复核，37 项相关单测通过 | 尚无绑定该权重的 ONNX/RKNN/板端验收；下一轮评分、采样和交叉对照仍待实施 | [`nanotrack-finetune.md`](nanotrack-finetune.md) |
+| NanoTrack 微调 | `ready_for_downstream_evaluation` | g5000 身份保持冻结；九格矩阵 72/72 完成且 verifier 结论为 `no_safe_cell` | 没有新 cell 同时通过双 seed 安全门；g5000 仍无绑定的 ONNX/RKNN/板端验收 | [`nanotrack-finetune.md`](nanotrack-finetune.md) |
 | Detector 训练 | `candidate_ready_promotion_held` | VisDrone9 PT、ONNX、RKNN 和 manifest/labels 身份已复核，76 项回归通过 | 正式切换被集成内存门和重捕效果门阻塞；canonical manifest 仍是 COCO | [`detector-training.md`](detector-training.md) |
-| 开发板验证 | `functional_pass_promotion_held` | 当前 Debug 工件、13 项板端测试、detector 单图和短程集成功能已复核 | 源码候选尚未集成锁定；VmHWM、detector-confirmed 重捕和阈值门未闭环 | [`board-validation.md`](board-validation.md) |
-| 生产交叉编译 | `blocked_waiting_for_approved_board_handoff` | 已同步协调基线并确认当前没有可消费 handoff | 输入身份尚未批准，因此未执行交叉编译；这不是编译失败 | [`cross-compile.md`](cross-compile.md) |
+| 开发板验证 | `functional_pass_promotion_held` | 统一数据集已在真实 RK3566 路径完成文件与 271 项标签哈希核验；既有 Debug 功能证据保留 | 尚未用统一数据集形成新的算法运行证据；正式源码/模型 handoff 仍未批准 | [`board-validation.md`](board-validation.md) |
+| 生产交叉编译 | `candidate_cross_compile_succeeded_handoff_unapproved` | 已有候选 A6 编译、隔离板端启动和诊断记录 | 候选记录不是协调者批准的生产 handoff；正式编译裁决和真实吊舱验收仍未完成 | [`cross-compile.md`](cross-compile.md) |
 
 ## 依赖顺序
 
@@ -103,3 +103,15 @@
 - `sot-v1.mp4` 和 `girl_dance.mp4` 仅保留为历史证据输入，从本同步点起不再用于新增测试。
 - 本次更新只建立数据消费契约，不声称该视频已传到 RK3566、已由板端运行，也不替代
   交叉编译、板端性能或真实吊舱验收。
+
+### 2026-11-09T21:23:05+08:00
+
+- 集成 NanoTrack 微调 `b43aa257e99b7ffaf8e0845c4fdfaabef1d45821`、detector
+  `1a851916b3f64fbf65cdf6e9fa4394800a2c795e`、开发板验证
+  `29cd9948196330ed45fac18d7963b9cd385beb58` 和生产交叉编译
+  `74f2bc8485b2054341979e53562a71d4cbc71d4e` 的最新已提交回传。
+- 同时集成 `999f346c6df19be2e96abe9a32f413f0b93cee7c` 的长时跟踪真值数据要求文档。
+- NanoTrack 完整单测在其链接工作树运行 `277` 项，只有 4 个历史绝对路径比较失败；
+  相同路径测试在主工作树为 `6/6` 通过。合并结果仍需执行完整主工作树回归后才能作为最终验证结论。
+- 保持 `development_board_validation.latest_handoff.available=false`；候选交叉编译和板端诊断
+  不升级为批准 handoff、生产部署或真实吊舱验收。

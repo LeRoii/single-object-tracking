@@ -1,15 +1,15 @@
 schema_version: 2
-updated_at: "2026-11-07T22:55:06+08:00"
+updated_at: "2026-11-09T21:23:05+08:00"
 coordinator_baseline:
   branch: main
-  commit: "40002ba22bda62cffa8519f323abab5f970e0836"
-  note: "The canonical non-training test-data contract is based on this main commit; prior task-update identities remain historical records below."
+  commit: "e0b59f4936ce074c1d263624745d975df52bdef3"
+  note: "All latest committed task updates and the ground-truth requirements document are integrated through this main commit; approval gates below remain unchanged unless stated explicitly."
 
 integrated_task_updates:
-  detector_training: "700da83459b742e0d83ea28493feef6cd3103cca"
-  nanotrack_finetune: "81b95123dc5678b924802482c88fb1ae3e9d5980"
-  board_validation: "acc595d19b3e270f8adde7cebca5deeb7e8f9328"
-  production_cross_compile: "2795a3303921e750a73ef7d1d38482c2b3012a67"
+  detector_training: "1a851916b3f64fbf65cdf6e9fa4394800a2c795e"
+  nanotrack_finetune: "b43aa257e99b7ffaf8e0845c4fdfaabef1d45821"
+  board_validation: "29cd9948196330ed45fac18d7963b9cd385beb58"
+  production_cross_compile: "74f2bc8485b2054341979e53562a71d4cbc71d4e"
 
 ownership:
   status_index: coordinating_chat
@@ -96,6 +96,7 @@ nanotrack:
     note: "This is not evidence for the fine-tuned g5000 checkpoint."
   fine_tuned_candidate:
     status: ready_for_downstream_evaluation
+    task_update_commit: "b43aa257e99b7ffaf8e0845c4fdfaabef1d45821"
     checkpoint: artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth
     sha256: "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1"
     selection_record: artifacts/nanotrack_conservative_three_stage/run/selection.json
@@ -107,6 +108,11 @@ nanotrack:
     rknn: null
     board_validation: null
     evidence: artifacts/nanotrack_conservative_three_stage/REPORT.zh-CN.md
+    factorial_screening:
+      completed_nodes: 72
+      state: no_safe_cell
+      promotion_authorized: false
+      evidence: docs/progress/nanotrack-finetune.md
 
 detector:
   canonical:
@@ -117,6 +123,7 @@ detector:
   candidate:
     name: yolov8n-visdrone9-rk3566-fp16-v1
     status: candidate_ready_promotion_held
+    task_update_commit: "1a851916b3f64fbf65cdf6e9fa4394800a2c795e"
     training_checkpoint:
       path: artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-best.pt
       sha256: "6744672ac5e35debba2a647ad570e9fe84a1cabd1c45c9840080d0a4127fe36d"
@@ -144,6 +151,12 @@ development_board_validation:
   position: before_production_cross_compile
   environment: complete_native_build_environment
   implementation: interactive_debug_variant
+  latest_task_update_commit: "29cd9948196330ed45fac18d7963b9cd385beb58"
+  canonical_test_data_on_board:
+    path: /home/cat/Project/SOT/data/occ_video_1
+    identity_verified: true
+    algorithm_run_completed: false
+    evidence: docs/progress/board-validation.md
   latest_review:
     status: functional_pass_promotion_held
     task_update_commit: "acc595d19b3e270f8adde7cebca5deeb7e8f9328"
@@ -169,14 +182,19 @@ development_board_validation:
     verdict: null
 
 production_cross_compile:
-  status: blocked_waiting_for_approved_board_handoff
-  last_owner_refresh_commit: "2795a3303921e750a73ef7d1d38482c2b3012a67"
+  status: candidate_cross_compile_succeeded_handoff_unapproved
+  last_owner_refresh_commit: "74f2bc8485b2054341979e53562a71d4cbc71d4e"
   responsibility: obtain_latest_board_validated_handoff_and_compile
   latest_result_access_confirmed: false
   consumed_source_commit: null
   consumed_artifacts: null
   compile_command: null
   compile_succeeded: false
+  candidate_compile_record:
+    status: evidence_recorded_not_approved_handoff
+    task_update_commit: "74f2bc8485b2054341979e53562a71d4cbc71d4e"
+    evidence: docs/progress/cross-compile.md
+    note: "Candidate A6 build and diagnostic evidence do not satisfy the approved-handoff compile gate."
   production_artifact:
     path: null
     sha256: null
