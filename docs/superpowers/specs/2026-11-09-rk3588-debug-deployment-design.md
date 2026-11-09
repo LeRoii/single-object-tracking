@@ -13,17 +13,19 @@
   `BUILD_TESTING=ON` 和 `ENABLE_RKNN_RUNTIME=ON`。
 - 使用 RK3588 自带 OpenCV 4.5.4 和 `librknnrt.so`；从已验证 RKNN SDK
   取得编译头文件，但不盲目覆盖系统运行库。
-- 先测试现有 RK3566-target RKNN 模型能否由 RK3588 runtime 加载。若不兼容，
-  用相同 ONNX、相同预处理和 Toolkit 2.3.2 重新生成 RK3588-target 模型，分别记录哈希；
-  不把重新转换后的模型描述成与 RK3566 二进制同一工件。
+- 不向 RK3588 传输、部署或尝试加载任何 RK3566-target RKNN 模型。NanoTrack 的
+  template/search/head 和 VisDrone9 detector 全部由各自已冻结的 ONNX 源、相同预处理
+  和 Toolkit 2.3.2 重新生成 RK3588-target 模型，并生成新的 manifest 与 SHA-256；
+  新模型是独立工件，不沿用 RK3566 模型身份。
 - detector 使用现有 VisDrone9 候选，只用于 Debug 候选生成；它不得直接授权控制，
   也不改变当前 promotion held 状态。
 - 新的算法运行证据只使用 `data/occ_video_1`，传输后逐项核对契约哈希。
 
 ## 采用方案
 
-选择“最新 main 的 RK3588 原生重建”：先保留算法与模型输入身份，适配板端编译和
-RKNN 运行环境，再分层验证。没有采用复制 RK3566 二进制及其完整动态库的方式，
+选择“最新 main 的 RK3588 原生重建”：保留算法源码、ONNX 输入和预处理身份，重新生成
+全部 RK3588-target RKNN 模型，适配板端编译和 RKNN 运行环境，再分层验证。没有采用
+复制 RK3566 二进制、RKNN 模型及其完整动态库的方式，
 因为 Debian 10/OpenCV 4.10/RKNN 2.3.2 与 RK3588 的 Ubuntu 22.04/OpenCV 4.5.4/
 系统 runtime 不同；也没有继续使用旧 `d589215`，因为用户明确要求部署刚合并后的最新代码。
 
@@ -37,7 +39,8 @@ RKNN 运行环境，再分层验证。没有采用复制 RK3566 二进制及其�
 
 ## 验证门槛
 
-1. 源码、模型、manifest、labels、配置和统一数据集传输前后 SHA-256 一致。
+1. 源码、ONNX 输入、RK3588 模型、manifest、labels、配置和统一数据集均记录
+   SHA-256；传到 RK3588 的工件与主机生成结果一致，且 manifest 声明目标为 `rk3588`。
 2. RK3588 原生配置和编译成功，完整 CTest 通过；记录编译器、OpenCV、runtime、
    driver、源码提交和二进制哈希。
 3. NanoTrack 三模型逐一加载成功；detector 单图 smoke 成功。
