@@ -1,0 +1,477 @@
+{
+  "asset_root": "/home/u20/single-object-tracking",
+  "cells": {
+    "b32_g0": {
+      "batch_size": 32,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b32_g0.yaml",
+      "config_sha256": "8787819602a6938f33225b0aae4e3da7eae563e8189a6b2d76b10ab1d8f85b8a",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 80,
+      "full_samples": 40960,
+      "full_updates": 1280,
+      "got_percent": 0,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b32_g0",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "UAV123_BIKE_NORMAL": 476,
+        "UAV123_OTHER_NORMAL": 1426,
+        "UAV123_PERSON_NORMAL": 4754,
+        "UAV123_VEHICLE_NORMAL": 2852,
+        "UAVDT_VEHICLE_NORMAL": 13166,
+        "VISDRONE_MOT_BIKE_NORMAL": 1317,
+        "VISDRONE_MOT_PERSON_NORMAL": 7899,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 3950,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 5120
+      },
+      "screening_samples": 10240,
+      "screening_updates": 320,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    },
+    "b32_g10": {
+      "batch_size": 32,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b32_g10.yaml",
+      "config_sha256": "c0bcf47f87e94c3e73656f378c8bb4d47f697655dec2fe7c959308fbff0bf797",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 80,
+      "full_samples": 40960,
+      "full_updates": 1280,
+      "got_percent": 10,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b32_g10",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "GOT_OTHER_NORMAL": 1366,
+        "GOT_PERSON_NORMAL": 1365,
+        "GOT_VEHICLE_NORMAL": 1365,
+        "UAV123_BIKE_NORMAL": 428,
+        "UAV123_OTHER_NORMAL": 1284,
+        "UAV123_PERSON_NORMAL": 4279,
+        "UAV123_VEHICLE_NORMAL": 2567,
+        "UAVDT_VEHICLE_NORMAL": 11849,
+        "VISDRONE_MOT_BIKE_NORMAL": 1185,
+        "VISDRONE_MOT_PERSON_NORMAL": 7109,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 3555,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 4608
+      },
+      "screening_samples": 10240,
+      "screening_updates": 320,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    },
+    "b32_g30": {
+      "batch_size": 32,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b32_g30.yaml",
+      "config_sha256": "d2059cdb1d434328c9507d275ec6fbb3bdd617131b91c197f49fab8fcd62e9f3",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 80,
+      "full_samples": 40960,
+      "full_updates": 1280,
+      "got_percent": 30,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b32_g30",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "GOT_OTHER_NORMAL": 4096,
+        "GOT_PERSON_NORMAL": 4096,
+        "GOT_VEHICLE_NORMAL": 4096,
+        "UAV123_BIKE_NORMAL": 333,
+        "UAV123_OTHER_NORMAL": 998,
+        "UAV123_PERSON_NORMAL": 3328,
+        "UAV123_VEHICLE_NORMAL": 1997,
+        "UAVDT_VEHICLE_NORMAL": 9216,
+        "VISDRONE_MOT_BIKE_NORMAL": 922,
+        "VISDRONE_MOT_PERSON_NORMAL": 5529,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 2765,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 3584
+      },
+      "screening_samples": 10240,
+      "screening_updates": 320,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    },
+    "b64_g0": {
+      "batch_size": 64,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b64_g0.yaml",
+      "config_sha256": "3ddae5568c65e4a5b727dcb74cc735c95c05d8edd680b0cf1b92980f00fa5926",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 40,
+      "full_samples": 40960,
+      "full_updates": 640,
+      "got_percent": 0,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b64_g0",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "UAV123_BIKE_NORMAL": 476,
+        "UAV123_OTHER_NORMAL": 1426,
+        "UAV123_PERSON_NORMAL": 4754,
+        "UAV123_VEHICLE_NORMAL": 2852,
+        "UAVDT_VEHICLE_NORMAL": 13166,
+        "VISDRONE_MOT_BIKE_NORMAL": 1317,
+        "VISDRONE_MOT_PERSON_NORMAL": 7899,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 3950,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 5120
+      },
+      "screening_samples": 10240,
+      "screening_updates": 160,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    },
+    "b64_g10": {
+      "batch_size": 64,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b64_g10.yaml",
+      "config_sha256": "a305402d974c8e09199bb1732bb446f235c96afa678691c2cc1c3d864f610a8e",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 40,
+      "full_samples": 40960,
+      "full_updates": 640,
+      "got_percent": 10,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b64_g10",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "GOT_OTHER_NORMAL": 1366,
+        "GOT_PERSON_NORMAL": 1365,
+        "GOT_VEHICLE_NORMAL": 1365,
+        "UAV123_BIKE_NORMAL": 428,
+        "UAV123_OTHER_NORMAL": 1284,
+        "UAV123_PERSON_NORMAL": 4279,
+        "UAV123_VEHICLE_NORMAL": 2567,
+        "UAVDT_VEHICLE_NORMAL": 11849,
+        "VISDRONE_MOT_BIKE_NORMAL": 1185,
+        "VISDRONE_MOT_PERSON_NORMAL": 7109,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 3555,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 4608
+      },
+      "screening_samples": 10240,
+      "screening_updates": 160,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    },
+    "b64_g30": {
+      "batch_size": 64,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b64_g30.yaml",
+      "config_sha256": "b61666e811640347ec89c0294144601c710747862abf9368f947ee0ec24ab2ba",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 40,
+      "full_samples": 40960,
+      "full_updates": 640,
+      "got_percent": 30,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b64_g30",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "GOT_OTHER_NORMAL": 4096,
+        "GOT_PERSON_NORMAL": 4096,
+        "GOT_VEHICLE_NORMAL": 4096,
+        "UAV123_BIKE_NORMAL": 333,
+        "UAV123_OTHER_NORMAL": 998,
+        "UAV123_PERSON_NORMAL": 3328,
+        "UAV123_VEHICLE_NORMAL": 1997,
+        "UAVDT_VEHICLE_NORMAL": 9216,
+        "VISDRONE_MOT_BIKE_NORMAL": 922,
+        "VISDRONE_MOT_PERSON_NORMAL": 5529,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 2765,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 3584
+      },
+      "screening_samples": 10240,
+      "screening_updates": 160,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    },
+    "b8_g0": {
+      "batch_size": 8,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b8_g0.yaml",
+      "config_sha256": "493c4e8896b6c4113cf9a5637ea793c999019206f66e614d38935193642be128",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 320,
+      "full_samples": 40960,
+      "full_updates": 5120,
+      "got_percent": 0,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b8_g0",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "UAV123_BIKE_NORMAL": 476,
+        "UAV123_OTHER_NORMAL": 1426,
+        "UAV123_PERSON_NORMAL": 4754,
+        "UAV123_VEHICLE_NORMAL": 2852,
+        "UAVDT_VEHICLE_NORMAL": 13166,
+        "VISDRONE_MOT_BIKE_NORMAL": 1317,
+        "VISDRONE_MOT_PERSON_NORMAL": 7899,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 3950,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 5120
+      },
+      "screening_samples": 10240,
+      "screening_updates": 1280,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    },
+    "b8_g10": {
+      "batch_size": 8,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b8_g10.yaml",
+      "config_sha256": "f26e4491f18444246cca95d9a8cf33146c4c099048564f880da2f38b873de189",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 320,
+      "full_samples": 40960,
+      "full_updates": 5120,
+      "got_percent": 10,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b8_g10",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "GOT_OTHER_NORMAL": 1366,
+        "GOT_PERSON_NORMAL": 1365,
+        "GOT_VEHICLE_NORMAL": 1365,
+        "UAV123_BIKE_NORMAL": 428,
+        "UAV123_OTHER_NORMAL": 1284,
+        "UAV123_PERSON_NORMAL": 4279,
+        "UAV123_VEHICLE_NORMAL": 2567,
+        "UAVDT_VEHICLE_NORMAL": 11849,
+        "VISDRONE_MOT_BIKE_NORMAL": 1185,
+        "VISDRONE_MOT_PERSON_NORMAL": 7109,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 3555,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 4608
+      },
+      "screening_samples": 10240,
+      "screening_updates": 1280,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    },
+    "b8_g30": {
+      "batch_size": 8,
+      "config_path": "/home/u20/single-object-tracking/.worktrees/nanotrack-factorial-v3/configs/nanotrack_factorial_v3/b8_g30.yaml",
+      "config_sha256": "9fecd21c0a0879307c02dbb44679ad06dd134bb9d865b1e3864a3d8aab60dd5c",
+      "evaluation_interval_samples": 2560,
+      "evaluation_interval_updates": 320,
+      "full_samples": 40960,
+      "full_updates": 5120,
+      "got_percent": 30,
+      "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+      "input_hashes": {
+        "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+        "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+        "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+        "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+      },
+      "learning_rate": {
+        "end": 8e-06,
+        "schedule": "log_by_samples",
+        "start": 2e-05
+      },
+      "output_dir": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/run/b8_g30",
+      "pair_policy_path": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+      "quotas": {
+        "GOT_OTHER_NORMAL": 4096,
+        "GOT_PERSON_NORMAL": 4096,
+        "GOT_VEHICLE_NORMAL": 4096,
+        "UAV123_BIKE_NORMAL": 333,
+        "UAV123_OTHER_NORMAL": 998,
+        "UAV123_PERSON_NORMAL": 3328,
+        "UAV123_VEHICLE_NORMAL": 1997,
+        "UAVDT_VEHICLE_NORMAL": 9216,
+        "VISDRONE_MOT_BIKE_NORMAL": 922,
+        "VISDRONE_MOT_PERSON_NORMAL": 5529,
+        "VISDRONE_MOT_VEHICLE_NORMAL": 2765,
+        "VISDRONE_SOT_UNKNOWN_NORMAL": 3584
+      },
+      "screening_samples": 10240,
+      "screening_updates": 1280,
+      "seeds": [
+        123456,
+        20261011,
+        20261024
+      ]
+    }
+  },
+  "confirmation_seeds": [
+    123456,
+    20261011,
+    20261024
+  ],
+  "dataset_manifests": {
+    "GOT_OTHER_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/other.json",
+      "sha256": "975f0b915347503d48d5e524a238e53eec8a5ec07e09feb73f33715be6e03a9d"
+    },
+    "GOT_PERSON_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/person.json",
+      "sha256": "022f8e05c1dcffa59f8202efeba8f36c33d6a9bc8c3efd2e6a57650eb56ce54c"
+    },
+    "GOT_VEHICLE_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_got_replay_v1/got/normal/vehicle.json",
+      "sha256": "3c53c70e05d22bffe76b2df11a77767a44d9ae63fcb5ee4b6ea8f4d89c5df7a3"
+    },
+    "UAV123_BIKE_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/normal/bike.json",
+      "sha256": "bf15b3fedd59eb3a373dd62996b7d660647306de81c7e275a5c12167c7af431b"
+    },
+    "UAV123_OTHER_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/normal/other.json",
+      "sha256": "906f2ea40a243971f23cdc8b8c4c1a27c1c24d11da87f23274039e8a2fecabc3"
+    },
+    "UAV123_PERSON_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/normal/person.json",
+      "sha256": "d82c66158f97c6b3f39fd39f8593dd0cf723423b9c78fad781c6a174f5fe9729"
+    },
+    "UAV123_VEHICLE_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uav123/normal/vehicle.json",
+      "sha256": "514b84f0cc08c9914d4328db120e840b3a46beb2b7bb42057a5a03e963a75f67"
+    },
+    "UAVDT_VEHICLE_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/uavdt/normal/vehicle.json",
+      "sha256": "ba6e861aca902900a06c4f752e16f9452cba488782f9681e66480a17f7976d33"
+    },
+    "VISDRONE_MOT_BIKE_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/normal/bike.json",
+      "sha256": "169855d63e36bad1bfc2cf6ccbcd2290f6094ce7a01794807829b7bf426a8723"
+    },
+    "VISDRONE_MOT_PERSON_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/normal/person.json",
+      "sha256": "49d097820bb9807fb81106d51d7a2a839faa7717d9ae569d6aec74f7aa36c2c0"
+    },
+    "VISDRONE_MOT_VEHICLE_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_mot/normal/vehicle.json",
+      "sha256": "debf5ce1375916b68de8dce9a31bba34783082e4fc61b4d38ae44c583195bf29"
+    },
+    "VISDRONE_SOT_UNKNOWN_NORMAL": {
+      "path": "/home/u20/single-object-tracking/data/nanotrack_conservative_three_stage/visdrone_sot/normal/unknown.json",
+      "sha256": "0681e262e26aca142c5e10ddf00478c3dc98ccdfb5e5e8b8b5922854c34a3ee9"
+    }
+  },
+  "experiment": "nanotrack-factorial-v3",
+  "input_hashes": {
+    "initial_checkpoint": "40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1",
+    "pair_audit": "69b4d5d253ef40894f34a3648af31872e5676a40ce8d8a2f98a44cf04adb1ca2",
+    "pair_policy": "e33eb9423b08879b6b6f9068711e1617298a6fceb4a5ca4241f6a5bd45338024",
+    "source_config": "cb3065982818a701a7ebb469c41b894b0a6c11e7aac6cb91dc42e5ed50547f2e"
+  },
+  "input_paths": {
+    "initial_checkpoint": "/home/u20/single-object-tracking/artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth",
+    "pair_audit": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/audit.json",
+    "pair_policy": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3/pair-audit/pair-policy.json",
+    "source_config": "/home/u20/single-object-tracking/configs/nanotrack_v3_three_stage_stage1.yaml"
+  },
+  "output_root": "/home/u20/single-object-tracking/artifacts/nanotrack_factorial_v3",
+  "schema_version": 1,
+  "scoring_version": "nanotrack-category-first-v3",
+  "screening_seeds": [
+    123456,
+    20261011
+  ],
+  "source_config": "/home/u20/single-object-tracking/configs/nanotrack_v3_three_stage_stage1.yaml"
+}

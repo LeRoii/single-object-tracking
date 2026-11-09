@@ -1,6 +1,7 @@
 # Local environments and tool installations
 .venv/
 .venvs/
+.venvs
 venv/
 env/
 .tools/
@@ -16,12 +17,15 @@ env/
 
 # External repository checkouts (retain their own version control)
 repos/
+repos
 src/mobile-cv/
 ancient-tracker/
 
 # Datasets, generated artifacts, and experiment outputs
 data/
+data
 artifacts/
+artifacts
 **/data/
 **/artifacts/
 outputs/

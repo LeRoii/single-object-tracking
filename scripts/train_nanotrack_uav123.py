@@ -2,6 +2,8 @@
 """Single-GPU NanoTrack fine-tuning entry point for prepared SOT datasets."""
 
 import argparse
+from contextlib import ExitStack
+import hashlib
 import json
 import math
 import os
@@ -20,6 +22,14 @@ import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader, Dataset, Sampler
 
+try:
+    from scripts.nanotrack_pair_sampling import (
+        install_pair_policy, load_pair_policy, restore_pair_policy, validate_resume_pair_policy,
+    )
+except ModuleNotFoundError:
+    from nanotrack_pair_sampling import (
+        install_pair_policy, load_pair_policy, restore_pair_policy, validate_resume_pair_policy,
+    )
 
 POLICIES = ("head_only", "tail2")
 RESUME_CHECKPOINT_STEPS = 250
@@ -413,8 +423,10 @@ def restore_training_checkpoint(
     path: Path,
     metrics_path: Optional[Path] = None,
     steps_per_epoch: Optional[int] = None,
+    pair_policy_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     checkpoint = torch.load(str(path), map_location="cpu")
+    validate_resume_pair_policy(checkpoint, pair_policy_sha256)
     required = {"epoch", "optimizer"}
     missing = sorted(required - set(checkpoint))
     if missing:
@@ -443,6 +455,8 @@ def restore_training_checkpoint(
         "config": checkpoint.get("config"),
         "lr_schedule": checkpoint.get("lr_schedule"),
     }
+    if pair_policy_sha256 is not None:
+        progress["pair_policy_sha256"] = pair_policy_sha256
     for key in ("epoch", "step_in_epoch", "global_step", "metrics_position"):
         if progress[key] < 0:
             raise ValueError("checkpoint {} must be non-negative".format(key))
@@ -518,9 +532,10 @@ def _checkpoint_payload(
     metrics_position: Optional[int],
     stage_step: Optional[int],
     lr_schedule: str = "epoch",
+    pair_policy_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     model_state = model.state_dict()
-    return {
+    checkpoint = {
         "model": model_state,
         "state_dict": model_state,
         "optimizer": optimizer.state_dict(),
@@ -537,6 +552,9 @@ def _checkpoint_payload(
         "config": config,
         "lr_schedule": lr_schedule,
     }
+    if pair_policy_sha256 is not None:
+        checkpoint["pair_policy_sha256"] = pair_policy_sha256
+    return checkpoint
 
 
 def truncate_metrics_after_global_step(path: Path, global_step: int) -> int:
@@ -611,6 +629,7 @@ def save_training_checkpoint(
     immutable: bool = False,
     stage_step: Optional[int] = None,
     lr_schedule: str = "epoch",
+    pair_policy_sha256: Optional[str] = None,
 ) -> Dict[str, object]:
     if completed_epochs < 0 or step_in_epoch < 0 or global_step < 0:
         raise ValueError("checkpoint progress values must be non-negative")
@@ -632,6 +651,7 @@ def save_training_checkpoint(
         metrics_position,
         stage_step,
         lr_schedule,
+        pair_policy_sha256,
     )
     if atomic or immutable:
         _atomic_torch_save(checkpoint, path, immutable=immutable)
@@ -667,6 +687,7 @@ def save_periodic_checkpoints(
     candidate_checkpoint_steps: int = CANDIDATE_CHECKPOINT_STEPS,
     resume_checkpoint_steps: int = RESUME_CHECKPOINT_STEPS,
     lr_schedule: str = "epoch",
+    pair_policy_sha256: Optional[str] = None,
 ) -> Dict[str, Path]:
     if global_step <= 0:
         raise ValueError("global_step must be positive for periodic checkpoints")
@@ -701,6 +722,7 @@ def save_periodic_checkpoints(
         "metrics_position": metrics_position,
         "stage_step": stage_step,
         "lr_schedule": lr_schedule,
+        "pair_policy_sha256": pair_policy_sha256,
     }
     if global_step % resume_cadence == 0:
         resume_path = Path(output_dir) / "resume.pth"
@@ -748,6 +770,65 @@ def _head_lr_for_step(cfg: object, stage_step: int, total_steps: int) -> float:
     return math.exp(math.log(start) * (1.0 - ratio) + math.log(end) * ratio)
 
 
+def _head_lr_for_samples(cfg: object, seen_samples: int, total_samples: int) -> float:
+    """LR at a pre-update sample boundary; the endpoint is the terminal value.
+
+    For an update after s samples, use fraction s/N. This has no batch-dependent
+    endpoint correction: shared sample boundaries produce identical learning rates.
+    s=N describes the terminal schedule value, not an extra optimizer update.
+    """
+    position, count = int(seen_samples), int(total_samples)
+    if count <= 0 or position < 0 or position > count:
+        raise ValueError("seen_samples must be within the sample LR schedule")
+    start = float(cfg.TRAIN.LR.KWARGS.start_lr)
+    end = float(cfg.TRAIN.LR.KWARGS.end_lr)
+    if start <= 0 or end <= 0 or not math.isfinite(start) or not math.isfinite(end):
+        raise ValueError("sample LR endpoints must be finite and positive")
+    ratio = position / float(count)
+    return math.exp(math.log(start) * (1.0 - ratio) + math.log(end) * ratio)
+
+
+def save_sample_segment_telemetry(
+    path, *, cfg, stage, seed, batch_size, start_update, end_update,
+    start_global_step, end_global_step, full_sample_budget, losses,
+    wall_seconds, config_sha256, pair_policy_sha256, input_checkpoint_sha256,
+    cuda_memory,
+):
+    """Atomically retain one completed sample-scheduled segment's measurements."""
+    updates = end_update - start_update
+    if updates <= 0 or len(losses) != updates or not math.isfinite(wall_seconds) or wall_seconds < 0:
+        raise ValueError("invalid sample segment telemetry")
+    value = {
+        "schema_version": 1, "stage": stage, "seed": seed, "batch_size": batch_size,
+        "lr_schedule": "sample", "full_sample_budget": full_sample_budget,
+        "start_update": start_update, "end_update": end_update,
+        "start_global_step": start_global_step, "end_global_step": end_global_step,
+        "segment_updates": updates, "start_seen_samples": start_update * batch_size,
+        "end_seen_samples": end_update * batch_size, "segment_samples": updates * batch_size,
+        "initial_lr": _head_lr_for_samples(cfg, start_update * batch_size, full_sample_budget),
+        "final_lr": _head_lr_for_samples(cfg, (end_update - 1) * batch_size, full_sample_budget),
+        "terminal_next_lr": _head_lr_for_samples(cfg, end_update * batch_size, full_sample_budget),
+        "loss_finite": all(math.isfinite(float(loss)) for loss in losses), "loss_count": len(losses),
+        "wall_seconds": wall_seconds, "wall_boundary": "training_loop",
+        "config_sha256": config_sha256, "pair_policy_sha256": pair_policy_sha256,
+        "input_checkpoint_sha256": input_checkpoint_sha256, "cuda_memory": cuda_memory,
+    }
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix="." + path.name, dir=str(path.parent))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return value
+
+
 def _set_learning_rates(optimizer: torch.optim.Optimizer, head_lr: float) -> None:
     for group in optimizer.param_groups:
         group["lr"] = head_lr * float(group["lr_multiplier"])
@@ -768,6 +849,11 @@ def _append_jsonl(path: Path, value: Dict[str, object]) -> None:
 
 
 def main() -> None:
+    with ExitStack() as pair_policy_cleanup:
+        _main(pair_policy_cleanup)
+
+
+def _main(pair_policy_cleanup: ExitStack) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--nanotrack-root", type=Path, required=True)
@@ -778,8 +864,9 @@ def main() -> None:
     parser.add_argument("--initial-global-step", type=int)
     parser.add_argument("--stop-after-global-step", type=int)
     parser.add_argument("--policy", choices=POLICIES)
+    parser.add_argument("--pair-policy", type=Path)
     parser.add_argument("--stage", default="legacy")
-    parser.add_argument("--lr-schedule", choices=("epoch", "step"), default="epoch")
+    parser.add_argument("--lr-schedule", choices=("epoch", "step", "sample"), default="epoch")
     parser.add_argument(
         "--checkpoint-every-steps", type=int, default=RESUME_CHECKPOINT_STEPS
     )
@@ -787,7 +874,11 @@ def main() -> None:
         "--candidate-every-steps", type=int, default=CANDIDATE_CHECKPOINT_STEPS
     )
     parser.add_argument("--seed", type=int, default=123456)
+    parser.add_argument("--validate-only", action="store_true",
+                        help="Validate parser/checkpoint boundary contracts without loading a model or CUDA")
     args = parser.parse_args()
+    pair_policy = load_pair_policy(args.pair_policy) if args.pair_policy is not None else None
+    pair_policy_sha256 = pair_policy["sha256"] if pair_policy is not None else None
     if args.resume is not None and args.initialize_from is not None:
         raise ValueError("resume and initialize-from are mutually exclusive")
     if args.initial_global_step is not None and args.initialize_from is None:
@@ -797,6 +888,7 @@ def main() -> None:
         resume_header = torch.load(str(args.resume.resolve()), map_location="cpu")
         if not isinstance(resume_header, dict) or "global_step" not in resume_header:
             raise ValueError("resume checkpoint is missing global_step")
+        validate_resume_pair_policy(resume_header, pair_policy_sha256)
         resume_global_step = int(resume_header["global_step"])
     start_global_step = validate_segment_request(
         args.initial_global_step,
@@ -810,6 +902,19 @@ def main() -> None:
                 RESUME_CHECKPOINT_STEPS
             )
         )
+    if args.validate_only:
+        source_step = None
+        if args.initialize_from is not None:
+            header = torch.load(str(args.initialize_from.resolve()), map_location="cpu")
+            source_step = int(header.get("global_step", 0))
+            if source_step < 0 or start_global_step < source_step:
+                raise ValueError("stage initializer would move the run global_step backwards")
+        print(json.dumps({"validated": True, "start_global_step": start_global_step,
+                          "source_global_step": source_step,
+                          "stop_after_global_step": args.stop_after_global_step,
+                          "checkpoint_every_steps": args.checkpoint_every_steps,
+                          "candidate_every_steps": args.candidate_every_steps}, sort_keys=True))
+        return
 
     config_path = args.config.resolve()
     nanotrack_root = args.nanotrack_root.resolve()
@@ -824,6 +929,14 @@ def main() -> None:
     from nanotrack.models.model_builder import ModelBuilder
     from nanotrack.utils.model_load import load_pretrain
 
+    if pair_policy is not None:
+        from nanotrack.datasets.dataset import SubDataset
+        install_pair_policy(SubDataset, pair_policy["policy"])
+        pair_policy_cleanup.callback(restore_pair_policy, SubDataset)
+        (output_dir / "pair-policy-provenance.json").write_text(
+            json.dumps({"pair_policy": pair_policy}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     cfg.merge_from_file(str(config_path))
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable in this execution environment")
@@ -877,6 +990,7 @@ def main() -> None:
             optimizer,
             args.resume.resolve(),
             steps_per_epoch=steps_per_epoch,
+            pair_policy_sha256=pair_policy_sha256,
         )
         if args.policy is not None and progress["policy"] not in (None, args.policy):
             raise ValueError(
@@ -969,7 +1083,13 @@ def main() -> None:
             ),
             flush=True,
         )
+    if args.lr_schedule == "sample":
+        torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
+    segment_start = time.perf_counter()
+    segment_start_update = stage_step
+    segment_start_global = global_step
+    segment_losses = []
     for epoch in range(start_epoch, int(cfg.TRAIN.EPOCH)):
         model.train()
         if args.policy is None:
@@ -1000,6 +1120,11 @@ def main() -> None:
         first_step = resume_step if epoch == start_epoch else 0
         for step in range(first_step, steps_per_epoch):
             head_lr = (
+                _head_lr_for_samples(
+                    cfg, stage_step * batch_size,
+                    int(cfg.TRAIN.EPOCH) * steps_per_epoch * batch_size
+                )
+                if args.lr_schedule == "sample" else
                 _head_lr_for_step(
                     cfg, stage_step, int(cfg.TRAIN.EPOCH) * steps_per_epoch
                 )
@@ -1034,6 +1159,7 @@ def main() -> None:
                 "loc_loss": float(outputs["loc_loss"].detach().cpu()),
             }
             epoch_losses.append(record["total_loss"])
+            segment_losses.append(record["total_loss"])
             _append_jsonl(metrics_path, record)
             active_policy = args.policy or (
                 "legacy_joint"
@@ -1057,6 +1183,7 @@ def main() -> None:
                 candidate_checkpoint_steps=args.candidate_every_steps,
                 resume_checkpoint_steps=args.checkpoint_every_steps,
                 lr_schedule=args.lr_schedule,
+                pair_policy_sha256=pair_policy_sha256,
             )
             if (step + 1) % int(cfg.TRAIN.PRINT_FREQ) == 0 or step + 1 == steps_per_epoch:
                 print(
@@ -1077,6 +1204,23 @@ def main() -> None:
             if segment_boundary_reached(
                 global_step, args.stop_after_global_step, saved_paths
             ):
+                if args.lr_schedule == "sample":
+                    torch.cuda.synchronize()
+                    save_sample_segment_telemetry(
+                        output_dir / "segment-telemetry.json", cfg=cfg, stage=args.stage,
+                        seed=args.seed, batch_size=batch_size, start_update=segment_start_update,
+                        end_update=stage_step, start_global_step=segment_start_global,
+                        end_global_step=global_step,
+                        full_sample_budget=int(cfg.TRAIN.EPOCH) * steps_per_epoch * batch_size,
+                        losses=segment_losses, wall_seconds=time.perf_counter() - segment_start,
+                        config_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
+                        pair_policy_sha256=pair_policy_sha256,
+                        input_checkpoint_sha256=hashlib.sha256(
+                            (args.resume or args.initialize_from or args.pretrained).read_bytes()).hexdigest(),
+                        cuda_memory={"status": "observed",
+                                     "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+                                     "peak_reserved_bytes": torch.cuda.max_memory_reserved()},
+                    )
                 print("segment_complete global_step={}".format(global_step), flush=True)
                 return
         checkpoint_path = output_dir / "checkpoint_e{}.pth".format(epoch + 1)
@@ -1100,6 +1244,7 @@ def main() -> None:
             stage_step=stage_step,
             atomic=True,
             lr_schedule=args.lr_schedule,
+            pair_policy_sha256=pair_policy_sha256,
         )
         save_training_checkpoint(
             output_dir / "last.pth",
@@ -1117,6 +1262,7 @@ def main() -> None:
             stage_step=stage_step,
             atomic=True,
             lr_schedule=args.lr_schedule,
+            pair_policy_sha256=pair_policy_sha256,
         )
         save_training_checkpoint(
             output_dir / "resume.pth",
@@ -1134,6 +1280,7 @@ def main() -> None:
             stage_step=stage_step,
             atomic=True,
             lr_schedule=args.lr_schedule,
+            pair_policy_sha256=pair_policy_sha256,
         )
         print(
             "saved={} mean_loss={:.4f} elapsed_seconds={:.1f}".format(

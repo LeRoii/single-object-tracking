@@ -410,7 +410,7 @@ class NanoTrackTrainingPolicyTest(unittest.TestCase):
         self.assertIn("--initial-global-step INITIAL_GLOBAL_STEP", result.stdout)
         self.assertIn("--stop-after-global-step STOP_AFTER_GLOBAL_STEP", result.stdout)
         self.assertIn("--candidate-every-steps CANDIDATE_EVERY_STEPS", result.stdout)
-        self.assertIn("--lr-schedule {epoch,step}", result.stdout)
+        self.assertIn("--lr-schedule {epoch,step,sample}", result.stdout)
 
     def test_head_only_policy_has_exact_trainable_names_and_frozen_bn(self):
         configure = require_api(self, "configure_model_for_policy")
