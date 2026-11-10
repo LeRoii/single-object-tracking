@@ -426,7 +426,7 @@ match = re.search(
     r"p95_runtime_ms=([0-9.]+) runtime_fps=([0-9.]+) "
     r"mean_pipeline_ms=([0-9.]+) p50_pipeline_ms=([0-9.]+) "
     r"p95_pipeline_ms=([0-9.]+) end_to_end_fps=([0-9.]+) "
-    r"calibrated=([01]) metadata=(\S+)",
+    r"initializations=(\d+) calibrated=([01]) metadata=(\S+)",
     log,
 )
 if not match:
@@ -435,7 +435,9 @@ if int(match.group(1)) != expected - 1:
     raise SystemExit("summary tracked frame count mismatch")
 if any(float(value) <= 0 for value in match.groups()[1:10]):
     raise SystemExit("invalid summary metrics")
-if pathlib.Path(match.group(12)).name != "session-metadata.json":
+if int(match.group(11)) < 1:
+    raise SystemExit("summary initialization count must be positive")
+if pathlib.Path(match.group(13)).name != "session-metadata.json":
     raise SystemExit("summary metadata path does not name session-metadata.json")
 PY
 

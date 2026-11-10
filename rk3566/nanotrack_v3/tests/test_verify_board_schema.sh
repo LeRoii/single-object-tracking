@@ -151,7 +151,8 @@ metadata = {
     "SUMMARY tracked_frames=2 mean_tracker_ms=1 mean_runtime_ms=2 "
     "p50_runtime_ms=2 p95_runtime_ms=2 runtime_fps=500 "
     "mean_pipeline_ms=3 p50_pipeline_ms=3 p95_pipeline_ms=3 "
-    "end_to_end_fps=333 calibrated=0 metadata=session-metadata.json\n"
+    "end_to_end_fps=333 initializations=1 calibrated=0 "
+    "metadata=session-metadata.json\n"
 )
 PY
 
