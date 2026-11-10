@@ -92,6 +92,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_tracker_math PRIVATE nanotrack_math)
   add_test(NAME tracker_math COMMAND test_tracker_math)
 
+  add_executable(test_rknn_target tests/test_rknn_target.cpp)
+  target_include_directories(test_rknn_target PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME rknn_target COMMAND test_rknn_target)
+
   add_executable(test_cli tests/test_cli.cpp)
   target_link_libraries(test_cli PRIVATE nanotrack_cli)
   target_compile_definitions(test_cli

@@ -1,5 +1,6 @@
 #include "yolo_rknn_engine.hpp"
 
+#include "rknn_target.hpp"
 #include "scoped_cleanup.hpp"
 #include "sha256.hpp"
 #include "yolov8_postprocess.hpp"
@@ -41,6 +42,7 @@ struct TensorContract {
 };
 
 struct DetectorManifest {
+  std::string target_platform;
   std::string model_file;
   std::string model_sha256;
   std::uintmax_t model_size = 0;
@@ -220,8 +222,11 @@ DetectorManifest load_manifest(const YoloRknnEngineConfig& config) {
     throw std::runtime_error("detector manifest class or DFL count is invalid");
   }
 
-  if (read_string(conversion, "target_platform", "conversion") != "rk3566") {
-    throw std::runtime_error("detector manifest target_platform must be rk3566");
+  manifest.target_platform =
+      read_string(conversion, "target_platform", "conversion");
+  if (!is_supported_rknn_target(manifest.target_platform)) {
+    throw std::runtime_error("detector manifest target_platform is unsupported: " +
+                             manifest.target_platform);
   }
   if (read_bool(conversion, "quantized", "conversion")) {
     throw std::runtime_error("detector manifest quantized must be false");
@@ -608,7 +613,8 @@ class YoloRknnEngine::Impl {
               << " manifest=" << config_.manifest_path
               << " labels=" << config_.labels_path
               << " api=" << api_version_ << " driver=" << driver_version_
-              << " target=rk3566 outputs=" << output_attrs_.size() << '\n';
+              << " target=" << manifest_.target_platform
+              << " outputs=" << output_attrs_.size() << '\n';
   }
 
   YoloTensorView output_view(const rknn_output& output,
