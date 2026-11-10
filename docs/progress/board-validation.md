@@ -108,6 +108,49 @@ ctest --test-dir build --output-on-failure
   `64c3839cc4666b48d160e3d7482237979fabf2b96ec51b80888cb7658021008a`、
   `2437181e5d77817137f1af362ddfbdc2181ad488f4ed4d667e4b08c407560e1e`；`ldd`
   确认二者使用板载 `librknnrt.so`，无缺失依赖。完整配置、构建、CTest 和 ldd 日志均留在部署根。
+- 以下命令均在
+  `/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f` 执行；这是本轮保留证据所用的完整
+  detector、bounded、verifier 和交互应用参数（交互键盘输入由临时 ctypes/XTest helper 等价执行
+  `Space`、等待 4 秒、`Q`，其结果保留在 `runs/interactive-debug/x11-input.log`）：
+
+```bash
+ffmpeg -v error -y -i data/occ_video_1/1.mp4 -frames:v 1 \
+  runs/detector-smoke/frame0.png
+stdbuf -oL -eL ./build/yolo_detector_smoke \
+  --model releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn \
+  --manifest releases/yolov8n-visdrone9-rk3588-fp16-v1/models/detector-manifest.json \
+  --labels releases/yolov8n-visdrone9-rk3588-fp16-v1/models/visdrone9.txt \
+  --image runs/detector-smoke/frame0.png --conf 0.25 --nms 0.45 --class-id 2 \
+  --output-image runs/detector-smoke/annotated.jpg \
+  --output-csv runs/detector-smoke/detections.csv \
+  > runs/detector-smoke/run.log 2>&1
+
+stdbuf -oL -eL ./build/nanotrack_v3 \
+  --video data/occ_video_1/1.mp4 --bbox 992,582,37,39 --model-dir models \
+  --sensor visible --controller-config config/visible-default.conf --max-frames 60 \
+  --detector-model releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn \
+  --detector-manifest releases/yolov8n-visdrone9-rk3588-fp16-v1/models/detector-manifest.json \
+  --detector-labels releases/yolov8n-visdrone9-rk3588-fp16-v1/models/visdrone9.txt \
+  --detector-class-id 2 --detector-conf 0.25 --detector-nms 0.45 \
+  --output-video runs/occ-smoke/output.avi --output-boxes runs/occ-smoke/bboxes.csv \
+  --session-metadata runs/occ-smoke/session-metadata.json \
+  > runs/occ-smoke/run.log 2>&1
+
+EXPECTED_RKNN_TARGET=rk3588 scripts/verify_board.sh \
+  runs/occ-smoke models 61 1920 1080 \
+  releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn \
+  releases/yolov8n-visdrone9-rk3588-fp16-v1/models/detector-manifest.json \
+  releases/yolov8n-visdrone9-rk3588-fp16-v1/models/visdrone9.txt \
+  > runs/occ-smoke/verify.log 2>&1
+
+timeout --signal=INT 30s env DISPLAY=:0 XAUTHORITY=/home/neardi/.Xauthority \
+  stdbuf -oL -eL ./build/nanotrack_v3 \
+  --config config/rk3588-interactive-debug.conf --bbox 992,582,37,39 \
+  --max-frames 120 --output-boxes runs/interactive-debug/bboxes.csv \
+  --session-metadata runs/interactive-debug/session-metadata.json \
+  > runs/interactive-debug/run.log 2>&1
+```
+
 - detector 单帧 smoke 使用 canonical frame 0、class 2 `car`、conf/NMS `0.25/0.45`。
   模型成功初始化并报告 `target=rk3588`、API 2.1.0、driver 0.9.8、9 outputs；推理结果
   `raw=346`、保留上限 100 个 car 候选，preprocess/inference/postprocess/total 为
@@ -120,8 +163,8 @@ ctest --test-dir build --output-on-failure
 - bounded canonical smoke 使用 bbox `992,582,37,39`、`--max-frames 60`、class 2 和上述模型。
   初始化帧加 60 个跟踪帧，共 61 行数据/61 帧视频；SUMMARY 为
   `tracked_frames=60`、mean runtime `8.489 ms`、runtime FPS `117.799`、mean pipeline
-  `113.422 ms`、end-to-end FPS `8.817`。执行
-  `EXPECTED_RKNN_TARGET=rk3588 scripts/verify_board.sh ... 61 1920 1080 ...` 得到
+  `113.422 ms`、end-to-end FPS `8.817`。执行上述完整
+  `EXPECTED_RKNN_TARGET=rk3588 scripts/verify_board.sh` 命令得到
   `PASS board artifacts output_frames=61 tracked_frames=60`。61 行中 detector direct-control
   行为 0；本短段稳定跟踪中 detector request/complete/reject/error 均为 0，因此不证明 detector
   重捕。证据在 `runs/occ-smoke/`；log/CSV/metadata/video/verify SHA-256 依次为
