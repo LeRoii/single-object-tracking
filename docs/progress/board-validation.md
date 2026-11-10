@@ -1,5 +1,162 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-10T19:21:14+08:00 RK3588 独立 Debug 迁移与实板运行
+
+- 本轮按用户确认的“方案 1”在隔离工作树
+  `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking` 执行；主线输入为
+  `main@1bf657ff730891ae0bea48340a046cbcbeaa87d4`，实现链为
+  `3c7801897372f63f7b94755806ea2c53f4e03648`（转换目标参数化）、
+  `493a3f8429bec0e85bb48fd15598218fb38ab6b2`（RK3588 Debug 配置与校验器）、
+  `b1dc8450b3a679e9f41a22a3d9e3af25a527de39`（C++ runtime 接受 RK3588 detector
+  manifest）和 `cb2d0fab019bf44edd55b3f947506b8b389bf19f`（校验当前 SUMMARY 格式）。
+  工作树为 detached HEAD；本条进度的结果提交以
+  `git log -1 --format=%H -- docs/progress/board-validation.md` 查询。未修改协调方专属的
+  `docs/progress/STATUS.md` 或 `docs/progress/integration-contract.yaml`。
+- 目标板最终地址为 `192.168.1.102`，hostname `LKD3588`，硬件
+  `Rockchip RK3588 NEARDI LKD3588 Board`，AArch64 Ubuntu 22.04、Linux 6.1.84，
+  GCC 11.4.0、CMake 3.22.1、OpenCV 4.5.4；RKNPU driver `0.9.8`。系统
+  `/usr/lib/librknnrt.so` SHA-256 为
+  `0f1c5db6c649c8705759308aa56ecffc3295c7eb465f9ec9170882f44004aa8d`，实际运行日志
+  API 为 `2.1.0 (967d001cc8@2024-08-07T19:28:19)`。编译头从已连接 RK3566 的
+  `/home/cat/ThirdParty/rknpu2_v2.3.2/librknn_api/include/rknn_api.h` 取得，SHA-256
+  `c48e11a6f41b451a5fd1e4ad774ea60252d3d94f78bee9b21ea3d21b21deba9a`；只使用该头
+  编译，未覆盖 RK3588 系统 runtime。
+
+### ONNX 到 RK3588 模型身份
+
+- 严格未复制 RK3566 RKNN。NanoTrack 作者仓库 HEAD
+  `248663fde6bf7c40190cf10ee396d5662919ecd3`，权重 SHA-256
+  `4f0d25108385a67bdec5fa01ca37c74acb72343b53996dd645fe18b86e512e69`；确定性导出 seed
+  `20260929`、opset 14，ONNX checker 和 ORT parity 均通过。计划指定的旧
+  `nanotrack` venv 为 Torch 1.7.1、最高稳定 opset 12，实际会报
+  `Unsupported ONNX opset version: 14`；因此实际导出使用与仓库历史 opset-14 制品一致的
+  `/home/u20/single-object-tracking/.venvs/rknn-convert/bin/python`（Torch 2.4.0、ONNX
+  1.16.1、ORT 1.23.2），未降低 opset 或跳过数值校验。
+- 实际转换核心命令为：
+
+```bash
+/home/u20/single-object-tracking/.venvs/rknn-convert/bin/python \
+  rk3566/nanotrack_v3/tools/export_v3.py \
+  --repo /home/u20/single-object-tracking/repos/siamtrackers/NanoTrack \
+  --config /home/u20/single-object-tracking/repos/siamtrackers/NanoTrack/models/config/configv3.yaml \
+  --weight /home/u20/single-object-tracking/repos/siamtrackers/NanoTrack/models/pretrained/nanotrackv3.pth \
+  --output-dir /home/u20/single-object-tracking/artifacts/rk3588-debug-deploy/nanotrack \
+  --seed 20260929 --opset 14 --atol 1e-4 --rtol 1e-4
+
+/home/u20/single-object-tracking/.venvs/rknn-convert/bin/python \
+  rk3566/nanotrack_v3/tools/convert_rknn.py \
+  --model-dir /home/u20/single-object-tracking/artifacts/rk3588-debug-deploy/nanotrack \
+  --source-commit 248663fde6bf7c40190cf10ee396d5662919ecd3 \
+  --weight-sha256 4f0d25108385a67bdec5fa01ca37c74acb72343b53996dd645fe18b86e512e69 \
+  --target rk3588
+
+/home/u20/single-object-tracking/.venvs/rknn-convert/bin/python \
+  rk3566/nanotrack_v3/tools/convert_yolov8_rk3566.py \
+  --onnx /home/u20/single-object-tracking/artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-rkopt.onnx \
+  --output /home/u20/single-object-tracking/artifacts/rk3588-debug-deploy/detector/yolov8n-visdrone9-rk3588-fp16.rknn \
+  --manifest /home/u20/single-object-tracking/artifacts/rk3588-debug-deploy/detector/detector-manifest.json \
+  --labels /home/u20/single-object-tracking/artifacts/rk3588-debug-deploy/detector/visdrone9.txt \
+  --source-url local://yolov8n-visdrone9-rkopt.onnx \
+  --source-repository https://github.com/airockchip/ultralytics_yolov8 \
+  --source-commit 4674fe6e003dfbc5f2250d3b39dd31faaf7a9877 --target rk3588 \
+  --output-count 9 \
+  --training-checkpoint /home/u20/single-object-tracking/artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-best.pt \
+  --training-repository https://github.com/airockchip/ultralytics_yolov8 \
+  --training-commit 4674fe6e003dfbc5f2250d3b39dd31faaf7a9877 \
+  --training-config /home/u20/single-object-tracking/artifacts/yolov8-visdrone9/runs/visdrone9-full/args.yaml \
+  --dataset-audit /home/u20/single-object-tracking/artifacts/yolov8-visdrone9/dataset-audit.json
+```
+
+- 新生成的 RK3588 template/search/head SHA-256 依次为
+  `eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55`、
+  `d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee`、
+  `4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5`；tracker
+  manifest 为 `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`，
+  `provenance.target_platform=rk3588`。VisDrone9 RK3588 model/manifest/labels 依次为
+  `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`、
+  `ac2b536c3a46761138ecc67a2be865890b8bc0bbe2fb7195c2bb8b12d34049c9`、
+  `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992`；detector
+  manifest 为 RK3588、FP16/no quantization、9 outputs、9 classes，源 RKOPT ONNX SHA-256
+  `b2948072f01da7fe3b686392a47fe742380c98775c4149111527b7ddf26a5cc8`。主机模型包
+  `/home/u20/single-object-tracking/artifacts/rk3588-debug-deploy/SHA256SUMS` 全部通过；审计还确认
+  新包文件名不含 `rk3566`，且没有复制 tracked RK3566 RKNN 路径。
+
+### 原生构建与实板运行
+
+- 隔离部署根为
+  `/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f`，创建前确认不存在。canonical
+  输入 `data/occ_video_1/1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，1920x1080、
+  30 FPS、271 帧；顶层数据清单 SHA-256
+  `872483add3bb9ae3ddc4172b689e224ccf3e65b51bd0ab07268ee02957c3254f`。
+  source archive `inputs/source-cb2d0fa.tar.gz` SHA-256
+  `171d587d0abc0fa91d4587bc7ad9200bbced198f69118470afd1c89f8fe25be6`。后续源码更新解包
+  显式排除 `models/*`，避免源码仓库中的历史 manifest 覆盖生成模型。
+- 板端实际构建命令：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+  -DENABLE_RKNN_RUNTIME=ON \
+  -DRKNN_INCLUDE_DIR=/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/include \
+  -DRKNN_LIBRARY=/usr/lib/librknnrt.so
+cmake --build build -- -j2
+ctest --test-dir build --output-on-failure
+```
+
+  原生 Debug 构建成功；最新完整 CTest `19/19` 通过。`build/nanotrack_v3` 和
+  `build/yolo_detector_smoke` SHA-256 分别为
+  `64c3839cc4666b48d160e3d7482237979fabf2b96ec51b80888cb7658021008a`、
+  `2437181e5d77817137f1af362ddfbdc2181ad488f4ed4d667e4b08c407560e1e`；`ldd`
+  确认二者使用板载 `librknnrt.so`，无缺失依赖。完整配置、构建、CTest 和 ldd 日志均留在部署根。
+- detector 单帧 smoke 使用 canonical frame 0、class 2 `car`、conf/NMS `0.25/0.45`。
+  模型成功初始化并报告 `target=rk3588`、API 2.1.0、driver 0.9.8、9 outputs；推理结果
+  `raw=346`、保留上限 100 个 car 候选，preprocess/inference/postprocess/total 为
+  `8.745/53.909/12.492/75.146 ms`。这证明模型加载和推理完成，不是 detector 精度或阈值
+  质量结论。证据在 `runs/detector-smoke/`；`run.log`、`detections.csv`、
+  `annotated.jpg` SHA-256 依次为
+  `cb4351742e38787f13e7887e47f884852ee4441893612d1c288ec9ef16661c1c`、
+  `22d6a9e758ce791d2cb4f875053b5527c0efa3e5bf2b58f7339f692a6c5018d5`、
+  `10b793e67844d041c67b04ca9543a1a3eb925c0041722def7da92bd1634c9c46`。
+- bounded canonical smoke 使用 bbox `992,582,37,39`、`--max-frames 60`、class 2 和上述模型。
+  初始化帧加 60 个跟踪帧，共 61 行数据/61 帧视频；SUMMARY 为
+  `tracked_frames=60`、mean runtime `8.489 ms`、runtime FPS `117.799`、mean pipeline
+  `113.422 ms`、end-to-end FPS `8.817`。执行
+  `EXPECTED_RKNN_TARGET=rk3588 scripts/verify_board.sh ... 61 1920 1080 ...` 得到
+  `PASS board artifacts output_frames=61 tracked_frames=60`。61 行中 detector direct-control
+  行为 0；本短段稳定跟踪中 detector request/complete/reject/error 均为 0，因此不证明 detector
+  重捕。证据在 `runs/occ-smoke/`；log/CSV/metadata/video/verify SHA-256 依次为
+  `cf043fa92c8c546e499ee0d2b43c6da9e92b47a8fcaf1a7cfbb45468cc9301b1`、
+  `f8bdfbe3d84d793f6acac176de845e4edebd3cc36f5b476dc29276ae4abf0fe8`、
+  `5515a66da7125d89ed126845e7023dc58a5ec20a050321c0029344c471a748a6`、
+  `0c6c852c045d9d517095e94db7beade7d48bdde94bc963949ee0efe799c2be41`、
+  `34296832c1129c5694da72a7f307e3d46bcf7d1aa0b6d9dc391da36e6cc55bab`。
+- X11 Debug 在 active `:0` 会话运行 `--config config/rk3588-interactive-debug.conf`，显式同一 bbox，
+  通过 XTest helper 发送 Space 播放、4 秒后 Q 退出；应用与输入 helper 均 exit 0。日志记录
+  `interactive_ready`、`action=play_pause`、30/60/90/120 帧结构化 `frame_status`、
+  `frame_limit_reached`、`action=quit` 和 `shutdown reason=user_quit`，最终 120 tracked frames。
+  证据在 `runs/interactive-debug/`；log/CSV/metadata SHA-256 依次为
+  `2cc348f9e0d5a74ec14759dea97340e5c2582ef4a07bed6c344093ecee75ada4`、
+  `e18aef2ba86ad8fef9e4fa6d3fa1c076255190ec3ddc167b1ab4898a4a15c4d4`、
+  `20c3d1d9aaa33b82c452d4d5054f4bb998c8ff5f6371f66a1ef919329d079c77`。
+  总清单 `runs/EVIDENCE-SHA256SUMS` 含 40 项；环境快照在 `runs/BOARD-ENVIRONMENT.txt`。
+- 首次 detector smoke 因 C++ runtime 仍硬编码 RK3566 manifest 而失败，原日志保留为
+  `runs/detector-smoke/run-initial-rk3566-hardcode-failure.log`，随后由 `b1dc845` 修复并复测。
+  二次源码归档解包曾只覆盖 tracker manifest 为 RK3566（RKNN 文件实测仍为新 RK3588 哈希），
+  该次不一致运行保留于 `runs/occ-smoke-invalid-rk3566-manifest/`，不计入通过证据；恢复并逐文件
+  `cmp` RK3588 包后重新运行，最终 `runs/occ-smoke/` 才是有效证据。
+
+### 证据边界与 Handoff
+
+- 本轮只证明在指定 LKD3588 上：四个从 ONNX 新生成的 RK3588 模型身份一致、原生 Debug 构建、
+  detector 单图推理、canonical 视频 60 帧集成运行、板端 schema/safety 校验和真实 X11 交互播放/退出
+  均通过。它不满足当前 integration contract 的 RK3566 board gate，也不构成 detector promotion、
+  production handoff、生产交叉编译、长时稳定性、遮挡重现质量、阈值/性能校准或真实吊舱验收。
+  `functional_pass_promotion_held` 和既有 RK3566 `latest_handoff.available=false` 不因本轮改变。
+- 请求协调对话决定是否在 `integration-contract.yaml` 中把 RK3588 建立为与 RK3566 分离、明确命名的
+  Debug target，并审核提交链 `3c78018..cb2d0fa` 后再决定是否集成。若建立新目标，还需分别冻结
+  RK3588 runtime/API/driver、四模型 manifest/hash、canonical 路径及独立验收门；不得用本轮实验结果
+  替换既有 RK3566 合同身份。
+
 ## 2026-11-08T22:52:30+08:00 统一非训练测试数据板端落盘核验
 
 - 协调基线为 `main@9d0085f63e5e332db2142bfff71bfcef5f20b8c7`；任务工作树
