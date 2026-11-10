@@ -27,7 +27,10 @@ for name in ("template_backbone.rknn", "search_backbone.rknn", "head.rknn"):
         "file": name,
         "sha256": hashlib.sha256((model_dir / name).read_bytes()).hexdigest(),
     }
-(artifact_dir / "manifest.json").write_text(json.dumps({"models": models}))
+(artifact_dir / "manifest.json").write_text(json.dumps({
+    "provenance": {"target_platform": "rk3566"},
+    "models": models,
+}))
 
 header = [
     "schema_version", "frame_id", "timestamp_ms", "state", "quality",
@@ -156,6 +159,32 @@ ffmpeg -loglevel error -f lavfi -i color=size=16x16:rate=1 \
   -frames:v 3 "$artifact_dir/output.avi"
 
 bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16
+
+python3 - "$artifact_dir/manifest.json" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+manifest = json.loads(path.read_text())
+manifest["provenance"]["target_platform"] = "rk3588"
+path.write_text(json.dumps(manifest))
+PY
+if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
+  echo "verify_board accepted RK3588 manifest under default RK3566 target" >&2
+  exit 1
+fi
+EXPECTED_RKNN_TARGET=rk3588 \
+  bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16
+if EXPECTED_RKNN_TARGET=rk3399pro \
+    bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
+  echo "verify_board accepted unsupported EXPECTED_RKNN_TARGET" >&2
+  exit 1
+fi
+python3 - "$artifact_dir/manifest.json" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+manifest = json.loads(path.read_text())
+manifest["provenance"]["target_platform"] = "rk3566"
+path.write_text(json.dumps(manifest))
+PY
 
 cp "$artifact_dir/bboxes.csv" "$artifact_dir/bboxes.valid.csv"
 cp "$artifact_dir/session-metadata.json" "$artifact_dir/metadata.base.json"

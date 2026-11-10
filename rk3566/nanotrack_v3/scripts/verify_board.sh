@@ -14,6 +14,15 @@ frame_height=$5
 detector_model=${6:-}
 detector_manifest=${7:-}
 detector_labels=${8:-}
+expected_rknn_target=${EXPECTED_RKNN_TARGET:-rk3566}
+
+case "$expected_rknn_target" in
+  rk3566|rk3588) ;;
+  *)
+    echo "unsupported EXPECTED_RKNN_TARGET: $expected_rknn_target" >&2
+    exit 2
+    ;;
+esac
 
 for file in run.log bboxes.csv output.avi manifest.json session-metadata.json; do
   if [[ ! -s "$artifact_dir/$file" ]]; then
@@ -43,7 +52,7 @@ if grep -Eqi 'GTK|selectROI|imshow|cannot open display|RKNN:.*(error|unsupported
   exit 1
 fi
 
-python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" <<'PY'
+python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" <<'PY'
 import csv
 import hashlib
 import json
@@ -60,6 +69,7 @@ height = int(sys.argv[5])
 detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
+expected_rknn_target = sys.argv[9]
 EXPECTED_TRACKING_SCHEMA = 9
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
@@ -109,6 +119,11 @@ for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimensio
         raise SystemExit(f"out of range metadata {key}")
 
 manifest = json.loads((artifact_dir / "manifest.json").read_text())
+manifest_target = manifest.get("provenance", {}).get("target_platform")
+if manifest_target != expected_rknn_target:
+    raise SystemExit(
+        f"tracking manifest target mismatch: expected {expected_rknn_target}, got {manifest_target}"
+    )
 for model in manifest["models"].values():
     path = model_dir / model["file"]
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -379,8 +394,11 @@ else:
         raise SystemExit("detector manifest schema_version must be 1")
     if declared.get("deployment_status") != "function_only_board_unverified":
         raise SystemExit("detector manifest deployment status is unexpected")
-    if declared["conversion"].get("target_platform") != "rk3566":
-        raise SystemExit("detector manifest target is not rk3566")
+    detector_target = declared["conversion"].get("target_platform")
+    if detector_target != expected_rknn_target:
+        raise SystemExit(
+            f"detector manifest target mismatch: expected {expected_rknn_target}, got {detector_target}"
+        )
     if declared["conversion"].get("quantized") is not False:
         raise SystemExit("detector manifest must describe FP16 conversion")
     model_digest = hashlib.sha256(detector_model.read_bytes()).hexdigest()

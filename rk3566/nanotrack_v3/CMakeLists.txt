@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
 find_package(Threads REQUIRED)
 
-option(ENABLE_RKNN_RUNTIME "Build the RK3566 RKNN/OpenCV executable" OFF)
+option(ENABLE_RKNN_RUNTIME "Build the RKNN/OpenCV runtime executable" OFF)
 
 add_library(nanotrack_production_deployment_config src/production_deployment_config.cpp)
 target_include_directories(nanotrack_production_deployment_config

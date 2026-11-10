@@ -338,6 +338,24 @@ int main() {
                   shipped.target_class_ambiguity_margin == 0.10F,
               "shipped debug thresholds retain uncalibrated defaults");
 
+  const std::filesystem::path rk3588_config =
+      std::filesystem::path(NANOTRACK_SOURCE_DIR) /
+      "config/rk3588-interactive-debug.conf";
+  const Options rk3588 =
+      parse_options({"nanotrack_v3", "--config", rk3588_config.string()});
+  expect_true(rk3588.interactive && !rk3588.has_bbox,
+              "RK3588 debug config starts interactive for mouse selection");
+  expect_true(rk3588.video ==
+                      (source_dir / "data/occ_video_1/1.mp4").string() &&
+                  rk3588.model_dir == (source_dir / "models").string() &&
+                  rk3588.controller_config ==
+                      (source_dir / "config/visible-default.conf").string(),
+              "RK3588 debug config resolves canonical video and runtime paths");
+  expect_true(
+      rk3588.detector_model.find(
+          "releases/yolov8n-visdrone9-rk3588-fp16-v1/") != std::string::npos,
+      "RK3588 debug config selects the RK3588 detector release");
+
   struct ThresholdCase {
     const char* key;
     float Options::*field;
