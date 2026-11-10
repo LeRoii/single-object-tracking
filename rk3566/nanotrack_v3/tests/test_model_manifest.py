@@ -78,10 +78,28 @@ def test_build_manifest_rejects_head_template_shape_mismatch():
         )
 
 
-def test_build_manifest_rejects_non_rk3566_target():
+def test_build_manifest_accepts_rk3588_target():
     template, search, head = valid_metadata()
 
-    with pytest.raises(ValueError, match="target_platform"):
+    manifest = build_manifest(
+        template,
+        search,
+        head,
+        {
+            "source_commit": "a" * 40,
+            "weight_sha256": "b" * 64,
+            "toolkit_version": "2.3.2",
+            "target_platform": "rk3588",
+        },
+    )
+
+    assert manifest["provenance"]["target_platform"] == "rk3588"
+
+
+def test_build_manifest_rejects_unsupported_target():
+    template, search, head = valid_metadata()
+
+    with pytest.raises(ValueError, match="unsupported RKNN target.*rk3399pro"):
         build_manifest(
             template,
             search,
@@ -90,7 +108,7 @@ def test_build_manifest_rejects_non_rk3566_target():
                 "source_commit": "a" * 40,
                 "weight_sha256": "b" * 64,
                 "toolkit_version": "2.3.2",
-                "target_platform": "rk3588",
+                "target_platform": "rk3399pro",
             },
         )
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the RK3566 YOLOv8 detector manifest and artifact identities."""
+"""Validate a YOLOv8 detector manifest and artifact identities."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+
+from rknn_targets import SUPPORTED_RKNN_TARGETS, require_supported_target
 
 
 class ManifestError(ValueError):
@@ -202,6 +204,7 @@ def load_and_verify_manifest(
     manifest_path: Path,
     model_path: Optional[Path] = None,
     labels_path: Optional[Path] = None,
+    expected_target: Optional[str] = None,
 ) -> Dict[str, Any]:
     manifest_path = Path(manifest_path)
     try:
@@ -251,8 +254,16 @@ def load_and_verify_manifest(
     _validate_provenance(provenance)
     if "training" in manifest:
         _validate_training(manifest["training"])
-    if conversion["target_platform"] != "rk3566":
-        raise ManifestError("conversion.target_platform must be rk3566")
+    try:
+        actual_target = require_supported_target(conversion["target_platform"])
+        if expected_target is not None:
+            expected_target = require_supported_target(expected_target)
+    except ValueError as error:
+        raise ManifestError(f"conversion.target_platform {error}") from error
+    if expected_target is not None and actual_target != expected_target:
+        raise ManifestError(
+            f"conversion target mismatch: expected {expected_target}, got {actual_target}"
+        )
     if conversion["quantized"] is not False:
         raise ManifestError("conversion.quantized must be false")
     if conversion["mean_values"] != [[0.0, 0.0, 0.0]]:
@@ -293,10 +304,14 @@ def main() -> int:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--model", type=Path, help="override manifest-relative model path")
     parser.add_argument("--labels", type=Path, help="override manifest-relative labels path")
+    parser.add_argument("--expected-target", choices=SUPPORTED_RKNN_TARGETS)
     arguments = parser.parse_args()
     try:
         manifest = load_and_verify_manifest(
-            arguments.manifest, arguments.model, arguments.labels
+            arguments.manifest,
+            arguments.model,
+            arguments.labels,
+            arguments.expected_target,
         )
     except ManifestError as error:
         parser.error(str(error))

@@ -10,6 +10,7 @@ from pathlib import Path
 from rknn.api import RKNN
 
 from model_manifest import build_manifest, sha256_file, write_manifest
+from rknn_targets import SUPPORTED_RKNN_TARGETS, require_supported_target
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--weight-sha256", required=True)
-    parser.add_argument("--target", default="rk3566", choices=["rk3566"])
+    parser.add_argument("--target", default="rk3566", choices=SUPPORTED_RKNN_TARGETS)
     return parser.parse_args()
 
 
@@ -26,10 +27,11 @@ def checked(step: str, status: int) -> None:
         raise RuntimeError(f"RKNN {step} failed with status {status}")
 
 
-def convert_one(onnx_path: Path, rknn_path: Path) -> None:
+def convert_one(onnx_path: Path, rknn_path: Path, target: str) -> None:
+    target = require_supported_target(target)
     rknn = RKNN(verbose=True)
     try:
-        checked("config", rknn.config(target_platform="rk3566"))
+        checked("config", rknn.config(target_platform=target))
         checked("load_onnx", rknn.load_onnx(model=str(onnx_path)))
         checked("build", rknn.build(do_quantization=False))
         checked("export_rknn", rknn.export_rknn(str(rknn_path)))
@@ -63,7 +65,7 @@ def main() -> int:
         "head": "head.rknn",
     }
     for name, output_name in output_names.items():
-        convert_one(model_dir / graph_meta[name]["file"], model_dir / output_name)
+        convert_one(model_dir / graph_meta[name]["file"], model_dir / output_name, args.target)
 
     template_shape = graph_meta["template_backbone"]["outputs"][0]["shape"]
     search_shape = graph_meta["search_backbone"]["outputs"][0]["shape"]

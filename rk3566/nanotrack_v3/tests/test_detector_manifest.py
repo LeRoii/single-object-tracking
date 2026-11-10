@@ -132,7 +132,7 @@ def test_six_output_manifest_without_score_sum_is_supported(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        (("conversion", "target_platform"), "rk3588", "target_platform"),
+        (("conversion", "target_platform"), "rk3399pro", "target_platform"),
         (("conversion", "quantized"), True, "quantized"),
         (("input", "color_order"), "BGR", "color_order"),
         (("input", "shape"), [1, 384, 640, 3], "shape"),
@@ -141,7 +141,7 @@ def test_six_output_manifest_without_score_sum_is_supported(tmp_path):
         (("calibrated",), True, "calibrated"),
     ],
 )
-def test_fixed_rk3566_conversion_contract_is_enforced(tmp_path, field, value, message):
+def test_fixed_conversion_contract_is_enforced(tmp_path, field, value, message):
     manifest = valid_manifest()
     target = manifest
     for name in field[:-1]:
@@ -251,6 +251,7 @@ def test_conversion_manifest_records_reproducible_inputs(tmp_path):
         python_executable="/opt/rknn/bin/python",
         host_os="Ubuntu 22.04",
         output_count=9,
+        target_platform="rk3588",
     )
 
     assert manifest["artifact"]["sha256"] == sha256(b"converted rknn")
@@ -259,7 +260,7 @@ def test_conversion_manifest_records_reproducible_inputs(tmp_path):
     assert manifest["provenance"]["source_size_bytes"] == len(b"official onnx")
     assert manifest["provenance"]["toolkit_version"] == "2.3.2"
     assert manifest["conversion"] == {
-        "target_platform": "rk3566",
+        "target_platform": "rk3588",
         "quantized": False,
         "mean_values": [[0.0, 0.0, 0.0]],
         "std_values": [[255.0, 255.0, 255.0]],
@@ -297,6 +298,7 @@ def test_visdrone9_manifest_records_complete_training_provenance(tmp_path):
         python_executable="/opt/rknn/bin/python",
         host_os="Ubuntu 22.04",
         output_count=9,
+        target_platform="rk3566",
         training_checkpoint=checkpoint,
         training_repository="https://github.com/airockchip/ultralytics_yolov8",
         training_commit="a" * 40,
@@ -363,8 +365,21 @@ def test_manifest_builder_rejects_partial_training_arguments(tmp_path):
             python_executable="python",
             host_os="linux",
             output_count=9,
+            target_platform="rk3566",
             training_checkpoint=checkpoint,
         )
+
+
+def test_rk3588_manifest_verifies_only_for_matching_expected_target(tmp_path):
+    manifest = valid_manifest()
+    manifest["conversion"]["target_platform"] = "rk3588"
+    path = write_fixture(tmp_path, manifest)
+
+    loaded = load_and_verify_manifest(path, expected_target="rk3588")
+
+    assert loaded["conversion"]["target_platform"] == "rk3588"
+    with pytest.raises(ManifestError, match="expected rk3566.*got rk3588"):
+        load_and_verify_manifest(path, expected_target="rk3566")
 
 
 def test_conversion_help_and_manifest_check_do_not_import_rknn(tmp_path):
@@ -376,7 +391,8 @@ def test_conversion_help_and_manifest_check_do_not_import_rknn(tmp_path):
         check=False,
     )
     assert help_result.returncode == 0, help_result.stderr
-    assert "RK3566" in help_result.stdout
+    assert "--target" in help_result.stdout
+    assert "rk3588" in help_result.stdout
 
     manifest_path = write_fixture(tmp_path)
     verify_result = subprocess.run(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert Rockchip's optimized YOLOv8 ONNX model for RK3566."""
+"""Convert Rockchip's optimized YOLOv8 ONNX model for a supported RKNN target."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Dict
 
+from rknn_targets import SUPPORTED_RKNN_TARGETS, require_supported_target
 from verify_detector_manifest import (
     ManifestError,
     load_and_verify_manifest,
@@ -64,12 +65,14 @@ def build_detector_manifest(
     python_executable: str,
     host_os: str,
     output_count: int,
+    target_platform: str,
     training_checkpoint: Path | None = None,
     training_repository: str | None = None,
     training_commit: str | None = None,
     training_config: Path | None = None,
     dataset_audit: Path | None = None,
 ) -> Dict[str, Any]:
+    target_platform = require_supported_target(target_platform)
     onnx_path = Path(onnx_path)
     rknn_path = Path(rknn_path)
     labels_path = Path(labels_path)
@@ -124,7 +127,7 @@ def build_detector_manifest(
             "host_os": host_os,
         },
         "conversion": {
-            "target_platform": "rk3566",
+            "target_platform": target_platform,
             "quantized": False,
             "mean_values": [[0.0, 0.0, 0.0]],
             "std_values": [[255.0, 255.0, 255.0]],
@@ -207,7 +210,7 @@ def _convert(arguments: argparse.Namespace) -> None:
             rknn.config(
                 mean_values=[[0.0, 0.0, 0.0]],
                 std_values=[[255.0, 255.0, 255.0]],
-                target_platform="rk3566",
+                target_platform=arguments.target,
             ),
         )
         _check_rknn_result("load_onnx", rknn.load_onnx(model=str(arguments.onnx)))
@@ -227,6 +230,7 @@ def _convert(arguments: argparse.Namespace) -> None:
         python_executable=sys.executable,
         host_os=platform.platform(),
         output_count=arguments.output_count,
+        target_platform=arguments.target,
         training_checkpoint=arguments.training_checkpoint,
         training_repository=arguments.training_repository,
         training_commit=arguments.training_commit,
@@ -236,7 +240,7 @@ def _convert(arguments: argparse.Namespace) -> None:
     arguments.manifest.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    load_and_verify_manifest(arguments.manifest)
+    load_and_verify_manifest(arguments.manifest, expected_target=arguments.target)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -253,6 +257,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-url")
     parser.add_argument("--source-repository")
     parser.add_argument("--source-commit")
+    parser.add_argument("--target", choices=SUPPORTED_RKNN_TARGETS, default="rk3566")
     parser.add_argument("--output-count", type=int, choices=(6, 9), default=9)
     parser.add_argument("--training-checkpoint", type=Path)
     parser.add_argument("--training-repository")
@@ -267,7 +272,9 @@ def main() -> int:
     arguments = parser.parse_args()
     try:
         if arguments.verify_manifest is not None:
-            load_and_verify_manifest(arguments.verify_manifest)
+            load_and_verify_manifest(
+                arguments.verify_manifest, expected_target=arguments.target
+            )
             print(f"detector manifest verified: {arguments.verify_manifest}")
             return 0
         required = (
@@ -285,7 +292,7 @@ def main() -> int:
         _convert(arguments)
     except (ManifestError, OSError, RuntimeError, ValueError) as error:
         parser.error(str(error))
-    print(f"RK3566 detector converted: {arguments.output}")
+    print(f"{arguments.target} detector converted: {arguments.output}")
     print(f"detector manifest: {arguments.manifest}")
     return 0
 

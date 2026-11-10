@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
+from rknn_targets import require_supported_target
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -56,8 +58,7 @@ def build_manifest(
     head: Dict[str, Any],
     provenance: Dict[str, Any],
 ) -> Dict[str, Any]:
-    if provenance.get("target_platform") != "rk3566":
-        raise ValueError("target_platform must be rk3566")
+    require_supported_target(provenance.get("target_platform"))
 
     _require_model(template, "template_backbone", inputs=1, outputs=1)
     _require_model(search, "search_backbone", inputs=1, outputs=1)
