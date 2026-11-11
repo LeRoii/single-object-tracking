@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, replace
@@ -140,7 +141,8 @@ def _validate_distractors(payload: dict, frame_count: int, width: int, height: i
     seen = set()
     for distractor in payload.get("distractors", []):
         distractor_id = distractor.get("distractor_id")
-        if not isinstance(distractor_id, str) or not distractor_id:
+        if (not isinstance(distractor_id, str) or
+                re.fullmatch(r"car_002_distractor_\d{3}", distractor_id) is None):
             raise ValueError("invalid distractor_id")
         if distractor_id in seen:
             raise ValueError(f"duplicate distractor_id: {distractor_id}")
@@ -276,7 +278,7 @@ def _build_draft_at_root(config: BuildConfig) -> dict:
     frame_records = []
     status_rows = []
     review_rows = []
-    status_counts = {status: 0 for status in REVIEW_STATUSES}
+    status_counts = {status: 0 for status in sorted(REVIEW_STATUSES)}
     for frame_id in range(config.frame_count):
         candidate_row = candidates[frame_id]
         policy = policies[frame_id]
@@ -531,17 +533,40 @@ def _verify_manifest(root: Path, manifest_name: str, expected_layer: str, frame_
 
 def validate_draft(root: Path, require_confirmed: bool) -> dict:
     metadata = json.loads((root / "annotation_metadata.json").read_text(encoding="utf-8"))
-    if metadata.get("ground_truth_schema_version") != SCHEMA_VERSION or not metadata.get("draft"):
+    if (metadata.get("ground_truth_schema_version") != SCHEMA_VERSION or
+            metadata.get("draft") is not True):
         raise ValueError("not a car_002 draft package")
     if metadata.get("formal_evaluation_authorized") is not False:
         raise ValueError("formal_evaluation_authorized must be false for a draft")
-    frame_count = int(metadata["video"]["frame_count"])
-    width = int(metadata["video"]["width"])
-    height = int(metadata["video"]["height"])
-    fps_num = int(metadata["video"]["fps_num"])
-    fps_den = int(metadata["video"]["fps_den"])
+    video = metadata.get("video", {})
+    frame_count = int(video["frame_count"])
+    width = int(video["width"])
+    height = int(video["height"])
+    fps_num = int(video["fps_num"])
+    fps_den = int(video["fps_den"])
     if frame_count <= 0 or width <= 0 or height <= 0 or fps_num <= 0 or fps_den <= 0:
         raise ValueError("invalid package video geometry")
+    video_path = Path(video.get("path", ""))
+    video_sha256 = video.get("sha256")
+    if (video.get("frame_id_origin") != 0 or
+            not isinstance(video_sha256, str) or
+            re.fullmatch(r"[0-9a-f]{64}", video_sha256) is None or
+            not video_path.is_file() or _sha256(video_path) != video_sha256):
+        raise ValueError("video identity mismatch")
+    episode = metadata.get("episode", {})
+    expected_episode = {
+        "episode_id": "occ_video_1_car_002_full_object",
+        "target_id": "car_002",
+        "tracking_target_id": "car_002",
+        "category": "car",
+        "class_id": 0,
+        "target_scope": "full_object",
+        "start_frame": 0,
+        "end_frame": frame_count - 1,
+        "init_frame": 0,
+    }
+    if episode != expected_episode:
+        raise ValueError("episode identity mismatch")
     _verify_manifest(root, "labels.sha256", "labels", frame_count)
     _verify_manifest(root, "candidate_labels.sha256", "candidate_labels", frame_count)
     _verify_manifest(root, "estimated_labels.sha256", "estimated_labels", frame_count)
@@ -570,7 +595,7 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
         raise ValueError("review contact sheet manifest mismatch")
     if require_confirmed and unresolved:
         raise ValueError(f"unresolved review rows: {len(unresolved)}")
-    status_counts = {status: 0 for status in REVIEW_STATUSES}
+    status_counts = {status: 0 for status in sorted(REVIEW_STATUSES)}
     distractor_payload = json.loads((root / "distractors.json").read_text(encoding="utf-8"))
     if distractor_payload.get("ground_truth_schema_version") != SCHEMA_VERSION:
         raise ValueError("invalid packaged distractor schema")
@@ -594,6 +619,10 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
         visibility = record.get("visibility_ratio")
         if not isinstance(visibility, (int, float)) or not math.isfinite(visibility) or not 0 <= visibility <= 1:
             raise ValueError(f"invalid visibility_ratio at frame {frame_id}")
+        if ((target_state == "visible" and visibility <= 0) or
+                (target_state == "partial_occlusion" and not 0 < visibility < 1) or
+                (target_state in {"full_occlusion", "out_of_view"} and visibility != 0)):
+            raise ValueError(f"visibility_ratio contradicts target_state at frame {frame_id}")
         expected_timestamp = round(frame_id * 1_000_000 * fps_den / fps_num)
         if record.get("timestamp_us") != expected_timestamp:
             raise ValueError(f"timestamp_us mismatch at frame {frame_id}")
@@ -622,6 +651,8 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
             raise ValueError(f"non-observable candidate bbox at frame {frame_id}")
         if review_status == "estimated_non_observable" and estimate_box is None:
             raise ValueError(f"missing non-observable estimate at frame {frame_id}")
+        if review_status == "estimated_non_observable" and observable:
+            raise ValueError(f"estimated_non_observable is observable at frame {frame_id}")
         if record.get("bbox_valid") is not (target_box is not None):
             raise ValueError(f"bbox_valid mismatch at frame {frame_id}")
         expected_source = "human_confirmed" if target_box is not None else "not_available"

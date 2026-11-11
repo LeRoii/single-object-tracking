@@ -271,6 +271,20 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             self.assertEqual((fixture.output / "checksums.sha256").read_bytes(), before)
             draft.validate_draft(fixture.output, require_confirmed=False)
 
+    def test_rebuild_is_deterministic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DraftFixture(Path(directory))
+            draft.build_draft(fixture.config())
+            before_checksums = (fixture.output / "checksums.sha256").read_bytes()
+            before_metadata = (fixture.output / "annotation_metadata.json").read_bytes()
+            draft.build_draft(replace(fixture.config(), replace_draft=True))
+            self.assertEqual(
+                (fixture.output / "checksums.sha256").read_bytes(), before_checksums
+            )
+            self.assertEqual(
+                (fixture.output / "annotation_metadata.json").read_bytes(), before_metadata
+            )
+
     def test_invalid_completed_staging_preserves_previous_draft(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = DraftFixture(Path(directory))
@@ -318,6 +332,46 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             value["formal_evaluation_authorized"] = True
             path.write_text(json.dumps(value))
 
+        def corrupt_metadata_identity(fixture):
+            path = fixture.output / "annotation_metadata.json"
+            value = json.loads(path.read_text())
+            value["draft"] = "yes"
+            path.write_text(json.dumps(value))
+
+        def corrupt_video_identity(fixture):
+            path = fixture.output / "annotation_metadata.json"
+            value = json.loads(path.read_text())
+            value["video"]["path"] = str(fixture.root / "missing.mp4")
+            value["video"]["sha256"] = "bad"
+            value["video"]["frame_id_origin"] = 99
+            path.write_text(json.dumps(value))
+
+        def corrupt_episode(fixture):
+            path = fixture.output / "annotation_metadata.json"
+            value = json.loads(path.read_text())
+            value["episode"]["target_id"] = "wrong"
+            value["episode"]["end_frame"] = 999
+            path.write_text(json.dumps(value))
+
+        def corrupt_visibility(fixture):
+            path = fixture.output / "frames.jsonl"
+            frames = [json.loads(line) for line in path.read_text().splitlines()]
+            frames[2]["visibility_ratio"] = 0.75
+            path.write_text("".join(json.dumps(row) + "\n" for row in frames))
+
+        def corrupt_estimated_state(fixture):
+            path = fixture.output / "frames.jsonl"
+            frames = [json.loads(line) for line in path.read_text().splitlines()]
+            frames[2]["target_state"] = "visible"
+            frames[2]["visibility_ratio"] = 0.5
+            path.write_text("".join(json.dumps(row) + "\n" for row in frames))
+
+        def corrupt_distractor_id(fixture):
+            path = fixture.output / "distractors.json"
+            value = json.loads(path.read_text())
+            value["distractors"][0]["distractor_id"] = "x"
+            path.write_text(json.dumps(value))
+
         def corrupt_distractor(fixture):
             path = fixture.output / "distractors.json"
             value = json.loads(path.read_text())
@@ -329,7 +383,13 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             (corrupt_derived, "timestamp_us|bbox_valid"),
             (corrupt_estimate, "estimate"),
             (corrupt_metadata, "formal_evaluation_authorized"),
+            (corrupt_metadata_identity, "draft package"),
+            (corrupt_video_identity, "video"),
+            (corrupt_episode, "episode"),
+            (corrupt_visibility, "visibility_ratio"),
+            (corrupt_estimated_state, "estimated_non_observable"),
             (corrupt_distractor, "distractor"),
+            (corrupt_distractor_id, "distractor_id"),
         ]
         for mutate, message in cases:
             with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
