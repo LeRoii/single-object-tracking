@@ -327,7 +327,7 @@ class LongTermController {
   SearchPlan active_plan_{};
   int stable_frames_ = 0;
   int dual_template_reliable_streak_ = 0;
-  int template_bridge_consecutive_frames_ = 0;
+  std::optional<std::int64_t> template_bridge_start_ms_;
   std::int64_t last_recent_update_ms_ = 0;
   bool recent_probation_ = false;
   int probation_reliable_frames_ = 0;

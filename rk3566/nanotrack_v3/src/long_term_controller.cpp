@@ -136,7 +136,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   last_timestamp_ms_ = timestamp_ms;
   stable_frames_ = 0;
   dual_template_reliable_streak_ = 0;
-  template_bridge_consecutive_frames_ = 0;
+  template_bridge_start_ms_.reset();
   last_recent_update_ms_ = timestamp_ms;
   recent_probation_ = false;
   probation_reliable_frames_ = 0;
@@ -1282,9 +1282,9 @@ ControllerOutput LongTermController::finish_frame(
       config_.template_bridge_min_stable_frames > 0 &&
       (dual_template_reliable_streak_ >=
            config_.template_bridge_min_stable_frames ||
-       template_bridge_consecutive_frames_ > 0) &&
-      template_bridge_consecutive_frames_ <
-          config_.template_bridge_max_consecutive_frames &&
+       (template_bridge_start_ms_ &&
+        plan.timestamp_ms - *template_bridge_start_ms_ <=
+            config_.template_bridge_max_duration_ms)) &&
       plan.mode == TrackingMode::kTracking && !loss_start_ms_ &&
       !motion_search_active_ && !recent_probation_ &&
       !detector_verification_active && anchor && recent &&
@@ -1617,17 +1617,19 @@ ControllerOutput LongTermController::finish_frame(
       output.template_iou >= config_.template_agreement_iou;
   if (accepted &&
       acceptance_path == AcceptedObservationPath::kTemplateBridge) {
-    ++template_bridge_consecutive_frames_;
+    if (!template_bridge_start_ms_) {
+      template_bridge_start_ms_ = plan.timestamp_ms;
+    }
     dual_template_reliable_streak_ = 0;
   } else if (accepted && acceptance_path == AcceptedObservationPath::kDirect &&
       dual_template_reliable && !recent_probation_ &&
       output.template_action == TemplateAction::kNone) {
-    template_bridge_consecutive_frames_ = 0;
+    template_bridge_start_ms_.reset();
     dual_template_reliable_streak_ = std::min(
         dual_template_reliable_streak_ + 1, 1000000);
   } else {
     dual_template_reliable_streak_ = 0;
-    template_bridge_consecutive_frames_ = 0;
+    template_bridge_start_ms_.reset();
   }
 
   output.detector_candidates_queued = detector_candidates_.size();

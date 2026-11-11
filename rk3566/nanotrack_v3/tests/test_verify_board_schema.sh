@@ -160,7 +160,7 @@ metadata = {
     "search_reacquisition_requires_detector": True,
     "search_reacquisition_min_age_ms": 400,
     "template_bridge_min_stable_frames": 3,
-    "template_bridge_max_consecutive_frames": 2,
+    "template_bridge_max_duration_ms": 200,
     "motion_search_confidence_ms": 1000,
     "motion_max_speed_diagonals_per_s": 1.0,
     "motion_max_acceleration_diagonals_per_s2": 2.0,

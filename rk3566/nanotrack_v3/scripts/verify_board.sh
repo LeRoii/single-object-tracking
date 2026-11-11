@@ -83,7 +83,7 @@ for key, low, high in [
     ("accepted_scale_median_window_frames", 1, 31),
     ("accepted_scale_direction_confirm_frames", 1, 31),
     ("template_bridge_min_stable_frames", 0, 60),
-    ("template_bridge_max_consecutive_frames", 1, 10),
+    ("template_bridge_max_duration_ms", 0, 1000),
     ("motion_search_confidence_ms", 1, 60000),
     ("search_probe_interval_ms", 1, 60000),
 ]:
@@ -461,7 +461,7 @@ for key in {
     "motion_search_enabled", "search_reacquisition_requires_detector",
     "search_reacquisition_min_age_ms", "motion_search_confidence_ms",
     "template_bridge_min_stable_frames",
-    "template_bridge_max_consecutive_frames",
+    "template_bridge_max_duration_ms",
     "motion_max_speed_diagonals_per_s",
     "motion_max_acceleration_diagonals_per_s2",
     "motion_scale_rate_limit_per_s", "search_probe_interval_ms",

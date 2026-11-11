@@ -2128,7 +2128,7 @@ void test_bounded_template_bridge() {
   using namespace nanotrack;
   ControllerConfig config;
   config.template_bridge_min_stable_frames = 3;
-  config.template_bridge_max_consecutive_frames = 2;
+  config.template_bridge_max_duration_ms = 200;
   config.motion_search_enabled = true;
   config.search_reacquisition_requires_detector = true;
   LongTermController controller(config);
@@ -2152,20 +2152,22 @@ void test_bounded_template_bridge() {
                   output.tracking_phase == TrackingPhase::kTracking,
               "one isolated anchor score miss is bridged after stable agreement");
 
-  plan = controller.begin_frame(5, 200, false);
-  observations = reliable_pair(plan, stable, 5);
-  observations[0].metrics.peak_margin = 0.0F;
-  output = controller.finish_frame(plan, observations, std::nullopt);
-  expect_true(output.accepted && !output.reacquired &&
-                  output.accepted_observation_path ==
-                      AcceptedObservationPath::kTemplateBridge,
-              "a second consecutive eligible score-only dip remains boundedly bridged");
-  plan = controller.begin_frame(6, 240, false);
-  observations = reliable_pair(plan, stable, 6);
+  for (int frame = 5; frame <= 9; ++frame) {
+    plan = controller.begin_frame(frame, frame * 40, false);
+    observations = reliable_pair(plan, stable, frame);
+    observations[0].metrics.peak_margin = 0.0F;
+    output = controller.finish_frame(plan, observations, std::nullopt);
+    expect_true(output.accepted && !output.reacquired &&
+                    output.accepted_observation_path ==
+                        AcceptedObservationPath::kTemplateBridge,
+                "eligible score-only dips bridge through the duration boundary");
+  }
+  plan = controller.begin_frame(10, 400, false);
+  observations = reliable_pair(plan, stable, 10);
   observations[0].metrics.peak_margin = 0.0F;
   output = controller.finish_frame(plan, observations, std::nullopt);
   expect_true(!output.accepted,
-              "a third consecutive score-only dip exhausts the bridge and searches");
+              "score-only dips beyond the duration boundary enter search");
 
   LongTermController immature(config);
   immature.initialize(stable, 0, 0, {240, 160},

@@ -104,7 +104,7 @@ void test_adaptive_coast_serialization() {
   config.search_reacquisition_requires_detector = true;
   config.search_reacquisition_min_age_ms = 400;
   config.template_bridge_min_stable_frames = 3;
-  config.template_bridge_max_consecutive_frames = 2;
+  config.template_bridge_max_duration_ms = 200;
   apply_controller_config_metadata(metadata, config);
   auto json = tracking_session_metadata_json(metadata);
   expect_true(contains(json, "\"occlusion_probe_interval_frames\": 7") &&
@@ -122,7 +122,7 @@ void test_adaptive_coast_serialization() {
                   metadata.search_reacquisition_requires_detector &&
                   metadata.search_reacquisition_min_age_ms == 400 &&
                   metadata.template_bridge_min_stable_frames == 3 &&
-                  metadata.template_bridge_max_consecutive_frames == 2 &&
+                  metadata.template_bridge_max_duration_ms == 200 &&
                   contains(json, "\"max_accepted_scale_step_ratio\": 0.050000") &&
                   contains(json, "\"accepted_scale_deadband_ratio\": 0.020000") &&
                   contains(json, "\"accepted_scale_smoothing_alpha\": 0.100000") &&
@@ -135,7 +135,7 @@ void test_adaptive_coast_serialization() {
                   contains(json, "\"search_reacquisition_requires_detector\": true") &&
                   contains(json, "\"search_reacquisition_min_age_ms\": 400") &&
                   contains(json, "\"template_bridge_min_stable_frames\": 3") &&
-                  contains(json, "\"template_bridge_max_consecutive_frames\": 2"),
+                  contains(json, "\"template_bridge_max_duration_ms\": 200"),
               "metadata uses effective configuration instead of schema defaults");
   result.output.accepted_observation_path =
       AcceptedObservationPath::kTemplateBridge;
