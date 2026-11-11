@@ -212,6 +212,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     search_confirmation_candidate_.reset();
     motion_search_active_ = false;
     motion_.end_search();
+    dual_template_reliable_streak_ = 0;
+    template_bridge_start_ms_.reset();
     mode_ = timestamp_mode;
     throw;
   }
@@ -366,6 +368,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
 void LongTermController::abort_frame() noexcept {
   if (!frame_open_) return;
   frame_open_ = false;
+  dual_template_reliable_streak_ = 0;
+  template_bridge_start_ms_.reset();
   if (active_plan_.search_hint) {
     active_detector_candidate_.reset();
     confirmations_.clear();

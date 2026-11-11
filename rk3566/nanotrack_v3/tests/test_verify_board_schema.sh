@@ -413,7 +413,7 @@ for invalid_case in schema_mismatch nan_threshold interval0 missing_scale_step i
     missing_output_hysteresis output_hysteresis_negative output_hysteresis_inf \
     missing_center_alpha center_alpha_zero center_alpha_large center_alpha_nan \
     missing_center_ratio center_ratio_negative center_ratio_inf \
-    missing_reacquisition reacquisition_negative reacquisition_inf; do
+    missing_reacquisition reacquisition_negative reacquisition_inf bridge_duration_zero; do
   cp "$artifact_dir/metadata.valid.json" "$artifact_dir/session-metadata.json"
   python3 - "$artifact_dir/session-metadata.json" "$invalid_case" <<'PY'
 import json, sys
@@ -481,6 +481,8 @@ elif case == "missing_reacquisition":
     del data["max_reacquisition_center_distance"]
 elif case == "reacquisition_negative":
     data["max_reacquisition_center_distance"] = -0.01
+elif case == "bridge_duration_zero":
+    data["template_bridge_max_duration_ms"] = 0
 else:
     data["max_reacquisition_center_distance"] = float("inf")
 with open(path, "w") as stream: json.dump(data, stream)

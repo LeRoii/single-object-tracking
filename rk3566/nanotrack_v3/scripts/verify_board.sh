@@ -98,6 +98,9 @@ if (isinstance(minimum_search_age, bool) or
         minimum_search_age < 0 or
         minimum_search_age > metadata["motion_search_confidence_ms"]):
     raise SystemExit("invalid metadata search_reacquisition_min_age_ms")
+if (metadata["template_bridge_min_stable_frames"] > 0 and
+        metadata["template_bridge_max_duration_ms"] == 0):
+    raise SystemExit("enabled metadata template bridge requires a duration")
 for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
             "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
             "max_accepted_scale_step_ratio",

@@ -2261,6 +2261,49 @@ void test_bounded_template_bridge() {
   output = disabled.finish_frame(plan, observations, std::nullopt);
   expect_true(!output.accepted,
               "default-zero configuration preserves historical behavior");
+
+  LongTermController aborted(config);
+  aborted.initialize(stable, 0, 0, {240, 160},
+                     make_fixed_target_class(0, true));
+  for (int frame = 1; frame <= 3; ++frame) {
+    plan = aborted.begin_frame(frame, frame * 40, false);
+    aborted.finish_frame(plan, reliable_pair(plan, stable, frame), std::nullopt);
+  }
+  plan = aborted.begin_frame(4, 160, false);
+  observations = reliable_pair(plan, stable, 4);
+  observations[0].metrics.peak_margin = 0.0F;
+  output = aborted.finish_frame(plan, observations, std::nullopt);
+  expect_true(output.accepted && aborted.template_bridge_start_ms_.has_value(),
+              "abort fixture enters an active template bridge");
+  aborted.begin_frame(5, 200, false);
+  aborted.abort_frame();
+  expect_true(!aborted.template_bridge_start_ms_ &&
+                  aborted.dual_template_reliable_streak_ == 0,
+              "aborting a frame clears every template bridge authorization");
+  plan = aborted.begin_frame(6, 240, false);
+  observations = reliable_pair(plan, stable, 6);
+  observations[0].metrics.peak_margin = 0.0F;
+  output = aborted.finish_frame(plan, observations, std::nullopt);
+  expect_true(!output.accepted,
+              "a score-only dip after abort cannot inherit the old bridge");
+
+  LongTermController prediction_error(config);
+  prediction_error.initialize(stable, 0, 0, {240, 160},
+                              make_fixed_target_class(0, true));
+  prediction_error.dual_template_reliable_streak_ = 3;
+  prediction_error.template_bridge_start_ms_ = 40;
+  prediction_error.motion_.velocity_x_ =
+      std::numeric_limits<float>::quiet_NaN();
+  bool prediction_threw = false;
+  try {
+    prediction_error.begin_frame(1, 80, false);
+  } catch (const std::runtime_error&) {
+    prediction_threw = true;
+  }
+  expect_true(prediction_threw &&
+                  prediction_error.dual_template_reliable_streak_ == 0 &&
+                  !prediction_error.template_bridge_start_ms_,
+              "motion prediction exceptions revoke bridge authorization");
 }
 
 }  // namespace
