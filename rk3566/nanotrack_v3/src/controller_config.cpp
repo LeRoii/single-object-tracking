@@ -12,6 +12,8 @@
 namespace nanotrack {
 namespace {
 
+constexpr char replacement_profile[] = "visible-recent-safe-v1.conf";
+
 std::string trim(std::string text) {
   const auto not_space = [](unsigned char value) { return std::isspace(value) == 0; };
   text.erase(text.begin(), std::find_if(text.begin(), text.end(), not_space));
@@ -64,7 +66,21 @@ void set_value(ControllerConfig& config,
                const std::string& value) {
   if (key == "sensor") config.sensor = value;
   else if (key == "calibrated") config.calibrated = parse_bool(key, value);
-  else if (key == "reliable_score") config.reliable_score = parse_float(key, value);
+  else if (key == "template_policy") {
+    const auto policy = TemplatePolicy::kRecentSafeV1;
+    if (value != to_string(policy)) {
+      throw std::invalid_argument(
+          key + " must be " + to_string(policy) + "; use " + replacement_profile);
+    }
+    config.template_policy = policy;
+  } else if (key == "recovery_policy") {
+    const auto policy = RecoveryPolicy::kUnifiedCandidatesV1;
+    if (value != to_string(policy)) {
+      throw std::invalid_argument(
+          key + " must be " + to_string(policy) + "; use " + replacement_profile);
+    }
+    config.recovery_policy = policy;
+  } else if (key == "reliable_score") config.reliable_score = parse_float(key, value);
   else if (key == "reliable_psr") config.reliable_psr = parse_float(key, value);
   else if (key == "reliable_apce") config.reliable_apce = parse_float(key, value);
   else if (key == "reliable_peak_margin") config.reliable_peak_margin = parse_float(key, value);
@@ -88,6 +104,10 @@ void set_value(ControllerConfig& config,
   else if (key == "uncertain_ms") config.uncertain_ms = parse_integer(key, value);
   else if (key == "local_recovery_ms") config.local_recovery_ms = parse_integer(key, value);
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
+  else if (key == "suspicion_enter_ms") config.suspicion_enter_ms = parse_integer(key, value);
+  else if (key == "suspicion_clear_ms") config.suspicion_clear_ms = parse_integer(key, value);
+  else if (key == "response_psr_drop_ratio") config.response_psr_drop_ratio = parse_float(key, value);
+  else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
   else if (key == "occlusion_hold_frames") config.occlusion_hold_frames = parse_int(key, value);
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
@@ -118,8 +138,6 @@ void set_value(ControllerConfig& config,
   else if (key == "stable_frames_for_update") config.stable_frames_for_update = parse_int(key, value);
   else if (key == "recent_update_interval_ms") config.recent_update_interval_ms = parse_integer(key, value);
   else if (key == "recent_probation_frames") config.recent_probation_frames = parse_int(key, value);
-  else if (key == "template_bridge_min_stable_frames") config.template_bridge_min_stable_frames = parse_int(key, value);
-  else if (key == "template_bridge_max_duration_ms") config.template_bridge_max_duration_ms = parse_integer(key, value);
   else if (key == "confirmation_window") config.confirmation_window = parse_int(key, value);
   else if (key == "confirmation_required") config.confirmation_required = parse_int(key, value);
   else if (key == "search_tracking") config.search_tracking = parse_float(key, value);
@@ -132,7 +150,6 @@ void set_value(ControllerConfig& config,
   else if (key == "motion_beta") config.motion_beta = parse_float(key, value);
   else if (key == "motion_max_dt_ms") config.motion_max_dt_ms = parse_integer(key, value);
   else if (key == "motion_search_enabled") config.motion_search_enabled = parse_bool(key, value);
-  else if (key == "search_reacquisition_requires_detector") config.search_reacquisition_requires_detector = parse_bool(key, value);
   else if (key == "search_reacquisition_min_age_ms") config.search_reacquisition_min_age_ms = parse_integer(key, value);
   else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
   else if (key == "motion_max_speed_diagonals_per_s") config.motion_max_speed_diagonals_per_s = parse_float(key, value);
@@ -145,6 +162,20 @@ void set_value(ControllerConfig& config,
 bool in_unit_interval(float value) { return value >= 0.0F && value <= 1.0F; }
 
 }  // namespace
+
+const char* to_string(TemplatePolicy policy) {
+  switch (policy) {
+    case TemplatePolicy::kRecentSafeV1: return "recent_safe_v1";
+  }
+  return "unknown";
+}
+
+const char* to_string(RecoveryPolicy policy) {
+  switch (policy) {
+    case RecoveryPolicy::kUnifiedCandidatesV1: return "unified_candidates_v1";
+  }
+  return "unknown";
+}
 
 ControllerConfig default_controller_config(const std::string& sensor) {
   ControllerConfig config;
@@ -254,6 +285,20 @@ void validate_controller_config(const ControllerConfig& config) {
       config.local_recovery_ms <= config.uncertain_ms ||
       config.assisted_recovery_ms <= config.local_recovery_ms) {
     throw std::invalid_argument("controller state timing must be strictly increasing");
+  }
+  if (config.suspicion_enter_ms <= 0) {
+    throw std::invalid_argument("suspicion_enter_ms must be positive");
+  }
+  if (config.suspicion_clear_ms <= 0) {
+    throw std::invalid_argument("suspicion_clear_ms must be positive");
+  }
+  if (!in_unit_interval(config.response_psr_drop_ratio) ||
+      config.response_psr_drop_ratio == 0.0F) {
+    throw std::invalid_argument("response_psr_drop_ratio must be in (0,1]");
+  }
+  if (!in_unit_interval(config.response_apce_drop_ratio) ||
+      config.response_apce_drop_ratio == 0.0F) {
+    throw std::invalid_argument("response_apce_drop_ratio must be in (0,1]");
   }
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
@@ -382,6 +427,12 @@ ControllerConfig load_controller_config(const std::string& path) {
     }
     const std::string key = trim(line.substr(0, separator));
     const std::string value = trim(line.substr(separator + 1));
+    if (key == "search_reacquisition_requires_detector" ||
+        key == "template_bridge_min_stable_frames" ||
+        key == "template_bridge_max_duration_ms") {
+      throw std::invalid_argument(
+          "deprecated controller config key " + key + "; use " + replacement_profile);
+    }
     if (key.empty() || value.empty()) {
       throw std::invalid_argument("empty controller config key or value");
     }
@@ -389,6 +440,16 @@ ControllerConfig load_controller_config(const std::string& path) {
       throw std::invalid_argument("duplicate controller config key: " + key);
     }
     set_value(config, key, value);
+  }
+  if (seen.count("template_policy") == 0) {
+    throw std::invalid_argument(
+        std::string("missing template_policy=") +
+        to_string(TemplatePolicy::kRecentSafeV1) + "; use " + replacement_profile);
+  }
+  if (seen.count("recovery_policy") == 0) {
+    throw std::invalid_argument(
+        std::string("missing recovery_policy=") +
+        to_string(RecoveryPolicy::kUnifiedCandidatesV1) + "; use " + replacement_profile);
   }
   validate_controller_config(config);
   return config;
@@ -447,7 +508,13 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.motion_max_speed_diagonals_per_s << '|'
          << config.motion_max_acceleration_diagonals_per_s2 << '|'
          << config.motion_scale_rate_limit_per_s << '|'
-         << config.search_probe_interval_ms;
+         << config.search_probe_interval_ms << '|'
+         << to_string(config.template_policy) << '|'
+         << to_string(config.recovery_policy) << '|'
+         << config.suspicion_enter_ms << '|'
+         << config.suspicion_clear_ms << '|'
+         << config.response_psr_drop_ratio << '|'
+         << config.response_apce_drop_ratio;
   return stream.str();
 }
 

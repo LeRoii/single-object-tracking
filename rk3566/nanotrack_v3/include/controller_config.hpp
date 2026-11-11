@@ -8,9 +8,17 @@
 
 namespace nanotrack {
 
+enum class TemplatePolicy { kRecentSafeV1 };
+enum class RecoveryPolicy { kUnifiedCandidatesV1 };
+
+const char* to_string(TemplatePolicy policy);
+const char* to_string(RecoveryPolicy policy);
+
 struct ControllerConfig {
   std::string sensor = "visible";
   bool calibrated = false;
+  TemplatePolicy template_policy = TemplatePolicy::kRecentSafeV1;
+  RecoveryPolicy recovery_policy = RecoveryPolicy::kUnifiedCandidatesV1;
 
   float reliable_score = 0.80F;
   float reliable_psr = 8.0F;
@@ -37,6 +45,11 @@ struct ControllerConfig {
   std::int64_t uncertain_ms = 200;
   std::int64_t local_recovery_ms = 1000;
   std::int64_t assisted_recovery_ms = 3000;
+  // Candidate defaults pending calibration.
+  std::int64_t suspicion_enter_ms = 100;
+  std::int64_t suspicion_clear_ms = 100;
+  float response_psr_drop_ratio = 0.25F;
+  float response_apce_drop_ratio = 0.30F;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;

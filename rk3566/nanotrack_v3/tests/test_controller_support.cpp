@@ -3,6 +3,7 @@
 #include "motion_estimator.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -36,10 +37,42 @@ void expect_throws(Function function, const std::string& message) {
   }
 }
 
-void write_file(const std::string& path, const std::string& contents) {
+const std::string template_policy_line = "template_policy=recent_safe_v1\n";
+const std::string recovery_policy_line = "recovery_policy=unified_candidates_v1\n";
+
+void write_raw_file(const std::string& path, const std::string& contents) {
   std::ofstream stream(path);
   if (!stream) throw std::runtime_error("cannot write test config");
   stream << contents;
+}
+
+void write_file(const std::string& path, const std::string& contents) {
+  write_raw_file(path, template_policy_line + recovery_policy_line + contents);
+}
+
+void expect_config_error(const std::string& path, const std::string& key,
+                         const std::string& detail = "") {
+  try {
+    nanotrack::load_controller_config(path);
+    expect_true(false, key + " must fail");
+  } catch (const std::invalid_argument& error) {
+    const std::string message = error.what();
+    expect_true(message.find(key) != std::string::npos &&
+                    message.find(detail) != std::string::npos,
+                "unexpected error for " + key + ": " + message);
+  }
+}
+
+std::uint64_t file_fingerprint(const std::string& path) {
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream) throw std::runtime_error("cannot read historical config: " + path);
+  // FNV-1a over the original bytes, including comments and line endings.
+  std::uint64_t fingerprint = 14695981039346656037ULL;
+  for (char byte; stream.get(byte);) {
+    fingerprint ^= static_cast<unsigned char>(byte);
+    fingerprint *= 1099511628211ULL;
+  }
+  return fingerprint;
 }
 
 void expect_occlusion_defaults(const nanotrack::ControllerConfig& config,
@@ -81,6 +114,10 @@ int main() {
   using namespace nanotrack;
 
   const ControllerConfig default_visible = default_controller_config("visible");
+  expect_true(default_visible.template_policy == TemplatePolicy::kRecentSafeV1 &&
+                  default_visible.recovery_policy ==
+                      RecoveryPolicy::kUnifiedCandidatesV1,
+              "programmatic defaults select the current policies");
   expect_occlusion_defaults(ControllerConfig{}, "structure");
   expect_occlusion_defaults(default_visible, "visible defaults");
   expect_true(default_visible.detector_target_mode ==
@@ -156,72 +193,76 @@ int main() {
   const std::string source_dir = source_file.substr(
       0, source_file.find_last_of("/\\"));
   const std::string config_dir = source_dir + "/../config/";
-  const ControllerConfig shipped_visible =
-      load_controller_config(config_dir + "visible-default.conf");
-  expect_occlusion_defaults(shipped_visible, "shipped visible configuration");
-  expect_near(shipped_visible.reliable_psr, 4.2F, 1e-6F,
-              "shipped visible config uses the static-target reliable PSR candidate");
-  expect_near(shipped_visible.weak_psr, 4.0F, 1e-6F,
-              "shipped visible config uses the staged weak PSR candidate");
-  expect_near(shipped_visible.reliable_peak_margin, 0.04F, 1e-6F,
-              "shipped visible config uses the reliable peak-margin candidate");
-  expect_near(shipped_visible.weak_peak_margin, 0.02F, 1e-6F,
-              "shipped visible config uses the weak peak-margin candidate");
-  expect_near(shipped_visible.max_accepted_scale_step_ratio, 0.05F, 1e-6F,
-              "shipped visible config limits accepted scale steps to five percent");
-  expect_near(shipped_visible.accepted_scale_deadband_ratio, 0.02F, 1e-6F,
-              "shipped visible config suppresses two-percent scale noise");
-  expect_near(shipped_visible.accepted_scale_smoothing_alpha, 0.10F, 1e-6F,
-              "shipped visible config smooths bounded scale updates");
-  expect_true(shipped_visible.accepted_scale_median_window_frames == 5 &&
-                  shipped_visible.accepted_scale_direction_confirm_frames == 3,
-              "shipped visible config enables temporal scale confirmation");
-  expect_near(shipped_visible.accepted_scale_output_hysteresis_px, 0.75F,
-              1e-6F, "shipped visible config enables sticky integer output");
-  expect_near(shipped_visible.accepted_center_smoothing_alpha, 0.35F, 1e-6F,
-              "shipped visible config blends accepted center innovation");
-  expect_near(shipped_visible.accepted_center_max_correction_ratio, 0.25F,
-              1e-6F, "shipped visible config bounds accepted center correction");
-  expect_near(shipped_visible.max_reacquisition_center_distance, 0.75F,
-              1e-6F,
-              "shipped visible config fixes the ordinary recovery center gate");
-  const ControllerConfig occlusion_candidate = load_controller_config(
-      config_dir + "visible-occlusion-calibrated.conf");
-  expect_true(occlusion_candidate.sensor == "visible" &&
-                  occlusion_candidate.calibrated &&
-                  occlusion_candidate.motion_search_enabled &&
-                  occlusion_candidate.search_reacquisition_requires_detector,
-              "generic visible occlusion candidate explicitly enables calibrated motion search");
-  expect_true(occlusion_candidate.confirmation_required == 2 &&
-                  occlusion_candidate.confirmation_window >= 2 &&
-                  occlusion_candidate.search_reacquisition_min_age_ms == 400,
-              "generic visible candidate retains two-hit reacquisition safety");
-  expect_true(occlusion_candidate.motion_search_confidence_ms > 0 &&
-                  std::isfinite(occlusion_candidate.motion_max_speed_diagonals_per_s) &&
-                  occlusion_candidate.motion_max_speed_diagonals_per_s > 0.0F &&
-                  std::isfinite(occlusion_candidate.motion_max_acceleration_diagonals_per_s2) &&
-                  occlusion_candidate.motion_max_acceleration_diagonals_per_s2 > 0.0F &&
-                  std::isfinite(occlusion_candidate.motion_scale_rate_limit_per_s) &&
-                  occlusion_candidate.motion_scale_rate_limit_per_s > 0.0F &&
-                  occlusion_candidate.search_probe_interval_ms > 0,
-              "generic visible candidate uses finite positive time and physical bounds");
-  expect_true(controller_config_identity(occlusion_candidate) !=
-                  controller_config_identity(shipped_visible),
-              "calibrated candidate has a distinct controller identity");
-  expect_true(!shipped_visible.calibrated &&
-                  !shipped_visible.motion_search_enabled,
-              "visible-default remains compatibility behavior with motion search disabled");
-  expect_occlusion_defaults(
-      load_controller_config(config_dir + "infrared-default.conf"),
-      "shipped infrared configuration");
-  expect_near(load_controller_config(config_dir + "visible-default.conf")
-                  .detector_candidate_max_center_ratio,
-              0.15F, 1e-6F,
-              "shipped visible config enables the strict detector gate");
-  expect_near(load_controller_config(config_dir + "infrared-default.conf")
-                  .detector_candidate_max_center_ratio,
-              0.15F, 1e-6F,
-              "shipped infrared config enables the strict detector gate");
+  const std::string profile = "visible-recent-safe-v1.conf";
+  const std::string migration_path = "/tmp/nanotrack_policy_test.conf";
+  write_raw_file(migration_path, recovery_policy_line + "sensor=visible\n");
+  expect_config_error(migration_path, "template_policy", profile);
+  write_raw_file(migration_path, template_policy_line + "sensor=visible\n");
+  expect_config_error(migration_path, "recovery_policy", profile);
+  write_raw_file(migration_path,
+                 "template_policy=anchor\n" + recovery_policy_line);
+  expect_config_error(migration_path, "template_policy", "recent_safe_v1");
+  write_raw_file(migration_path,
+                 template_policy_line + "recovery_policy=detector_only\n");
+  expect_config_error(migration_path, "recovery_policy", "unified_candidates_v1");
+  for (const std::string& key : {"search_reacquisition_requires_detector",
+                                 "template_bridge_min_stable_frames",
+                                 "template_bridge_max_duration_ms"}) {
+    const std::string value =
+        key == "search_reacquisition_requires_detector" ? "false" : "0";
+    write_raw_file(migration_path, key + "=" + value + "\n");
+    expect_config_error(migration_path, key, profile);
+    write_file(migration_path, key + "=" + value + "\n");
+    expect_config_error(migration_path, key, profile);
+  }
+
+  struct HistoricalConfig {
+    const char* name;
+    std::uint64_t fingerprint;
+  };
+  for (const auto& historical : {
+           HistoricalConfig{"infrared-default.conf", 0xcb5995cda4869e12ULL},
+           HistoricalConfig{"interactive-debug.conf", 0x07bda556c831c022ULL},
+           HistoricalConfig{"rk3588-interactive-debug.conf", 0x582f36558a411bceULL},
+           HistoricalConfig{"visible-default.conf", 0xb5a8c0288eef353fULL},
+           HistoricalConfig{"visible-occlusion-calibrated.conf",
+                            0x4f851040d9bcfc9bULL}}) {
+    expect_true(file_fingerprint(config_dir + historical.name) ==
+                    historical.fingerprint,
+                std::string(historical.name) + " retains its original bytes");
+  }
+  expect_config_error(config_dir + "visible-default.conf",
+                      "template_policy", profile);
+  expect_config_error(config_dir + "infrared-default.conf",
+                      "template_policy", profile);
+  expect_config_error(config_dir + "visible-occlusion-calibrated.conf",
+                      "template_bridge_min_stable_frames", profile);
+
+  try {
+    const ControllerConfig candidate =
+        load_controller_config(config_dir + profile);
+    expect_true(candidate.template_policy == TemplatePolicy::kRecentSafeV1 &&
+                    candidate.recovery_policy ==
+                        RecoveryPolicy::kUnifiedCandidatesV1 &&
+                    std::string(to_string(candidate.template_policy)) ==
+                        "recent_safe_v1" &&
+                    std::string(to_string(candidate.recovery_policy)) ==
+                        "unified_candidates_v1",
+                "recent-safe profile explicitly selects both versioned policies");
+    expect_occlusion_defaults(candidate, "visible recent-safe profile");
+    expect_true(candidate.sensor == "visible" && !candidate.calibrated &&
+                    candidate.motion_search_enabled,
+                "recent-safe profile enables motion search as an uncalibrated candidate");
+    expect_true(candidate.confirmation_required == 2 &&
+                    candidate.confirmation_window == 3 &&
+                    candidate.search_reacquisition_min_age_ms == 400,
+                "recent-safe profile preserves the existing recovery gates");
+    expect_near(candidate.detector_candidate_max_center_ratio, 0.02F, 1e-6F,
+                "recent-safe profile preserves the calibrated scalar position gate");
+  } catch (const std::exception& error) {
+    expect_true(false, std::string("recent-safe profile must load: ") + error.what());
+  }
+  if (failures != 0) return 1;
 
   const std::string visible_path = "/tmp/nanotrack_visible_test.conf";
   write_file(visible_path,
@@ -247,16 +288,17 @@ int main() {
              "accepted_center_smoothing_alpha=0.45\n"
              "accepted_center_max_correction_ratio=0.30\n"
              "max_reacquisition_center_distance=0.80\n"
-             "template_bridge_min_stable_frames=4\n"
-             "template_bridge_max_duration_ms=200\n"
              "uncertain_ms=200\n"
              "local_recovery_ms=1000\n"
              "assisted_recovery_ms=3000\n"
+             "suspicion_enter_ms=120\n"
+             "suspicion_clear_ms=180\n"
+             "response_psr_drop_ratio=0.15\n"
+             "response_apce_drop_ratio=0.35\n"
              "motion_alpha=1.0\n"
              "motion_beta=0.5\n"
              "motion_max_dt_ms=200\n"
              "motion_search_enabled=true\n"
-             "search_reacquisition_requires_detector=true\n"
              "search_reacquisition_min_age_ms=300\n"
              "motion_search_confidence_ms=900\n"
              "motion_max_speed_diagonals_per_s=0.75\n"
@@ -264,7 +306,7 @@ int main() {
              "motion_scale_rate_limit_per_s=0.30\n"
              "search_probe_interval_ms=120\n");
   const ControllerConfig visible = load_controller_config(visible_path);
-  expect_occlusion_defaults(visible, "legacy configuration with missing keys");
+  expect_occlusion_defaults(visible, "configuration with omitted occlusion keys");
   expect_true(visible.sensor == "visible" && !visible.calibrated,
               "visible config identity and calibration marker");
   expect_true(visible.detector_target_mode == DetectorTargetMode::kSubtarget,
@@ -296,15 +338,31 @@ int main() {
               "accepted center correction ratio parses explicitly");
   expect_near(visible.max_reacquisition_center_distance, 0.80F, 1e-6F,
               "ordinary recovery center distance parses explicitly");
-  expect_true(visible.template_bridge_min_stable_frames == 4,
-              "template bridge history parses explicitly");
-  expect_true(visible.template_bridge_max_duration_ms == 200,
-              "template bridge duration parses explicitly");
   expect_true(visible.uncertain_ms == 200 &&
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
+  expect_true(visible.suspicion_enter_ms == 120 &&
+                  visible.suspicion_clear_ms == 180,
+              "candidate suspicion timings parse explicitly");
+  expect_near(visible.response_psr_drop_ratio, 0.15F, 1e-6F,
+              "candidate PSR drop ratio parses explicitly");
+  expect_near(visible.response_apce_drop_ratio, 0.35F, 1e-6F,
+              "candidate APCE drop ratio parses explicitly");
+
+  for (const std::string& key : {"suspicion_enter_ms", "suspicion_clear_ms"}) {
+    for (const std::string& value : {"0", "-1", "1.5"}) {
+      write_file(migration_path, key + "=" + value + "\n");
+      expect_config_error(migration_path, key);
+    }
+  }
+  for (const std::string& key : {"response_psr_drop_ratio",
+                                 "response_apce_drop_ratio"}) {
+    for (const std::string& value : {"0", "-0.1", "1.01", "nan"}) {
+      write_file(migration_path, key + "=" + value + "\n");
+      expect_config_error(migration_path, key);
+    }
+  }
   expect_true(visible.motion_search_enabled &&
-                  visible.search_reacquisition_requires_detector &&
                   visible.search_reacquisition_min_age_ms == 300 &&
                   visible.motion_search_confidence_ms == 900 &&
                   visible.search_probe_interval_ms == 120,
