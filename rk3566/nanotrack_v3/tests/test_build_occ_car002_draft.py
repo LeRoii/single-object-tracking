@@ -19,6 +19,9 @@ class DraftFixture:
         self.policy = root / "review-policy.csv"
         self.events = root / "events.json"
         self.distractors = root / "distractors.json"
+        self.review_dir = root / "review"
+        self.review_dir.mkdir()
+        (self.review_dir / "contact-sheet-000.jpg").write_bytes(b"review-sheet")
         self.output = root / "draft"
         self._write_candidates()
         self._write_policy()
@@ -156,6 +159,7 @@ class DraftFixture:
             output_root=self.output,
             episode_id="occ_video_1_car_002_full_object",
             target_id="car_002",
+            review_dir=self.review_dir,
         )
 
 
@@ -194,6 +198,10 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             self.assertEqual(frames[2]["estimated_bbox_xywh"], [12.0, 20.0, 30.0, 40.0])
             self.assertEqual(frames[3]["target_state"], "ambiguous")
             self.assertIsNone(frames[3]["candidate_bbox_xywh"])
+            self.assertEqual(
+                (fixture.output / "review_contact_sheets/contact-sheet-000.jpg").read_bytes(),
+                b"review-sheet",
+            )
 
     def test_build_creates_exactly_271_contiguous_files_per_layer(self):
         with tempfile.TemporaryDirectory() as directory:

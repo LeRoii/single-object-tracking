@@ -51,6 +51,7 @@ class BuildConfig:
     output_root: Path
     episode_id: str
     target_id: str
+    review_dir: Optional[Path] = None
     replace_draft: bool = False
 
 
@@ -244,6 +245,18 @@ def build_draft(config: BuildConfig) -> dict:
         distractors, config.frame_count, config.width, config.height
     )
     _prepare_output(config)
+    review_sheet_names: List[str] = []
+    if config.review_dir is not None:
+        review_sheets = sorted(config.review_dir.glob("contact-sheet-*.jpg"))
+        if not review_sheets:
+            raise ValueError("review directory has no contact sheets")
+        destination = config.output_root / "review_contact_sheets"
+        destination.mkdir()
+        for sheet in review_sheets:
+            if not sheet.is_file():
+                raise ValueError(f"invalid review contact sheet: {sheet}")
+            shutil.copy2(sheet, destination / sheet.name)
+            review_sheet_names.append(sheet.name)
 
     frame_records = []
     status_rows = []
@@ -399,6 +412,11 @@ def build_draft(config: BuildConfig) -> dict:
         },
         "review_status_counts": status_counts,
         "unresolved_review_count": len(review_rows),
+        "review_contact_sheets": {
+            "source": str(config.review_dir) if config.review_dir is not None else None,
+            "count": len(review_sheet_names),
+            "files": review_sheet_names,
+        },
     }
     _write_json(config.output_root / "annotation_metadata.json", metadata)
     _write_json(config.output_root / "events.json", events)
@@ -473,6 +491,12 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
     if len(frames) != frame_count or [record.get("frame_id") for record in frames] != list(range(frame_count)):
         raise ValueError("frames.jsonl is not continuous")
     unresolved = [record for record in frames if record.get("review_status") in UNRESOLVED_REVIEW_STATUSES]
+    review_media = metadata.get("review_contact_sheets", {})
+    expected_sheets = review_media.get("files", [])
+    if review_media.get("count") != len(expected_sheets) or any(
+        not (root / "review_contact_sheets" / name).is_file() for name in expected_sheets
+    ):
+        raise ValueError("review contact sheet manifest mismatch")
     if require_confirmed and unresolved:
         raise ValueError(f"unresolved review rows: {len(unresolved)}")
     for record in frames:
@@ -518,6 +542,7 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--events", type=Path, required=True)
     build.add_argument("--distractors", type=Path, required=True)
     build.add_argument("--output", type=Path, required=True)
+    build.add_argument("--review-dir", type=Path)
     build.add_argument("--episode-id", default="occ_video_1_car_002_full_object")
     build.add_argument("--target-id", default="car_002")
     build.add_argument("--replace-draft", action="store_true")
@@ -546,6 +571,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 output_root=args.output,
                 episode_id=args.episode_id,
                 target_id=args.target_id,
+                review_dir=args.review_dir,
                 replace_draft=args.replace_draft,
             )
         )
