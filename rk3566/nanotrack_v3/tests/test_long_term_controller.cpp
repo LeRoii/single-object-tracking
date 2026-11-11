@@ -1874,10 +1874,13 @@ void test_search_detector_shadow_hint_isolation() {
   ambiguous.finish_frame(ambiguous.begin_frame(1, 40, false), {}, std::nullopt);
   plan = ambiguous.begin_frame(2, 80, true);
   const DetectorRequest ambiguous_request = *plan.detector_request;
+  BBox ambiguous_left = plan.motion_predicted_bbox;
+  BBox ambiguous_right = plan.motion_predicted_bbox;
+  ambiguous_left.x -= 4.0F;
+  ambiguous_right.x += 4.0F;
   DetectorBatch ambiguous_batch{
       ambiguous_request.frame_id, ambiguous_request.timestamp_ms,
-      {{plan.motion_predicted_bbox, 0.99F, 0},
-       {BBox{42, 30, 20, 20}, 0.98F, 0}}};
+      {{ambiguous_left, 0.99F, 0}, {ambiguous_right, 0.98F, 0}}};
   ambiguous_batch.generation = ambiguous_request.generation;
   ambiguous.finish_frame(plan, {}, ambiguous_batch);
   plan = ambiguous.begin_frame(3, 120, false);
@@ -1887,6 +1890,31 @@ void test_search_detector_shadow_hint_isolation() {
       plan, reliable_pair(plan, plan.predicted_bbox, 3), std::nullopt);
   expect_true(!output.accepted && !output.search_hint && output.control_valid,
               "same-class ambiguity cannot seed search confirmation or control");
+
+  LongTermController dominant(config);
+  dominant.initialize(initial, 0, 0, {240, 160},
+                      make_fixed_target_class(0, true));
+  dominant.finish_frame(dominant.begin_frame(1, 40, false), {}, std::nullopt);
+  plan = dominant.begin_frame(2, 80, true);
+  const DetectorRequest dominant_request = *plan.detector_request;
+  BBox dominant_near = plan.motion_predicted_bbox;
+  BBox dominant_far = plan.motion_predicted_bbox;
+  dominant_near.x += 3.0F;
+  dominant_far.x += 30.0F;
+  DetectorBatch dominant_batch{
+      dominant_request.frame_id, dominant_request.timestamp_ms,
+      {{dominant_near, 0.80F, 0}, {dominant_far, 0.99F, 0}}};
+  dominant_batch.generation = dominant_request.generation;
+  dominant.finish_frame(plan, {}, dominant_batch);
+  plan = dominant.begin_frame(3, 120, false);
+  expect_true(plan.detector_same_class_candidates == 2 &&
+                  !plan.detector_same_class_ambiguous &&
+                  plan.predicted_bbox.x == dominant_near.x,
+              "a geometrically dominant nearest candidate resolves ambiguity without using confidence");
+  output = dominant.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 3), std::nullopt);
+  expect_true(!output.accepted && output.search_hint && output.control_valid,
+              "resolved nearest candidate remains shadow-only on its first template hit");
 }
 
 void test_atomic_search_reacquisition_and_template_probation() {
@@ -2444,7 +2472,7 @@ int main() {
   DetectorBatch ambiguous_batch{
       2, 1100,
       {{BBox{20, 20, 30, 40}, 0.95F, 0},
-       {BBox{120, 20, 30, 40}, 0.90F, 0}}};
+       {BBox{50, 20, 30, 40}, 0.90F, 0}}};
   same_class_ambiguity.finish_frame(plan, {}, ambiguous_batch);
   plan = same_class_ambiguity.begin_frame(3, 1140, false);
   expect_true(plan.detector_same_class_candidates == 2 &&

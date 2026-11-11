@@ -226,6 +226,7 @@ class LongTermController {
     float center_ratio = 0.0F;
     std::vector<BBox> probes;
     std::size_t same_class_candidates = 0;
+    bool same_class_ambiguous = false;
     std::uint64_t source_frame_id = 0;
     std::int64_t source_timestamp_ms = 0;
     std::uint64_t generation = 0;

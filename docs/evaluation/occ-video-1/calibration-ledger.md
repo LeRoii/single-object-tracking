@@ -327,3 +327,41 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   normalized one-target-width corridor. Required cadence neighbors remain `360/440 ms`;
   corridor neighbors return to the already observed passing `0.018/0.022` range.
 - Decision: `PENDING`; run nominal before any matrix continuation.
+
+## C006 result — cadence plateau, width perturbation ambiguity
+
+- Timestamp: `2026-11-11T14:09:35+08:00`
+- Source commit: `6760e26d7009d662d8e479e76e6f3d3a944567c3`
+- Board root: `/home/neardi/Project/SOT/occ-candidate-6760e26`
+- Source archive/config/executable SHA-256:
+  `358c70f71c2c00b64aaea1bc1c35a21d60dc5ca961f749dd0a2c4136c490b997`,
+  `87b4b818e740a5a4137e4ab7339a26b5d70e93e5c7852e468dd26c8a73e06791`,
+  `ebc6a3e5bf8f1e6f517835c22d2eac47c81eaee4e83c7f7c28bc680d9c32e599`.
+- Native Debug, `-Werror=switch`, and CTest `19/19` passed. Nominal development
+  PASS reacquired at frame 185 with all-visible mean IoU `0.750791`.
+- Cadence `360/400/440 ms` passed at frames `184/185/187`; corridor
+  `0.018/0.020/0.022` passed at frame 185. All real-valued neighbors tested so far,
+  center `+/-2 px`, width `-5%`, and height `+/-5%` passed.
+- Center-preserving width `+5%` entered search but retained two same-class candidates.
+  The true target was nearer the bounded motion prediction (`0.009615`) than the
+  neighboring car (`0.017311`), yet the existing count-only ambiguity policy rejected
+  both. Detector/template scores alone favored the neighboring car, so confidence or
+  template score must not resolve this case.
+- Decision: `REJECT` for freeze; retain the cadence/config plateau and add only a
+  geometry-dominance safety rule in C007. No holdout/full run occurred.
+
+## C007 — geometrically dominant nearest-candidate resolution
+
+- Timestamp: `2026-11-11T14:09:35+08:00`
+- Parent: `C006`; candidate config unchanged.
+- Rule: when same-class candidates pass the existing corridor, only the nearest may be
+  marked non-ambiguous, and only if its motion-center distance is at most `2/3` of the
+  second-nearest distance. Comparable candidates remain ambiguous. Detector confidence
+  is deliberately excluded from this decision.
+- Safety: the resolved candidate is still shadow-only; anchor reliability, recent veto,
+  minimum search age, generation/stale gates, and two consecutive identity-consistent
+  tracker hits remain mandatory before atomic commit. Later queued alternatives remain
+  ambiguous and cannot authorize recovery.
+- Synthetic tests cover comparable neighbors (reject) and a lower-confidence but
+  geometrically dominant nearest candidate (first hit remains shadow-only). Decision
+  `PENDING` until full host/board/matrix verification.

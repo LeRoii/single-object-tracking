@@ -9,6 +9,7 @@ namespace nanotrack {
 namespace {
 
 constexpr float kPositionGateEpsilon = 1e-6F;
+constexpr float kDominantNearestCandidateRatio = 2.0F / 3.0F;
 
 bool finite_bbox(const BBox& bbox) {
   return std::isfinite(bbox.x) && std::isfinite(bbox.y) &&
@@ -333,8 +334,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.detector_candidate_center_ratio = active.queued.center_ratio;
     plan.detector_same_class_candidates =
         active.queued.same_class_candidates;
-    plan.detector_same_class_ambiguous =
-        active.queued.same_class_candidates > 1;
+    plan.detector_same_class_ambiguous = active.queued.same_class_ambiguous;
     plan.detector_candidate_locked = active.locked;
     plan.detector_probe_index = active.locked ? active.locked_probe_index
                                               : active.next_probe - 1;
@@ -1029,8 +1029,14 @@ LongTermController::ingest_detector_batch(
     }
     positioned.resize(config_.detector_max_candidates);
   }
+  const bool dominant_nearest_candidate =
+      positioned.size() >= 2 &&
+      positioned[0].center_ratio <=
+          kDominantNearestCandidateRatio * positioned[1].center_ratio;
   detector_candidates_.clear();
-  for (const PositionedCandidate& positioned_candidate : positioned) {
+  for (std::size_t positioned_index = 0;
+       positioned_index < positioned.size(); ++positioned_index) {
+    const PositionedCandidate& positioned_candidate = positioned[positioned_index];
     DetectorCandidateDiagnostic& diagnostic =
         result.diagnostics[positioned_candidate.diagnostic_index];
     DetectorCandidate candidate = diagnostic.candidate;
@@ -1045,6 +1051,9 @@ LongTermController::ingest_detector_batch(
           return result.diagnostics[other.diagnostic_index]
                      .candidate.class_id == candidate.class_id;
         }));
+    queued.same_class_ambiguous =
+        queued.same_class_candidates > 1 &&
+        !(positioned_index == 0 && dominant_nearest_candidate);
     queued.source_frame_id = batch->source_frame_id;
     queued.source_timestamp_ms = batch->source_timestamp_ms;
     queued.generation = batch->generation;
