@@ -356,6 +356,18 @@ int main() {
           "releases/yolov8n-visdrone9-rk3588-fp16-v1/") != std::string::npos,
       "RK3588 debug config selects the RK3588 detector release");
 
+  const std::filesystem::path occlusion_candidate =
+      source_dir / "config/visible-occlusion-calibrated.conf";
+  expect_true(std::filesystem::is_regular_file(occlusion_candidate),
+              "generic visible occlusion candidate is shipped with the CLI assets");
+  const Options candidate_options = parse_options(
+      {"nanotrack_v3", "--video", "/tmp/input.mp4", "--bbox", "1,2,3,4",
+       "--model-dir", "/tmp/models", "--controller-config",
+       occlusion_candidate.string(), "--output-video", "/tmp/output.avi",
+       "--output-boxes", "/tmp/output.csv"});
+  expect_true(candidate_options.controller_config == occlusion_candidate.string(),
+              "CLI preserves the explicit generic candidate configuration path");
+
   struct ThresholdCase {
     const char* key;
     float Options::*field;

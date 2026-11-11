@@ -185,6 +185,30 @@ int main() {
   expect_near(shipped_visible.max_reacquisition_center_distance, 0.75F,
               1e-6F,
               "shipped visible config fixes the ordinary recovery center gate");
+  const ControllerConfig occlusion_candidate = load_controller_config(
+      config_dir + "visible-occlusion-calibrated.conf");
+  expect_true(occlusion_candidate.sensor == "visible" &&
+                  occlusion_candidate.calibrated &&
+                  occlusion_candidate.motion_search_enabled,
+              "generic visible occlusion candidate explicitly enables calibrated motion search");
+  expect_true(occlusion_candidate.confirmation_required == 2 &&
+                  occlusion_candidate.confirmation_window >= 2,
+              "generic visible candidate retains two-hit reacquisition safety");
+  expect_true(occlusion_candidate.motion_search_confidence_ms > 0 &&
+                  std::isfinite(occlusion_candidate.motion_max_speed_diagonals_per_s) &&
+                  occlusion_candidate.motion_max_speed_diagonals_per_s > 0.0F &&
+                  std::isfinite(occlusion_candidate.motion_max_acceleration_diagonals_per_s2) &&
+                  occlusion_candidate.motion_max_acceleration_diagonals_per_s2 > 0.0F &&
+                  std::isfinite(occlusion_candidate.motion_scale_rate_limit_per_s) &&
+                  occlusion_candidate.motion_scale_rate_limit_per_s > 0.0F &&
+                  occlusion_candidate.search_probe_interval_ms > 0,
+              "generic visible candidate uses finite positive time and physical bounds");
+  expect_true(controller_config_identity(occlusion_candidate) !=
+                  controller_config_identity(shipped_visible),
+              "calibrated candidate has a distinct controller identity");
+  expect_true(!shipped_visible.calibrated &&
+                  !shipped_visible.motion_search_enabled,
+              "visible-default remains compatibility behavior with motion search disabled");
   expect_occlusion_defaults(
       load_controller_config(config_dir + "infrared-default.conf"),
       "shipped infrared configuration");

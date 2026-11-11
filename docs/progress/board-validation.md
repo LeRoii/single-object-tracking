@@ -1,5 +1,30 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T12:47:34+08:00 通用可见光遮挡候选配置与只追加标定账本
+
+- 在 `codex/occ-video-1-tracking`、Task 7 起点
+  `15f32fe8d52fee0b53e2c15d961b87f1c006ccd5` 新增通用
+  `config/visible-occlusion-calibrated.conf`；结果提交可用
+  `git log -1 --format=%H -- rk3566/nanotrack_v3/config/visible-occlusion-calibrated.conf` 查询。
+- C001 保留 `visible-default.conf` 的已有视觉、遮挡、detector 和两击确认阈值，只显式启用
+  `motion_search_enabled=true`，初始通用物理边界为 `2500 ms` 置信期、`1.0 diagonal/s`
+  速度、`2.0 diagonal/s^2` 加速度、`0.50/s` 尺度变化和 `100 ms` probe 间隔；配置中没有
+  视频名、帧号、真值坐标、桥梁或场景特例。`confirmation_required=2`、window 3 保持不变。
+- 原 `visible-default.conf` 未修改，SHA-256 仍为
+  `54dcc973feed11ad3e9e7838c8f35e86b0d587d5aa143863a625c849fa5dae19`；新候选为
+  `495d5a0bc74d077cb333ae25affc512005b701fc432552f0994ed55607aab6c9`，controller identity
+  测试确认两者不同且默认配置继续关闭 motion search。
+- 新建只追加 `docs/evaluation/occ-video-1/calibration-ledger.md`，先冻结 C000 失败基线的源码、
+  配置、RK3588 ONNX 派生模型、detector、输入与输出报告哈希，再登记 C001 的 parent、理由、
+  变更参数和严格 `--max-frames 189` 待执行命令。C001 明确标为 `PENDING_NOT_RUN`；未知二进制、
+  板端目录和报告写为 `PENDING`，没有从历史证据猜测。
+- TDD RED 时两个测试分别因候选文件不存在失败；新增文件后，聚焦 `controller_support|cli`
+  为 `2/2` 通过。新鲜完整构建及 CTest 为 `19/19` 通过、`0` 失败、总时间 `4.51 sec`，
+  `git diff --check` 无输出。
+- 本里程碑没有运行 C001、没有读取 190--270 holdout，也没有改变或重新生成 RK3588 模型；
+  `calibrated=true` 仅表示候选配置接口，不能解释为真值标定已经完成。下一步 Task 8 先实现
+  robustness manifest 校验器，再部署并只用 0--189 做候选与参数邻域验证。
+
 ## 2026-11-11T12:43:43+08:00 schema 10 搜索控制证据契约与 fail-closed 校验
 
 - 在 `codex/occ-video-1-tracking`、Task 6 起点
