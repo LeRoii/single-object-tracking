@@ -1,5 +1,24 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T14:51:34+08:00 C009 holdout FAIL，停止调参与重复运行
+
+- 冻结命令在 RK3588 上精确执行一次，输出 `1920x1080`/271 帧；首个正式
+  `scope=holdout` evaluator 返回 FAIL。按冻结规则未执行 full-scope evaluator、第 2/3
+  次重复或任何参数修改。
+- 原遮挡后仍在帧 185 重捕，identity proxy、continuous control、prediction continuity
+  PASS；但可见期 200--215 帧再次进入搜索，216 帧第二次重捕，不满足全序列
+  唯一重捕。holdout 有效观测 mean IoU `0.671046 < 0.70`，all-visible `0.677702`。
+- evaluator 还把不含全遮挡帧的 190--270 holdout scope 判为 full-occlusion gate FAIL，这是
+  scope 适用性缺陷；排除它也不改变上述两个真实失败。
+- RK3588 verifier 另在 CSV 帧 204 失败：`search_hint_present=1` + `CONFLICT`，但
+  `search_hint_confirmation_count=0`，违反当前 schema 对 present hint 必须为 `1/2` 的约束。
+- 保留根目录：`/home/neardi/Project/SOT/occ-candidate-05cf4d9/runs/C009-full-run1`。
+  evaluator JSON/bboxes/video SHA-256 分别为
+  `dae7168e3df422b42796ba156e70f7c1bfb67b0fb65596e63a3791a439343ffe`、
+  `97f275ae1bf05eb345bb8335757ffbcaac063153d895c1f3ccd0808792f4c645`、
+  `ac527664f99b1211d6ffa505d4bb65f9cc69b7795b7aaf870c97d3de30a63f36`。
+  C009 结论为 `REJECT for release`；holdout 现已揭盲，后续候选不得声称仍为盲测。
+
 ## 2026-11-11T14:44:38+08:00 C009 development 平台 PASS 与冻结
 
 - C009 RK3588 原生 Debug、`-Werror=switch`、CTest `19/19`；可执行/config SHA-256

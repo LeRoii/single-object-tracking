@@ -452,3 +452,27 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   partial status-metadata exposure, and future command are committed in
   `frozen-candidate.json`. Runtime/config changes after this point invalidate C009's
   blind-run status.
+
+## C009 holdout result — FAIL, tuning stopped
+
+- Timestamp: `2026-11-11T14:51:34+08:00`
+- The frozen command ran exactly once through frame 270 on RK3588. The first formal
+  `scope=holdout` evaluator returned `FAIL`; no full-scope evaluator and no repeat run
+  was executed after that result.
+- The original occlusion recovery still occurred at frame 185 and identity proxy,
+  continuous control, and prediction continuity passed. A second visible-period search
+  occurred at frames 200--215 and committed another recovery at frame 216. The evaluator
+  therefore observed reacquisition frames `[185, 216]`, not exactly one.
+- Holdout valid-observation mean IoU was `0.671046`, below the frozen `0.70` floor;
+  all-visible holdout mean IoU was `0.677702`. These failures remain even if the separate
+  holdout-scope applicability defect in `full_occlusion_semantics` is ignored.
+- RK3588 artifact verification also failed at CSV row/frame 204: the runtime published a
+  present `CONFLICT` search hint with confirmation count `0`, while the schema verifier
+  requires a present hint to carry count `1` or `2`. The manifest remained `rk3588`; it
+  was not relabeled to satisfy the verifier's default target.
+- Retained report/bboxes/video SHA-256 are
+  `dae7168e3df422b42796ba156e70f7c1bfb67b0fb65596e63a3791a439343ffe`,
+  `97f275ae1bf05eb345bb8335757ffbcaac063153d895c1f3ccd0808792f4c645`, and
+  `ac527664f99b1211d6ffa505d4bb65f9cc69b7795b7aaf870c97d3de30a63f36`.
+- Decision: `REJECT C009 for release`. The holdout is now exposed. Any later candidate
+  must be identified as post-holdout work and cannot reuse a blind-holdout claim.
