@@ -46,6 +46,7 @@ cv::Scalar state_color(const nanotrack::ControllerOutput& output) {
   if (output.control_valid) return cv::Scalar(0, 255, 0);
   switch (output.mode) {
     case nanotrack::TrackingMode::kTracking: return cv::Scalar(0, 255, 255);
+    case nanotrack::TrackingMode::kSuspected: return cv::Scalar(0, 255, 255);
     case nanotrack::TrackingMode::kUncertain: return cv::Scalar(0, 255, 255);
     case nanotrack::TrackingMode::kLocalRecovery: return cv::Scalar(0, 165, 255);
     case nanotrack::TrackingMode::kAssistedRecovery: return cv::Scalar(255, 0, 255);

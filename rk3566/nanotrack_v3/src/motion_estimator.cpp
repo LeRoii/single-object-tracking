@@ -44,12 +44,13 @@ BBox MotionEstimator::predict(std::int64_t timestamp_ms) {
                0.5F * acceleration_y_ * last_dt_seconds_ * last_dt_seconds_;
   velocity_x_ += acceleration_x_ * last_dt_seconds_;
   velocity_y_ += acceleration_y_ * last_dt_seconds_;
-  clamp_derivatives();
   if (!scale_frozen_) {
     width_ = std::max(1.0F, width_ + velocity_width_ * last_dt_seconds_);
     height_ = std::max(1.0F, height_ + velocity_height_ * last_dt_seconds_);
   }
   clamp_state_to_frame();
+  // Prediction can shrink the box and therefore its allowed scale velocity.
+  clamp_derivatives();
   last_timestamp_ms_ = timestamp_ms;
   correction_allowed_ = true;
   return current_bbox_;

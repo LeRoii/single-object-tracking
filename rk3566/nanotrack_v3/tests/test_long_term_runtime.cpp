@@ -985,10 +985,57 @@ void test_target_class_session_config(const nanotrack::ImageView& image) {
               "fixed target with no detector initializes NanoTrack without detector recovery");
 }
 
+void test_tentative_recent_does_not_commit() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.suspicion_enter_ms = 40;
+  config.occlusion_min_reference_samples = 3;
+  config.stable_frames_for_update = 4;
+  config.recent_update_interval_ms = 1;
+  FakeTracker tracker;
+  FakeDetector detector;
+  LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  const BBox trusted{40, 30, 20, 20};
+  const BBox tentative{45, 30, 20, 20};
+  runtime.initialize(image, trusted, 0, 0);
+  for (std::uint64_t id = 1; id <= 6; ++id) {
+    const auto timestamp = static_cast<std::int64_t>(id * 40);
+    const bool clean = id <= 3;
+    const ResponseMetrics metrics = clean ? ResponseMetrics{0.98F, 0.96F, 20, 30, 0.28F}
+                                          : ResponseMetrics{0.98F, 0.96F, 11, 16, 0.15F};
+    tracker.observation_override = std::vector<TrackerObservation>{
+        {id, timestamp, clean ? trusted : tentative, metrics, TemplateKind::kRecent, id}};
+    if (id == 6) {
+      tracker.observation_override->push_back(
+          {id, timestamp, trusted, {}, TemplateKind::kSafe, id});
+    }
+    const auto result = runtime.process_frame(image, id, timestamp);
+    if (!clean) {
+      expect_true(!result.output.accepted && result.output.observation_present &&
+                      !result.output.trusted_for_state_update &&
+                      result.output.tracking_bbox.x == tentative.x &&
+                      result.output.control_valid,
+                  "runtime exposes the recent observation while controller trust is frozen");
+    }
+    if (id == 6) {
+      expect_true(result.plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                      result.output.mode == TrackingMode::kSuspected,
+                  "suspected run mode reaches the short-term tracker");
+    }
+  }
+  expect_true(tracker.commit_calls == 3 && tracker.committed_bbox.x == trusted.x &&
+                  tracker.stage_calls == 0 && tracker.recent_commit_calls == 0 &&
+                  tracker.rollback_calls == 0,
+              "tentative frames call no bbox or template learning hooks");
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
+  test_tentative_recent_does_not_commit();
 
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};

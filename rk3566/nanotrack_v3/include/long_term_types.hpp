@@ -17,9 +17,10 @@ enum class TrackingMode {
   kAssistedRecovery,
   kLost,
   kOcclusionHold,
+  kSuspected,
 };
 
-enum class TrackingPhase { kTracking, kSearching, kInvalid };
+enum class TrackingPhase { kTracking, kSearching, kInvalid, kSuspected };
 enum class ControlSource { kNone, kObservation, kMotionSearch };
 
 enum class QualityLevel { kReliable, kWeak, kRejected };

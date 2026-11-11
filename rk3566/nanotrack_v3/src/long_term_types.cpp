@@ -118,6 +118,7 @@ const char* to_string(TargetClassCandidateRejection value) {
 const char* to_string(TrackingMode value) {
   switch (value) {
     case TrackingMode::kTracking: return "TRACKING";
+    case TrackingMode::kSuspected: return "SUSPECTED";
     case TrackingMode::kUncertain: return "UNCERTAIN";
     case TrackingMode::kLocalRecovery: return "LOCAL_RECOVERY";
     case TrackingMode::kAssistedRecovery: return "ASSISTED_RECOVERY";
@@ -130,6 +131,7 @@ const char* to_string(TrackingMode value) {
 const char* to_string(TrackingPhase value) {
   switch (value) {
     case TrackingPhase::kTracking: return "TRACKING";
+    case TrackingPhase::kSuspected: return "SUSPECTED";
     case TrackingPhase::kSearching: return "SEARCHING";
     case TrackingPhase::kInvalid: return "INVALID";
   }

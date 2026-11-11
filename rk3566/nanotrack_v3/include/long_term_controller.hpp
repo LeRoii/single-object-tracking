@@ -4,6 +4,7 @@
 #include "long_term_types.hpp"
 #include "motion_estimator.hpp"
 #include "occlusion_evidence.hpp"
+#include "response_baseline.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -69,6 +70,8 @@ struct ControllerOutput {
   TrackingMode mode = TrackingMode::kTracking;
   TrackingPhase tracking_phase = TrackingPhase::kInvalid;
   bool observation_valid = false;
+  bool observation_present = false;
+  bool trusted_for_state_update = false;
   ControlSource control_source = ControlSource::kNone;
   QualityLevel quality = QualityLevel::kRejected;
   BBox bbox{};
@@ -268,6 +271,18 @@ class LongTermController {
   float search_scale_for(TrackingMode mode, std::int64_t timestamp_ms) const;
   EvaluatedObservation evaluate(const TrackerObservation& observation,
                                 const SearchPlan& plan) const;
+  enum class RecentDisposition { kDirect, kTentative, kSearch };
+  RecentDisposition assess_recent(const SearchPlan& plan,
+                                  const EvaluatedObservation& recent);
+  void publish_tentative(const SearchPlan& plan,
+                         const EvaluatedObservation& recent,
+                         ControllerOutput& output);
+  void clear_suspicion() noexcept;
+  void promote_shadow_prediction() noexcept;
+  float trusted_elapsed_seconds(std::int64_t timestamp_ms) const;
+  bool trusted_control_live(std::int64_t timestamp_ms) const;
+  bool search_control_live(std::int64_t timestamp_ms) const;
+  BBox bound_recent_scale(const BBox& bbox, std::int64_t timestamp_ms) const;
   bool add_confirmation(std::uint64_t frame_id, const BBox& bbox);
   bool update_search_confirmation(
       std::uint64_t frame_id, const BBox& bbox,
@@ -302,6 +317,16 @@ class LongTermController {
 
   ControllerConfig config_;
   MotionEstimator motion_;
+  // The first tentative frame moves its prediction into shadow_motion_ and
+  // restores the motion state from before that prediction.
+  std::optional<MotionEstimator> motion_before_prediction_;
+  std::optional<MotionEstimator> shadow_motion_;
+  ResponseBaseline response_baseline_;
+  std::optional<std::int64_t> response_degraded_since_ms_;
+  std::optional<std::int64_t> suspected_since_ms_;
+  std::optional<std::int64_t> response_clean_since_ms_;
+  std::int64_t last_trusted_timestamp_ms_ = 0;
+  bool legacy_anchor_observations_ = false;
   OcclusionEvidenceTracker occlusion_evidence_;
   OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};

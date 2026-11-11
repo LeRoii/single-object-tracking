@@ -1,5 +1,6 @@
 #include "controller_config.hpp"
 #include "long_term_types.hpp"
+#include "response_baseline.hpp"
 #include "target_class.hpp"
 
 #include <cstddef>
@@ -2308,7 +2309,223 @@ void test_bounded_template_bridge() {
 
 }  // namespace
 
+namespace {
+
+void test_recent_safe_tentative_tracking() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.occlusion_min_reference_samples = 3;
+  config.suspicion_enter_ms = 80;
+  config.suspicion_clear_ms = 80;
+  config.uncertain_ms = 120;
+  config.motion_search_confidence_ms = 180;
+  config.stable_frames_for_update = 50;
+  config.accepted_center_max_correction_ratio = 0.10F;
+  const BBox initial{70, 50, 30, 30};
+  const BBox shifted{77, 50, 30, 30};
+  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
+  const ResponseMetrics degraded{0.98F, 0.96F, 11, 16, 0.15F};
+  const auto track = [&](LongTermController& controller, std::uint64_t id,
+                         const BBox& bbox, const ResponseMetrics& metrics) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto observation = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    observation.metrics = metrics;
+    std::vector<TrackerObservation> observations{observation};
+    if (plan.template_run_mode == TemplateRunMode::kRecentAndSafe) {
+      observations.push_back(rejected_observation(
+          plan, TemplateKind::kSafe, initial));
+    }
+    return controller.finish_frame(plan, observations, std::nullopt);
+  };
+
+  LongTermController clears(config);
+  LongTermController expires(config);
+  LongTermController collapses(config);
+  for (auto* controller : {&clears, &expires, &collapses}) {
+    controller->initialize(initial, 0, 0, {320, 240});
+    for (std::uint64_t id = 1; id <= 3; ++id) {
+      const BBox moving{initial.x + static_cast<float>(id), initial.y, 30, 30};
+      const auto out = track(*controller, id, moving, healthy);
+      expect_true(out.accepted && out.trusted_for_state_update && out.observation_present,
+                  "ordinary recent-only observations are direct and trusted");
+    }
+    const auto trusted = controller->motion_.snapshot(120);
+    for (std::uint64_t id = 4; id <= 6; ++id) {
+      const auto out = track(*controller, id, shifted, degraded);
+      expect_true(out.mode == (id == 6 ? TrackingMode::kSuspected
+                                      : TrackingMode::kTracking),
+                  "stable-size, high-score response degradation waits for the enter gate");
+      expect_true(out.tracking_phase == TrackingPhase::kSuspected &&
+                      !out.accepted && !out.trusted_for_state_update &&
+                      out.observation_present && out.control_valid &&
+                      out.control_source == ControlSource::kObservation &&
+                      out.template_action == TemplateAction::kNone &&
+                      out.tracking_bbox.x == shifted.x && out.tracking_bbox.width == 30,
+                  "tentative output carries the exact recent observation without accepting it");
+      expect_true(out.control_bbox.x > 73.0F && out.control_bbox.x <= 76.001F,
+                  "tentative control applies the existing center correction limit");
+      const auto saved = controller->motion_.snapshot(120);
+      expect_true(saved.bbox.x == trusted.bbox.x &&
+                      saved.velocity_x == trusted.velocity_x &&
+                      saved.acceleration_x == trusted.acceleration_x &&
+                      controller->stable_frames_ == 3 &&
+                      controller->response_baseline_.evaluate(healthy).reference->psr == 20,
+                  "tentative frames leave motion, response history and stable count untouched");
+    }
+  }
+
+  for (std::uint64_t id : {7U, 8U, 9U}) {
+    const auto out = track(clears, id, shifted, healthy);
+    expect_true(out.accepted == (id == 9) &&
+                    out.mode == (id == 9 ? TrackingMode::kTracking : TrackingMode::kSuspected),
+                "clean recent must meet the clear gate even when safe is weak");
+  }
+  expect_true(clears.begin_frame(10, 400, false).template_run_mode ==
+                  TemplateRunMode::kRecentOnly,
+              "clear returns to the single recent head");
+
+  for (std::uint64_t id : {7U, 8U, 9U}) {
+    const auto out = track(expires, id, shifted, degraded);
+    expect_true(out.control_valid == (id == 7),
+                "control expires from the last trusted frame, including time spent suspected");
+    if (id == 8) {
+      expect_true(out.tracking_phase == TrackingPhase::kSuspected &&
+                      out.observation_present && out.control_source == ControlSource::kNone,
+                  "expired tentative control keeps publishing the recent observation");
+    }
+    if (id == 9) {
+      expect_true(out.tracking_phase == TrackingPhase::kSearching &&
+                      out.motion_search_age_ms == 0 && !out.observation_present,
+                  "continuous degradation escalates without renewing control");
+    }
+  }
+  const auto search_plan = expires.begin_frame(10, 400, false);
+  expect_true(search_plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                  !search_plan.motion_control_authorized,
+              "search runs recent and safe while expired control remains revoked");
+
+  const auto suspect_plan = collapses.begin_frame(7, 280, false);
+  expect_true(suspect_plan.template_run_mode == TemplateRunMode::kRecentAndSafe,
+              "suspected requests safe for diagnostics");
+  const auto collapse = collapses.finish_frame(suspect_plan,
+      {rejected_observation(suspect_plan, TemplateKind::kRecent, initial),
+       reliable_observation(suspect_plan, TemplateKind::kSafe, initial)}, std::nullopt);
+  expect_true(collapse.tracking_phase == TrackingPhase::kSearching &&
+                  collapse.control_source == ControlSource::kMotionSearch &&
+                  !collapse.accepted && !collapse.observation_present,
+              "collapsed recent escalates even if safe is strong");
+}
+
+void test_recent_safe_transient_and_probation() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.suspicion_enter_ms = 80;
+  config.occlusion_min_reference_samples = 3;
+  config.stable_frames_for_update = 4;
+  config.recent_update_interval_ms = 1;
+  config.recent_probation_frames = 2;
+  LongTermController controller(config);
+  const BBox bbox{70, 50, 30, 30};
+  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
+  const ResponseMetrics degraded{0.98F, 0.96F, 11, 16, 0.15F};
+  const ResponseMetrics stronger{0.98F, 0.96F, 40, 60, 0.40F};
+  controller.initialize(bbox, 0, 0, {320, 240});
+  const auto track = [&](std::uint64_t id, const ResponseMetrics& metrics) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    recent.metrics = metrics;
+    std::vector<TrackerObservation> observations{recent};
+    if (id == 6 || id == 7) {
+      expect_true(plan.template_run_mode == TemplateRunMode::kStagedAndRecent,
+                  "probation requests only staged and recent heads");
+      auto staged = recent;
+      staged.template_kind = TemplateKind::kStaged;
+      observations.push_back(staged);
+    }
+    return controller.finish_frame(plan, observations, std::nullopt);
+  };
+  for (std::uint64_t id = 1; id <= 3; ++id) track(id, healthy);
+  const auto spike = track(4, degraded);
+  expect_true(spike.mode == TrackingMode::kTracking &&
+                  spike.tracking_phase == TrackingPhase::kSuspected &&
+                  !spike.accepted && spike.template_action == TemplateAction::kNone,
+              "an isolated degraded sample freezes learning before the enter duration");
+  const auto clears = track(5, healthy);
+  expect_true(clears.accepted && clears.mode == TrackingMode::kTracking &&
+                  clears.template_action == TemplateAction::kStageRecent,
+              "a single clean observation clears the pending entry and can stage");
+  expect_true(track(6, stronger).template_action == TemplateAction::kNone &&
+                  track(7, stronger).template_action == TemplateAction::kCommitRecent &&
+                  controller.response_baseline_.evaluate(healthy).reference->psr == 20,
+              "staged probation leaves the trusted response baseline untouched");
+
+  auto score_only = healthy;
+  score_only.raw_score = 0.6F;
+  const auto searching = track(8, score_only);
+  expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
+                  searching.mode != TrackingMode::kSuspected,
+              "a raw-score drop alone cannot enter SUSPECTED");
+  expect_true(!track(9, healthy).accepted && track(10, healthy).accepted &&
+                  !controller.response_baseline_.evaluate(healthy).reference,
+              "recovery from short search also requires a fresh response baseline");
+  track(11, healthy);
+  track(12, healthy);
+  expect_true(!controller.response_baseline_.evaluate(healthy).reference,
+              "the recovery hit cannot count as an ordinary baseline sample");
+  track(13, healthy);
+  expect_true(controller.response_baseline_.evaluate(healthy).reference.has_value(),
+              "response gating resumes after a fresh ordinary minimum");
+}
+
+void test_recent_safe_rolling_scale() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_scale_rate_limit_per_s = 0.50F;
+  config.max_accepted_scale_step_ratio = 0.08F;
+  config.stable_frames_for_update = 99;
+  LongTermController controller(config);
+  controller.initialize({150, 60, 20, 20}, 0, 0, {180, 120});
+  float previous_width = 20.0F;
+  for (std::uint64_t id = 1; id <= 14; ++id) {
+    const auto plan = controller.begin_frame(id, id * 100, false);
+    const float width = 20.0F + static_cast<float>(id);
+    const BBox recent{180 - width, 60, width, width};
+    const auto out = controller.finish_frame(plan,
+        {reliable_observation(plan, TemplateKind::kRecent, recent),
+         rejected_observation(plan, TemplateKind::kSafe, plan.predicted_bbox)},
+        std::nullopt);
+    expect_true(out.accepted && out.selected_template == TemplateKind::kRecent &&
+                    out.tracking_bbox.width <= previous_width * 1.05F + 0.001F &&
+                    out.tracking_bbox.x + out.tracking_bbox.width <= 180.0F,
+                "trusted recent keeps tracking with weak safe under rolling rate and edge limits");
+    previous_width = out.tracking_bbox.width;
+  }
+  expect_true(previous_width > 20.0F * 1.33F,
+              "gradual scale grows beyond the permanent initialization envelope");
+  auto plan = controller.begin_frame(15, 1500, false);
+  const BBox collapsed{164, 74, 3, 3};
+  const auto out = controller.finish_frame(plan,
+      {reliable_observation(plan, TemplateKind::kRecent, collapsed)}, std::nullopt);
+  expect_true(!out.accepted && out.tracking_bbox.width >= previous_width * 0.75F,
+              "a high-response scale collapse does not become trusted");
+
+  MotionEstimator motion(config);
+  motion.initialize({150, 60, 20, 20}, 0, 180, 120);
+  motion.velocity_width_ = -10.0F;
+  const auto predicted = motion.predict(100);
+  const auto snapshot = motion.snapshot(100);
+  expect_near(predicted.width, 19.0F, 1e-6F, "prediction uses the prior scale rate");
+  expect_near(snapshot.scale_velocity_width, -9.5F, 1e-6F,
+              "scale velocity stays bounded by the newly projected width");
+}
+
+}  // namespace
+
 int main() {
+  test_recent_safe_tentative_tracking();
+  test_recent_safe_transient_and_probation();
+  test_recent_safe_rolling_scale();
   using namespace nanotrack;
   test_external_observation_and_control_contract();
   test_accepted_scale_deadband_smoothing_and_compatibility();

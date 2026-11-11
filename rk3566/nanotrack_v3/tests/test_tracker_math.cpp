@@ -93,6 +93,24 @@ int main() {
       },
       "dimension guard rejects inverted scale bounds");
 
+  BBox rolling{80.0F, 60.0F, 20.0F, 20.0F};
+  for (float size : {23.0F, 26.0F, 29.0F, 32.0F}) {
+    const BBox at_edge{100.0F - size, 80.0F - size, size, size};
+    rolling = constrain_bbox_dimensions(at_edge, rolling, 0.75F, 1.33F, 100, 80);
+    expect_near(rolling.x + rolling.width, 100.0F, 1e-6F,
+                "rolling scale retains right-edge contact");
+    expect_near(rolling.y + rolling.height, 80.0F, 1e-6F,
+                "rolling scale retains lower-edge contact");
+  }
+  expect_near(rolling.width, 32.0F, 1e-6F,
+              "rolling growth passes the original-size ceiling");
+  const auto anti_collapse = constrain_bbox_dimensions(
+      BBox{99, 79, 1, 1}, rolling, 0.75F, 1.33F, 100, 80);
+  expect_near(anti_collapse.width, 24.0F, 1e-6F,
+              "the collapse floor follows the last committed width");
+  expect_near(anti_collapse.x + anti_collapse.width, 100.0F, 1e-6F,
+              "the collapsed observation stays clipped to the frame");
+
   expect_near(percentile_ms({1, 2, 3, 4}, 0.5F), 2.5F, 1e-6F, "p50");
   expect_near(percentile_ms({1, 2, 3, 4}, 0.95F), 3.85F, 1e-5F, "p95");
   expect_throws([] { percentile_ms({}, 0.5F); }, "empty percentile must fail");

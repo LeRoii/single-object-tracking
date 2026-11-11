@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace nanotrack {
 namespace {
@@ -98,7 +99,8 @@ float bbox_iou(const BBox& first, const BBox& second) {
 }
 
 LongTermController::LongTermController(const ControllerConfig& config)
-    : config_(config), motion_(config), occlusion_evidence_(config) {
+    : config_(config), motion_(config), response_baseline_(config),
+      occlusion_evidence_(config) {
   validate_controller_config(config_);
 }
 
@@ -120,6 +122,12 @@ void LongTermController::initialize(const BBox& initial_bbox,
   reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   mode_ = TrackingMode::kTracking;
+  motion_before_prediction_.reset();
+  shadow_motion_.reset();
+  response_baseline_.reset_after_recovery();
+  clear_suspicion();
+  last_trusted_timestamp_ms_ = timestamp_ms;
+  legacy_anchor_observations_ = false;
   loss_start_ms_.reset();
   last_detector_request_ms_.reset();
   last_detector_request_frame_.reset();
@@ -155,7 +163,9 @@ void LongTermController::initialize(const BBox& initial_bbox,
 
 TrackingMode LongTermController::mode_for_timestamp(
     std::int64_t timestamp_ms) const {
-  if (!loss_start_ms_) return TrackingMode::kTracking;
+  if (!loss_start_ms_) {
+    return suspected_since_ms_ ? TrackingMode::kSuspected : TrackingMode::kTracking;
+  }
   const std::int64_t elapsed = timestamp_ms - *loss_start_ms_;
   if (elapsed < config_.uncertain_ms) return TrackingMode::kUncertain;
   if (elapsed < config_.local_recovery_ms) return TrackingMode::kLocalRecovery;
@@ -168,7 +178,8 @@ TrackingMode LongTermController::mode_for_timestamp(
 float LongTermController::search_scale_for(TrackingMode mode,
                                            std::int64_t timestamp_ms) const {
   switch (mode) {
-    case TrackingMode::kTracking: return config_.search_tracking;
+    case TrackingMode::kTracking:
+    case TrackingMode::kSuspected: return config_.search_tracking;
     case TrackingMode::kUncertain: return config_.search_uncertain;
     case TrackingMode::kLocalRecovery: {
       const std::int64_t elapsed = timestamp_ms - *loss_start_ms_;
@@ -198,10 +209,14 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
 
   const TrackingMode timestamp_mode = mode_for_timestamp(timestamp_ms);
   BBox motion_predicted;
+  MotionEstimator& predictor = shadow_motion_ ? *shadow_motion_ : motion_;
   try {
+    if (!legacy_anchor_observations_ && !loss_start_ms_ && !shadow_motion_) {
+      motion_before_prediction_.emplace(motion_);
+    }
     // MotionEstimator clips finite predictions while retaining the frozen size.
     // Internal prediction failures abort this frame; no output may authorize it.
-    motion_predicted = motion_.predict(timestamp_ms);
+    motion_predicted = predictor.predict(timestamp_ms);
     validate_bbox(motion_predicted, frame_size_.width, frame_size_.height);
   } catch (...) {
     hold_remaining_frames_ = 0;
@@ -214,7 +229,13 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     motion_.end_search();
     dual_template_reliable_streak_ = 0;
     template_bridge_start_ms_.reset();
-    mode_ = timestamp_mode;
+    if (motion_before_prediction_) {
+      motion_ = std::move(*motion_before_prediction_);
+      motion_before_prediction_.reset();
+    }
+    shadow_motion_.reset();
+    clear_suspicion();
+    mode_ = mode_for_timestamp(timestamp_ms);
     throw;
   }
   if (hold_remaining_frames_ > 0) {
@@ -296,20 +317,25 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.frame_id = frame_id;
   plan.timestamp_ms = timestamp_ms;
   plan.mode = mode_;
-  plan.tracking_phase = mode_ == TrackingMode::kTracking &&
-                                !motion_search_active_
-                            ? TrackingPhase::kTracking
-                            : TrackingPhase::kSearching;
+  if (mode_ == TrackingMode::kSuspected) {
+    plan.tracking_phase = TrackingPhase::kSuspected;
+    plan.template_run_mode = TemplateRunMode::kRecentAndSafe;
+  } else if (mode_ == TrackingMode::kTracking && !motion_search_active_) {
+    plan.tracking_phase = TrackingPhase::kTracking;
+    plan.template_run_mode = recent_probation_ ? TemplateRunMode::kStagedAndRecent
+                                               : TemplateRunMode::kRecentOnly;
+  } else {
+    plan.tracking_phase = TrackingPhase::kSearching;
+    plan.template_run_mode = TemplateRunMode::kRecentAndSafe;
+  }
   // A plan is created before tracker inference and therefore never claims a
   // current-frame visual observation or observation-derived control.
   plan.observation_valid = false;
-  plan.motion_control_authorized =
-      config_.motion_search_enabled && motion_search_active_ &&
-      motion_.prediction_confident(timestamp_ms);
+  plan.motion_control_authorized = search_control_live(timestamp_ms);
   plan.control_source = plan.motion_control_authorized
                             ? ControlSource::kMotionSearch
                             : ControlSource::kNone;
-  const MotionSnapshot motion_snapshot = motion_.snapshot(timestamp_ms);
+  const MotionSnapshot motion_snapshot = predictor.snapshot(timestamp_ms);
   plan.motion_search_age_ms = motion_snapshot.search_age_ms;
   plan.motion_prediction_confident =
       motion_snapshot.prediction_confident;
@@ -368,6 +394,12 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
 void LongTermController::abort_frame() noexcept {
   if (!frame_open_) return;
   frame_open_ = false;
+  if (motion_before_prediction_) {
+    motion_ = std::move(*motion_before_prediction_);
+    motion_before_prediction_.reset();
+  }
+  response_degraded_since_ms_.reset();
+  response_clean_since_ms_.reset();
   dual_template_reliable_streak_ = 0;
   template_bridge_start_ms_.reset();
   if (active_plan_.search_hint) {
@@ -415,6 +447,10 @@ void LongTermController::validate_output_semantics(
   if (output.tracking_phase == TrackingPhase::kInvalid) {
     throw std::logic_error("controller output has no tracking phase");
   }
+  if (output.trusted_for_state_update != output.accepted ||
+      (output.trusted_for_state_update && !output.observation_present)) {
+    throw std::logic_error("trusted output requires an accepted observation");
+  }
   if (output.observation_valid != output.accepted) {
     throw std::logic_error(
         "observation validity must match accepted tracker evidence");
@@ -430,15 +466,19 @@ void LongTermController::validate_output_semantics(
     throw std::logic_error(
         "TRACKING requires accepted observation-derived control");
   }
+  if (output.tracking_phase == TrackingPhase::kSuspected &&
+      (!output.observation_present || output.trusted_for_state_update)) {
+    throw std::logic_error("SUSPECTED requires a tentative observation");
+  }
   if (output.tracking_phase == TrackingPhase::kSearching &&
-      output.observation_valid) {
+      output.observation_present) {
     throw std::logic_error("SEARCHING cannot claim a valid observation");
   }
   if (output.control_source == ControlSource::kObservation &&
-      (output.tracking_phase != TrackingPhase::kTracking ||
-       !output.observation_valid)) {
-    throw std::logic_error(
-        "OBSERVATION control requires confirmed tracking");
+      (!output.observation_present ||
+       (output.tracking_phase != TrackingPhase::kTracking &&
+        output.tracking_phase != TrackingPhase::kSuspected))) {
+    throw std::logic_error("OBSERVATION control requires a current observation");
   }
   if (output.control_source == ControlSource::kMotionSearch &&
       (output.tracking_phase != TrackingPhase::kSearching ||
@@ -452,7 +492,13 @@ void LongTermController::finalize_output_semantics(ControllerOutput& output) {
   if (output.accepted) {
     output.tracking_phase = TrackingPhase::kTracking;
     output.observation_valid = true;
+    output.observation_present = true;
+    output.trusted_for_state_update = true;
     output.control_source = ControlSource::kObservation;
+  } else if (output.observation_present) {
+    output.tracking_phase = TrackingPhase::kSuspected;
+    output.control_source = output.control_valid ? ControlSource::kObservation
+                                                 : ControlSource::kNone;
   } else {
     output.tracking_phase = TrackingPhase::kSearching;
     output.observation_valid = false;
@@ -507,6 +553,151 @@ LongTermController::EvaluatedObservation LongTermController::evaluate(
     result.quality = QualityLevel::kRejected;
   }
   return result;
+}
+
+void LongTermController::clear_suspicion() noexcept {
+  response_degraded_since_ms_.reset();
+  suspected_since_ms_.reset();
+  response_clean_since_ms_.reset();
+}
+
+void LongTermController::promote_shadow_prediction() noexcept {
+  if (shadow_motion_) {
+    motion_ = std::move(*shadow_motion_);
+    shadow_motion_.reset();
+  }
+}
+
+float LongTermController::trusted_elapsed_seconds(std::int64_t timestamp_ms) const {
+  return static_cast<float>(
+      std::min(timestamp_ms - last_trusted_timestamp_ms_, config_.motion_max_dt_ms)) /
+      1000.0F;
+}
+
+bool LongTermController::trusted_control_live(std::int64_t timestamp_ms) const {
+  return timestamp_ms - last_trusted_timestamp_ms_ <= config_.motion_search_confidence_ms;
+}
+
+bool LongTermController::search_control_live(std::int64_t timestamp_ms) const {
+  return config_.motion_search_enabled && motion_search_active_ &&
+         motion_.prediction_confident(timestamp_ms) &&
+         (legacy_anchor_observations_ || trusted_control_live(timestamp_ms));
+}
+
+LongTermController::RecentDisposition LongTermController::assess_recent(
+    const SearchPlan& plan, const EvaluatedObservation& recent) {
+  const auto& observation = recent.observation;
+  const auto bounded =
+      constrain_tracker_observation_dimensions(observation.bbox, current_bbox_, frame_size_);
+  if (recent.quality == QualityLevel::kRejected ||
+      observation.bbox.width < bounded.width ||
+      observation.bbox.height < bounded.height) {
+    return RecentDisposition::kSearch;
+  }
+
+  const auto& metrics = observation.metrics;
+  const auto response = response_baseline_.evaluate(metrics);
+  const int drops = static_cast<int>(response.psr_drop) +
+                    static_cast<int>(response.apce_drop) +
+                    static_cast<int>(response.peak_margin_drop);
+  const bool motion_inconsistent =
+      recent.center_residual >= config_.occlusion_motion_residual_threshold;
+  const bool response_weak = metrics.psr < config_.reliable_psr ||
+                             metrics.apce < config_.reliable_apce ||
+                             metrics.peak_margin < config_.reliable_peak_margin;
+  const bool degraded = drops >= 2 ||
+                        (motion_inconsistent && (drops > 0 || response_weak));
+  if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
+    response_clean_since_ms_.reset();
+    if (!response_degraded_since_ms_) response_degraded_since_ms_ = plan.timestamp_ms;
+    if (!suspected_since_ms_ &&
+        plan.timestamp_ms - *response_degraded_since_ms_ >= config_.suspicion_enter_ms) {
+      suspected_since_ms_ = plan.timestamp_ms;
+    }
+    // Reuse the uncertainty budget after entering SUSPECTED. An intervening
+    // clean sample restarts the duration of continuous degradation.
+    if (suspected_since_ms_ &&
+        plan.timestamp_ms - std::max(*suspected_since_ms_, *response_degraded_since_ms_) >=
+            config_.uncertain_ms) {
+      return RecentDisposition::kSearch;
+    }
+    return RecentDisposition::kTentative;
+  }
+
+  response_degraded_since_ms_.reset();
+  if (recent.quality != QualityLevel::kReliable) return RecentDisposition::kSearch;
+  if (!suspected_since_ms_) return RecentDisposition::kDirect;
+  if (!response_clean_since_ms_) response_clean_since_ms_ = plan.timestamp_ms;
+  if (plan.timestamp_ms - *response_clean_since_ms_ < config_.suspicion_clear_ms) {
+    return RecentDisposition::kTentative;
+  }
+  return RecentDisposition::kDirect;
+}
+
+BBox LongTermController::bound_recent_scale(const BBox& bbox,
+                                           std::int64_t timestamp_ms) const {
+  const float dt = trusted_elapsed_seconds(timestamp_ms);
+  const float step = std::min(config_.max_accepted_scale_step_ratio,
+                              config_.motion_scale_rate_limit_per_s * dt);
+  const BBox bounded = constrain_tracker_observation_dimensions(
+      bbox, current_bbox_, frame_size_);
+  return constrain_bbox_dimensions(
+      bounded, current_bbox_, std::max(0.5F, 1.0F - step), 1.0F + step,
+      frame_size_.width, frame_size_.height);
+}
+
+void LongTermController::publish_tentative(
+    const SearchPlan& plan, const EvaluatedObservation& recent,
+    ControllerOutput& output) {
+  if (!shadow_motion_) {
+    auto& trusted_motion = motion_before_prediction_.value();
+    shadow_motion_.emplace(std::move(motion_));
+    motion_ = std::move(trusted_motion);
+  }
+  motion_before_prediction_.reset();
+  response_baseline_.freeze();
+
+  const auto& bbox = recent.observation.bbox;
+  output.selected_template = TemplateKind::kRecent;
+  output.selected_observation_bbox = bbox;
+  output.selected_metrics = recent.observation.metrics;
+  output.quality = recent.quality;
+  output.normalized_center_residual = recent.center_residual;
+  output.area_log_change = recent.area_log_change;
+  output.aspect_log_change = recent.aspect_log_change;
+  output.tracking_bbox = bbox;
+  const BBox scaled = bound_recent_scale(bbox, plan.timestamp_ms);
+  output.display_bbox = stabilize_accepted_center(plan, bbox, scaled, false, output);
+  output.bbox = output.display_bbox;
+
+  const float previous_x = current_bbox_.x + 0.5F * current_bbox_.width;
+  const float previous_y = current_bbox_.y + 0.5F * current_bbox_.height;
+  float delta_x = bbox.x + 0.5F * bbox.width - previous_x;
+  float delta_y = bbox.y + 0.5F * bbox.height - previous_y;
+  const float dt = trusted_elapsed_seconds(plan.timestamp_ms);
+  const float diagonal = std::hypot(static_cast<float>(frame_size_.width),
+                                    static_cast<float>(frame_size_.height));
+  float limit = config_.motion_max_speed_diagonals_per_s * diagonal * dt;
+  if (config_.accepted_center_max_correction_ratio > 0.0F) {
+    limit = std::min(limit, config_.accepted_center_max_correction_ratio *
+                                std::sqrt(scaled.width * scaled.height));
+  }
+  const float distance = std::hypot(delta_x, delta_y);
+  if (distance > limit) {
+    delta_x *= limit / distance;
+    delta_y *= limit / distance;
+  }
+  output.control_bbox = centered_box(previous_x + delta_x, previous_y + delta_y,
+                                     scaled, frame_size_);
+  output.observation_present = true;
+  output.control_valid = trusted_control_live(plan.timestamp_ms);
+  mode_ = mode_for_timestamp(plan.timestamp_ms);
+  output.mode = mode_;
+  if (recent_probation_) {
+    output.template_action = TemplateAction::kRollbackRecent;
+    recent_probation_ = false;
+    probation_reliable_frames_ = 0;
+  }
 }
 
 bool LongTermController::add_confirmation(std::uint64_t frame_id,
@@ -826,6 +1017,12 @@ void LongTermController::accept_observation(
   } else {
     scaled_bbox = stabilize_accepted_bbox(
         selected.observation.bbox, next_width, next_height);
+    if (!legacy_anchor_observations_ &&
+        selected.observation.template_kind == TemplateKind::kRecent) {
+      scaled_bbox = bound_recent_scale(scaled_bbox, plan.timestamp_ms);
+      next_width.emitted = scaled_bbox.width;
+      next_height.emitted = scaled_bbox.height;
+    }
   }
   output.tracking_bbox = scaled_bbox;
   output.display_bbox = stabilize_accepted_center(
@@ -843,7 +1040,8 @@ void LongTermController::accept_observation(
   occlusion_coast_age_frames_ = 0;
   coast_probe_candidate_.reset();
   frozen_scale_reference_.reset();
-  if (reacquired) {
+  if (loss_start_ms_) response_baseline_.reset_after_recovery();
+  if (reacquired || (!legacy_anchor_observations_ && loss_start_ms_)) {
     motion_.initialize(output.tracking_bbox, plan.timestamp_ms,
                        frame_size_.width, frame_size_.height);
     occlusion_evidence_.reset();
@@ -859,6 +1057,7 @@ void LongTermController::accept_observation(
   width_scale_state_ = std::move(next_width);
   height_scale_state_ = std::move(next_height);
   current_bbox_ = output.tracking_bbox;
+  last_trusted_timestamp_ms_ = plan.timestamp_ms;
   display_bbox_ = output.display_bbox;
   loss_start_ms_.reset();
   confirmations_.clear();
@@ -875,6 +1074,7 @@ void LongTermController::accept_observation(
   if (acceptance_path == AcceptedObservationPath::kSearchReacquisition) {
     output.template_action = TemplateAction::kStageRecent;
     recent_probation_ = true;
+    response_baseline_.freeze();
     probation_reliable_frames_ = 0;
     stable_frames_ = 0;
     last_recent_update_ms_ = plan.timestamp_ms;
@@ -1128,6 +1328,8 @@ ControllerOutput LongTermController::finish_frame(
 
   std::optional<EvaluatedObservation> anchor;
   std::optional<EvaluatedObservation> recent;
+  std::optional<EvaluatedObservation> safe;
+  std::optional<EvaluatedObservation> staged;
   std::optional<std::uint64_t> token;
   for (const TrackerObservation& observation : observations) {
     // Skipped coast frames retain their existing observation-isolation contract.
@@ -1137,18 +1339,50 @@ ControllerOutput LongTermController::finish_frame(
     }
     token = observation.search_token;
     EvaluatedObservation evaluated = evaluate(observation, plan);
-    if (observation.template_kind == TemplateKind::kAnchor) {
-      if (anchor) throw std::invalid_argument("duplicate anchor observation");
-      anchor = evaluated;
-    } else {
-      if (recent) throw std::invalid_argument("duplicate recent observation");
-      recent = evaluated;
+    const auto record = [&](std::optional<EvaluatedObservation>& slot) {
+      if (slot) throw std::invalid_argument("duplicate template observation");
+      slot = evaluated;
+    };
+    switch (observation.template_kind) {
+      case TemplateKind::kAnchor: record(anchor); break;
+      case TemplateKind::kRecent: record(recent); break;
+      case TemplateKind::kSafe: record(safe); break;
+      case TemplateKind::kStaged: record(staged); break;
     }
   }
 
+  if (anchor) {
+    legacy_anchor_observations_ = true;
+    promote_shadow_prediction();
+    clear_suspicion();
+  }
+  const bool ordinary_recent =
+      !legacy_anchor_observations_ && !loss_start_ms_ &&
+      (plan.mode == TrackingMode::kTracking || plan.mode == TrackingMode::kSuspected);
   std::optional<EvaluatedObservation> selected;
   bool force_confirmation = false;
-  if (anchor && recent) {
+  if (ordinary_recent) {
+    selected = recent;
+    const auto& other = staged ? staged : safe;
+    if (recent && other) {
+      output.template_iou = bbox_iou(recent->observation.bbox, other->observation.bbox);
+    }
+    const RecentDisposition disposition =
+        recent ? assess_recent(plan, *recent) : RecentDisposition::kSearch;
+    if (disposition == RecentDisposition::kTentative) {
+      publish_tentative(plan, *recent, output);
+      finalize_output_semantics(output);
+      last_frame_id_ = plan.frame_id;
+      last_timestamp_ms_ = plan.timestamp_ms;
+      frame_open_ = false;
+      return output;
+    }
+    if (disposition == RecentDisposition::kSearch && selected) {
+      selected->quality = QualityLevel::kRejected;
+    }
+    promote_shadow_prediction();
+    clear_suspicion();
+  } else if (anchor && recent) {
     output.template_iou = bbox_iou(anchor->observation.bbox, recent->observation.bbox);
     if (anchor->quality == QualityLevel::kReliable &&
         recent->quality == QualityLevel::kReliable) {
@@ -1296,7 +1530,7 @@ ControllerOutput LongTermController::finish_frame(
       anchor->quality != QualityLevel::kReliable && !anchor->score_gate &&
       anchor->center_gate && anchor->area_gate && anchor->aspect_gate &&
       output.template_iou >= config_.template_agreement_iou;
-  if (selected && !hold_used_for_loss_) {
+  if (!ordinary_recent && selected && !hold_used_for_loss_) {
     // Only normal, accepted tracking observations may enter stable history.
     // Confirmation and all motion/template effects happen after evidence.
     const bool directly_accepted =
@@ -1310,7 +1544,7 @@ ControllerOutput LongTermController::finish_frame(
         detector_verification_active});
     occlusion_suspicion_frames_ = occlusion_decision_.suspicion_active
         ? occlusion_suspicion_frames_ + 1 : 0;
-  } else if (!selected) {
+  } else if (!selected || ordinary_recent) {
     occlusion_decision_ = occlusion_evidence_.observe_gap();
   }
   publish_occlusion_evidence(output);
@@ -1386,8 +1620,10 @@ ControllerOutput LongTermController::finish_frame(
     const bool recent_allows_search_hit =
         !recent || recent->quality != QualityLevel::kReliable ||
         output.template_iou >= config_.template_agreement_iou;
-    if (candidate_search_path &&
-        plan.hypothesis_source != HypothesisSource::kDetector) {
+    if (ordinary_recent) {
+      accepted = selected->quality == QualityLevel::kReliable;
+    } else if (candidate_search_path &&
+               plan.hypothesis_source != HypothesisSource::kDetector) {
       if (!config_.search_reacquisition_requires_detector && anchor &&
           anchor->quality == QualityLevel::kReliable &&
           recent_allows_search_hit && !occlusion_decision_.triggered &&
@@ -1531,7 +1767,12 @@ ControllerOutput LongTermController::finish_frame(
 
   if (accepted) {
     accept_observation(plan, *selected, acceptance_path, output);
+    if (ordinary_recent && !recent_probation_) {
+      response_baseline_.resume_tracking();
+      response_baseline_.observe_trusted(selected->observation.metrics);
+    }
   } else {
+    response_baseline_.freeze();
     motion_.freeze_scale(current_bbox_.width, current_bbox_.height);
     output.tracking_bbox = motion_.current_bbox();
     output.display_bbox = output.tracking_bbox;
@@ -1566,9 +1807,7 @@ ControllerOutput LongTermController::finish_frame(
       output.motion_scale_velocity_width = snapshot.scale_velocity_width;
       output.motion_scale_velocity_height = snapshot.scale_velocity_height;
     }
-    output.motion_control_authorized =
-        config_.motion_search_enabled && motion_search_active_ &&
-        motion_.prediction_confident(plan.timestamp_ms);
+    output.motion_control_authorized = search_control_live(plan.timestamp_ms);
     output.control_valid = output.motion_control_authorized;
     output.accepted = false;
     stable_frames_ = 0;
@@ -1584,8 +1823,10 @@ ControllerOutput LongTermController::finish_frame(
     // The commit frame stages the confirmed target. Probation evidence starts
     // on subsequent ordinary tracking frames, never on the reacquisition hit.
   } else if (recent_probation_) {
+    const auto& probation_template = legacy_anchor_observations_ ? anchor : staged;
     const bool templates_confirm_staged_recent =
-        anchor && recent && anchor->quality == QualityLevel::kReliable &&
+        probation_template && recent &&
+        probation_template->quality == QualityLevel::kReliable &&
         recent->quality == QualityLevel::kReliable &&
         output.template_iou >= config_.template_agreement_iou;
     if (accepted && templates_confirm_staged_recent &&
@@ -1611,6 +1852,7 @@ ControllerOutput LongTermController::finish_frame(
                  config_.recent_update_interval_ms) {
     output.template_action = TemplateAction::kStageRecent;
     recent_probation_ = true;
+    response_baseline_.freeze();
     probation_reliable_frames_ = 0;
     stable_frames_ = 0;
   }
@@ -1637,6 +1879,7 @@ ControllerOutput LongTermController::finish_frame(
   }
 
   output.detector_candidates_queued = detector_candidates_.size();
+  motion_before_prediction_.reset();
   last_frame_id_ = plan.frame_id;
   last_timestamp_ms_ = plan.timestamp_ms;
   frame_open_ = false;
