@@ -1807,15 +1807,18 @@ void test_search_detector_shadow_hint_isolation() {
               "timestamp interval suppresses an early repeat while probing the hint");
   const BBox committed_before_hint = controller.current_bbox();
   const BBox motion_before_hint = plan.motion_predicted_bbox;
+  auto first_hit_observations = reliable_pair(plan, plan.predicted_bbox, 4);
+  first_hit_observations[1].metrics.raw_score = 0.70F;
+  first_hit_observations[1].metrics.penalized_peak = 0.70F;
   output = controller.finish_frame(
-      plan, reliable_pair(plan, plan.predicted_bbox, 4), std::nullopt);
+      plan, first_hit_observations, std::nullopt);
   expect_true(!output.accepted && output.search_hint &&
                   output.search_hint->confirmation_count == 1 &&
                   output.control_valid &&
                   output.control_source == ControlSource::kMotionSearch &&
                   output.control_bbox.x == motion_before_hint.x &&
                   controller.current_bbox().x == committed_before_hint.x,
-              "first detector/anchor hit creates a shadow hint without control or state commit");
+              "reliable anchor seeds a shadow hint while a weak agreeing recent cannot authorize or veto");
 
   plan = controller.begin_frame(5, 180, false);
   expect_true(plan.search_hint && plan.search_hint->used &&

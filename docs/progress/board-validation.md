@@ -1,5 +1,25 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T13:11:43+08:00 C003 verifier PASS 与 C004 recent-veto-only 修正
+
+- C003 在 RK3588 `/home/neardi/Project/SOT/occ-candidate-2389df0` 原生 Debug 构建、
+  `-Werror=switch` 和 CTest `19/19` 通过；二进制 SHA-256
+  `b2cad65b27fc18171ce36fadf8bdb63d4a970f16205ed934e3a4f17a01fc46da`。严格 0--189
+  运行后，board verifier 首次 PASS，verify log SHA-256
+  `f6564fb4dcfed79e3726f98d87cb3fb20a5bdbfa551023f269537cc304c585bd`。
+- evaluator 仍与 C002 同一 FAIL：无重捕且 visible/identity gate 失败。逐字段证据显示窄走廊已把
+  两批 position-valid/queued 数量从 3 降为 1；frame 187 唯一候选 center ratio `0.016328`，
+  anchor 可靠，recent score `0.748582` 只达 weak，但两模板 IoU `0.911284`。当前实现错误要求
+  recent 也必须 reliable，导致合法 anchor 无法建立 shadow first hit。
+- C004 按既定证据政策修正为“anchor 唯一授权、recent 只否决”：可靠 anchor 必需；recent
+  不存在或 weak 时不能授权也不能否决，只有 recent 自身 reliable 且与 anchor 几何冲突才 veto。
+  detector identity/class/ambiguity、400 ms 最小搜索龄、0.02 corridor、两击一致性和第一击零提交
+  均保持。
+- 合成 detector 测试把第一击 recent 降为 weak 且保持高 IoU，确认仍只生成 shadow hint；第二击
+  才原子提交。主机 CTest `19/19`、鲁棒性检查器单测 `4/4`、Python 语法检查和
+  `git diff --check` 均通过。C003/C004 结果已只追加到 calibration ledger。
+- C004 尚未提交、部署或运行；没有 holdout 证据，nominal 即使通过也尚未满足鲁棒性矩阵。
+
 ## 2026-11-11T13:07:57+08:00 C002 安全搜索结果与 C003 成熟窄走廊候选
 
 - C002 在 RK3588 继续严格 `--max-frames 189`；二进制/config SHA-256 分别为

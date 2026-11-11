@@ -1354,8 +1354,8 @@ ControllerOutput LongTermController::finish_frame(
     output.area_log_change = selected->area_log_change;
     output.aspect_log_change = selected->aspect_log_change;
     const bool recent_allows_search_hit =
-        !recent || (recent->quality == QualityLevel::kReliable &&
-                    output.template_iou >= config_.template_agreement_iou);
+        !recent || recent->quality != QualityLevel::kReliable ||
+        output.template_iou >= config_.template_agreement_iou;
     if (candidate_search_path &&
         plan.hypothesis_source != HypothesisSource::kDetector) {
       if (!config_.search_reacquisition_requires_detector && anchor &&
@@ -1416,9 +1416,9 @@ ControllerOutput LongTermController::finish_frame(
     ActiveDetectorCandidate& active = *active_detector_candidate_;
     const bool was_locked = active.locked;
     const bool templates_agree =
-        anchor && recent && anchor->quality == QualityLevel::kReliable &&
-        recent->quality == QualityLevel::kReliable &&
-        output.template_iou >= config_.template_agreement_iou;
+        anchor && anchor->quality == QualityLevel::kReliable &&
+        (!recent || recent->quality != QualityLevel::kReliable ||
+         output.template_iou >= config_.template_agreement_iou);
     if (!active.locked) {
       if (!plan.detector_same_class_ambiguous && selected && templates_agree &&
           selected->quality == QualityLevel::kReliable &&

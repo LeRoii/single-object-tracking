@@ -175,3 +175,44 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   `-10%/nominal/+10%`; nominal success alone cannot freeze C003.
 - Planned command: same development-only command with `runs/C003-development`;
   exact source/executable/report hashes and decision `PENDING`.
+
+## C003 result — unique candidate reached but weak recent blocked anchor
+
+- Timestamp: `2026-11-11T13:11:43+08:00`
+- Source commit: `2389df0`
+- Board/evidence root: `/home/neardi/Project/SOT/occ-candidate-2389df0` and
+  `runs/C003-development`
+- Executable/config SHA-256:
+  `b2cad65b27fc18171ce36fadf8bdb63d4a970f16205ed934e3a4f17a01fc46da`,
+  `89fbc1d23b2be17c8d6938f5f53383ec4b26a59383f4343dce80603335715706`
+- Board verifier: `PASS`; verify log SHA-256
+  `f6564fb4dcfed79e3726f98d87cb3fb20a5bdbfa551023f269537cc304c585bd`.
+- Run artifact SHA-256: bboxes
+  `e52eb75dd0ad183e07c56ed32bb2262de6a921c63235f106b8f29e7b3b60346c`, video
+  `d8500471aa3e8e6f508683cd5ed8fa2965fd0d26b4f245ba5e5b6031260e7e75`, log
+  `9808633dec0b480a2239c9bdfa1f3f5bd8e09ba50709da9604daffb14b124653`.
+- Evaluator result: identical FAIL metrics to C002; JSON/Markdown SHA-256
+  `f6585be2c7faf8b21000f0a99220771773020b08752abba0dcc41d236d8760cc`,
+  `dd6a92985d209fab27f9d7540b2e635c5a30ed08d1e5372614c9741677330ce5`.
+- Diagnostic boundary: the narrowed gate reduced each detector batch to one queued
+  candidate. At frame 187 the candidate was unique (`center_ratio=0.016328`), anchor
+  was reliable, recent was weak but geometrically agreeing (`template_iou=0.911284`).
+  The controller nevertheless required recent to be reliable, so it discarded the
+  detector candidate before a shadow first hit.
+- Decision: `REJECT`; corridor/minimum-age behavior is retained for C004.
+
+## C004 — anchor-authorized, recent-veto-only detector verification
+
+- Timestamp: `2026-11-11T13:11:43+08:00`
+- Parent: `C003`
+- Rationale: match the approved evidence policy: only a reliable anchor can authorize;
+  recent never authorizes, and vetoes only when it is itself reliable and conflicts.
+  A weak recent cannot turn a reliable anchor into acceptance, but also cannot suppress
+  an otherwise legal detector-seeded first hit.
+- Candidate config and SHA-256: unchanged from C003,
+  `89fbc1d23b2be17c8d6938f5f53383ec4b26a59383f4343dce80603335715706`.
+- Code change: unify tracker/detector search agreement as reliable anchor plus
+  no reliable-recent conflict. Two-hit geometry, detector identity, class ambiguity,
+  minimum age, corridor, generation/stale isolation, and shadow-only first hit remain.
+- Planned run: `runs/C004-development`; exact source/executable/report hashes and
+  decision `PENDING`.
