@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "candidate_id": "C009",
+  "frozen_at": "2026-11-11T14:44:38+08:00",
+  "branch": "codex/occ-video-1-tracking",
+  "runtime_source_commit": "05cf4d92debd6799be2b59102b6546078f30a8e8",
+  "board_root": "/home/neardi/Project/SOT/occ-candidate-05cf4d9",
+  "development_scope": [0, 189],
+  "identities": {
+    "source_archive_sha256": "add60e422318a2c35920d046495a04f7bdba2f1b7fdd78514aee5ee31ca6f0c0",
+    "executable_sha256": "3792ecde2f4b915d38496fa4fdbba6ecbe6854aae50897e9fb5e577d1d2a43a3",
+    "config_sha256": "87b4b818e740a5a4137e4ab7339a26b5d70e93e5c7852e468dd26c8a73e06791",
+    "evaluator_sha256": "288350bd904d4f0e01c76dc74dec101fbb2588fde26c218bc1536c347f1eb160",
+    "tracker_manifest_sha256": "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261",
+    "template_model_sha256": "eaf7f80f64393cd21f26fb5c51dc12fa8fc538b71dfc9f854af0c0718f123af6",
+    "search_model_sha256": "d3cb0e38f80cdcd2668339b5654a7ce9865855239d73067cffb7284e6f1de180",
+    "head_model_sha256": "4da379f5f023b1df79e2fdd418582b57d057c96edb67f18f31f1bb60314ed82f",
+    "detector_model_sha256": "8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c",
+    "detector_manifest_sha256": "ac2b536c566a2c2c7bc4d1b66cacd63743ddf87cd63101464605b0631116d833",
+    "detector_labels_sha256": "41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992",
+    "video_sha256": "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d"
+  },
+  "development_evidence": {
+    "nominal_root": "/home/neardi/Project/SOT/occ-candidate-05cf4d9/runs/C009-development",
+    "nominal_bboxes_sha256": "4d78dacdbd984f088aec6dff9139fa8e56de4a6e5687b1e3335273c191317098",
+    "nominal_video_sha256": "0a5d887e20c3f5b556fc564c17abe90bd8a0a5073b0a795cdb490c34c19c34e3",
+    "nominal_metadata_sha256": "58e69429d7ba56964c3b176d45641ceae9d6ebeb9d829e9b820165036db93f01",
+    "nominal_evaluator_json_sha256": "8ea2ac37ba2238156f7cbd73f2dc1a4f1b5cb43f16c0d6634ad623d87d3bc504",
+    "nominal_verify_log_sha256": "f6564fb4dcfed79e3726f98d87cb3fb20a5bdbfa551023f269537cc304c585bd",
+    "nominal_reacquisition_frame": 185,
+    "nominal_all_visible_mean_iou": 0.750790610066073,
+    "robustness_root": "/home/neardi/Project/SOT/occ-candidate-05cf4d9/runs/C009-robustness",
+    "candidate_manifest_sha256": "4b1f82125a1ad7d21343adebdf82b62377dc58a71142581f4e1a8a0811d2b601",
+    "robustness_json_sha256": "31228fa6aa43c4db522c0e85ff8ee843478d783170f0fc647efa5342333cc01c",
+    "robustness_markdown_sha256": "c4a6be600401b0451a598154d275bb4e932e3b45c7c9021b66397001312bf697",
+    "matrix_results_sha256": "7be11504eb6c345b82f3de02c2f05d3525caec0c2bedf4b08d5090fe37ded4a3",
+    "report_count": 33,
+    "latest_reacquisition_frame": 187,
+    "maximum_visible_mean_iou_drop": 0.016618
+  },
+  "safety": {
+    "confirmation_required": 2,
+    "detector_direct_control": false,
+    "generation_stale_isolation": true,
+    "fail_closed_faults": true,
+    "full_occlusion_motion_control": true
+  },
+  "holdout_status": "NOT_RUN",
+  "holdout_boundary_note": "No post-189 video frame, bbox label, runtime output, or evaluator result has been read. A diagnostic command previously exposed annotation_status.csv status text for frames 190-193; this partial metadata exposure is declared and cannot be undone.",
+  "future_full_run_command": "cd /home/neardi/Project/SOT/occ-candidate-05cf4d9 && ./build/nanotrack_v3 --video /home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/data/occ_video_1/1.mp4 --bbox 992,582,37,39 --model-dir /home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/models --sensor visible --controller-config config/visible-occlusion-calibrated.conf --max-frames 270 --detector-model /home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn --detector-manifest /home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/detector-manifest.json --detector-labels /home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/visdrone9.txt --detector-class-id 2 --detector-conf .25 --detector-nms .45 --output-video runs/C009-full-run1/output.avi --output-boxes runs/C009-full-run1/bboxes.csv --session-metadata runs/C009-full-run1/session-metadata.json"
+}

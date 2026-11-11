@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -71,9 +72,21 @@ def complete_manifest(root):
     for variant in ("center_x_minus2", "center_x_plus2", "center_y_minus2",
                     "center_y_plus2", "scale_minus5", "scale_plus5"):
         add("init-" + variant, "initialization", variant)
+    fault_evidence = []
     for variant in ("variable_timestamps", "detector_delay", "detector_drop",
                     "generation_gap"):
-        add("fault-" + variant, "fault", variant)
+        path = root / ("fault-" + variant + ".json")
+        path.write_text(json.dumps({
+            "schema_version": 1,
+            "variant": variant,
+            "passed": True,
+            "evidence": "synthetic state matrix",
+        }), encoding="utf-8")
+        fault_evidence.append({
+            "variant": variant,
+            "path": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        })
     return {
         "schema_version": 1,
         "candidate": {
@@ -92,6 +105,7 @@ def complete_manifest(root):
         "fault_variants": [
             "variable_timestamps", "detector_delay", "detector_drop", "generation_gap"
         ],
+        "fault_evidence": fault_evidence,
         "safety_audit": {
             "confirmation_required": 2,
             "detector_direct_control": False,
@@ -129,6 +143,27 @@ class RobustnessManifestTest(unittest.TestCase):
             manifest = complete_manifest(directory)
             manifest["reports"] = manifest["reports"][:1]
             with self.assertRaisesRegex(ValueError, "missing"):
+                self.check(manifest)
+
+    def test_fault_evidence_requires_complete_hashed_passing_variants(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = complete_manifest(directory)
+            manifest["fault_evidence"].pop()
+            with self.assertRaisesRegex(ValueError, "missing fault"):
+                self.check(manifest)
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = complete_manifest(directory)
+            manifest["fault_evidence"][0]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                self.check(manifest)
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = complete_manifest(directory)
+            item = manifest["fault_evidence"][0]
+            payload = json.loads(Path(item["path"]).read_text())
+            payload["passed"] = False
+            Path(item["path"]).write_text(json.dumps(payload))
+            item["sha256"] = hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest()
+            with self.assertRaisesRegex(ValueError, "not passing"):
                 self.check(manifest)
 
     def test_scope_holdout_duplicate_and_identity_mismatches_are_rejected(self):

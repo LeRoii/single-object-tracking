@@ -428,3 +428,27 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   rerun any report whose provenance or output is incomplete, run probation `2/3/4`,
   all initialization variants, fault-state CTests, and the robustness aggregator before
   freeze. Decision `PENDING`.
+
+## C009 result — development plateau PASS and freeze
+
+- Timestamp: `2026-11-11T14:44:38+08:00`
+- Runtime source commit: `05cf4d92debd6799be2b59102b6546078f30a8e8`
+- Board root: `/home/neardi/Project/SOT/occ-candidate-05cf4d9`
+- Source archive/config/executable SHA-256:
+  `add60e422318a2c35920d046495a04f7bdba2f1b7fdd78514aee5ee31ca6f0c0`,
+  `87b4b818e740a5a4137e4ab7339a26b5d70e93e5c7852e468dd26c8a73e06791`,
+  `3792ecde2f4b915d38496fa4fdbba6ecbe6854aae50897e9fb5e577d1d2a43a3`.
+- Board native Debug, `-Werror=switch`, CTest `19/19`, retained nominal verifier PASS,
+  1920x1080/190-frame video, and development evaluator PASS. Retained nominal reacquired
+  at frame 185 with all-visible mean IoU `0.750791`.
+- Robustness: `33/33` real board reports PASS; reacquisition range `184--187`; maximum
+  all-visible mean IoU drop `0.016618 <= 0.03`. Center `+/-2 px`, center-preserving
+  width/height `+/-5%`, every listed real `+/-10%`, and valid counts `-1/+1` passed.
+- Hashed focused fault evidence for variable timestamps, detector delay/drop, and
+  generation gaps passed. Robustness JSON/Markdown SHA-256:
+  `31228fa6aa43c4db522c0e85ff8ee843478d783170f0fc647efa5342333cc01c`,
+  `c4a6be600401b0451a598154d275bb4e932e3b45c7c9021b66397001312bf697`.
+- Decision: `FREEZE` for the one-time full/holdout run. Exact identities, evidence,
+  partial status-metadata exposure, and future command are committed in
+  `frozen-candidate.json`. Runtime/config changes after this point invalidate C009's
+  blind-run status.

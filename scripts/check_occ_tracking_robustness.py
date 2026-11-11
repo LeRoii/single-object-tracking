@@ -2,6 +2,7 @@
 """Validate a development-only occ tracking robustness plateau manifest."""
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -60,8 +61,7 @@ def _require_coverage(manifest, records):
         for required in ("-1", "+1"):
             if required not in observed:
                 raise ValueError("missing {} neighbor {}".format(parameter, required))
-    for category, key in (("initialization", "initialization_variants"),
-                          ("fault", "fault_variants")):
+    for category, key in (("initialization", "initialization_variants"),):
         required = set(_nonempty_names(manifest.get(key), key))
         observed = {item["variant"] for item in records if item["category"] == category}
         missing = sorted(required - observed)
@@ -71,6 +71,52 @@ def _require_coverage(manifest, records):
         if unexpected:
             raise ValueError("unexpected {} variants: {}".format(category, ", ".join(unexpected)))
     return nominal[0]
+
+
+def _validate_fault_evidence(manifest, base):
+    required = set(_nonempty_names(manifest.get("fault_variants"), "fault_variants"))
+    records = manifest.get("fault_evidence")
+    if not isinstance(records, list) or not records:
+        raise ValueError("fault_evidence must be a nonempty list")
+    variants = [item.get("variant") for item in records if isinstance(item, dict)]
+    if len(variants) != len(records) or len(set(variants)) != len(variants):
+        raise ValueError("fault evidence variants must be unique")
+    missing = sorted(required - set(variants))
+    if missing:
+        raise ValueError("missing fault evidence: {}".format(", ".join(missing)))
+    unexpected = sorted(set(variants) - required)
+    if unexpected:
+        raise ValueError("unexpected fault evidence: {}".format(", ".join(unexpected)))
+    paths = [item.get("path") for item in records]
+    if any(not isinstance(path, str) or not path for path in paths) or len(set(paths)) != len(paths):
+        raise ValueError("fault evidence paths must be unique nonempty strings")
+    validated = []
+    for item in records:
+        expected_hash = item.get("sha256")
+        if not isinstance(expected_hash, str) or len(expected_hash) != 64:
+            raise ValueError("fault evidence SHA-256 is invalid")
+        path = Path(item["path"])
+        if not path.is_absolute():
+            path = base / path
+        try:
+            actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as error:
+            raise ValueError("invalid fault evidence {}: {}".format(path, error)) from error
+        if actual_hash != expected_hash:
+            raise ValueError("fault evidence SHA-256 mismatch for {}".format(item["variant"]))
+        payload = _load_json(path, "fault evidence")
+        if payload.get("schema_version") != 1 or payload.get("variant") != item["variant"]:
+            raise ValueError("fault evidence identity mismatch for {}".format(item["variant"]))
+        if payload.get("passed") is not True:
+            raise ValueError("fault evidence {} is not passing".format(item["variant"]))
+        if not isinstance(payload.get("evidence"), str) or not payload["evidence"]:
+            raise ValueError("fault evidence {} lacks evidence text".format(item["variant"]))
+        validated.append({
+            "variant": item["variant"],
+            "sha256": actual_hash,
+            "evidence": payload["evidence"],
+        })
+    return validated
 
 
 def _validate_safety(manifest):
@@ -110,6 +156,7 @@ def evaluate_manifest(manifest, manifest_path=None):
     safety = _validate_safety(manifest)
 
     base = Path(manifest_path).resolve().parent if manifest_path else Path.cwd()
+    fault_evidence = _validate_fault_evidence(manifest, base)
     loaded = []
     for item in records:
         for key in ("label", "category", "variant", "path", "config_sha256"):
@@ -164,6 +211,7 @@ def evaluate_manifest(manifest, manifest_path=None):
             item["report"]["reacquisition"]["first_frame"] for item in loaded
         ),
         "safety_audit": safety,
+        "fault_evidence": fault_evidence,
         "reports": [
             {
                 "label": item["record"]["label"],
@@ -192,6 +240,12 @@ def render_markdown(result):
         "- `{}`: IoU `{:.6f}`, reacquisition `{}`".format(
             item["label"], item["visible_mean_iou"], item["reacquisition_frame"]
         ) for item in result["reports"]
+    )
+    lines.append("")
+    lines.extend(["## Fault evidence", ""])
+    lines.extend(
+        "- `{}`: `{}`".format(item["variant"], item["sha256"])
+        for item in result["fault_evidence"]
     )
     lines.append("")
     return "\n".join(lines)

@@ -1,5 +1,23 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T14:44:38+08:00 C009 development 平台 PASS 与冻结
+
+- C009 RK3588 原生 Debug、`-Werror=switch`、CTest `19/19`；可执行/config SHA-256
+  `3792ecde2f4b915d38496fa4fdbba6ecbe6854aae50897e9fb5e577d1d2a43a3`、
+  `87b4b818e740a5a4137e4ab7339a26b5d70e93e5c7852e468dd26c8a73e06791`。
+- 33/33 development 真实矩阵 PASS，重捕 `184--187`，最大 mean IoU 下降 `0.016618`；
+  variable-time、detector delay/drop、generation-gap 的哈希 focused CTest 证据 PASS。
+- 冻结前独立主机 CTest `19/19` 和 evaluator/robustness Python 单测 `18/18` PASS；
+  全仓 Python discovery 另有 16 个模块因当前主机未安装 `cv2`/`torch` 而在导入阶段中止。
+- 保留 nominal 在帧 185 重捕，evaluator/board verifier PASS；视频 `1920x1080`、190 帧。
+  bboxes/video/evaluator JSON SHA-256 分别为
+  `4d78dacdbd984f088aec6dff9139fa8e56de4a6e5687b1e3335273c191317098`、
+  `0a5d887e20c3f5b556fc564c17abe90bd8a0a5073b0a795cdb490c34c19c34e3`、
+  `8ea2ac37ba2238156f7cbd73f2dc1a4f1b5cb43f16c0d6634ad623d87d3bc504`。
+- C009 已写入 `frozen-candidate.json`，状态 `NOT_RUN`；下一步只能执行其中精确 full
+  command，不能再改 runtime/config。部分 190--193 status 文本暴露边界继续保留。当前仍无
+  post-189 视频/bbox/runtime/evaluator 结果，也没有人眼 identity sign-off。
+
 ## 2026-11-11T14:26:43+08:00 C009 候选
 
 - C009 恢复已通过 nominal/width+5 的 C007 runtime（probation=3），保留 400 ms、0.020
