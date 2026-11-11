@@ -1911,7 +1911,7 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   `8545f97ac9539231e936dfcc2a322d8916e5f143`，候选工具提交 `1ccff5d`，分层草案打包器
   提交 `8545f97`，review contact-sheet 纳入包与哈希的修复提交
   `5d186f8705b5f8a1bababe51a11ffdd43a080935`，独立审查后的 provenance/validator/
-  staged-replace 加固提交 `b1d9dc2`、`d33e848` 与 `e069bf6`。这是主机侧标注草案生成，不是
+  staged-replace 加固提交 `b1d9dc2`、`d33e848`、`e069bf6` 与 `db20a75`。这是主机侧标注草案生成，不是
   RK3588 新运行或板端验收。
 - 原视频 `/home/u20/single-object-tracking/data/occ_video_1/1.mp4` SHA-256
   `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，严格解码为
@@ -1962,6 +1962,8 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 - 独立终审指出的四项问题已处理：人工确认必须通过独立 `confirmed_*` 框且保留原候选；
   validator 重新检查几何、枚举、派生字段、估计依据、逐层 YOLO 一致性、状态计数、
   metadata/video/episode 身份、状态与可见率关系、干扰物类型/ID 及 checksum 完整覆盖；
+  独立 `validate` 默认绑定 canonical `occ_video_1` 固定 SHA-256，包内即使改绑到另一存在
+  文件并提供其正确哈希也会被拒绝；
   `--replace-draft` 先在同级 staging 完整构建并通过
   validator，再以可恢复备份交换（不声称单次系统调用原子交换）；错误同类车补齐
   259--264 逐帧记录。测试覆盖多类语义篡改后重算哈希仍必须失败、结构无效 staging
