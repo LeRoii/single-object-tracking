@@ -50,6 +50,7 @@ struct SearchPlan {
   float motion_acceleration_y = 0.0F;
   float motion_scale_velocity_width = 0.0F;
   float motion_scale_velocity_height = 0.0F;
+  TemplateRunMode template_run_mode = TemplateRunMode::kRecentOnly;
 };
 
 enum class AcceptedObservationPath {

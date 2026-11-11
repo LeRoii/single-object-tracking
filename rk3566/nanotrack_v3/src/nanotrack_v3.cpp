@@ -5,13 +5,11 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <stdexcept>
 
 namespace nanotrack {
 namespace {
-
-constexpr float kMinimumInitialDimensionRatio = 0.75F;
-constexpr float kMaximumInitialDimensionRatio = 1.33F;
 
 std::size_t tensor_elements(const rknn_tensor_attr& attr) {
   return static_cast<std::size_t>(attr.n_elems);
@@ -77,7 +75,8 @@ void NanoTrackV3::validate_model_interfaces() {
 }
 
 cv::Mat NanoTrackV3::crop(const cv::Mat& frame, float center_x, float center_y,
-                          int output_size, int original_size) const {
+                          int output_size, int original_size,
+                          const cv::Scalar& padding_color) const {
   const float half = (original_size + 1.0F) / 2.0F;
   int xmin = static_cast<int>(std::floor(center_x - half + 0.5F));
   int ymin = static_cast<int>(std::floor(center_y - half + 0.5F));
@@ -95,7 +94,7 @@ cv::Mat NanoTrackV3::crop(const cv::Mat& frame, float center_x, float center_y,
   cv::Mat padded;
   if (left || top || right || bottom) {
     cv::copyMakeBorder(frame, padded, top, bottom, left, right,
-                       cv::BORDER_CONSTANT, channel_average_);
+                       cv::BORDER_CONSTANT, padding_color);
   } else {
     padded = frame;
   }
@@ -115,33 +114,26 @@ void NanoTrackV3::initialize(const cv::Mat& frame, const BBox& bbox) {
     throw std::invalid_argument("initial frame must be a non-empty 8-bit BGR image");
   }
   validate_bbox(bbox, frame.cols, frame.rows);
+  const cv::Scalar channel_average = cv::mean(frame);
+  templates_.initialize(extract_template_feature(frame, bbox, channel_average));
   frame_width_ = frame.cols;
   frame_height_ = frame.rows;
-  state_.center_x = bbox.x + (bbox.width - 1.0F) / 2.0F;
-  state_.center_y = bbox.y + (bbox.height - 1.0F) / 2.0F;
-  state_.width = bbox.width;
-  state_.height = bbox.height;
-  initial_bbox_ = bbox;
-  channel_average_ = cv::mean(frame);
-  anchor_feature_ = extract_template_feature(frame, bbox);
-  recent_feature_ = anchor_feature_;
-  recent_backup_feature_.clear();
-  recent_matches_anchor_ = true;
-  recent_backup_matches_anchor_ = true;
-  recent_staged_ = false;
+  committed_bbox_ = bbox;
+  channel_average_ = channel_average;
   search_token_ = 0;
   initialized_ = true;
 }
 
-std::vector<float> NanoTrackV3::extract_template_feature(const cv::Mat& frame,
-                                                         const BBox& bbox) {
+std::vector<float> NanoTrackV3::extract_template_feature(
+    const cv::Mat& frame, const BBox& bbox, const cv::Scalar& padding_color) {
   validate_bbox(bbox, frame.cols, frame.rows);
   const float center_x = bbox.x + (bbox.width - 1.0F) / 2.0F;
   const float center_y = bbox.y + (bbox.height - 1.0F) / 2.0F;
   const float context_width = bbox.width + 0.5F * (bbox.width + bbox.height);
   const float context_height = bbox.height + 0.5F * (bbox.width + bbox.height);
   const int original_size = rounded_positive(std::sqrt(context_width * context_height));
-  const cv::Mat patch = crop(frame, center_x, center_y, 127, original_size);
+  const cv::Mat patch = crop(frame, center_x, center_y, 127, original_size,
+                             padding_color);
   auto outputs = template_model_->run(
       {{patch.data, patch.total() * patch.elemSize(), RKNN_TENSOR_UINT8,
         RKNN_TENSOR_NHWC}});
@@ -168,9 +160,8 @@ std::optional<DecodeResult> NanoTrackV3::run_head(
       try_decode_head(head_outputs[0], head_outputs[1], reference_state,
                       config_, scale_z, frame_width_, frame_height_);
   if (decoded) {
-    decoded->bbox = constrain_bbox_dimensions(
-        decoded->bbox, initial_bbox_, kMinimumInitialDimensionRatio,
-        kMaximumInitialDimensionRatio, frame_width_, frame_height_);
+    decoded->bbox = constrain_tracker_observation_dimensions(
+        decoded->bbox, committed_bbox_, FrameSize{frame_width_, frame_height_});
     decoded->state.center_x = decoded->bbox.x + 0.5F * decoded->bbox.width;
     decoded->state.center_y = decoded->bbox.y + 0.5F * decoded->bbox.height;
     decoded->state.width = decoded->bbox.width;
@@ -221,7 +212,8 @@ std::vector<TrackerObservation> NanoTrackV3::infer(const ImageView& image,
       (size_z + 2.0F * padding) * plan.search_scale);
   const float effective_scale_z = 255.0F / static_cast<float>(original_size);
   const cv::Mat patch = crop(frame, reference_state.center_x,
-                             reference_state.center_y, 255, original_size);
+                             reference_state.center_y, 255, original_size,
+                             channel_average_);
 
   auto search_outputs = search_model_->run(
       {{patch.data, patch.total() * patch.elemSize(), RKNN_TENSOR_UINT8,
@@ -231,65 +223,73 @@ std::vector<TrackerObservation> NanoTrackV3::infer(const ImageView& image,
   }
   const std::vector<float> search_feature =
       feature_for_nhwc_input(search_outputs[0], head_model_->inputs()[1]);
-  const std::optional<DecodeResult> anchor =
-      run_head(anchor_feature_, search_feature, reference_state,
-               effective_scale_z);
-  const std::optional<DecodeResult> recent =
-      recent_matches_anchor_
-          ? anchor
-          : run_head(recent_feature_, search_feature, reference_state,
-                     effective_scale_z);
-  const std::uint64_t token = ++search_token_;
+  const std::uint64_t token = search_token_ + 1;
   std::vector<TrackerObservation> observations;
-  if (anchor) {
-    observations.push_back(
-        TrackerObservation{plan.frame_id, plan.timestamp_ms, anchor->bbox,
-                           anchor->metrics, TemplateKind::kAnchor, token});
-  }
-  if (recent) {
-    observations.push_back(
-        TrackerObservation{plan.frame_id, plan.timestamp_ms, recent->bbox,
-                           recent->metrics, TemplateKind::kRecent, token});
-  }
+  run_template_heads(
+      templates_, plan.template_run_mode,
+      [&](const RecentSafeTemplates::Feature& feature) {
+        return run_head(feature, search_feature, reference_state,
+                        effective_scale_z);
+      },
+      [&](TemplateKind kind, const std::optional<DecodeResult>& decoded) {
+        if (decoded) {
+          observations.push_back(TrackerObservation{
+              plan.frame_id, plan.timestamp_ms, decoded->bbox, decoded->metrics,
+              kind, token});
+        }
+      });
+  search_token_ = token;
   return observations;
 }
 
 void NanoTrackV3::commit_bbox(const BBox& bbox) {
   if (!initialized_) throw std::logic_error("tracker has not been initialized");
   validate_bbox(bbox, frame_width_, frame_height_);
-  state_.center_x = bbox.x + (bbox.width - 1.0F) / 2.0F;
-  state_.center_y = bbox.y + (bbox.height - 1.0F) / 2.0F;
-  state_.width = bbox.width;
-  state_.height = bbox.height;
+  committed_bbox_ = bbox;
 }
 
-void NanoTrackV3::stage_recent(const ImageView& image, const BBox& bbox) {
-  if (recent_staged_) {
-    throw std::logic_error("recent template is already in probation");
+void NanoTrackV3::prepare_recent(const ImageView& image, const BBox& bbox,
+                                std::uint64_t transaction_id) {
+  if (!initialized_) throw std::logic_error("tracker has not been initialized");
+  if (templates_.pending_transaction_id()) {
+    throw std::logic_error("a template transaction is already pending");
   }
   const cv::Mat frame = mat_view(image);
   if (frame.cols != frame_width_ || frame.rows != frame_height_) {
     throw std::invalid_argument("template frame size changed");
   }
-  recent_backup_feature_ = recent_feature_;
-  recent_backup_matches_anchor_ = recent_matches_anchor_;
-  recent_feature_ = extract_template_feature(frame, bbox);
-  recent_matches_anchor_ = false;
-  recent_staged_ = true;
+  templates_.prepare(extract_template_feature(frame, bbox, channel_average_),
+                     transaction_id);
+}
+
+bool NanoTrackV3::commit_recent(std::uint64_t transaction_id) noexcept {
+  return templates_.commit(transaction_id);
+}
+
+bool NanoTrackV3::abort_recent(std::uint64_t transaction_id) noexcept {
+  return templates_.abort(transaction_id);
+}
+
+void NanoTrackV3::stage_recent(const ImageView& image, const BBox& bbox) {
+  const auto last_id = templates_.last_prepared_transaction_id().value_or(0);
+  if (last_id == std::numeric_limits<std::uint64_t>::max()) {
+    throw std::overflow_error("template transaction ids exhausted");
+  }
+  prepare_recent(image, bbox, last_id + 1);
 }
 
 void NanoTrackV3::commit_recent() {
-  if (!recent_staged_) throw std::logic_error("no staged recent template to commit");
-  recent_backup_feature_.clear();
-  recent_staged_ = false;
+  const auto id = templates_.pending_transaction_id();
+  if (!id || !commit_recent(*id)) {
+    throw std::logic_error("no staged recent template to commit");
+  }
 }
 
 void NanoTrackV3::rollback_recent() {
-  if (!recent_staged_) throw std::logic_error("no staged recent template to roll back");
-  recent_feature_ = recent_backup_feature_;
-  recent_matches_anchor_ = recent_backup_matches_anchor_;
-  recent_backup_feature_.clear();
-  recent_staged_ = false;
+  const auto id = templates_.pending_transaction_id();
+  if (!id || !abort_recent(*id)) {
+    throw std::logic_error("no staged recent template to roll back");
+  }
 }
 
 }  // namespace nanotrack

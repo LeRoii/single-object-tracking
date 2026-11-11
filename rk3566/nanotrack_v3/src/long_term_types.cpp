@@ -2,6 +2,17 @@
 
 namespace nanotrack {
 
+BBox constrain_tracker_observation_dimensions(const BBox& candidate,
+                                              const BBox& committed_bbox,
+                                              FrameSize frame) {
+  constexpr float kMinimumDimensionRatio = 0.75F;
+  constexpr float kMaximumDimensionRatio = 1.33F;
+  return constrain_bbox_dimensions(candidate, committed_bbox,
+                                   kMinimumDimensionRatio,
+                                   kMaximumDimensionRatio,
+                                   frame.width, frame.height);
+}
+
 const char* to_string(OcclusionReferenceSource value) {
   switch (value) {
     case OcclusionReferenceSource::kNone: return "NONE";
@@ -144,7 +155,13 @@ const char* to_string(QualityLevel value) {
 }
 
 const char* to_string(TemplateKind value) {
-  return value == TemplateKind::kAnchor ? "ANCHOR" : "RECENT";
+  switch (value) {
+    case TemplateKind::kAnchor: return "ANCHOR";
+    case TemplateKind::kRecent: return "RECENT";
+    case TemplateKind::kSafe: return "SAFE";
+    case TemplateKind::kStaged: return "STAGED";
+  }
+  return "UNKNOWN";
 }
 
 const char* to_string(TemplateAction value) {

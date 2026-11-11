@@ -78,6 +78,12 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
     ++rollback_calls;
     if (on_rollback) on_rollback();
   }
+  void prepare_recent(const nanotrack::ImageView&, const nanotrack::BBox&,
+                      std::uint64_t) override {
+    throw std::logic_error("runtime fake has no transaction-ID support yet");
+  }
+  bool commit_recent(std::uint64_t) noexcept override { return false; }
+  bool abort_recent(std::uint64_t) noexcept override { return false; }
 
   bool initialized = false;
   bool emit_reliable = true;

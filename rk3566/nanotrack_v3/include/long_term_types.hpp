@@ -38,7 +38,9 @@ enum class OcclusionTriggerReason {
   kGradualHeightMotion,
 };
 enum class OcclusionProbeType { kNone, kSearch, kConfirm };
-enum class TemplateKind { kAnchor, kRecent };
+// kAnchor is used by the legacy controller and telemetry during migration.
+enum class TemplateKind { kAnchor, kRecent, kSafe, kStaged };
+enum class TemplateRunMode { kRecentOnly, kStagedAndRecent, kRecentAndSafe };
 enum class TemplateAction { kNone, kStageRecent, kCommitRecent, kRollbackRecent };
 enum class HypothesisSource { kMotion, kDetector };
 enum class DetectorTargetMode { kFullObject, kSubtarget };
@@ -55,6 +57,10 @@ struct FrameSize {
   int width = 0;
   int height = 0;
 };
+
+BBox constrain_tracker_observation_dimensions(const BBox& candidate,
+                                              const BBox& committed_bbox,
+                                              FrameSize frame);
 
 struct ImageView {
   const std::uint8_t* data = nullptr;
