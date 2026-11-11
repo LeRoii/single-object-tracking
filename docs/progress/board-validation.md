@@ -1878,3 +1878,27 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 - 证据边界：`PASS_CANONICAL_BOARD_ACCEPTANCE` 仅表示 RK3588 上 canonical
   `occ_video_1` 后揭盲三次验收通过；人工复核视频状态仍为 PENDING，未声称真实云台
   pod 验收。
+
+## 2026-11-11T16:10:00+08:00 RK3588 interactive one-command profile startup PASS
+
+- 分支 `codex/occ-video-1-tracking`，任务基线
+  `10c311e4576e67036ff30eb2538e9298aab5abfc`，配置/测试/文档提交
+  `b3a7e4a`。本机配置为
+  `rk3566/nanotrack_v3/config/rk3588-interactive-debug.conf`，板端部署路径为
+  `/home/neardi/Project/SOT/occ-candidate-e865c78/rk3588-interactive-debug.conf`；两端
+  SHA-256 均为
+  `e7daafa4373f676b3e9b10984e48fa2ffe46cc6d9ec1c422dbe3d4e77e88544a`。
+- 主机侧先修改 CLI 测试形成 3 个预期失败断言，再更新配置；聚焦 `cli` 测试通过，
+  全量 CTest `19/19` 通过，`git diff --check` 通过。配置保留
+  `interactive=true` 且不预置 bbox，绑定 C012 已验收的 RK3588 NanoTrack 模型、
+  `visible-occlusion-calibrated.conf` 和 RK3588 VisDrone9 detector release；固定输出为
+  `/tmp/rk3588-interactive-debug.avi`、`.csv`、`.json`。
+- 板端在 `/home/neardi/Project/SOT/occ-candidate-e865c78` 执行
+  `DISPLAY=:0 timeout --signal=INT --kill-after=2s 15s stdbuf -oL -eL ./build/nanotrack_v3 --config rk3588-interactive-debug.conf`。
+  日志确认 RKNN API `2.1.0`、driver `0.9.8`、detector `target=rk3588 outputs=9`，
+  随后出现 `runtime_ready`、三个输出均 enabled，以及
+  `interactive_ready playing=0 initialized=0`；冒烟结束后无残留 `nanotrack_v3`
+  进程。日志保留于板端 `/tmp/rk3588-interactive-config-smoke.log`。
+- 证据边界：本次只验证新配置通过既有二进制加载并进入等待鼠标选框状态；未人工画框、
+  未运行完整视频、未生成新的算法验收结论，也未声称真实云台 pod 验收。C012 的
+  canonical acceptance 及其源码/可执行身份不因本次运行配置部署而改变。
