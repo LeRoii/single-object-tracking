@@ -9,6 +9,33 @@ include(CTest)
 find_package(Threads REQUIRED)
 
 option(ENABLE_RKNN_RUNTIME "Build the RKNN/OpenCV runtime executable" OFF)
+option(BUILD_ANNOTATION_TOOLS "Build host-only annotation tools" OFF)
+
+if(BUILD_ANNOTATION_TOOLS)
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio tracking)
+  add_library(nanotrack_bidirectional_annotation
+    src/bidirectional_annotation.cpp
+  )
+  target_include_directories(nanotrack_bidirectional_annotation
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS}
+  )
+  target_link_libraries(nanotrack_bidirectional_annotation
+    PUBLIC nanotrack_math ${OpenCV_LIBS}
+  )
+  target_compile_options(nanotrack_bidirectional_annotation
+    PRIVATE -Wall -Wextra -Wpedantic
+  )
+
+  add_executable(generate_bidirectional_candidates
+    tools/generate_bidirectional_candidates.cpp
+  )
+  target_link_libraries(generate_bidirectional_candidates
+    PRIVATE nanotrack_bidirectional_annotation ${OpenCV_LIBS}
+  )
+  target_compile_options(generate_bidirectional_candidates
+    PRIVATE -Wall -Wextra -Wpedantic
+  )
+endif()
 
 add_library(nanotrack_production_deployment_config src/production_deployment_config.cpp)
 target_include_directories(nanotrack_production_deployment_config
@@ -76,6 +103,16 @@ target_include_directories(nanotrack_sha256 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_compile_options(nanotrack_sha256 PRIVATE -Wall -Wextra -Wpedantic)
 
 if(BUILD_TESTING)
+  if(BUILD_ANNOTATION_TOOLS)
+    add_executable(test_bidirectional_annotation
+      tests/test_bidirectional_annotation.cpp
+    )
+    target_link_libraries(test_bidirectional_annotation
+      PRIVATE nanotrack_bidirectional_annotation ${OpenCV_LIBS}
+    )
+    add_test(NAME bidirectional_annotation COMMAND test_bidirectional_annotation)
+  endif()
+
   add_executable(test_production_deployment_config tests/test_production_deployment_config.cpp)
   target_link_libraries(test_production_deployment_config PRIVATE nanotrack_production_deployment_config)
   add_test(NAME production_deployment_config COMMAND test_production_deployment_config)
