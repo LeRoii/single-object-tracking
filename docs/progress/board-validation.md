@@ -1,5 +1,21 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T11:18:21+08:00 `occ_video_1` 方案 2 获批并形成实施计划
+
+- 用户已批准
+  `docs/superpowers/specs/2026-11-11-occ-video-1-closed-loop-tracking-design.md` 的最终设计，包含
+  SEARCHING 期间持续运动预测与云台控制、190 帧前两阶段重捕、detector shadow hint、模板
+  probation 以及避免单视频过拟合的泛化护栏。批准不等于算法或板端验收已经完成。
+- 实施计划写入
+  `docs/superpowers/plans/2026-11-11-occ-video-1-closed-loop-tracking.md`，按 evaluator、外部语义、
+  时间制运动搜索、搜索期 detector、两次确认重捕、schema 10、通用可见光候选配置、0--189
+  标定/扰动平台、冻结 holdout 和 RK3588 三次完整复跑九个任务执行。计划明确第一次暴露
+  190--270 前必须提交冻结记录，若盲测结果促成修改则该段永久降级为 regression。
+- 本里程碑仍只提交设计/计划/任务进度，没有修改 runtime 算法、阈值、模型或协调方专属
+  `STATUS.md`/`integration-contract.yaml`，也没有产生新的主机测试或开发板运行证据。起点为
+  `codex/occ-video-1-tracking@98ee995e0ef67f51bfb6114754eb3f43d7e0e909`；结果提交以
+  `git log -1 --format=%H -- docs/progress/board-validation.md` 查询。
+
 ## 2026-11-11T10:53:22+08:00 `occ_video_1` 完整基线与方案 2 设计待批准
 
 - 新任务在隔离工作树
