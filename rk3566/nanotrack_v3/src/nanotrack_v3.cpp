@@ -175,7 +175,8 @@ void NanoTrackV3::initialize(const ImageView& image, const BBox& bbox) {
 }
 
 std::vector<TrackerObservation> NanoTrackV3::infer(const ImageView& image,
-                                                   const SearchPlan& plan) {
+                                                   const SearchPlan& plan,
+                                                   TemplateHeadExecution& heads) {
   if (!initialized_) throw std::logic_error("tracker has not been initialized");
   const cv::Mat frame = mat_view(image);
   if (frame.empty() || frame.type() != CV_8UC3 || frame.cols != frame_width_ ||
@@ -215,6 +216,7 @@ std::vector<TrackerObservation> NanoTrackV3::infer(const ImageView& image,
       feature_for_nhwc_input(search_outputs[0], head_model_->inputs()[1]);
   const std::uint64_t token = search_token_ + 1;
   std::vector<TrackerObservation> observations;
+  heads = {};
   run_template_heads(
       templates_, plan.template_run_mode,
       [&](const RecentSafeTemplates::Feature& feature) {
@@ -222,6 +224,15 @@ std::vector<TrackerObservation> NanoTrackV3::infer(const ImageView& image,
                         effective_scale_z);
       },
       [&](TemplateKind kind, const std::optional<DecodeResult>& decoded) {
+        switch (kind) {
+          case TemplateKind::kRecent: heads.recent = true; break;
+          case TemplateKind::kSafe:
+            heads.safe_reused_recent = templates_.recent_matches_safe();
+            heads.safe = !heads.safe_reused_recent;
+            break;
+          case TemplateKind::kStaged: heads.staged = true; break;
+          case TemplateKind::kAnchor: break;
+        }
         if (decoded) {
           observations.push_back(constrain_tracker_observation(
               TrackerObservation{plan.frame_id, plan.timestamp_ms, decoded->bbox,
@@ -261,26 +272,8 @@ bool NanoTrackV3::abort_recent(std::uint64_t transaction_id) noexcept {
   return templates_.abort(transaction_id);
 }
 
-void NanoTrackV3::stage_recent(const ImageView& image, const BBox& bbox) {
-  const auto last_id = templates_.last_prepared_transaction_id().value_or(0);
-  if (last_id == std::numeric_limits<std::uint64_t>::max()) {
-    throw std::overflow_error("template transaction ids exhausted");
-  }
-  prepare_recent(image, bbox, last_id + 1);
-}
-
-void NanoTrackV3::commit_recent() {
-  const auto id = templates_.pending_transaction_id();
-  if (!id || !commit_recent(*id)) {
-    throw std::logic_error("no staged recent template to commit");
-  }
-}
-
-void NanoTrackV3::rollback_recent() {
-  const auto id = templates_.pending_transaction_id();
-  if (!id || !abort_recent(*id)) {
-    throw std::logic_error("no staged recent template to roll back");
-  }
+void NanoTrackV3::discard_staged_recent() noexcept {
+  if (const auto id = templates_.pending_transaction_id()) templates_.abort(*id);
 }
 
 }  // namespace nanotrack

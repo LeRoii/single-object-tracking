@@ -78,7 +78,9 @@ cv::Mat render_annotated(const cv::Mat& source,
   const cv::Scalar color = state_color(output);
   cv::rectangle(rendered, rectangle, color, 2);
   const std::string label =
-      std::string(nanotrack::to_string(output.mode)) + " " +
+      std::string(output.tracking_phase == nanotrack::TrackingPhase::kSuspected
+                      ? "SUSPECTED / RECENT OBSERVATION"
+                      : nanotrack::to_string(output.tracking_phase)) + " " +
       nanotrack::to_string(output.quality) +
       (output.control_valid ? " CTRL" : " NO_CTRL");
   cv::putText(rendered, label,
@@ -111,8 +113,12 @@ cv::Mat render_interactive(const cv::Mat& source,
           return cv::Scalar(0, 165, 255);
         case nanotrack::DebugBoxKind::kNanoTrackAnchor:
           return cv::Scalar(255, 0, 0);
+        case nanotrack::DebugBoxKind::kNanoTrackSafe:
+        case nanotrack::DebugBoxKind::kNanoTrackStaged:
         case nanotrack::DebugBoxKind::kNanoTrackRecent:
           return cv::Scalar(0, 255, 255);
+        case nanotrack::DebugBoxKind::kTentativeControl:
+          return cv::Scalar(0, 180, 255);
         case nanotrack::DebugBoxKind::kAcceptedControl:
           return cv::Scalar(0, 255, 0);
         case nanotrack::DebugBoxKind::kSearchControlPrediction:
@@ -451,6 +457,8 @@ int main(int argc, char** argv) {
     }
     cv::VideoWriter writer;
     std::ofstream boxes;
+    std::ofstream frame_json;
+    std::filesystem::path frame_json_path;
 
     nanotrack::NanoTrackV3 tracker(options.model_dir);
     std::unique_ptr<nanotrack::DetectorAdapter> detector;
@@ -531,6 +539,18 @@ int main(int argc, char** argv) {
       cv::resizeWindow(kInteractiveWindow, nanotrack::kInteractiveWindowWidth,
                        nanotrack::kInteractiveWindowHeight);
     }
+    const auto discard_frame_json = [&] {
+      if (frame_json.is_open()) frame_json.close();
+      std::error_code error;
+      std::filesystem::remove(frame_json_path, error);
+      session_metadata.frame_json_file.clear();
+    };
+    const auto write_frame_json = [&](const nanotrack::TrackingLogRow& row) {
+      if (!frame_json.is_open()) return;
+      frame_json << nanotrack::tracking_frame_json(row) << '\n';
+      if (!frame_json) discard_frame_json();
+    };
+
     const auto initialize_target = [&](const nanotrack::BBox& bbox) {
       const bool reinitializing = initialized;
       if (options.interactive) {
@@ -555,6 +575,14 @@ int main(int argc, char** argv) {
       initial_output.bbox = bbox;
       initial_output.control_valid = true;
       initial_output.accepted = true;
+      initial_output.tracking_phase = nanotrack::TrackingPhase::kTracking;
+      initial_output.observation_valid = true;
+      initial_output.observation_present = true;
+      initial_output.trusted_for_state_update = true;
+      initial_output.control_source = nanotrack::ControlSource::kObservation;
+      initial_output.tracking_bbox = bbox;
+      initial_output.display_bbox = bbox;
+      initial_output.control_bbox = bbox;
       initial_output.target_class = initialization.target_class;
       nanotrack::RuntimeFrameResult initial_result;
       initial_result.plan.frame_id = source_frame;
@@ -580,13 +608,28 @@ int main(int argc, char** argv) {
         if (!options.output_boxes.empty()) {
           boxes.open(options.output_boxes);
           if (!boxes) throw std::runtime_error("cannot open output CSV");
+          const auto initial_row = nanotrack::make_initial_log_row(
+              source_frame, timestamp_ms, bbox, detector->available(),
+              detector->available() && detector->can_submit(),
+              controller_config.detector_target_mode, initialization.target_class);
           boxes << nanotrack::tracking_csv_header() << '\n';
-          boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
-                       source_frame, timestamp_ms, bbox, detector->available(),
-                       detector->available() && detector->can_submit(),
-                       controller_config.detector_target_mode,
-                       initialization.target_class))
-                << '\n';
+          boxes << nanotrack::tracking_csv_row(initial_row) << '\n';
+          frame_json_path = options.output_boxes + ".jsonl";
+          const auto metadata_destination = options.session_metadata.empty()
+              ? std::filesystem::path(options.output_boxes + ".metadata.json")
+              : std::filesystem::path(options.session_metadata);
+          std::error_code companion_error;
+          const auto companion_status = std::filesystem::symlink_status(frame_json_path, companion_error);
+          if (companion_status.type() == std::filesystem::file_type::not_found &&
+              frame_json_path.lexically_normal() != metadata_destination.lexically_normal() &&
+              frame_json_path.lexically_normal() !=
+                  std::filesystem::path(options.output_video).lexically_normal()) {
+            frame_json.open(frame_json_path);
+            if (frame_json) {
+              session_metadata.frame_json_file = frame_json_path.filename().string();
+              write_frame_json(initial_row);
+            }
+          }
         }
       }
       initialized = true;
@@ -732,6 +775,7 @@ int main(int argc, char** argv) {
       log_row.pipeline_ms = pipeline_ms;
       if (boxes.is_open()) {
         boxes << nanotrack::tracking_csv_row(log_row) << '\n';
+        write_frame_json(log_row);
       }
       if (options.interactive) {
         for (const std::string& event :
@@ -753,6 +797,11 @@ int main(int argc, char** argv) {
     }
     if (boxes.is_open()) {
       boxes.close();
+      if (!boxes && frame_json.is_open()) discard_frame_json();
+    }
+    if (frame_json.is_open()) {
+      frame_json.close();
+      if (!frame_json) discard_frame_json();
     }
     if (!initialized) {
       std::cout << "SUMMARY tracked_frames=0 initialized=0\n";

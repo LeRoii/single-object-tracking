@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -68,6 +69,20 @@ enum class AcceptedObservationPath {
   kSearchReacquisition,
 };
 
+enum class TemplateTransitionResult { kNone, kPending, kApplied, kPrepareFailed, kTrackerRejected };
+
+struct TemplateTransitionRequest {
+  // A fresh acknowledgement ID for each action. The slot retains the ID of
+  // its prepare request until it is committed or discarded.
+  std::uint64_t transaction_id = 0;
+  TemplateAction action = TemplateAction::kNone;
+  BBox bbox{};
+  bool recovery = false;
+  std::uint64_t template_slot_id = 0;
+};
+
+const char* to_string(TemplateTransitionResult result);
+
 struct ControllerOutput {
   std::uint64_t frame_id = 0;
   std::int64_t timestamp_ms = 0;
@@ -89,6 +104,17 @@ struct ControllerOutput {
       AcceptedObservationPath::kDirect;
   TemplateKind selected_template = TemplateKind::kAnchor;
   TemplateAction template_action = TemplateAction::kNone;
+  std::optional<TemplateTransitionRequest> template_transition;
+  TemplateTransitionResult template_transition_result = TemplateTransitionResult::kNone;
+  bool template_transition_applied = false;
+  bool template_probation_active = false;
+  const char* template_transition_reason = "NONE";
+  const char* state_change_reason = "NONE";
+  const char* recovery_reason = "NONE";
+  std::optional<ResponseReference> trusted_response_reference;
+  std::optional<float> response_psr_relative_delta;
+  std::optional<float> response_apce_relative_delta;
+  std::optional<float> response_peak_margin_absolute_delta;
   ResponseMetrics selected_metrics{};
   std::optional<BBox> selected_observation_bbox;
   float center_innovation_x = 0.0F;
@@ -192,9 +218,14 @@ class LongTermController {
       const SearchPlan& plan,
       const std::vector<TrackerObservation>& observations,
       const std::optional<DetectorBatch>& detector_batch);
-  // Abandon an unfinished frame and revoke its coast budget. Already-finished
-  // controller state is retained.
+  // Revoke unfinished-frame state and any outstanding template request.
+  // Committed tracking state is retained.
   void abort_frame() noexcept;
+  bool resolve_template_transition(std::uint64_t transaction_id, bool applied) noexcept;
+  bool publish_template_transition(ControllerOutput& output,
+                                   TemplateTransitionResult result) noexcept;
+  bool has_template_probation() const noexcept { return recent_probation_; }
+  void discard_template_probation() noexcept;
 
   TrackingMode mode() const { return mode_; }
   const BBox& current_bbox() const { return current_bbox_; }
@@ -271,7 +302,8 @@ class LongTermController {
                                 const SearchPlan& plan) const;
   enum class RecentDisposition { kDirect, kTentative, kSearch };
   RecentDisposition assess_recent(const SearchPlan& plan,
-                                  const EvaluatedObservation& recent);
+                                  const EvaluatedObservation& recent,
+                                  const ResponseBaselineEvaluation& response);
   void publish_tentative(const SearchPlan& plan,
                          const EvaluatedObservation& recent,
                          ControllerOutput& output);
@@ -290,6 +322,11 @@ class LongTermController {
   bool search_reacquisition_eligible(std::int64_t timestamp_ms) const noexcept;
   void invalidate_unified_recovery() noexcept;
   void cancel_probation() noexcept;
+  void reset_template_probation() noexcept;
+  void defer_recovery_acceptance(const SearchPlan& plan,
+                                 const EvaluatedObservation& selected,
+                                 ControllerOutput& output);
+  void apply_recovery_acceptance() noexcept;
   SearchHint search_hint_for(const RecoveryCandidate& candidate) const;
   std::optional<EvaluatedObservation> confirm_recovery_candidate(
       const SearchPlan& plan,
@@ -337,6 +374,18 @@ class LongTermController {
     TrackingMode mode;
   };
 
+  struct RecoveryAcceptance {
+    explicit RecoveryAcceptance(const ControllerConfig& config)
+        : motion(config), occlusion_evidence(config) {}
+    BBox bbox{};
+    BBox display_bbox{};
+    MotionEstimator motion;
+    OcclusionEvidenceTracker occlusion_evidence;
+    OcclusionEvidenceDecision occlusion_decision;
+    DimensionScaleState width_scale;
+    DimensionScaleState height_scale;
+  };
+
   ControllerConfig config_;
   MotionEstimator motion_;
   std::optional<MotionEstimator> shadow_motion_;
@@ -359,6 +408,8 @@ class LongTermController {
   DimensionScaleState height_scale_state_{};
   TargetClassState target_class_{};
   TrackingMode mode_ = TrackingMode::kTracking;
+  TrackingMode last_output_mode_ = TrackingMode::kTracking;
+  TrackingPhase last_output_phase_ = TrackingPhase::kTracking;
   std::optional<std::int64_t> loss_start_ms_;
   std::optional<std::int64_t> last_detector_request_ms_;
   std::optional<std::uint64_t> last_detector_request_frame_;
@@ -374,6 +425,10 @@ class LongTermController {
   SearchPlan active_plan_{};
   int stable_frames_ = 0;
   std::int64_t last_recent_update_ms_ = 0;
+  std::uint64_t last_template_transaction_id_ = 0;
+  std::optional<std::uint64_t> staged_template_slot_id_;
+  std::optional<TemplateTransitionRequest> pending_template_transition_;
+  std::unique_ptr<RecoveryAcceptance> pending_recovery_acceptance_;
   bool recent_probation_ = false;
   bool recovery_probation_ = false;
   bool rollback_pending_ = false;

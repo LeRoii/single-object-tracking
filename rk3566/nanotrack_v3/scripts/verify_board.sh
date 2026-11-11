@@ -52,7 +52,7 @@ if grep -Eqi 'GTK|selectROI|imshow|cannot open display|RKNN:.*(error|unsupported
   exit 1
 fi
 
-python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" <<'PY'
+python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-11}" <<'PY'
 import csv
 import hashlib
 import json
@@ -70,7 +70,9 @@ detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
 expected_rknn_target = sys.argv[9]
-EXPECTED_TRACKING_SCHEMA = 10
+EXPECTED_TRACKING_SCHEMA = int(sys.argv[10])
+if EXPECTED_TRACKING_SCHEMA not in {10, 11}:
+    raise SystemExit("expected tracking schema must be 10 or 11")
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
 for key, low, high in [
@@ -201,11 +203,183 @@ required = {
     "search_hint_first_hit_frame", "search_hint_confirmation_count",
     "search_hint_used", "search_hint_rejection",
 }
+bbox_components = ("x", "y", "width", "height")
+raw_components = (*bbox_components, "score", "penalized_peak", "psr", "apce", "peak_margin")
+head_roles = ("recent", "safe", "staged")
+v11_booleans = {
+    "observation_present", "trusted_for_state_update", "safe_template_used",
+    "safe_reused_recent", "template_transition_recovery", "template_transition_applied",
+    "template_probation_active", "recovery_conflict",
+    *(f"{role}_head_executed" for role in head_roles),
+}
+v11_baselines = ("trusted_baseline_psr", "trusted_baseline_apce", "trusted_baseline_peak_margin")
+v11_deltas = ("response_psr_relative_delta", "response_apce_relative_delta",
+              "response_peak_margin_absolute_delta")
+v11_fields = v11_booleans | {
+    "state_change_reason", "rect0_source", "active_template", "selected_template",
+    "template_action", "template_transaction_id", "template_slot_id",
+    "template_transition_result", "template_transition_reason",
+    "candidate_source", "candidate_id", "candidate_generation",
+    "recovery_confirmation_hits", "recovery_probe_source", "recovery_probe_id",
+    "recovery_probe_generation", "recovery_reason", *v11_baselines, *v11_deltas,
+    *(f"{role}_decode_status" for role in head_roles),
+    *(f"{role}_raw_{component}" for role in head_roles for component in raw_components),
+    *(f"recovery_probe_{component}" for component in bbox_components),
+}
+
+def verify_recent_safe(row, index, last_transaction, staged_slot):
+    def reject(reason):
+        raise SystemExit(f"{reason} at row {index}")
+
+    for key in v11_booleans:
+        if row[key] not in {"0", "1"}:
+            reject(f"invalid {key}")
+    present = row["observation_present"] == "1"
+    trusted = row["trusted_for_state_update"] == "1"
+    accepted = row["accepted"] == "1"
+    phase = row["tracking_phase"]
+    if trusted != accepted or (trusted and not present):
+        reject("inconsistent observation trust")
+    if phase == "SUSPECTED" and (not present or trusted or row["recent_decode_status"] != "DECODED"):
+        reject("invalid tentative recent observation")
+    if phase == "SEARCHING" and present:
+        reject("searching row reports an observation")
+    if row["state"] == "SUSPECTED" and phase != "SUSPECTED":
+        reject("suspected state outside suspected phase")
+    if row["rect0_source"] == "INITIAL_ROI":
+        if not accepted or row["state_change_reason"] != "INITIALIZED":
+            reject("invalid initial rect0 source")
+    else:
+        expected_source = {"TRACKING": "ACCEPTED_OBSERVATION", "SUSPECTED": "RECENT_OBSERVATION",
+                           "SEARCHING": "MOTION_PREDICTION"}[phase]
+        if row["rect0_source"] != expected_source:
+            reject("rect0 source disagrees with tracking phase")
+    if row["state_change_reason"] not in {
+        "NONE", "INITIALIZED", "RESPONSE_DEGRADED", "SUSPICION_ENTERED",
+        "SUSPICION_CONTINUES", "SUSPICION_CLEARED", "SUSPICION_ESCALATED",
+        "OBSERVATION_CONFIRMED", "OBSERVATION_LOST", "SEARCH_MODE_CHANGED",
+        "RECOVERY_PREPARE_FAILED",
+    }:
+        reject("invalid state change reason")
+    if row["recovery_reason"] not in {
+        "NONE", "SEARCH_MIN_AGE", "PROBE_EXPIRED", "IDENTITY_CONFLICT",
+        "RECOVERY_CONFIRMED", "AWAITING_CONFIRMATION", "NO_ELIGIBLE_CANDIDATE",
+        "RECOVERY_STAGED", "RECOVERY_PREPARE_FAILED", "RECOVERY_COMMITTED",
+        "RECOVERY_COMMIT_REJECTED", "RECOVERY_PROBATION_REJECTED",
+    }:
+        reject("invalid recovery reason")
+    if row["active_template"] != "RECENT" or row["selected_template"] not in {"ANCHOR", "RECENT", "SAFE", "STAGED"}:
+        reject("invalid template role")
+    reuse = row["safe_reused_recent"] == "1"
+    if reuse and (row["recent_head_executed"] != "1" or row["safe_head_executed"] == "1" or
+                  row["safe_decode_status"] != row["recent_decode_status"] or
+                  any(row["safe_raw_" + key] != row["recent_raw_" + key] for key in raw_components)):
+        reject("inconsistent physical safe result reuse")
+    if (row["safe_template_used"] == "1") != (reuse or row["safe_head_executed"] == "1"):
+        reject("inconsistent safe-template use")
+    if row["staged_head_executed"] == "1" and row["safe_template_used"] == "1":
+        reject("staged and safe heads cannot run together")
+    if row["tracker_skipped"] == "1" and any(row[f"{role}_head_executed"] == "1" for role in head_roles):
+        reject("skipped tracker reports head execution")
+    for role in head_roles:
+        status = row[f"{role}_decode_status"]
+        ran = row[f"{role}_head_executed"] == "1" or (role == "safe" and reuse)
+        values = [row[f"{role}_raw_{key}"] for key in raw_components]
+        if ran and status not in {"DECODED", "NO_DECODE"}:
+            reject(f"missing raw {role} head result")
+        if not ran and status != "NOT_RUN":
+            reject(f"{role} result without execution")
+        if status == "DECODED":
+            if not all(values) or not all(math.isfinite(float(v)) for v in values):
+                reject(f"missing or non-finite raw {role} fields")
+            if any(float(v) <= 0 for v in values[2:4]):
+                reject(f"nonpositive raw {role} geometry")
+        elif any(values):
+            reject(f"raw {role} fields without a decoded result")
+
+    reference = [row[key] for key in v11_baselines]
+    deltas = [row[key] for key in v11_deltas]
+    if any(reference) and not all(reference):
+        reject("partial trusted response baseline")
+    if any(deltas) and not all(reference):
+        reject("relative response delta without trusted baseline")
+    if any(value and not math.isfinite(float(value)) for value in reference + deltas):
+        reject("non-finite trusted baseline or response delta")
+
+    action, result = row["template_action"], row["template_transition_result"]
+    applied = row["template_transition_applied"] == "1"
+    recovery = row["template_transition_recovery"] == "1"
+    probation = row["template_probation_active"] == "1"
+    transaction_id, slot_id = row["template_transaction_id"], row["template_slot_id"]
+    transition_reason = row["template_transition_reason"]
+    if action == "NONE":
+        if result != "NONE" or applied or recovery or transaction_id or slot_id or transition_reason != "NONE":
+            reject("template acknowledgement without an action")
+    else:
+        if action not in {"STAGE_RECENT", "COMMIT_RECENT", "ROLLBACK_RECENT"}:
+            reject("invalid template action")
+        if result not in {"APPLIED", "PREPARE_FAILED", "TRACKER_REJECTED"} or applied != (result == "APPLIED"):
+            reject("invalid template transition result")
+        if not transaction_id.isdigit() or not slot_id.isdigit():
+            reject("missing template transaction or slot ID")
+        transaction_id, slot_id = int(transaction_id), int(slot_id)
+        valid_reasons = {
+            "STAGE_RECENT": {"RECOVERY_CONFIRMED" if recovery else "STABLE_TRACKING"},
+            "COMMIT_RECENT": {"PROBATION_PASSED"},
+            "ROLLBACK_RECENT": {"FRAME_INVALIDATED", "PROBATION_REJECTED"},
+        }
+        if transaction_id <= last_transaction or slot_id <= 0 or transition_reason not in valid_reasons[action]:
+            reject("invalid template transaction identity or reason")
+        if action == "STAGE_RECENT":
+            if slot_id != transaction_id or probation != applied or (applied and not accepted):
+                reject("inconsistent stage acknowledgement")
+            if recovery and (applied != (row["reacquired"] == "1") or
+                             (not applied and phase != "SEARCHING")):
+                reject("invalid recovery stage semantics")
+            staged_slot = slot_id if applied else None
+        else:
+            if slot_id >= transaction_id or slot_id != staged_slot or probation or result == "PREPARE_FAILED":
+                reject("invalid template terminal acknowledgement")
+            staged_slot = None
+        last_transaction = transaction_id
+    if probation and staged_slot is None:
+        reject("template probation without an applied stage")
+
+    for source_key, id_key, generation_key in (
+        ("candidate_source", "candidate_id", "candidate_generation"),
+        ("recovery_probe_source", "recovery_probe_id", "recovery_probe_generation"),
+    ):
+        source, candidate_id, generation = row[source_key], row[id_key], row[generation_key]
+        if source == "NONE":
+            if candidate_id or generation:
+                reject("candidate ID without source")
+        elif source not in {"RECENT", "SAFE", "DETECTOR"} or not candidate_id.isdigit() or int(candidate_id) <= 0 or not generation.isdigit():
+            reject("invalid candidate key")
+    probe_box = [row["recovery_probe_" + key] for key in bbox_components]
+    if row["recovery_probe_source"] == "NONE":
+        if any(probe_box):
+            reject("probe box without candidate key")
+    elif not all(probe_box) or not all(math.isfinite(float(v)) for v in probe_box) or any(float(v) <= 0 for v in probe_box[2:]):
+        reject("invalid recovery probe box")
+    hits = row["recovery_confirmation_hits"]
+    if hits not in {"0", "1", "2"} or (hits != "0" and row["candidate_source"] == "NONE"):
+        reject("invalid recovery confirmation hits")
+    if row["recovery_conflict"] == "1" and (hits != "0" or row["reacquired"] == "1" or
+                                             row["control_source"] == "OBSERVATION"):
+        reject("conflicted candidate confirmed an observation")
+    if row["accepted_observation_path"] == "search_reacquisition" and not (
+            hits == "2" and action == "STAGE_RECENT" and applied and recovery):
+        reject("reacquisition lacks confirmed applied stage")
+    return last_transaction, staged_slot
+
+if EXPECTED_TRACKING_SCHEMA == 11:
+    required |= v11_fields
 missing = required - set(rows[0])
 if missing:
     raise SystemExit(f"CSV header is missing: {sorted(missing)}")
 first_frame_id = int(rows[0]["frame_id"])
 last_timestamp = None
+last_transaction, staged_slot = 0, None
 for index, row in enumerate(rows):
     if row["schema_version"] != str(EXPECTED_TRACKING_SCHEMA):
         raise SystemExit(f"unexpected CSV schema version at row {index}")
@@ -229,6 +403,9 @@ for index, row in enumerate(rows):
             "local_or_deeper_recovery", "detector_recovery",
             "occlusion_probe_recovery", "search_reacquisition"},
     }
+    if EXPECTED_TRACKING_SCHEMA == 11:
+        enums["state"].add("SUSPECTED")
+        enums["tracking_phase"].add("SUSPECTED")
     for key, valid in enums.items():
         if row[key] not in valid:
             raise SystemExit(f"invalid {key} at row {index}")
@@ -252,8 +429,10 @@ for index, row in enumerate(rows):
         raise SystemExit(f"searching row reports observation at row {index}")
     if (row["control_source"] == "NONE") != (not control_valid):
         raise SystemExit(f"control source/valid mismatch at row {index}")
-    if row["control_source"] == "OBSERVATION" and row["tracking_phase"] != "TRACKING":
-        raise SystemExit(f"observation control outside tracking at row {index}")
+    if row["control_source"] == "OBSERVATION" and row["tracking_phase"] not in {"TRACKING", "SUSPECTED"}:
+        raise SystemExit(f"observation control outside tracking or suspicion at row {index}")
+    if EXPECTED_TRACKING_SCHEMA == 11:
+        last_transaction, staged_slot = verify_recent_safe(row, index, last_transaction, staged_slot)
     if row["control_source"] == "MOTION_SEARCH":
         if row["tracking_phase"] != "SEARCHING" or row["motion_control_authorized"] != "1" or row["motion_prediction_confident"] != "1":
             raise SystemExit(f"invalid motion-search control at row {index}")
@@ -323,7 +502,7 @@ for index, row in enumerate(rows):
         hint_box = [float(row["search_hint_projected_" + suffix]) for suffix in ("x", "y", "width", "height")]
         if not all(math.isfinite(value) for value in hint_box) or hint_box[2] <= 0 or hint_box[3] <= 0:
             raise SystemExit(f"invalid search hint box at row {index}")
-    if row["accepted_observation_path"] == "search_reacquisition":
+    if EXPECTED_TRACKING_SCHEMA == 10 and row["accepted_observation_path"] == "search_reacquisition":
         if not hint_present or int(row["search_hint_confirmation_count"]) != 2 or row["search_hint_used"] != "1" or row["tracking_phase"] != "TRACKING":
             raise SystemExit(f"invalid search reacquisition at row {index}")
     for prefix in ("occlusion_probe_motion_", "occlusion_probe_"):
@@ -403,12 +582,14 @@ for index, row in enumerate(rows):
     same_class_candidates = int(row["detector_same_class_candidates"])
     if same_class_candidates < 0:
         raise SystemExit(f"invalid detector_same_class_candidates at row {index}")
-    if (row["detector_same_class_ambiguous"] == "1") != (
-            same_class_candidates > 1):
+    ambiguous = row["detector_same_class_ambiguous"] == "1"
+    persistent_conflict = EXPECTED_TRACKING_SCHEMA == 11 and row["recovery_conflict"] == "1"
+    if (same_class_candidates > 1 and not ambiguous) or (
+            ambiguous and same_class_candidates <= 1 and not persistent_conflict):
         raise SystemExit(f"inconsistent same-class ambiguity at row {index}")
-    if row["detector_same_class_ambiguous"] == "1" and (
-            row["detector_candidate_locked"] == "1" or
-            row["control_valid"] == "1"):
+    if ambiguous and (row["detector_candidate_locked"] == "1" or
+                      (EXPECTED_TRACKING_SCHEMA == 10 and control_valid) or
+                      row["control_source"] == "OBSERVATION"):
         raise SystemExit(f"ambiguous same-class candidate controls at row {index}")
     for key in {"occlusion_hold_triggered", "tracker_skipped",
                 "detector_suppressed_by_hold"}:
@@ -443,6 +624,38 @@ if metadata.get("schema_version") != EXPECTED_TRACKING_SCHEMA:
     raise SystemExit(
         f"session metadata schema_version must be {EXPECTED_TRACKING_SCHEMA}"
     )
+if EXPECTED_TRACKING_SCHEMA == 11:
+    if metadata.get("observation_valid_semantics") != "ACCEPTED_OBSERVATION" or metadata.get("rect0_bbox") != "tracking_bbox":
+        raise SystemExit("missing observation_valid or rect0 schema semantics")
+    companion = metadata.get("frame_json_file")
+    if companion is not None:
+        if not isinstance(companion, str) or pathlib.Path(companion).name != companion or not companion.endswith(".jsonl"):
+            raise SystemExit("invalid frame JSON companion name")
+        with (artifact_dir / companion).open() as stream:
+            frame_json = [json.loads(line) for line in stream]
+        if len(frame_json) != len(rows):
+            raise SystemExit("frame JSON companion count differs from CSV")
+        shared_fields = v11_fields | {
+            "schema_version", "frame_id", "timestamp_ms", "state", "tracking_phase",
+            "observation_valid", "accepted", "reacquired", "control_valid", "control_source",
+            "motion_control_authorized", "detector_same_class_ambiguous",
+            *(f"{box}_{key}" for box in ("tracking", "display", "control") for key in bbox_components),
+        }
+        for index, (row, frame) in enumerate(zip(rows, frame_json)):
+            for key in shared_fields:
+                value = frame.get(key)
+                if isinstance(value, bool):
+                    matches = row[key] == str(int(value))
+                elif isinstance(value, int):
+                    matches = row[key] and row[key] == str(value)
+                elif isinstance(value, float):
+                    matches = row[key] and float(row[key]) == value
+                elif value is None:
+                    matches = key in frame and row[key] == ""
+                else:
+                    matches = value == row[key]
+                if not matches:
+                    raise SystemExit(f"frame JSON companion mismatch for {key} at row {index}")
 for key in {
     "schema_version", "manifest_hash", "controller_config_hash", "sensor",
     "calibrated", "detector_target_mode", "rknn_api_version",

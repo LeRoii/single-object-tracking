@@ -61,6 +61,35 @@ nanotrack::RuntimeFrameResult frame_result(std::uint64_t frame_id) {
   return result;
 }
 
+void test_recent_safe_telemetry() {
+  using namespace nanotrack;
+  auto frame = frame_result(17);
+  auto& output = frame.output;
+  output.mode = TrackingMode::kSuspected;
+  output.tracking_phase = TrackingPhase::kSuspected;
+  output.observation_valid = false;
+  output.observation_present = true;
+  output.accepted = false;
+  output.template_action = TemplateAction::kRollbackRecent;
+  output.template_transition = TemplateTransitionRequest{13, output.template_action, output.tracking_bbox, false, 10};
+  output.template_transition_result = TemplateTransitionResult::kApplied;
+  output.template_transition_applied = true;
+  output.template_transition_reason = "PROBATION_REJECTED";
+  frame.template_heads = {true, false, true, false};
+  frame.observations.push_back({17, frame.plan.timestamp_ms, output.tracking_bbox,
+                               {0.8F, 0.7F, 5.0F, 8.0F, 0.1F}, TemplateKind::kRecent, 1});
+  DebugTelemetry telemetry(1000);
+  const auto events = telemetry.frame_events(frame, 10.0F, false);
+  expect_true(contains(events, "event=frame_observation schema_version=11 frame_id=17") &&
+                  contains(events, "tracking_phase=SUSPECTED") &&
+                  contains(events, "observation_present=1 trusted_for_state_update=0") &&
+                  contains(events, "rect0_source=RECENT_OBSERVATION") &&
+                  contains(events, "recent_raw_psr=5.000000") &&
+                  contains(events, "template_transaction_id=13 template_slot_id=10") &&
+                  contains(events, "template_transition_result=APPLIED"),
+              "tentative frames report full v11 evidence outside heartbeat cadence");
+}
+
 void test_adaptive_coast_events() {
   using namespace nanotrack;
   DebugTelemetry telemetry(1000);
@@ -344,6 +373,7 @@ void test_search_semantic_events() {
 }  // namespace
 
 int main() {
+  test_recent_safe_telemetry();
   using namespace nanotrack;
   test_adaptive_coast_events();
   test_center_filter_events();

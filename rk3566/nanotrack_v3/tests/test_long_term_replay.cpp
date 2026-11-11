@@ -1,4 +1,4 @@
-#include "long_term_controller.hpp"
+#include "resolved_controller_fixture.hpp"
 #include "target_class.hpp"
 
 #include <cmath>
@@ -79,7 +79,7 @@ void test_recent_safe_recovery_replay() {
   config.detector_candidate_max_center_ratio = 0.20F;
   config.search_reacquisition_requires_detector = true;  // Ignored migration field.
 
-  LongTermController tracker_only(config);
+  ResolvedControllerFixture tracker_only(config);
   tracker_only.initialize(initial, 0, 0, frame_size);
   auto plan = tracker_only.begin_frame(1, 40, true);
   auto out = tracker_only.finish_frame(plan, {}, std::nullopt);
@@ -111,7 +111,7 @@ void test_recent_safe_recovery_replay() {
                   !plan.request_detector,
               "continuous recent identity recovers across one gap without detector or safe veto");
 
-  LongTermController safe_only(config);
+  ResolvedControllerFixture safe_only(config);
   safe_only.initialize(initial, 0, 0, frame_size);
   safe_only.finish_frame(safe_only.begin_frame(1, 30, false), {}, std::nullopt);
   for (std::uint64_t frame = 2; frame <= 3; ++frame) {
@@ -123,7 +123,7 @@ void test_recent_safe_recovery_replay() {
                 "safe alone follows the same two-hit path without detector");
   }
 
-  LongTermController detector(config);
+  ResolvedControllerFixture detector(config);
   detector.initialize(initial, 0, 0, frame_size, make_fixed_target_class(0, true));
   plan = detector.begin_frame(1, 30, false);
   detector.finish_frame(plan, {}, std::nullopt);
@@ -153,7 +153,7 @@ void test_recent_safe_recovery_replay() {
                   out.search_hint->confirmation_count == 2,
               "the same detector-seeded identity commits through two safe verifications");
 
-  LongTermController ambiguous(config);
+  ResolvedControllerFixture ambiguous(config);
   ambiguous.initialize(initial, 0, 0, frame_size, make_fixed_target_class(0, true));
   plan = ambiguous.begin_frame(1, 30, false);
   ambiguous.finish_frame(plan, {}, std::nullopt);
@@ -187,7 +187,7 @@ void test_delayed_detector_recovery_replay() {
   config.motion_search_confidence_ms = 80;
   config.detector_interval_ms = 100;
   config.detector_candidate_max_center_ratio = 0.02F;
-  LongTermController controller(config);
+  ResolvedControllerFixture controller(config);
   controller.initialize(initial, 0, 0, {320, 200}, make_fixed_target_class(0, true));
   step(controller, 1, 20, BBox{43, 30, 20, 20}, TemplateKind::kRecent);
   step(controller, 2, 40, BBox{46, 30, 20, 20}, TemplateKind::kRecent);
@@ -244,7 +244,7 @@ void test_unified_subtarget_offset_replay() {
   config.detector_candidate_max_center_ratio = 0.70F;
   config.detector_target_mode = DetectorTargetMode::kSubtarget;
   config.detector_subtarget_max_probes = 5;
-  LongTermController controller(config);
+  ResolvedControllerFixture controller(config);
   controller.initialize(initial, 0, 0, {400, 240}, make_fixed_target_class(0, true));
   step(controller, 1, 20, std::nullopt);
   auto plan = controller.begin_frame(2, 40, true);
@@ -333,7 +333,7 @@ void test_subtarget_recovery_identity_and_eligibility() {
   };
 
   for (bool both_off_probe : {false, true}) {
-    LongTermController conflicted(config);
+    ResolvedControllerFixture conflicted(config);
     start(conflicted);
     auto plan = conflicted.begin_frame(3, 60, false);
     const auto recent_bbox = both_off_probe ? BBox{112, 62, 20, 20} : center;
@@ -357,7 +357,7 @@ void test_subtarget_recovery_identity_and_eligibility() {
   ControllerConfig age_config = config;
   age_config.detector_subtarget_max_probes = 1;
   age_config.search_reacquisition_min_age_ms = 60;
-  LongTermController immature(age_config);
+  ResolvedControllerFixture immature(age_config);
   start(immature);
   auto plan = immature.begin_frame(3, 60, false);
   auto out = immature.finish_frame(plan, {}, std::nullopt);
@@ -378,7 +378,7 @@ void test_subtarget_recovery_identity_and_eligibility() {
 
   ControllerConfig refresh_config = config;
   refresh_config.detector_stale_ms = 60;
-  LongTermController refreshed(refresh_config);
+  ResolvedControllerFixture refreshed(refresh_config);
   start(refreshed);
   plan = refreshed.begin_frame(3, 70, false);
   refreshed.finish_frame(plan, {}, std::nullopt);
@@ -412,7 +412,7 @@ int main() {
   const FrameSize frame_size{240, 160};
   ControllerConfig config;
 
-  LongTermController normal(config);
+  ResolvedControllerFixture normal(config);
   normal.initialize(initial, 0, 0, frame_size,
       make_unknown_target_class(TargetClassReason::kNoMatch));
   ControllerOutput output;
@@ -441,7 +441,7 @@ int main() {
   motion_search_config.motion_max_acceleration_diagonals_per_s2 = 3.0F;
   motion_search_config.motion_scale_rate_limit_per_s = 0.30F;
   motion_search_config.search_probe_interval_ms = 80;
-  LongTermController motion_search(motion_search_config);
+  ResolvedControllerFixture motion_search(motion_search_config);
   motion_search.initialize(initial, 0, 0, frame_size,
       make_unknown_target_class(TargetClassReason::kNoMatch));
   output = step(motion_search, 1, 40, BBox{44, 30, 20, 20});
@@ -466,7 +466,7 @@ int main() {
                       AcceptedObservationPath::kSearchReacquisition,
               "candidate replay commits only after the second consistent visual hit");
 
-  LongTermController assisted(config);
+  ResolvedControllerFixture assisted(config);
   assisted.initialize(initial, 0, 0, frame_size,
       make_unknown_target_class(TargetClassReason::kNoMatch));
   step(assisted, 1, 100, std::nullopt);
@@ -480,7 +480,7 @@ int main() {
   expect_true(output.reacquired && output.control_valid,
               "template-only assisted recovery can reacquire");
 
-  LongTermController permanent(config);
+  ResolvedControllerFixture permanent(config);
   permanent.initialize(initial, 0, 0, frame_size,
       make_unknown_target_class(TargetClassReason::kNoMatch));
   step(permanent, 1, 40, std::nullopt);
@@ -490,7 +490,7 @@ int main() {
   expect_true(output.mode == TrackingMode::kLost && !output.control_valid,
               "permanent loss stays invalid without detector");
 
-  LongTermController single_detector(config);
+  ResolvedControllerFixture single_detector(config);
   single_detector.initialize(initial, 0, 0, frame_size,
       make_fixed_target_class(0, true));
   step(single_detector, 1, 100, std::nullopt);
@@ -513,7 +513,7 @@ int main() {
   expect_true(!output.accepted && !output.control_valid && !output.reacquired,
               "one high-confidence candidate plus one reliable verification cannot reacquire");
 
-  LongTermController confirmed_detector(config);
+  ResolvedControllerFixture confirmed_detector(config);
   confirmed_detector.initialize(initial, 0, 0, frame_size,
       make_fixed_target_class(0, true));
   step(confirmed_detector, 1, 100, std::nullopt);
@@ -538,7 +538,7 @@ int main() {
   expect_true(output.accepted && output.reacquired && output.control_valid,
               "two spatially consistent verifications in three frames reacquire");
 
-  LongTermController filtered_detector(config);
+  ResolvedControllerFixture filtered_detector(config);
   filtered_detector.initialize(initial, 0, 0, frame_size,
       make_fixed_target_class(0, true));
   step(filtered_detector, 1, 100, std::nullopt);
@@ -551,7 +551,7 @@ int main() {
                   !output.control_valid,
               "wrong-class detections filtered by the engine cannot enter recovery");
 
-  LongTermController invalid_detector(config);
+  ResolvedControllerFixture invalid_detector(config);
   invalid_detector.initialize(initial, 0, 0, frame_size,
       make_fixed_target_class(0, true));
   step(invalid_detector, 1, 100, std::nullopt);
@@ -563,7 +563,7 @@ int main() {
                   !output.control_valid,
               "invalid detector geometry is discarded");
 
-  LongTermController same_class_distractor(config);
+  ResolvedControllerFixture same_class_distractor(config);
   same_class_distractor.initialize(initial, 0, 0, frame_size,
       make_fixed_target_class(0, true));
   step(same_class_distractor, 1, 100, std::nullopt);
@@ -592,7 +592,7 @@ int main() {
   expect_true(!output.accepted && !output.control_valid,
               "position rejection cannot bypass recovery confirmation");
 
-  LongTermController deformation(config);
+  ResolvedControllerFixture deformation(config);
   deformation.initialize(initial, 0, 0, frame_size,
       make_unknown_target_class(TargetClassReason::kNoMatch));
   const BBox deformed{35, 32, 30, 16};
@@ -600,7 +600,7 @@ int main() {
   expect_true(output.accepted && output.control_valid,
               "bounded target deformation remains trackable");
 
-  LongTermController distractor(config);
+  ResolvedControllerFixture distractor(config);
   distractor.initialize(initial, 0, 0, frame_size,
       make_unknown_target_class(TargetClassReason::kNoMatch));
   const BBox far_distractor{180, 30, 20, 20};
@@ -616,7 +616,7 @@ int main() {
     const int duration = budget.expected;
     ControllerConfig coast_config = config;
     coast_config.occlusion_hold_frames = budget.configured;
-    LongTermController coast(coast_config);
+    ResolvedControllerFixture coast(coast_config);
     coast.initialize(initial, 0, 0, frame_size);
     for (int frame = 1; frame <= 8; ++frame)
       step(coast, frame, frame * 40, initial);
@@ -678,7 +678,7 @@ int main() {
   // seven misses probe five and recovers at 10/11. Search alone never moves
   // the control box, and a failed confirm cannot shift the periodic schedule.
   for (int reappearance_age : {4, 7}) {
-    LongTermController coast(config);
+    ResolvedControllerFixture coast(config);
     coast.initialize(initial, 0, 0, frame_size);
     for (int frame = 1; frame <= 8; ++frame)
       step(coast, frame, frame * 40, initial);
@@ -732,7 +732,7 @@ int main() {
   }
 
   for (std::int64_t timestamp : {1400, 4000}) {
-    LongTermController late(config);
+    ResolvedControllerFixture late(config);
     late.initialize(initial, 0, 0, frame_size);
     for (int frame = 1; frame <= 8; ++frame)
       step(late, frame, frame * 40, initial);

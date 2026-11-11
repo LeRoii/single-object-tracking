@@ -9,7 +9,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 10;
+constexpr int kTrackingSchemaVersion = 11;
 
 class MonotonicVideoClock {
  public:
@@ -29,7 +29,12 @@ struct TrackingLogRow {
   std::int64_t timestamp_ms = 0;
   TrackingMode mode = TrackingMode::kTracking;
   TrackingPhase tracking_phase = TrackingPhase::kInvalid;
+  // Legacy column with accepted-observation semantics.
   bool observation_valid = false;
+  bool observation_present = false;
+  bool trusted_for_state_update = false;
+  const char* state_change_reason = "NONE";
+  const char* rect0_source = "MOTION_PREDICTION";
   ControlSource control_source = ControlSource::kNone;
   AcceptedObservationPath accepted_observation_path =
       AcceptedObservationPath::kDirect;
@@ -43,6 +48,27 @@ struct TrackingLogRow {
   BBox control_bbox{};
   TemplateKind selected_template = TemplateKind::kAnchor;
   TemplateAction template_action = TemplateAction::kNone;
+  std::optional<TemplateTransitionRequest> template_transition;
+  TemplateTransitionResult template_transition_result = TemplateTransitionResult::kNone;
+  bool template_transition_applied = false;
+  bool template_probation_active = false;
+  const char* template_transition_reason = "NONE";
+  TemplateHeadExecution template_heads;
+  std::optional<BBox> recent_raw_bbox;
+  std::optional<BBox> safe_raw_bbox;
+  std::optional<BBox> staged_raw_bbox;
+  ResponseMetrics safe_metrics{};
+  ResponseMetrics staged_metrics{};
+  std::optional<ResponseReference> trusted_response_reference;
+  std::optional<float> response_psr_relative_delta;
+  std::optional<float> response_apce_relative_delta;
+  std::optional<float> response_peak_margin_absolute_delta;
+  std::optional<RecoveryCandidateKey> recovery_candidate_key;
+  std::size_t recovery_confirmation_hits = 0;
+  bool recovery_conflict = false;
+  std::optional<RecoveryCandidateKey> recovery_probe;
+  BBox recovery_probe_bbox{};
+  const char* recovery_reason = "NONE";
   bool anchor_present = false;
   ResponseMetrics anchor_metrics{};
   bool recent_present = false;
@@ -185,6 +211,7 @@ struct InitializationDetectorSummary {
 
 struct TrackingSessionMetadata {
   std::string video;
+  std::string frame_json_file;
   std::string model_dir;
   std::string manifest_hash_algorithm;
   std::string manifest_hash;
@@ -257,6 +284,8 @@ std::string tracking_csv_header();
 void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
                                       const ControllerConfig& config);
 std::string tracking_csv_row(const TrackingLogRow& row);
+std::string tracking_frame_json(const TrackingLogRow& row);
+std::string tracking_frame_event_fields(const TrackingLogRow& row);
 TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     std::int64_t timestamp_ms,
                                     const BBox& bbox,

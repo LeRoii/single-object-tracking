@@ -20,15 +20,14 @@ class NanoTrackV3 final : public ShortTermTracker {
 
   void initialize(const ImageView& image, const BBox& bbox) override;
   std::vector<TrackerObservation> infer(const ImageView& image,
-                                        const SearchPlan& plan) override;
+                                        const SearchPlan& plan,
+                                        TemplateHeadExecution& heads) override;
   void commit_bbox(const BBox& bbox) override;
   void prepare_recent(const ImageView& image, const BBox& bbox,
                       std::uint64_t transaction_id) override;
   bool commit_recent(std::uint64_t transaction_id) noexcept override;
   bool abort_recent(std::uint64_t transaction_id) noexcept override;
-  void stage_recent(const ImageView& image, const BBox& bbox) override;
-  void commit_recent() override;
-  void rollback_recent() override;
+  void discard_staged_recent() noexcept override;
   const std::string& api_version() const { return template_model_->api_version(); }
   const std::string& driver_version() const { return template_model_->driver_version(); }
 

@@ -79,6 +79,7 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   }
 
   initialized_ = false;
+  abandon_staged_recent();
   controller_.initialize(initial_bbox, frame_id, timestamp_ms,
                          FrameSize{image.width, image.height}, result.target_class);
   tracker_.initialize(image, initial_bbox);
@@ -92,22 +93,27 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                                                   std::int64_t timestamp_ms) {
   if (!initialized_) throw std::logic_error("long-term runtime is not initialized");
   if (frame_open_) throw std::logic_error("previous runtime frame is unfinished");
-  validate_image(image);
   const auto total_start = std::chrono::steady_clock::now();
   RuntimeFrameResult result;
   result.target_class = last_initialization_.target_class;
   result.detector.configured = detector_configured_;
-  result.detector.ready = detector_.available() && detector_.can_submit();
-  result.plan = controller_.begin_frame(frame_id, timestamp_ms,
-                                        result.detector.ready);
+  bool completed = false;
   frame_open_ = true;
   ScopedCleanup frame_cleanup(
-      [this]() noexcept {
-        controller_.abort_frame();
+      [this, &completed]() noexcept {
+        if (!completed) {
+          abandon_staged_recent();
+          controller_.abort_frame();
+          controller_.discard_template_probation();
+        }
         frame_open_ = false;
         return 0;
       },
       [](int) noexcept {});
+  validate_image(image);
+  result.detector.ready = detector_.available() && detector_.can_submit();
+  result.plan = controller_.begin_frame(frame_id, timestamp_ms,
+                                        result.detector.ready);
 
   if (result.plan.request_detector && result.plan.detector_request) {
     result.detector.request_frame_id =
@@ -142,7 +148,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
 
   if (result.plan.run_tracker) {
     const auto tracker_start = std::chrono::steady_clock::now();
-    result.observations = tracker_.infer(image, result.plan);
+    result.observations = tracker_.infer(image, result.plan, result.template_heads);
     result.tracker_ms = std::chrono::duration<float, std::milli>(
                             std::chrono::steady_clock::now() - tracker_start)
                             .count();
@@ -151,21 +157,68 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   }
   result.output =
       controller_.finish_frame(result.plan, result.observations, detector_batch);
-  if (result.output.accepted) {
+  const auto& transition = result.output.template_transition;
+  const bool recovery_prepare = transition && transition->recovery &&
+      transition->action == TemplateAction::kStageRecent;
+  if (result.output.accepted && !recovery_prepare) {
     tracker_.commit_bbox(result.output.tracking_bbox);
   }
-  switch (result.output.template_action) {
-    case TemplateAction::kNone: break;
-    case TemplateAction::kStageRecent:
-      tracker_.stage_recent(image, result.output.tracking_bbox);
-      break;
-    case TemplateAction::kCommitRecent: tracker_.commit_recent(); break;
-    case TemplateAction::kRollbackRecent: tracker_.rollback_recent(); break;
-  }
+  if (transition) apply_template_transition(image, result.output);
   result.runtime_ms = std::chrono::duration<float, std::milli>(
                           std::chrono::steady_clock::now() - total_start)
                           .count();
+  completed = true;
   return result;
+}
+
+void LongTermRuntime::abandon_staged_recent() noexcept {
+  if (staged_template_slot_id_) {
+    if (!tracker_.abort_recent(*staged_template_slot_id_)) {
+      tracker_.discard_staged_recent();
+    }
+    staged_template_slot_id_.reset();
+  }
+}
+
+void LongTermRuntime::apply_template_transition(
+    const ImageView& image, ControllerOutput& output) {
+  const auto& request = *output.template_transition;
+  const auto slot = request.template_slot_id;
+  auto result = TemplateTransitionResult::kTrackerRejected;
+  switch (request.action) {
+    case TemplateAction::kStageRecent:
+      // Own the slot before extraction so even a throw after allocation is
+      // cleaned up using the exact same ID.
+      staged_template_slot_id_ = slot;
+      try {
+        tracker_.prepare_recent(image, request.bbox, slot);
+      } catch (...) {
+        abandon_staged_recent();
+        result = TemplateTransitionResult::kPrepareFailed;
+        break;
+      }
+      if (request.recovery) tracker_.commit_bbox(request.bbox);
+      result = TemplateTransitionResult::kApplied;
+      break;
+    case TemplateAction::kCommitRecent:
+      if (tracker_.commit_recent(slot)) {
+        result = TemplateTransitionResult::kApplied;
+        staged_template_slot_id_.reset();
+      } else {
+        if (!tracker_.abort_recent(slot)) tracker_.discard_staged_recent();
+        staged_template_slot_id_.reset();
+      }
+      break;
+    case TemplateAction::kRollbackRecent:
+      if (tracker_.abort_recent(slot)) result = TemplateTransitionResult::kApplied;
+      else tracker_.discard_staged_recent();
+      staged_template_slot_id_.reset();
+      break;
+    case TemplateAction::kNone: break;
+  }
+  if (!controller_.publish_template_transition(output, result)) {
+    throw std::logic_error("template transition acknowledgement did not match its request");
+  }
 }
 
 }  // namespace nanotrack

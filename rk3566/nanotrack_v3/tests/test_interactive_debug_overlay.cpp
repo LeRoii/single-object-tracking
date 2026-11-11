@@ -199,6 +199,28 @@ void test_target_class_presentation() {
 }  // namespace
 
 int main() {
+  {
+    using namespace nanotrack;
+    auto frame = complete_result();
+    frame.output.tracking_phase = TrackingPhase::kSuspected;
+    frame.output.observation_present = true;
+    frame.output.observation_valid = false;
+    frame.output.accepted = false;
+    frame.output.control_bbox = {54, 64, 27, 37};
+    const auto tentative = make_interactive_debug_overlay(frame);
+    expect_true(tentative.status_label == "SUSPECTED / RECENT OBSERVATION" &&
+                    tentative.control_valid &&
+                    tentative.boxes.back().kind == DebugBoxKind::kTentativeControl &&
+                    same_bbox(tentative.boxes.back().bbox, frame.output.control_bbox),
+                "suspected recent displays independent bounded control");
+    frame.output.control_source = ControlSource::kNone;
+    frame.output.control_valid = false;
+    const auto expired = make_interactive_debug_overlay(frame);
+    expect_true(expired.status_label == "SUSPECTED / RECENT OBSERVATION / NO_CONTROL" &&
+                    !expired.control_valid,
+                "expired tentative observation remains visible without control");
+  }
+
   using namespace nanotrack;
 
   const RuntimeFrameResult result = complete_result();

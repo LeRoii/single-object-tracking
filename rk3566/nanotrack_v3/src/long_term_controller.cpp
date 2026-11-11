@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace nanotrack {
@@ -127,6 +128,8 @@ void LongTermController::initialize(const BBox& initial_bbox,
   reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   mode_ = TrackingMode::kTracking;
+  last_output_mode_ = mode_;
+  last_output_phase_ = TrackingPhase::kTracking;
   prediction_checkpoint_.reset();
   shadow_motion_.reset();
   tentative_control_.reset();
@@ -150,6 +153,9 @@ void LongTermController::initialize(const BBox& initial_bbox,
   last_timestamp_ms_ = timestamp_ms;
   stable_frames_ = 0;
   last_recent_update_ms_ = timestamp_ms;
+  pending_template_transition_.reset();
+  pending_recovery_acceptance_.reset();
+  staged_template_slot_id_.reset();
   recent_probation_ = false;
   recovery_probation_ = false;
   rollback_pending_ = false;
@@ -207,6 +213,9 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
                                            bool detector_ready) {
   if (!initialized_) throw std::logic_error("controller is not initialized");
   if (frame_open_) throw std::logic_error("previous controller frame is unfinished");
+  if (pending_template_transition_) {
+    resolve_template_transition(pending_template_transition_->transaction_id, false);
+  }
   if (frame_id <= last_frame_id_ || timestamp_ms <= last_timestamp_ms_) {
     if (uses_unified_recovery()) {
       invalidate_unified_recovery();
@@ -224,13 +233,16 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
       invalidate_unified_recovery();
       cancel_probation();
     }
-    if (resume_search_after_rollback_ && !loss_start_ms_) {
-      loss_start_ms_ = last_timestamp_ms_;
-      last_detector_request_ms_.reset();
-      if (config_.motion_search_enabled) {
-        motion_.begin_search(last_timestamp_ms_);
-        motion_search_active_ = true;
+    if (resume_search_after_rollback_) {
+      if (!loss_start_ms_) {
+        loss_start_ms_ = last_timestamp_ms_;
+        last_detector_request_ms_.reset();
+        if (config_.motion_search_enabled) {
+          motion_.begin_search(last_timestamp_ms_);
+          motion_search_active_ = true;
+        }
       }
+      if (!rollback_pending_) resume_search_after_rollback_ = false;
     }
     recovery_candidates_.expire(frame_id, timestamp_ms,
                                 detector_eligibility_generation_);
@@ -455,11 +467,16 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
 }
 
 void LongTermController::abort_frame() noexcept {
-  if (!frame_open_) return;
-  if (uses_unified_recovery()) {
-    invalidate_unified_recovery();
-    cancel_probation();
+  if (pending_template_transition_) {
+    resolve_template_transition(pending_template_transition_->transaction_id, false);
   }
+  if (!frame_open_) {
+    pending_recovery_acceptance_.reset();
+    return;
+  }
+  pending_recovery_acceptance_.reset();
+  if (uses_unified_recovery()) invalidate_unified_recovery();
+  cancel_probation();
   frame_open_ = false;
   restore_prediction_checkpoint();
   if (active_plan_.mode == TrackingMode::kOcclusionHold) {
@@ -648,14 +665,176 @@ void LongTermController::complete_frame(const SearchPlan& plan,
                                         ControllerOutput& output) {
   finalize_output_semantics(output);
   if (output.tracking_phase != TrackingPhase::kSuspected) tentative_control_.reset();
-  prediction_checkpoint_.reset();
-  if (rollback_pending_ && output.template_action == TemplateAction::kRollbackRecent) {
-    rollback_pending_ = false;
-    resume_search_after_rollback_ = false;
+  if (output.tracking_phase == TrackingPhase::kSuspected) {
+    if (last_output_phase_ != TrackingPhase::kSuspected) {
+      output.state_change_reason = "RESPONSE_DEGRADED";
+    } else if (last_output_mode_ != output.mode) {
+      output.state_change_reason = "SUSPICION_ENTERED";
+    } else {
+      output.state_change_reason = "SUSPICION_CONTINUES";
+    }
+  } else if (output.accepted && last_output_phase_ == TrackingPhase::kSuspected) {
+    output.state_change_reason = "SUSPICION_CLEARED";
+  } else if (output.accepted && last_output_phase_ == TrackingPhase::kSearching) {
+    output.state_change_reason = "OBSERVATION_CONFIRMED";
+  } else if (output.tracking_phase == TrackingPhase::kSearching &&
+             last_output_phase_ != TrackingPhase::kSearching) {
+    output.state_change_reason = last_output_phase_ == TrackingPhase::kSuspected
+        ? "SUSPICION_ESCALATED" : "OBSERVATION_LOST";
+  } else if (output.mode != last_output_mode_) {
+    output.state_change_reason = "SEARCH_MODE_CHANGED";
   }
+  output.template_probation_active = recent_probation_;
+  if (output.template_action != TemplateAction::kNone) {
+    if (last_template_transaction_id_ == std::numeric_limits<std::uint64_t>::max()) {
+      throw std::overflow_error("template transaction IDs exhausted");
+    }
+    const auto id = ++last_template_transaction_id_;
+    const bool stage = output.template_action == TemplateAction::kStageRecent;
+    const bool recovery = stage ? pending_recovery_acceptance_ != nullptr
+                                : recovery_probation_ || resume_search_after_rollback_;
+    const auto slot = stage ? id : staged_template_slot_id_.value();
+    pending_template_transition_ = TemplateTransitionRequest{
+        id, output.template_action, output.tracking_bbox, recovery, slot};
+    output.template_transition = pending_template_transition_;
+    output.template_transition_result = TemplateTransitionResult::kPending;
+    switch (output.template_action) {
+      case TemplateAction::kStageRecent:
+        output.template_transition_reason = recovery ? "RECOVERY_CONFIRMED" : "STABLE_TRACKING";
+        break;
+      case TemplateAction::kCommitRecent:
+        output.template_transition_reason = "PROBATION_PASSED";
+        break;
+      case TemplateAction::kRollbackRecent:
+        output.template_transition_reason = rollback_pending_ ? "FRAME_INVALIDATED" : "PROBATION_REJECTED";
+        break;
+      case TemplateAction::kNone: break;
+    }
+  }
+  if (!pending_recovery_acceptance_) {
+    last_output_mode_ = output.mode;
+    last_output_phase_ = output.tracking_phase;
+  }
+  prediction_checkpoint_.reset();
   last_frame_id_ = plan.frame_id;
   last_timestamp_ms_ = plan.timestamp_ms;
   frame_open_ = false;
+}
+
+const char* to_string(TemplateTransitionResult result) {
+  switch (result) {
+    case TemplateTransitionResult::kNone: return "NONE";
+    case TemplateTransitionResult::kPending: return "PENDING";
+    case TemplateTransitionResult::kApplied: return "APPLIED";
+    case TemplateTransitionResult::kPrepareFailed: return "PREPARE_FAILED";
+    case TemplateTransitionResult::kTrackerRejected: return "TRACKER_REJECTED";
+  }
+  return "UNKNOWN";
+}
+
+void LongTermController::reset_template_probation() noexcept {
+  staged_template_slot_id_.reset();
+  recent_probation_ = false;
+  recovery_probation_ = false;
+  rollback_pending_ = false;
+  probation_reliable_frames_ = 0;
+  stable_frames_ = 0;
+}
+
+void LongTermController::discard_template_probation() noexcept {
+  if (!staged_template_slot_id_) return;
+  resume_search_after_rollback_ |= recovery_probation_;
+  reset_template_probation();
+  if (uses_unified_recovery()) invalidate_unified_recovery();
+}
+
+bool LongTermController::resolve_template_transition(
+    std::uint64_t transaction_id, bool applied) noexcept {
+  if (!pending_template_transition_ ||
+      pending_template_transition_->transaction_id != transaction_id) return false;
+
+  const auto request = *pending_template_transition_;
+  pending_template_transition_.reset();
+  if (request.action == TemplateAction::kStageRecent && applied) {
+    if (request.recovery) apply_recovery_acceptance();
+    staged_template_slot_id_ = request.template_slot_id;
+    recent_probation_ = true;
+    recovery_probation_ = request.recovery;
+    response_baseline_.freeze();
+    probation_reliable_frames_ = 0;
+    stable_frames_ = 0;
+  } else {
+    reset_template_probation();
+    if (request.action == TemplateAction::kCommitRecent && applied) {
+      last_recent_update_ms_ = last_timestamp_ms_;
+    } else if (request.recovery) {
+      invalidate_unified_recovery();
+      response_baseline_.freeze();
+      if (request.action != TemplateAction::kStageRecent) {
+        resume_search_after_rollback_ = true;
+      }
+    }
+  }
+  pending_recovery_acceptance_.reset();
+  return true;
+}
+
+bool LongTermController::publish_template_transition(
+    ControllerOutput& output, TemplateTransitionResult result) noexcept {
+  if (!output.template_transition || !pending_template_transition_ ||
+      result == TemplateTransitionResult::kNone || result == TemplateTransitionResult::kPending) {
+    return false;
+  }
+  const auto& request = *output.template_transition;
+  if (request.action != pending_template_transition_->action ||
+      request.template_slot_id != pending_template_transition_->template_slot_id ||
+      request.recovery != pending_template_transition_->recovery) return false;
+  const bool applied = result == TemplateTransitionResult::kApplied;
+  if (!resolve_template_transition(request.transaction_id, applied)) return false;
+
+  output.template_transition_result = result;
+  output.template_transition_applied = applied;
+  output.template_probation_active = recent_probation_;
+  if (request.recovery && request.action == TemplateAction::kStageRecent) {
+    if (applied) {
+      output.mode = mode_;
+      output.recovery_reason = "RECOVERY_STAGED";
+      output.state_change_reason = "OBSERVATION_CONFIRMED";
+    } else {
+      const auto& motion_bbox = active_plan_.motion_predicted_bbox;
+      output.mode = mode_;
+      output.accepted = false;
+      output.reacquired = false;
+      output.observation_valid = false;
+      output.observation_present = false;
+      output.trusted_for_state_update = false;
+      output.accepted_observation_path = AcceptedObservationPath::kDirect;
+      output.tracking_phase = TrackingPhase::kSearching;
+      output.tracking_bbox = motion_bbox;
+      output.display_bbox = motion_bbox;
+      output.control_bbox = motion_bbox;
+      output.bbox = motion_bbox;
+      output.motion_control_authorized = search_control_live(output.timestamp_ms);
+      output.control_valid = output.motion_control_authorized;
+      output.control_source = output.control_valid ? ControlSource::kMotionSearch
+                                                   : ControlSource::kNone;
+      output.selected_observation_bbox.reset();
+      output.center_innovation_x = output.center_innovation_y = 0.0F;
+      output.center_correction_x = output.center_correction_y = 0.0F;
+      output.center_correction_limited = false;
+      output.state_change_reason = "RECOVERY_PREPARE_FAILED";
+      output.recovery_reason = "RECOVERY_PREPARE_FAILED";
+      last_output_mode_ = output.mode;
+      last_output_phase_ = output.tracking_phase;
+    }
+  } else if (request.recovery) {
+    if (request.action == TemplateAction::kCommitRecent) {
+      output.recovery_reason = applied ? "RECOVERY_COMMITTED" : "RECOVERY_COMMIT_REJECTED";
+    } else {
+      output.recovery_reason = "RECOVERY_PROBATION_REJECTED";
+    }
+  }
+  return true;
 }
 
 float LongTermController::trusted_elapsed_seconds(std::int64_t timestamp_ms) const {
@@ -676,7 +855,8 @@ bool LongTermController::search_control_live(std::int64_t timestamp_ms) const {
 }
 
 LongTermController::RecentDisposition LongTermController::assess_recent(
-    const SearchPlan& plan, const EvaluatedObservation& recent) {
+    const SearchPlan& plan, const EvaluatedObservation& recent,
+    const ResponseBaselineEvaluation& response) {
   const auto& observation = recent.observation;
   const auto bounded =
       constrain_tracker_observation_dimensions(observation.bbox, current_bbox_, frame_size_);
@@ -687,7 +867,6 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   }
 
   const auto& metrics = observation.metrics;
-  const auto response = response_baseline_.evaluate(metrics);
   const int drops = static_cast<int>(response.psr_drop) +
                     static_cast<int>(response.apce_drop) +
                     static_cast<int>(response.peak_margin_drop);
@@ -840,8 +1019,6 @@ void LongTermController::publish_tentative(
   output.mode = mode_;
   if (recent_probation_) {
     output.template_action = TemplateAction::kRollbackRecent;
-    recent_probation_ = false;
-    probation_reliable_frames_ = 0;
   }
 }
 
@@ -916,11 +1093,15 @@ LongTermController::confirm_recovery_candidate(
     const std::optional<EvaluatedObservation>& recent,
     const std::optional<EvaluatedObservation>& safe,
     ControllerOutput& output) {
-  if (!search_reacquisition_eligible(plan.timestamp_ms)) return std::nullopt;
+  if (!search_reacquisition_eligible(plan.timestamp_ms)) {
+    output.recovery_reason = "SEARCH_MIN_AGE";
+    return std::nullopt;
+  }
   const auto* planned_candidate = plan.recovery_probe
       ? recovery_candidates_.find(*plan.recovery_probe) : nullptr;
   if (plan.recovery_probe && !planned_candidate) {
     if (output.search_hint) output.search_hint->rejection = SearchHintRejection::kExpired;
+    output.recovery_reason = "PROBE_EXPIRED";
     return std::nullopt;
   }
   const auto carrier = planned_candidate ? planned_candidate->subtarget_carrier : std::nullopt;
@@ -977,7 +1158,12 @@ LongTermController::confirm_recovery_candidate(
   const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
   if (probe_conflict) recovery_candidates_.mark_identity_conflict();
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
-  const auto* candidate = recovery_candidates_.select_probe();
+  const bool recent_confirmed = !output.recovery_conflict && recent_key &&
+      recovery_candidates_.confirmed(*recent_key);
+  const bool safe_confirmed = !output.recovery_conflict && safe_key &&
+      recovery_candidates_.confirmed(*safe_key);
+  const auto* candidate = recent_confirmed ? recovery_candidates_.find(*recent_key) :
+      safe_confirmed ? recovery_candidates_.find(*safe_key) : recovery_candidates_.select_probe();
   if (candidate) {
     output.recovery_candidate_key = candidate->key;
     output.recovery_confirmation_hits = candidate->hits();
@@ -994,11 +1180,15 @@ LongTermController::confirm_recovery_candidate(
     }
   }
   if (output.recovery_conflict) {
+    output.recovery_reason = "IDENTITY_CONFLICT";
     if (output.search_hint) output.search_hint->rejection = SearchHintRejection::kConflict;
     return std::nullopt;
   }
-  if (recent_key && recovery_candidates_.confirmed(*recent_key)) return recent;
-  if (safe_key && recovery_candidates_.confirmed(*safe_key)) return safe;
+  if (recent_confirmed || safe_confirmed) {
+    output.recovery_reason = "RECOVERY_CONFIRMED";
+    return recent_confirmed ? recent : safe;
+  }
+  output.recovery_reason = candidate ? "AWAITING_CONFIRMATION" : "NO_ELIGIBLE_CANDIDATE";
   return std::nullopt;
 }
 
@@ -1230,6 +1420,64 @@ BBox LongTermController::stabilize_accepted_center(
   return stabilized;
 }
 
+void LongTermController::defer_recovery_acceptance(
+    const SearchPlan& plan, const EvaluatedObservation& selected,
+    ControllerOutput& output) {
+  auto recovery = std::make_unique<RecoveryAcceptance>(config_);
+  const BBox bbox = selected.observation.bbox;
+  recovery->bbox = bbox;
+  recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);
+  recovery->motion.initialize(bbox, plan.timestamp_ms, frame_size_.width, frame_size_.height);
+  recovery->occlusion_decision = recovery->occlusion_evidence.observe(
+      OcclusionEvidenceInput{bbox, bbox, selected.observation.metrics, true, false, false});
+  recovery->width_scale.filtered = recovery->width_scale.emitted = bbox.width;
+  recovery->height_scale.filtered = recovery->height_scale.emitted = bbox.height;
+  output.tracking_bbox = bbox;
+  output.display_bbox = recovery->display_bbox;
+  output.control_bbox = bbox;
+  output.bbox = output.display_bbox;
+  pending_recovery_acceptance_ = std::move(recovery);
+  output.accepted = true;
+  output.reacquired = true;
+  output.control_valid = true;
+  output.accepted_observation_path = AcceptedObservationPath::kSearchReacquisition;
+  output.template_action = TemplateAction::kStageRecent;
+  output.mode = TrackingMode::kTracking;
+  output.motion_control_authorized = false;
+}
+
+void LongTermController::apply_recovery_acceptance() noexcept {
+  auto& recovery = *pending_recovery_acceptance_;
+  static_assert(std::is_nothrow_move_assignable_v<MotionEstimator>);
+  static_assert(std::is_nothrow_move_assignable_v<OcclusionEvidenceTracker>);
+  static_assert(std::is_nothrow_move_assignable_v<DimensionScaleState>);
+  motion_ = std::move(recovery.motion);
+  occlusion_evidence_ = std::move(recovery.occlusion_evidence);
+  occlusion_decision_ = recovery.occlusion_decision;
+  width_scale_state_ = std::move(recovery.width_scale);
+  height_scale_state_ = std::move(recovery.height_scale);
+  current_bbox_ = recovery.bbox;
+  display_bbox_ = recovery.display_bbox;
+  last_trusted_timestamp_ms_ = last_timestamp_ms_;
+  motion_search_active_ = false;
+  loss_start_ms_.reset();
+  hold_used_for_loss_ = false;
+  hold_remaining_frames_ = 0;
+  occlusion_coast_age_frames_ = 0;
+  coast_probe_candidate_.reset();
+  frozen_scale_reference_.reset();
+  occlusion_suspicion_frames_ = 0;
+  response_baseline_.reset_after_recovery();
+  confirmations_.clear();
+  active_detector_candidate_.reset();
+  detector_candidates_.clear();
+  invalidate_unified_recovery();
+  mode_ = TrackingMode::kTracking;
+  last_output_mode_ = mode_;
+  last_output_phase_ = TrackingPhase::kTracking;
+  consecutive_unreliable_frames_ = 0;
+}
+
 void LongTermController::accept_observation(
     const SearchPlan& plan, const EvaluatedObservation& selected,
     AcceptedObservationPath acceptance_path, ControllerOutput& output) {
@@ -1242,24 +1490,13 @@ void LongTermController::accept_observation(
     reset_scale_evidence(next_width);
     reset_scale_evidence(next_height);
   }
-  BBox scaled_bbox;
-  if (acceptance_path == AcceptedObservationPath::kSearchReacquisition) {
-    scaled_bbox = selected.observation.bbox;
-    next_width = DimensionScaleState{};
-    next_width.filtered = scaled_bbox.width;
+  BBox scaled_bbox = stabilize_accepted_bbox(
+      selected.observation.bbox, next_width, next_height);
+  if (!legacy_anchor_observations_ &&
+      selected.observation.template_kind == TemplateKind::kRecent) {
+    scaled_bbox = bound_recent_scale(scaled_bbox, plan.timestamp_ms);
     next_width.emitted = scaled_bbox.width;
-    next_height = DimensionScaleState{};
-    next_height.filtered = scaled_bbox.height;
     next_height.emitted = scaled_bbox.height;
-  } else {
-    scaled_bbox = stabilize_accepted_bbox(
-        selected.observation.bbox, next_width, next_height);
-    if (!legacy_anchor_observations_ &&
-        selected.observation.template_kind == TemplateKind::kRecent) {
-      scaled_bbox = bound_recent_scale(scaled_bbox, plan.timestamp_ms);
-      next_width.emitted = scaled_bbox.width;
-      next_height.emitted = scaled_bbox.height;
-    }
   }
   output.tracking_bbox = scaled_bbox;
   output.display_bbox = stabilize_accepted_center(
@@ -1307,19 +1544,8 @@ void LongTermController::accept_observation(
   consecutive_unreliable_frames_ = 0;
   // As in ordinary recovery, an old staged recent template cannot be
   // committed using evidence from a different tracking episode.
-  if (acceptance_path == AcceptedObservationPath::kSearchReacquisition) {
-    output.template_action = TemplateAction::kStageRecent;
-    recent_probation_ = true;
-    recovery_probation_ = true;
-    response_baseline_.freeze();
-    probation_reliable_frames_ = 0;
-    stable_frames_ = 0;
-    last_recent_update_ms_ = plan.timestamp_ms;
-  } else if (reacquired && recent_probation_) {
+  if (reacquired && recent_probation_) {
     output.template_action = TemplateAction::kRollbackRecent;
-    recent_probation_ = false;
-    probation_reliable_frames_ = 0;
-    stable_frames_ = 0;
   }
 }
 
@@ -1575,6 +1801,9 @@ ControllerOutput LongTermController::finish_frame(
   coast_probe_candidate_.reset();
   if (!frame_open_ || plan.frame_id != active_plan_.frame_id ||
       plan.timestamp_ms != active_plan_.timestamp_ms) {
+    if (pending_template_transition_) {
+      resolve_template_transition(pending_template_transition_->transaction_id, false);
+    }
     if (!frame_open_ && uses_unified_recovery()) {
       invalidate_unified_recovery();
       cancel_probation();
@@ -1635,6 +1864,22 @@ ControllerOutput LongTermController::finish_frame(
     }
   }
 
+  ResponseBaselineEvaluation response;
+  if (recent) {
+    const auto& metrics = recent->observation.metrics;
+    response = response_baseline_.evaluate(metrics);
+    output.trusted_response_reference = response.reference;
+    if (const auto& reference = response.reference) {
+      if (reference->psr > 0.0F) {
+        output.response_psr_relative_delta = (metrics.psr - reference->psr) / reference->psr;
+      }
+      if (reference->apce > 0.0F) {
+        output.response_apce_relative_delta = (metrics.apce - reference->apce) / reference->apce;
+      }
+      output.response_peak_margin_absolute_delta = metrics.peak_margin - reference->peak_margin;
+    }
+  }
+
   if (anchor) {
     legacy_anchor_observations_ = true;
     promote_shadow_prediction();
@@ -1684,7 +1929,7 @@ ControllerOutput LongTermController::finish_frame(
          recovery_candidates_.geometry_consistent(
              probation_template->observation.bbox, recent->observation.bbox));
     auto disposition = recent && probation_geometry_allows_acceptance
-        ? assess_recent(plan, *recent) : RecentDisposition::kSearch;
+        ? assess_recent(plan, *recent, response) : RecentDisposition::kSearch;
     if (recovery_probation_ && disposition != RecentDisposition::kDirect) {
       disposition = RecentDisposition::kSearch;
     }
@@ -1996,7 +2241,9 @@ ControllerOutput LongTermController::finish_frame(
     }
   }
 
-  if (accepted) {
+  if (accepted && acceptance_path == AcceptedObservationPath::kSearchReacquisition) {
+    defer_recovery_acceptance(plan, *selected, output);
+  } else if (accepted) {
     accept_observation(plan, *selected, acceptance_path, output);
     if (ordinary_recent && !recent_probation_) {
       response_baseline_.resume_tracking();
@@ -2062,28 +2309,15 @@ ControllerOutput LongTermController::finish_frame(
       ++probation_reliable_frames_;
       if (probation_reliable_frames_ >= config_.recent_probation_frames) {
         output.template_action = TemplateAction::kCommitRecent;
-        recent_probation_ = false;
-        recovery_probation_ = false;
-        probation_reliable_frames_ = 0;
-        stable_frames_ = 0;
-        last_recent_update_ms_ = plan.timestamp_ms;
       }
     } else {
       output.template_action = TemplateAction::kRollbackRecent;
-      recent_probation_ = false;
-      recovery_probation_ = false;
-      probation_reliable_frames_ = 0;
-      stable_frames_ = 0;
     }
   } else if (accepted && !output.reacquired && !force_confirmation &&
              stable_frames_ >= config_.stable_frames_for_update &&
              plan.timestamp_ms - last_recent_update_ms_ >=
                  config_.recent_update_interval_ms) {
     output.template_action = TemplateAction::kStageRecent;
-    recent_probation_ = true;
-    response_baseline_.freeze();
-    probation_reliable_frames_ = 0;
-    stable_frames_ = 0;
   }
 
   output.detector_candidates_queued = uses_unified_recovery()

@@ -37,6 +37,7 @@ struct TargetClassInitializationResult {
 struct RuntimeFrameResult {
   SearchPlan plan{};
   std::vector<TrackerObservation> observations;
+  TemplateHeadExecution template_heads;
   ControllerOutput output{};
   DetectorDiagnostics detector{};
   float tracker_ms = 0.0F;
@@ -68,6 +69,8 @@ class LongTermRuntime {
   }
 
  private:
+  void apply_template_transition(const ImageView& image, ControllerOutput& output);
+  void abandon_staged_recent() noexcept;
   static void validate_image(const ImageView& image);
 
   ShortTermTracker& tracker_;
@@ -78,6 +81,7 @@ class LongTermRuntime {
   bool detector_configured_ = false;
   bool initialized_ = false;
   bool frame_open_ = false;
+  std::optional<std::uint64_t> staged_template_slot_id_;
 };
 
 }  // namespace nanotrack

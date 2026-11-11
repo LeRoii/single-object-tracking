@@ -39,6 +39,68 @@ bool contains(const std::string& value, const std::string& expected) {
   return value.find(expected) != std::string::npos;
 }
 
+void test_recent_safe_serialization() {
+  using namespace nanotrack;
+  RuntimeFrameResult frame;
+  frame.template_heads = {true, true, false, false};
+  frame.plan.recovery_probe = RecoveryCandidateKey{RecoveryCandidateSource::kDetector, 7, 2};
+  frame.plan.predicted_bbox = {51, 30, 20, 20};
+  frame.observations = {
+      {1, 40, {50, 30, 20, 20}, {0.90F, 0.88F, 8.0F, 12.0F, 0.10F},
+       TemplateKind::kRecent, 1, BBox{49, 29, 22, 22}},
+      {1, 40, {55, 30, 20, 20}, {0.70F, 0.65F, 5.0F, 7.0F, 0.05F},
+       TemplateKind::kSafe, 1},
+  };
+  auto& output = frame.output;
+  output.frame_id = 1;
+  output.timestamp_ms = 40;
+  output.mode = TrackingMode::kSuspected;
+  output.tracking_phase = TrackingPhase::kSuspected;
+  output.observation_present = true;
+  output.control_valid = true;
+  output.control_source = ControlSource::kObservation;
+  output.tracking_bbox = frame.observations[0].bbox;
+  output.display_bbox = {45, 30, 20, 20};
+  output.control_bbox = {48, 30, 20, 20};
+  output.template_action = TemplateAction::kRollbackRecent;
+  output.template_transition = TemplateTransitionRequest{8, output.template_action, output.tracking_bbox, false, 6};
+  output.template_transition_result = TemplateTransitionResult::kTrackerRejected;
+  output.template_transition_reason = "PROBATION_REJECTED";
+  output.state_change_reason = "RESPONSE_DEGRADED";
+  output.trusted_response_reference = ResponseReference{10.0F, 16.0F, 0.25F};
+  output.response_psr_relative_delta = -0.20F;
+  output.response_apce_relative_delta = -0.25F;
+  output.response_peak_margin_absolute_delta = -0.15F;
+  output.recovery_candidate_key = RecoveryCandidateKey{RecoveryCandidateSource::kSafe, 9, 2};
+  output.recovery_confirmation_hits = 1;
+  output.recovery_reason = "AWAITING_CONFIRMATION";
+  const auto row = make_tracking_log_row(frame);
+  const auto csv = tracking_csv_header();
+  const auto json = tracking_frame_json(row);
+  for (const auto& expected : {
+           "\"schema_version\":11", "\"tracking_phase\":\"SUSPECTED\"",
+           "\"observation_valid\":false", "\"observation_present\":true",
+           "\"trusted_for_state_update\":false", "\"control_source\":\"OBSERVATION\"",
+           "\"rect0_source\":\"RECENT_OBSERVATION\"", "\"active_template\":\"RECENT\"",
+           "\"recent_raw_x\":49.000000", "\"safe_raw_x\":55.000000",
+           "\"safe_raw_penalized_peak\":0.650000", "\"staged_head_executed\":false",
+           "\"trusted_baseline_psr\":10.000000", "\"response_psr_relative_delta\":-0.200000",
+           "\"response_peak_margin_absolute_delta\":-0.150000", "\"template_transaction_id\":8",
+           "\"template_slot_id\":6", "\"template_transition_result\":\"TRACKER_REJECTED\"",
+           "\"template_transition_applied\":false", "\"candidate_source\":\"SAFE\"",
+           "\"candidate_id\":9", "\"recovery_probe_source\":\"DETECTOR\"",
+           "\"recovery_probe_x\":51.000000", "\"recovery_confirmation_hits\":1",
+           "\"tracking_x\":50.000000", "\"display_x\":45.000000", "\"control_x\":48.000000"}) {
+    expect_true(contains(json, expected), std::string("v11 JSON field ") + expected);
+    const std::string field(expected);
+    expect_true(contains(csv, field.substr(1, field.find('"', 1) - 1) + ',') ||
+                    csv.rfind(field.substr(1, field.find('"', 1) - 1)) != std::string::npos,
+                std::string("v11 CSV field ") + expected);
+  }
+  expect_true(csv_columns(csv) == csv_columns(tracking_csv_row(row)),
+              "v11 CSV includes exactly one value per named column");
+}
+
 void test_adaptive_coast_serialization() {
   using namespace nanotrack;
   RuntimeFrameResult result;
@@ -185,7 +247,13 @@ void test_adaptive_coast_serialization() {
 }  // namespace
 
 int main() {
+  expect_true(nanotrack::kTrackingSchemaVersion == 11 &&
+                  nanotrack::tracking_csv_header().find("template_transition_result") != std::string::npos &&
+                  nanotrack::tracking_csv_header().find("trusted_for_state_update") != std::string::npos,
+              "schema v11 exposes trusted and resolved transition semantics");
+
   using namespace nanotrack;
+  test_recent_safe_serialization();
   test_adaptive_coast_serialization();
 
   MonotonicVideoClock clock(30.0);
@@ -313,8 +381,8 @@ int main() {
         "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("10,", 0) == 0 && kTrackingSchemaVersion == 10,
-              "tracking rows carry schema version 10 exactly once");
+  expect_true(encoded.rfind("11,", 0) == 0 && kTrackingSchemaVersion == 11,
+              "tracking rows carry schema version 11 exactly once");
   expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
               "CSV writes established class and recovery gate");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
@@ -595,7 +663,7 @@ int main() {
                   contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
                   contains(json, "\"detector_ms\": 15.000000"),
               "same-frame initialization history retains order, result diagnostics and null optionals");
-  expect_true(contains(json, "\"schema_version\": 10") &&
+  expect_true(contains(json, "\"schema_version\": 11") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&
@@ -622,7 +690,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v10 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
+              "schema-v11 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";
