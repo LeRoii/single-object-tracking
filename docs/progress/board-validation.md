@@ -1,5 +1,32 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T12:53:27+08:00 development-only 鲁棒性聚合器与 RK3588 首次构建审计
+
+- 在 `codex/occ-video-1-tracking`、Task 8 起点
+  `2403c8618dc5f4234e399165e9168c5687aeb8e7` 新增纯报告聚合器
+  `scripts/check_occ_tracking_robustness.py`。它不执行 tracker 或选择参数，只接受 schema 1
+  candidate manifest 与已命名 evaluator reports；结果提交可用
+  `git log -1 --format=%H -- scripts/check_occ_tracking_robustness.py` 查询。
+- 聚合器要求每个实数参数 `-10%/nominal/+10%`、每个可调计数 `-1/nominal/+1`、初始框中心
+  `±2 px`、尺度 `±5%`、变时间戳和 detector delay/drop/generation gap 全部齐备；所有报告必须
+  严格为 development `0--189`、身份哈希匹配、所有 evaluator gate PASS、重捕 `<190`，且相对
+  nominal 的可见 mean IoU 最大下降不超过 `0.03`。confirmation 至少两击、detector 不直接
+  控制、generation/stale 隔离与异常 fail-closed 作为固定安全审计，不允许向下扰动。
+- 单元测试先因脚本不存在 4/4 RED；实现后覆盖缺邻域、nominal-only 刀刃、错误 scope/holdout、
+  重复报告、source/config/model 哈希不匹配、安全降级和 IoU 崩落，最终 4/4 PASS，
+  `py_compile` 通过。完整主机 CTest `19/19`、0 失败、总时间 `4.24 sec`。
+- 已把 `2403c86` 精确归档到 RK3588 `/home/neardi/Project/SOT/occ-candidate-2403c86`，归档两端
+  SHA-256 `dc97c84662778a15ff85d36c17b73c1a4069dbfbd6cbf80bef17dcf1b7b4525a`；models、
+  releases、data 均只链接到现有 ONNX 派生 RK3588 工件，复核哈希与 C000 一致。原生 Debug
+  构建二进制为 `bb596ef7cb95c38232b724f3c4fb5d462d2ac8c0e48d1d2d25b0f5162211f207`，板端
+  CTest `19/19`、0 失败、`6.40 sec`。
+- 板端 `-Werror=switch` 复现发现 Task 6 新增的 `kSearchControlPrediction`/`kSearchHint` 未进入
+  `main.cpp` 颜色 switch；根因是共享 overlay enum 已扩展而 Debug app 映射未同步。当前最小
+  修复为两种语义增加独立颜色，避免主要 Debug 功能落到红色 fallback。修复提交后必须重新
+  打包、原生构建和复跑 `-Werror=switch`，当前旧二进制不得用于 C001 数据运行。
+- 尚未执行任何 0--189 candidate run，也没有读取 190--270；本条不是标定、鲁棒平台或板端
+  功能通过结论。
+
 ## 2026-11-11T12:47:34+08:00 通用可见光遮挡候选配置与只追加标定账本
 
 - 在 `codex/occ-video-1-tracking`、Task 7 起点

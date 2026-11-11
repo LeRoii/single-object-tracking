@@ -114,6 +114,10 @@ cv::Mat render_interactive(const cv::Mat& source,
           return cv::Scalar(0, 255, 255);
         case nanotrack::DebugBoxKind::kAcceptedControl:
           return cv::Scalar(0, 255, 0);
+        case nanotrack::DebugBoxKind::kSearchControlPrediction:
+          return cv::Scalar(0, 200, 100);
+        case nanotrack::DebugBoxKind::kSearchHint:
+          return cv::Scalar(203, 192, 255);
         case nanotrack::DebugBoxKind::kCoastSearchProbe:
           return cv::Scalar(255, 0, 0);
         case nanotrack::DebugBoxKind::kCoastConfirmProbe:
