@@ -47,6 +47,11 @@ stdbuf -oL -eL ./build/nanotrack_v3 \
   改动进入共享 core 但只由独立 Debug 配置启用；identity 自动代理门后仍需人工视频签署；
   本轮是离线帧序功能验收而非 30 Hz 实时门；最终运行必须同时通过 evaluator、run manifest 和
   `verify_board.sh`。未修改协调方专属 `STATUS.md` 或 `integration-contract.yaml`。
+- 用户随后明确要求避免对单视频过拟合，把本视频视为典型遮挡场景并保留泛化能力。设计因此
+  删除 `occ_video_1` 专用配置和允许过拟合的表述，改用通用
+  `visible-occlusion-calibrated.conf` 候选；增加 190--270 冻结 holdout、合成状态机矩阵、
+  参数 `±10%`/计数 `±1` 稳定平台、初始框中心 `±2 px`/尺度 `±5%` 扰动和时序/异步扰动门。
+  `occ_video_1` 明确禁止进入任何后续模型训练或训练期选择。
 
 ## 2026-11-10T19:21:14+08:00 RK3588 独立 Debug 迁移与实板运行
 
