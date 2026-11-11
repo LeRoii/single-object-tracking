@@ -53,6 +53,8 @@ struct SearchPlan {
   float motion_scale_velocity_width = 0.0F;
   float motion_scale_velocity_height = 0.0F;
   std::optional<RecoveryCandidateKey> recovery_probe;
+  // Present only when this frame plans an unlocked subtarget offset.
+  std::optional<bool> subtarget_probe_is_final;
   TemplateRunMode template_run_mode = TemplateRunMode::kRecentOnly;
 };
 
@@ -285,6 +287,7 @@ class LongTermController {
   BBox bound_recent_scale(const BBox& bbox, std::int64_t timestamp_ms) const;
   bool add_confirmation(std::uint64_t frame_id, const BBox& bbox);
   bool uses_unified_recovery() const noexcept;
+  bool search_reacquisition_eligible(std::int64_t timestamp_ms) const noexcept;
   void invalidate_unified_recovery() noexcept;
   void cancel_probation() noexcept;
   SearchHint search_hint_for(const RecoveryCandidate& candidate) const;

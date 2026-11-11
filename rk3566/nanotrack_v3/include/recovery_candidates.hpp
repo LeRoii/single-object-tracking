@@ -17,9 +17,6 @@ struct RecoveryCandidateEvidence {
   float confidence = 0.0F;
   float motion_residual = 0.0F;
   std::optional<int> detector_class_id;
-  // For a detector subtarget, bbox is the current trusted-size probe and
-  // this region is the projected detection used for identity matching.
-  std::optional<BBox> subtarget_region;
 };
 
 struct RecoveryCandidate {
@@ -27,6 +24,9 @@ struct RecoveryCandidate {
   std::array<std::optional<RecoveryCandidateEvidence>, 3> evidence{};
   std::array<std::optional<RecoveryCandidateEvidence>, 2> verifications{};
   bool identity_conflicted = false;
+  // Geometry for associating a refreshed detector region with a live
+  // tracker-verified subtarget. Only live detector evidence can seed offsets.
+  std::optional<BBox> subtarget_carrier = std::nullopt;
   std::size_t subtarget_probes_attempted = 0;
   std::optional<std::uint64_t> last_subtarget_probe_frame = std::nullopt;
   bool subtarget_probes_exhausted = false;

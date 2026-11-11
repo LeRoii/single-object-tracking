@@ -307,12 +307,106 @@ void test_unified_subtarget_offset_replay() {
               "offset subtarget locks and confirms through the shared two-hit path");
 }
 
+void test_subtarget_recovery_identity_and_eligibility() {
+  using namespace nanotrack;
+  const BBox initial{40, 30, 20, 20};
+  const BBox carrier{110, 60, 100, 80};
+  const BBox center{150, 90, 20, 20};
+  const BBox alternate{178, 90, 20, 20};
+  const BBox top{150, 66, 20, 20};
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kSubtarget;
+  config.detector_subtarget_max_probes = 2;
+  config.detector_interval_ms = 20;
+  const auto batch_for = [&](const SearchPlan& plan) {
+    DetectorBatch batch{plan.frame_id, plan.timestamp_ms, {{carrier, 0.95F, 0}}};
+    if (plan.detector_request) batch.generation = plan.detector_request->generation;
+    return batch;
+  };
+  const auto start = [&](LongTermController& controller) {
+    controller.initialize(initial, 0, 0, {400, 240}, make_fixed_target_class(0, true));
+    step(controller, 1, 20, std::nullopt);
+    const auto plan = controller.begin_frame(2, 40, true);
+    expect_true(plan.detector_request.has_value(), "subtarget starts with an eligible detector request");
+    return controller.finish_frame(plan, {}, batch_for(plan));
+  };
+
+  for (bool both_off_probe : {false, true}) {
+    LongTermController conflicted(config);
+    start(conflicted);
+    auto plan = conflicted.begin_frame(3, 60, false);
+    const auto recent_bbox = both_off_probe ? BBox{112, 62, 20, 20} : center;
+    const auto safe_bbox = both_off_probe ? BBox{186, 110, 20, 20} : alternate;
+    auto out = conflicted.finish_frame(
+        plan, {reliable_for_plan(plan, recent_bbox, 3, TemplateKind::kRecent),
+               reliable_for_plan(plan, safe_bbox, 3, TemplateKind::kSafe)}, std::nullopt);
+    expect_true(!out.accepted && out.recovery_conflict && out.recovery_confirmation_hits == 0,
+                "two incompatible reliable parts of one carrier latch conflict without a hit");
+    const auto repeated_bbox = both_off_probe ? top : center;
+    for (std::uint64_t frame = 4; frame <= 7; ++frame) {
+      plan = conflicted.begin_frame(frame, frame * 20, false);
+      out = conflicted.finish_frame(
+          plan, {reliable_for_plan(plan, repeated_bbox, frame, TemplateKind::kRecent)}, std::nullopt);
+      expect_true(!out.accepted && out.recovery_conflict &&
+                      out.tracking_phase == TrackingPhase::kSearching,
+                  "repeated recent-only responses cannot erase the carrier conflict");
+    }
+  }
+
+  ControllerConfig age_config = config;
+  age_config.detector_subtarget_max_probes = 1;
+  age_config.search_reacquisition_min_age_ms = 60;
+  LongTermController immature(age_config);
+  start(immature);
+  auto plan = immature.begin_frame(3, 60, false);
+  auto out = immature.finish_frame(plan, {}, std::nullopt);
+  expect_true(!plan.recovery_probe && !out.accepted,
+              "an immature frame cannot use the single available detector offset");
+  plan = immature.begin_frame(4, 80, false);
+  out = immature.finish_frame(
+      plan, {reliable_for_plan(plan, center, 4, TemplateKind::kRecent)}, std::nullopt);
+  expect_true(plan.recovery_probe && plan.detector_probe_index == 0 &&
+                  plan.predicted_bbox.x == center.x && !out.accepted &&
+                  out.recovery_confirmation_hits == 1,
+              "first eligible frame keeps the fresh single offset for verification");
+  plan = immature.begin_frame(5, 100, false);
+  out = immature.finish_frame(
+      plan, {reliable_for_plan(plan, center, 5, TemplateKind::kRecent)}, std::nullopt);
+  expect_true(out.reacquired && out.recovery_confirmation_hits == 2,
+              "the preserved single offset can confirm only on the next NanoTrack frame");
+
+  ControllerConfig refresh_config = config;
+  refresh_config.detector_stale_ms = 60;
+  LongTermController refreshed(refresh_config);
+  start(refreshed);
+  plan = refreshed.begin_frame(3, 70, false);
+  refreshed.finish_frame(plan, {}, std::nullopt);
+  plan = refreshed.begin_frame(4, 100, false);
+  const auto first = refreshed.finish_frame(
+      plan, {reliable_for_plan(plan, top, 4, TemplateKind::kRecent)}, std::nullopt);
+  expect_true(plan.detector_probe_index == 1 && plan.detector_candidate_id &&
+                  first.recovery_candidate_key && first.recovery_confirmation_hits == 1,
+              "first offset hit occurs at the detector freshness limit");
+  plan = refreshed.begin_frame(5, 120, true);
+  out = refreshed.finish_frame(
+      plan, {reliable_for_plan(plan, top, 5, TemplateKind::kRecent)}, batch_for(plan));
+  expect_true(plan.detector_request && !plan.detector_candidate_id &&
+                  plan.recovery_probe == first.recovery_candidate_key &&
+                  plan.predicted_bbox.y == top.y && out.detector_status == DetectorBatchStatus::kAccepted &&
+                  out.detector_candidate_diagnostics.size() == 1 && first.recovery_candidate_key &&
+                  out.detector_candidate_diagnostics[0].candidate_id == first.recovery_candidate_key->id &&
+                  !out.recovery_conflict && out.reacquired && out.recovery_confirmation_hits == 2,
+              "fresh same-carrier detection merges with the verified offset after detector expiry");
+}
+
 }  // namespace
 
 int main() {
   test_recent_safe_recovery_replay();
   test_delayed_detector_recovery_replay();
   test_unified_subtarget_offset_replay();
+  test_subtarget_recovery_identity_and_eligibility();
   using namespace nanotrack;
   const BBox initial{40, 30, 20, 20};
   const FrameSize frame_size{240, 160};

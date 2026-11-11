@@ -333,26 +333,28 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
                               : active.queued.probes[active.next_probe++];
     source = HypothesisSource::kDetector;
   }
-  const RecoveryCandidate* probe = unified && loss_start_ms_
-      ? recovery_candidates_.select_probe() : nullptr;
+  SearchPlan plan;
+  const bool can_plan_probe = unified && loss_start_ms_ &&
+      (config_.detector_target_mode != DetectorTargetMode::kSubtarget ||
+       search_reacquisition_eligible(timestamp_ms));
+  const RecoveryCandidate* probe = can_plan_probe ? recovery_candidates_.select_probe() : nullptr;
   if (probe) {
     predicted = probe->preferred_evidence().bbox;
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
-    if (detector && detector->subtarget_region &&
+    if (detector && probe->subtarget_carrier &&
         !probe->from(RecoveryCandidateSource::kRecent) &&
         !probe->from(RecoveryCandidateSource::kSafe)) {
-      const auto probes = detector_probes(*detector->subtarget_region);
+      const auto probes = detector_probes(*probe->subtarget_carrier);
       const auto index = std::min(probe->subtarget_probes_attempted, probes.size() - 1);
       predicted = probes[index];
-      recovery_candidates_.advance_subtarget_probe(
-          probe->key, predicted, index, index + 1 == probes.size());
+      plan.detector_probe_index = index;
+      plan.subtarget_probe_is_final = index + 1 == probes.size();
     }
     if (probe->key.source == RecoveryCandidateSource::kDetector) {
       source = HypothesisSource::kDetector;
     }
   }
 
-  SearchPlan plan;
   plan.frame_id = frame_id;
   plan.timestamp_ms = timestamp_ms;
   plan.mode = mode_;
@@ -402,7 +404,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
     if (detector) {
       plan.detector_candidate_id = probe->key.id;
-      plan.detector_candidate_region = detector->subtarget_region.value_or(detector->bbox);
+      plan.detector_candidate_region = probe->subtarget_carrier.value_or(detector->bbox);
       plan.detector_candidate_class_id = detector->detector_class_id;
       plan.detector_candidate_confidence = detector->confidence;
       plan.detector_candidate_center_ratio = frame_normalized_center_distance(
@@ -410,7 +412,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
       plan.detector_same_class_candidates = recovery_candidates_.detector_count();
       plan.detector_same_class_ambiguous = recovery_candidates_.conflicted();
       plan.detector_candidate_locked = probe->hits() > 0;
-      if (probe->subtarget_probes_attempted > 0) {
+      if (!plan.subtarget_probe_is_final.has_value() && probe->subtarget_probes_attempted > 0) {
         plan.detector_probe_index = probe->subtarget_probes_attempted - 1;
       }
     }
@@ -868,6 +870,12 @@ bool LongTermController::uses_unified_recovery() const noexcept {
   return config_.motion_search_enabled || recent_safe_observations_;
 }
 
+bool LongTermController::search_reacquisition_eligible(
+    std::int64_t timestamp_ms) const noexcept {
+  return loss_start_ms_ && !rollback_pending_ &&
+         timestamp_ms - *loss_start_ms_ >= config_.search_reacquisition_min_age_ms;
+}
+
 void LongTermController::invalidate_unified_recovery() noexcept {
   recovery_candidates_.clear();
   ++detector_eligibility_generation_;
@@ -908,24 +916,43 @@ LongTermController::confirm_recovery_candidate(
     const std::optional<EvaluatedObservation>& recent,
     const std::optional<EvaluatedObservation>& safe,
     ControllerOutput& output) {
-  if (plan.timestamp_ms - *loss_start_ms_ < config_.search_reacquisition_min_age_ms ||
-      rollback_pending_) {
-    return std::nullopt;
-  }
-  if (plan.recovery_probe && !recovery_candidates_.find(*plan.recovery_probe)) {
+  if (!search_reacquisition_eligible(plan.timestamp_ms)) return std::nullopt;
+  const auto* planned_candidate = plan.recovery_probe
+      ? recovery_candidates_.find(*plan.recovery_probe) : nullptr;
+  if (plan.recovery_probe && !planned_candidate) {
     if (output.search_hint) output.search_hint->rejection = SearchHintRejection::kExpired;
     return std::nullopt;
   }
-  bool probe_conflict = false;
+  const auto carrier = planned_candidate ? planned_candidate->subtarget_carrier : std::nullopt;
+  const bool probe_verified = planned_candidate && planned_candidate->hits() > 0;
+  const auto reliable_in_carrier = [&](const std::optional<EvaluatedObservation>& observation) {
+    if (!carrier || !observation ||
+        !contains_center(*carrier, observation->observation.bbox)) {
+      return false;
+    }
+    if (observation->quality == QualityLevel::kReliable) return true;
+    if (!observation->score_gate || !observation->area_gate || !observation->aspect_gate) {
+      return false;
+    }
+    // Evaluate the same response and shape gates without letting the planned
+    // part's center hide contradictory evidence from another part.
+    auto recentered = plan;
+    const auto& bbox = observation->observation.bbox;
+    recentered.predicted_bbox = centered_box(
+        bbox.x + 0.5F * bbox.width, bbox.y + 0.5F * bbox.height,
+        plan.predicted_bbox, frame_size_);
+    return evaluate(observation->observation, recentered).quality == QualityLevel::kReliable;
+  };
+  const bool carrier_disagreement = reliable_in_carrier(recent) && reliable_in_carrier(safe) &&
+      !recovery_candidates_.geometry_consistent(recent->observation.bbox, safe->observation.bbox);
+  bool probe_conflict = carrier_disagreement;
   const auto observe = [&](RecoveryCandidateSource source,
                            const std::optional<EvaluatedObservation>& observation) {
     if (!observation) return std::optional<RecoveryCandidateKey>{};
     const BBox& bbox = observation->observation.bbox;
     const bool consistent_with_probe = !plan.recovery_probe ||
         recovery_candidates_.geometry_consistent(plan.predicted_bbox, bbox);
-    if (!consistent_with_probe && plan.detector_target_mode == DetectorTargetMode::kSubtarget &&
-        plan.detector_candidate_region && !plan.detector_candidate_locked &&
-        contains_center(*plan.detector_candidate_region, bbox)) {
+    if (!consistent_with_probe && carrier && !probe_verified && contains_center(*carrier, bbox)) {
       // This response may be a different part of the same detector region.
       // Wait for a matching offset probe before admitting it as evidence.
       return std::optional<RecoveryCandidateKey>{};
@@ -943,11 +970,12 @@ LongTermController::confirm_recovery_candidate(
     }
     probe_conflict = probe_conflict || !consistent_with_probe;
     return recovery_candidates_.observe(source, bbox, 0.0F, std::nullopt,
-        std::nullopt, consistent_with_probe,
+        std::nullopt, consistent_with_probe && !carrier_disagreement,
         frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_));
   };
   const auto recent_key = observe(RecoveryCandidateSource::kRecent, recent);
   const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
+  if (probe_conflict) recovery_candidates_.mark_identity_conflict();
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
   const auto* candidate = recovery_candidates_.select_probe();
   if (candidate) {
@@ -967,7 +995,6 @@ LongTermController::confirm_recovery_candidate(
   }
   if (output.recovery_conflict) {
     if (output.search_hint) output.search_hint->rejection = SearchHintRejection::kConflict;
-    if (probe_conflict) recovery_candidates_.mark_identity_conflict();
     return std::nullopt;
   }
   if (recent_key && recovery_candidates_.confirmed(*recent_key)) return recent;
@@ -1617,6 +1644,12 @@ ControllerOutput LongTermController::finish_frame(
     recent_safe_observations_ = true;
     recovery_candidates_.expire(plan.frame_id, plan.timestamp_ms,
                                 detector_eligibility_generation_);
+  }
+  if (plan.run_tracker && plan.recovery_probe && plan.subtarget_probe_is_final.has_value() &&
+      search_reacquisition_eligible(plan.timestamp_ms)) {
+    recovery_candidates_.advance_subtarget_probe(
+        *plan.recovery_probe, plan.predicted_bbox, plan.detector_probe_index,
+        *plan.subtarget_probe_is_final);
   }
   const DetectorIngestResult ingest_result =
       ingest_detector_batch(plan, detector_batch);

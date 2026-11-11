@@ -185,17 +185,15 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   const bool detector = source == RecoveryCandidateSource::kDetector;
   RecoveryCandidateEvidence evidence{
       bbox, frame_->frame_id, source_timestamp_ms.value_or(frame_->timestamp_ms),
-      confidence, motion_residual, detector_class_id, subtarget_region};
+      confidence, motion_residual, detector_class_id};
   if (evidence.timestamp_ms > frame_->timestamp_ms ||
       (detector && expired({evidence.frame_id, evidence.timestamp_ms}, detector_stale_ms_))) {
     return std::nullopt;
   }
   std::optional<RecoveryCandidateKey> matched;
   for (const auto& candidate : entries_) {
-    const auto& previous_detector = candidate.from(RecoveryCandidateSource::kDetector);
-    const bool compare_regions = detector && subtarget_region &&
-        previous_detector && previous_detector->subtarget_region;
-    const BBox& reference = compare_regions ? *previous_detector->subtarget_region
+    const bool compare_regions = detector && subtarget_region && candidate.subtarget_carrier;
+    const BBox& reference = compare_regions ? *candidate.subtarget_carrier
                                            : candidate.preferred_evidence().bbox;
     const BBox& observed = compare_regions ? *subtarget_region : bbox;
     if (!geometry_consistent(reference, observed)) continue;
@@ -249,7 +247,7 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   auto& source_evidence = entry->evidence[index];
   if (!detector || !source_evidence || source_evidence->frame_id != evidence.frame_id ||
       preferred_detector(evidence, *source_evidence)) {
-    if (detector && subtarget_region && source_evidence && source_evidence->subtarget_region) {
+    if (detector && subtarget_region && source_evidence && entry->subtarget_carrier) {
       // An async refresh must preserve the probe already sent to NanoTrack.
       evidence.bbox = source_evidence->bbox;
       if (entry->subtarget_probes_exhausted &&
@@ -262,6 +260,7 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
       entry->subtarget_probes_attempted = 0;
       entry->subtarget_probes_exhausted = false;
     }
+    if (detector && subtarget_region) entry->subtarget_carrier = subtarget_region;
     source_evidence = evidence;
   }
   if (!detector && tracker_verified) {
@@ -303,7 +302,7 @@ void RecoveryCandidateTable::advance_subtarget_probe(
                                   [&](const auto& candidate) { return candidate.key == key; });
   if (!frame_ || entry == entries_.end()) return;
   auto& detector = entry->evidence[source_index(RecoveryCandidateSource::kDetector)];
-  if (!detector || !detector->subtarget_region) return;
+  if (!detector || !entry->subtarget_carrier) return;
   detector->bbox = bbox;
   entry->subtarget_probes_attempted = index + 1;
   entry->last_subtarget_probe_frame = frame_->frame_id;

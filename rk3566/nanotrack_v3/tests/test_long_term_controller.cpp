@@ -1858,6 +1858,41 @@ void test_unified_recovery_candidate_cleanup() {
               "a stale completion cannot carry either candidate or detector history through the frame");
 }
 
+void test_subtarget_probe_abort_does_not_advance_cursor() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kSubtarget;
+  config.detector_subtarget_max_probes = 2;
+  config.detector_interval_ms = 20;
+  LongTermController controller(config);
+  controller.initialize({40, 30, 20, 20}, 0, 0, {400, 240}, make_fixed_target_class(0, true));
+  controller.finish_frame(controller.begin_frame(1, 20, false), {}, std::nullopt);
+
+  const auto seed = [&](const SearchPlan& plan) {
+    expect_true(plan.detector_request.has_value(), "abort fixture has an eligible seed");
+    DetectorBatch batch{plan.frame_id, plan.timestamp_ms, {{{110, 60, 100, 80}, 0.9F, 0}}};
+    if (plan.detector_request) batch.generation = plan.detector_request->generation;
+    controller.finish_frame(plan, {}, batch);
+  };
+  seed(controller.begin_frame(2, 40, true));
+  const auto planned = controller.begin_frame(3, 60, false);
+  const auto* candidate = planned.recovery_probe
+      ? controller.recovery_candidates_.find(*planned.recovery_probe) : nullptr;
+  expect_true(candidate && candidate->subtarget_probes_attempted == 0 &&
+                  planned.detector_probe_index == 0,
+              "opening an eligible subtarget frame plans without consuming the cursor");
+  controller.abort_frame();
+  const auto retry = controller.begin_frame(3, 60, true);
+  expect_true(!retry.recovery_probe, "aborted candidate cannot replay on the retried frame");
+  seed(retry);
+  const auto fresh = controller.begin_frame(4, 80, false);
+  expect_true(fresh.recovery_probe && fresh.recovery_probe != planned.recovery_probe &&
+                  fresh.detector_probe_index == 0,
+              "the fresh seed starts at the initial offset after abort");
+  controller.abort_frame();
+}
+
 void test_atomic_search_reacquisition_and_template_probation() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2447,6 +2482,7 @@ int main() {
   test_target_class_gate();
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
+  test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_recovery_probation_cleanup();
 
