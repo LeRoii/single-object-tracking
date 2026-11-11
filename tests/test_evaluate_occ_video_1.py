@@ -265,6 +265,51 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             [0, 1, 2, 6, 7, 8, 9, 10],
         )
 
+    def test_holdout_ignores_inapplicable_occlusion_gate_but_keeps_global_reacquisition(self):
+        contract = synthetic_contract()
+        rows = passing_rows()
+        for frame_id in range(11, 191):
+            bbox = [10.0 + frame_id, 20.0, 10.0, 10.0]
+            contract["truth"].append(
+                {
+                    "frame_id": frame_id,
+                    "bbox": bbox,
+                    "status": "visible",
+                    "observable": True,
+                }
+            )
+            rows.append(
+                {
+                    "schema_version": 10,
+                    "frame_id": frame_id,
+                    "timestamp_ms": frame_id * 33,
+                    "state": "TRACKING",
+                    "tracking_phase": "TRACKING",
+                    "observation_valid": True,
+                    "control_source": "OBSERVATION",
+                    "control_valid": True,
+                    "accepted": True,
+                    "reacquired": False,
+                    "tracking_bbox": bbox,
+                }
+            )
+        contract["identity"]["frame_count"] = 191
+
+        passing = evaluator.evaluate(contract, rows, "holdout")
+
+        self.assertEqual(passing["frame_range"], [190, 190])
+        self.assertEqual(passing["verdict"], "PASS")
+        self.assertFalse(passing["gates"]["full_occlusion_semantics"]["applicable"])
+        self.assertIn("N/A", evaluator.render_markdown(passing))
+
+        rows[190]["reacquired"] = True
+        failing = evaluator.evaluate(contract, rows, "holdout")
+
+        self.assertEqual(failing["verdict"], "FAIL")
+        self.assertTrue(failing["gates"]["reacquisition"]["applicable"])
+        self.assertFalse(failing["gates"]["reacquisition"]["passed"])
+        self.assertEqual(failing["reacquisition"]["frames"], [7, 190])
+
     def test_evaluate_reports_visible_control_reacquisition_and_identity_failures(self):
         rows = passing_rows()
         rows[2]["tracking_bbox"] = [80.0, 20.0, 10.0, 10.0]

@@ -381,9 +381,10 @@ def _kinematics(items, box_key):
     return velocities, accelerations
 
 
-def _gate(passed, detail, frames=None):
+def _gate(passed, detail, frames=None, applicable=True):
     return {
         "passed": bool(passed),
+        "applicable": bool(applicable),
         "detail": str(detail),
         "frames": sorted(set(frames or [])),
     }
@@ -623,9 +624,10 @@ def evaluate(contract, rows, scope):
             visible_failures,
         ),
         "full_occlusion_semantics": _gate(
-            not semantic_failures and bool(full_frames.intersection(required_frames)),
+            not semantic_failures,
             "full occlusion must publish SEARCHING/no observation/MOTION_SEARCH control",
             semantic_failures,
+            applicable=bool(full_frames.intersection(required_frames)),
         ),
         "prediction_continuity": _gate(
             trajectory_center_ok and trajectory_motion_ok,
@@ -659,7 +661,8 @@ def evaluate(contract, rows, scope):
     }
     failed_frames = set()
     for gate in gates.values():
-        failed_frames.update(gate["frames"])
+        if gate["applicable"] and not gate["passed"]:
+            failed_frames.update(gate["frames"])
     visible_ranked = sorted(
         (
             (report["iou"], report["frame_id"])
@@ -668,7 +671,9 @@ def evaluate(contract, rows, scope):
         key=lambda value: (value[0], value[1]),
     )
     worst_frames = sorted(failed_frames.union(frame for _, frame in visible_ranked[:10]))
-    verdict = "PASS" if all(gate["passed"] for gate in gates.values()) else "FAIL"
+    verdict = "PASS" if all(
+        not gate["applicable"] or gate["passed"] for gate in gates.values()
+    ) else "FAIL"
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
         "dataset": contract["identity"],
@@ -747,8 +752,11 @@ def render_markdown(report):
         "",
     ]
     for name, gate in report["gates"].items():
+        status = "N/A" if not gate.get("applicable", True) else (
+            "PASS" if gate["passed"] else "FAIL"
+        )
         lines.append(
-            "- `{}`: **{}** — {}".format(name, "PASS" if gate["passed"] else "FAIL", gate["detail"])
+            "- `{}`: **{}** — {}".format(name, status, gate["detail"])
         )
     lines.extend(["", "## Worst frames", ""])
     if report["worst_frames"]:
