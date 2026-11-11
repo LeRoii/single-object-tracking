@@ -17,6 +17,9 @@ struct SearchPlan {
   std::uint64_t frame_id = 0;
   std::int64_t timestamp_ms = 0;
   TrackingMode mode = TrackingMode::kTracking;
+  TrackingPhase tracking_phase = TrackingPhase::kInvalid;
+  bool observation_valid = false;
+  ControlSource control_source = ControlSource::kNone;
   BBox motion_predicted_bbox{};
   BBox predicted_bbox{};
   float search_scale = 1.0F;
@@ -52,6 +55,9 @@ struct ControllerOutput {
   std::uint64_t frame_id = 0;
   std::int64_t timestamp_ms = 0;
   TrackingMode mode = TrackingMode::kTracking;
+  TrackingPhase tracking_phase = TrackingPhase::kInvalid;
+  bool observation_valid = false;
+  ControlSource control_source = ControlSource::kNone;
   QualityLevel quality = QualityLevel::kRejected;
   BBox bbox{};
   BBox tracking_bbox{};
@@ -252,6 +258,8 @@ class LongTermController {
       const SearchPlan& plan,
       const std::optional<DetectorBatch>& batch);
   void publish_occlusion_evidence(ControllerOutput& output);
+  static void validate_output_semantics(const ControllerOutput& output);
+  static void finalize_output_semantics(ControllerOutput& output);
 
   ControllerConfig config_;
   MotionEstimator motion_;

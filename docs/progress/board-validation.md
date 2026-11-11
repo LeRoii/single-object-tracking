@@ -1,5 +1,25 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T12:13:38+08:00 观测有效性与控制来源外部语义契约
+
+- 在 `codex/occ-video-1-tracking`、Task 2 起点
+  `73efebb0130e6c94ee097e2c4613e2b8179dc59f` 以 TDD 新增
+  `TrackingPhase {TRACKING, SEARCHING, INVALID}`、
+  `ControlSource {NONE, OBSERVATION, MOTION_SEARCH}`，并把 `tracking_phase`、
+  `observation_valid`、`control_source` 放入 `SearchPlan` 和 `ControllerOutput`。所有完成的
+  controller 输出在返回前经过同一语义校验器；结果提交以
+  `git log -1 --format=%H -- rk3566/nanotrack_v3/include/long_term_types.hpp` 查询。
+- 直接接受观测现在明确发布 `TRACKING / observation_valid=true / OBSERVATION`，且
+  `tracking_bbox==control_bbox`，display smoothing 继续独立；既有授权 coast 明确发布
+  `SEARCHING / observation_valid=false / MOTION_SEARCH`。旧默认配置下的普通拒绝暂时显式为
+  `SEARCHING / false / NONE / control_valid=false`，没有在 Task 3 的 feature gate 和有界运动置信期
+  完成前静默切换 RK3566 默认控制行为。
+- RED 阶段 `test_long_term_controller` 因枚举、字段和校验接口不存在而编译失败；GREEN 后聚焦
+  `tracker_math`、`long_term_controller`、`long_term_runtime` 3/3 通过，完整 RKNN-independent
+  构建及 CTest `19/19` 通过，`git diff --check` 通过。本里程碑只建立共享 core 语义；尚未写
+  schema 10 日志字段，也尚未使普通未接受帧持续驱动云台。下一步由 Task 3 在通用候选配置
+  显式启用时间制有界 motion search。
+
 ## 2026-11-11T12:09:22+08:00 `occ_video_1` evaluator 与失败基线冻结
 
 - 在分支 `codex/occ-video-1-tracking`、实现起点

@@ -19,6 +19,9 @@ enum class TrackingMode {
   kOcclusionHold,
 };
 
+enum class TrackingPhase { kTracking, kSearching, kInvalid };
+enum class ControlSource { kNone, kObservation, kMotionSearch };
+
 enum class QualityLevel { kReliable, kWeak, kRejected };
 enum class OcclusionReferenceSource {
   kNone, kPartialStableMedian, kFullStableMedian
@@ -184,6 +187,8 @@ struct DetectorDiagnostics {
 };
 
 const char* to_string(TrackingMode value);
+const char* to_string(TrackingPhase value);
+const char* to_string(ControlSource value);
 const char* to_string(OcclusionReferenceSource value);
 const char* to_string(OcclusionTriggerReason value);
 const char* to_string(OcclusionProbeType value);

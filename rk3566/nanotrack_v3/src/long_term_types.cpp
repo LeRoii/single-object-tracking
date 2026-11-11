@@ -106,6 +106,24 @@ const char* to_string(TrackingMode value) {
   return "UNKNOWN";
 }
 
+const char* to_string(TrackingPhase value) {
+  switch (value) {
+    case TrackingPhase::kTracking: return "TRACKING";
+    case TrackingPhase::kSearching: return "SEARCHING";
+    case TrackingPhase::kInvalid: return "INVALID";
+  }
+  return "UNKNOWN";
+}
+
+const char* to_string(ControlSource value) {
+  switch (value) {
+    case ControlSource::kNone: return "NONE";
+    case ControlSource::kObservation: return "OBSERVATION";
+    case ControlSource::kMotionSearch: return "MOTION_SEARCH";
+  }
+  return "UNKNOWN";
+}
+
 const char* to_string(QualityLevel value) {
   switch (value) {
     case QualityLevel::kReliable: return "RELIABLE";

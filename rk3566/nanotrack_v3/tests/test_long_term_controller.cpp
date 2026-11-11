@@ -127,6 +127,98 @@ void advance_probe_coast(nanotrack::LongTermController& controller, int first, i
   }
 }
 
+void test_external_observation_and_control_contract() {
+  using namespace nanotrack;
+  expect_true(std::string(to_string(TrackingPhase::kTracking)) == "TRACKING" &&
+                  std::string(to_string(TrackingPhase::kSearching)) == "SEARCHING" &&
+                  std::string(to_string(TrackingPhase::kInvalid)) == "INVALID",
+              "tracking phases have stable external names");
+  expect_true(std::string(to_string(ControlSource::kNone)) == "NONE" &&
+                  std::string(to_string(ControlSource::kObservation)) == "OBSERVATION" &&
+                  std::string(to_string(ControlSource::kMotionSearch)) == "MOTION_SEARCH",
+              "control sources have stable external names");
+
+  ControllerConfig config;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  config.accepted_center_smoothing_alpha = 0.5F;
+  LongTermController controller(config);
+  const BBox initial{100, 70, 100, 80};
+  controller.initialize(initial, 0, 0, {400, 300});
+
+  auto plan = controller.begin_frame(1, 40, false);
+  expect_true(plan.tracking_phase == TrackingPhase::kTracking &&
+                  !plan.observation_valid &&
+                  plan.control_source == ControlSource::kNone,
+              "pre-inference tracking plan does not claim an observation");
+  const BBox observed{120, 70, 100, 80};
+  auto output = controller.finish_frame(
+      plan, reliable_pair(plan, observed, 1), std::nullopt);
+  expect_true(output.accepted && output.observation_valid && output.control_valid &&
+                  output.tracking_phase == TrackingPhase::kTracking &&
+                  output.control_source == ControlSource::kObservation,
+              "accepted tracker evidence publishes observation control");
+  expect_true(output.tracking_bbox.x == output.control_bbox.x &&
+                  output.tracking_bbox.y == output.control_bbox.y &&
+                  output.tracking_bbox.width == output.control_bbox.width &&
+                  output.tracking_bbox.height == output.control_bbox.height &&
+                  output.tracking_bbox.x != output.display_bbox.x &&
+                  output.bbox.x == output.display_bbox.x &&
+                  output.bbox.y == output.display_bbox.y,
+              "tracking/control box stays real while display smoothing is independent");
+
+  plan = controller.begin_frame(2, 80, false);
+  output = controller.finish_frame(plan, {}, std::nullopt);
+  expect_true(!output.accepted && !output.observation_valid && !output.control_valid &&
+                  output.tracking_phase == TrackingPhase::kSearching &&
+                  output.control_source == ControlSource::kNone,
+              "legacy rejected observation explicitly reports search without authorization");
+
+  ControllerConfig coast_config;
+  coast_config.occlusion_reference_window = 3;
+  LongTermController coast(coast_config);
+  const BBox stable{40, 30, 20, 20};
+  coast.initialize(stable, 0, 0, {160, 120});
+  for (std::uint64_t id = 1; id <= 3; ++id) {
+    const auto stable_plan = coast.begin_frame(id, id * 40, false);
+    coast.finish_frame(stable_plan, reliable_pair(stable_plan, stable, id),
+                       std::nullopt);
+  }
+  const auto trigger_plan = coast.begin_frame(4, 160, false);
+  const auto trigger = coast.finish_frame(
+      trigger_plan,
+      {weak_observation(trigger_plan, TemplateKind::kAnchor,
+                        BBox{43, 33, 14, 14})},
+      std::nullopt);
+  expect_true(trigger.occlusion_hold_triggered && !trigger.observation_valid &&
+                  trigger.control_valid &&
+                  trigger.tracking_phase == TrackingPhase::kSearching &&
+                  trigger.control_source == ControlSource::kMotionSearch,
+              "authorized occlusion motion publishes search control without observation");
+  const auto coast_plan = coast.begin_frame(5, 200, false);
+  expect_true(coast_plan.tracking_phase == TrackingPhase::kSearching &&
+                  !coast_plan.observation_valid &&
+                  coast_plan.control_source == ControlSource::kMotionSearch,
+              "coast search plan exposes its intended motion-control source");
+  const auto coast_output = coast.finish_frame(coast_plan, {}, std::nullopt);
+  expect_true(coast_output.control_valid && !coast_output.observation_valid &&
+                  coast_output.control_source == ControlSource::kMotionSearch,
+              "coast frame keeps observation and control validity separate");
+
+  ControllerOutput invalid = coast_output;
+  invalid.accepted = false;
+  invalid.observation_valid = true;
+  bool rejected_invalid_semantics = false;
+  try {
+    LongTermController::validate_output_semantics(invalid);
+  } catch (const std::logic_error&) {
+    rejected_invalid_semantics = true;
+  }
+  expect_true(rejected_invalid_semantics,
+              "semantic validator rejects observation validity without acceptance");
+}
+
 void test_accepted_scale_deadband_smoothing_and_compatibility() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -1573,6 +1665,7 @@ void test_target_class_gate() {
 
 int main() {
   using namespace nanotrack;
+  test_external_observation_and_control_contract();
   test_accepted_scale_deadband_smoothing_and_compatibility();
   test_temporal_scale_window_direction_and_hysteresis();
   test_temporal_scale_persistence_and_state_isolation();

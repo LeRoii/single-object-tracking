@@ -208,6 +208,9 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.frame_id = frame_id;
     plan.timestamp_ms = timestamp_ms;
     plan.mode = mode_;
+    plan.tracking_phase = TrackingPhase::kSearching;
+    plan.observation_valid = false;
+    plan.control_source = ControlSource::kMotionSearch;
     plan.motion_predicted_bbox = motion_predicted;
     plan.predicted_bbox = motion_predicted;
     plan.search_scale = search_scale_for(timestamp_mode, timestamp_ms);
@@ -259,6 +262,13 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.frame_id = frame_id;
   plan.timestamp_ms = timestamp_ms;
   plan.mode = mode_;
+  plan.tracking_phase = mode_ == TrackingMode::kTracking
+                            ? TrackingPhase::kTracking
+                            : TrackingPhase::kSearching;
+  // A plan is created before tracker inference and therefore never claims a
+  // current-frame visual observation or observation-derived control.
+  plan.observation_valid = false;
+  plan.control_source = ControlSource::kNone;
   plan.motion_predicted_bbox = motion_predicted;
   plan.predicted_bbox = predicted;
   plan.search_scale = source == HypothesisSource::kDetector
@@ -339,6 +349,59 @@ void LongTermController::publish_occlusion_evidence(ControllerOutput& output) {
   // belong only to the output frame on which they were first published.
   occlusion_decision_.suspicion_started = false;
   occlusion_decision_.suspicion_cleared = false;
+}
+
+void LongTermController::validate_output_semantics(
+    const ControllerOutput& output) {
+  if (output.tracking_phase == TrackingPhase::kInvalid) {
+    throw std::logic_error("controller output has no tracking phase");
+  }
+  if (output.observation_valid != output.accepted) {
+    throw std::logic_error(
+        "observation validity must match accepted tracker evidence");
+  }
+  if (output.control_valid ==
+      (output.control_source == ControlSource::kNone)) {
+    throw std::logic_error(
+        "control validity must agree with a non-NONE control source");
+  }
+  if (output.tracking_phase == TrackingPhase::kTracking &&
+      (!output.observation_valid || !output.control_valid ||
+       output.control_source != ControlSource::kObservation)) {
+    throw std::logic_error(
+        "TRACKING requires accepted observation-derived control");
+  }
+  if (output.tracking_phase == TrackingPhase::kSearching &&
+      output.observation_valid) {
+    throw std::logic_error("SEARCHING cannot claim a valid observation");
+  }
+  if (output.control_source == ControlSource::kObservation &&
+      (output.tracking_phase != TrackingPhase::kTracking ||
+       !output.observation_valid)) {
+    throw std::logic_error(
+        "OBSERVATION control requires confirmed tracking");
+  }
+  if (output.control_source == ControlSource::kMotionSearch &&
+      (output.tracking_phase != TrackingPhase::kSearching ||
+       output.observation_valid || !output.motion_control_authorized)) {
+    throw std::logic_error(
+        "MOTION_SEARCH requires authorized observation-free search");
+  }
+}
+
+void LongTermController::finalize_output_semantics(ControllerOutput& output) {
+  if (output.accepted) {
+    output.tracking_phase = TrackingPhase::kTracking;
+    output.observation_valid = true;
+    output.control_source = ControlSource::kObservation;
+  } else {
+    output.tracking_phase = TrackingPhase::kSearching;
+    output.observation_valid = false;
+    output.control_source = output.control_valid && output.motion_control_authorized
+                                ? ControlSource::kMotionSearch
+                                : ControlSource::kNone;
+  }
+  validate_output_semantics(output);
 }
 
 LongTermController::EvaluatedObservation LongTermController::evaluate(
@@ -1028,6 +1091,7 @@ ControllerOutput LongTermController::finish_frame(
       last_frame_id_ = plan.frame_id;
       last_timestamp_ms_ = plan.timestamp_ms;
       frame_open_ = false;
+      finalize_output_semantics(output);
       return output;
     }
     // No observation-side effects are allowed before two consistent hits.
@@ -1039,6 +1103,7 @@ ControllerOutput LongTermController::finish_frame(
     last_frame_id_ = plan.frame_id;
     last_timestamp_ms_ = plan.timestamp_ms;
     frame_open_ = false;
+    finalize_output_semantics(output);
     return output;
   }
 
@@ -1124,6 +1189,7 @@ ControllerOutput LongTermController::finish_frame(
     last_frame_id_ = plan.frame_id;
     last_timestamp_ms_ = plan.timestamp_ms;
     frame_open_ = false;
+    finalize_output_semantics(output);
     return output;
   }
   if (selected) {
@@ -1267,6 +1333,7 @@ ControllerOutput LongTermController::finish_frame(
   last_frame_id_ = plan.frame_id;
   last_timestamp_ms_ = plan.timestamp_ms;
   frame_open_ = false;
+  finalize_output_semantics(output);
   return output;
 } catch (...) {
   // Keep the frame open until it has a complete result so malformed probe
