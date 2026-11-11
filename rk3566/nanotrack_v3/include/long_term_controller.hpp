@@ -293,7 +293,7 @@ class LongTermController {
       const std::optional<EvaluatedObservation>& recent,
       const std::optional<EvaluatedObservation>& safe,
       ControllerOutput& output);
-  std::vector<BBox> detector_probes(const DetectorCandidate& candidate) const;
+  std::vector<BBox> detector_probes(const BBox& region) const;
   void activate_next_detector_candidate();
   bool detector_geometry_consistent(const BBox& reference,
                                     const BBox& bbox) const;

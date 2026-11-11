@@ -1970,6 +1970,44 @@ void test_atomic_search_reacquisition_and_template_probation() {
                   output.template_action == TemplateAction::kRollbackRecent,
               "recovery probation failure rolls back and resumes search");
 
+  ControllerConfig strict_probation = config;
+  strict_probation.detector_confirmation_iou = 0.50F;
+  strict_probation.template_agreement_iou = 0.80F;
+  LongTermController threshold_split(strict_probation);
+  threshold_split.initialize(initial, 0, 0, {240, 160});
+  reject_frame(threshold_split, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    plan = threshold_split.begin_frame(frame, frame * 40, false);
+    output = threshold_split.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, initial, frame)},
+        std::nullopt);
+  }
+  expect_true(output.template_action == TemplateAction::kStageRecent,
+              "strict probation fixture stages a candidate after two valid observations");
+  plan = threshold_split.begin_frame(4, 160, false);
+  BBox recent_shifted = initial;
+  BBox staged_shifted = initial;
+  recent_shifted.x += 2;
+  staged_shifted.x += 6;
+  output = threshold_split.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kRecent, recent_shifted, 4),
+       reliable_observation(plan, TemplateKind::kStaged, staged_shifted, 4)},
+      std::nullopt);
+  expect_true(output.template_iou > 0.66F && output.template_iou < 0.67F &&
+                  !output.accepted && !output.trusted_for_state_update &&
+                  output.tracking_phase == TrackingPhase::kSearching &&
+                  output.template_action == TemplateAction::kRollbackRecent &&
+                  threshold_split.current_bbox().x == initial.x &&
+                  threshold_split.last_trusted_timestamp_ms_ == 120,
+              "probation agreement failure rolls back before any trusted observation update");
+  plan = threshold_split.begin_frame(5, 200, false);
+  expect_true(plan.tracking_phase == TrackingPhase::kSearching &&
+                  plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                  !plan.recovery_probe,
+              "failed probation leaves no staged template or candidate for the next search");
+  threshold_split.abort_frame();
+
   LongTermController disagreement(config);
   disagreement.initialize(initial, 0, 0, {240, 160});
   reject_frame(disagreement, 1, 40);

@@ -8,7 +8,6 @@
 namespace nanotrack {
 namespace {
 
-constexpr std::uint64_t kConfirmationWindow = 3;
 constexpr std::size_t kRequiredHits = 2;
 
 std::size_t source_index(RecoveryCandidateSource source) {
@@ -77,6 +76,10 @@ RecoveryCandidateTable::RecoveryCandidateTable(const ControllerConfig& config)
     : detector_capacity_(config.detector_max_candidates),
       gap_ms_(config.motion_max_dt_ms),
       detector_stale_ms_(config.detector_stale_ms),
+      detector_window_frames_(config.detector_target_mode == DetectorTargetMode::kSubtarget
+          ? std::max<std::uint64_t>(kConfirmationWindow,
+                                    config.detector_subtarget_max_probes + 1)
+          : kConfirmationWindow),
       min_iou_(config.detector_confirmation_iou),
       max_center_distance_(config.detector_confirmation_center_distance),
       max_area_log_change_(config.detector_confirmation_max_area_log_change),
@@ -86,8 +89,9 @@ RecoveryCandidateTable::RecoveryCandidateTable(const ControllerConfig& config)
 }
 
 bool RecoveryCandidateTable::expired(FrameStamp evidence,
-                                     std::int64_t max_age_ms) const noexcept {
-  return frame_->frame_id - evidence.frame_id >= kConfirmationWindow ||
+                                     std::int64_t max_age_ms,
+                                     std::uint64_t max_age_frames) const noexcept {
+  return frame_->frame_id - evidence.frame_id >= max_age_frames ||
          static_cast<std::uint64_t>(frame_->timestamp_ms) -
                  static_cast<std::uint64_t>(evidence.timestamp_ms) >
              static_cast<std::uint64_t>(max_age_ms);
@@ -116,9 +120,12 @@ void RecoveryCandidateTable::expire(std::uint64_t frame_id,
   for (auto& candidate : entries_) {
     for (std::size_t index = 0; index < candidate.evidence.size(); ++index) {
       auto& item = candidate.evidence[index];
-      const auto age_limit = index == source_index(RecoveryCandidateSource::kDetector)
-          ? detector_stale_ms_ : gap_ms_;
-      if (item && expired({item->frame_id, item->timestamp_ms}, age_limit)) item.reset();
+      const bool detector = index == source_index(RecoveryCandidateSource::kDetector);
+      if (item && expired({item->frame_id, item->timestamp_ms},
+                          detector ? detector_stale_ms_ : gap_ms_,
+                          detector ? detector_window_frames_ : kConfirmationWindow)) {
+        item.reset();
+      }
     }
     for (auto& hit : candidate.verifications) {
       if (hit && expired({hit->frame_id, hit->timestamp_ms}, gap_ms_)) hit.reset();
@@ -168,25 +175,33 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
     RecoveryCandidateSource source, const BBox& bbox, float confidence,
     std::optional<std::int64_t> source_timestamp_ms,
     std::optional<int> detector_class_id, bool tracker_verified,
-    float motion_residual) {
+    float motion_residual, std::optional<BBox> subtarget_region) {
   if (!frame_ || !valid_box(bbox) || !std::isfinite(confidence) ||
       confidence < 0.0F || confidence > 1.0F ||
-      !std::isfinite(motion_residual) || motion_residual < 0.0F) {
+      !std::isfinite(motion_residual) || motion_residual < 0.0F ||
+      (subtarget_region && !valid_box(*subtarget_region))) {
     return std::nullopt;
   }
   const bool detector = source == RecoveryCandidateSource::kDetector;
   RecoveryCandidateEvidence evidence{
       bbox, frame_->frame_id, source_timestamp_ms.value_or(frame_->timestamp_ms),
-      confidence, motion_residual, detector_class_id};
+      confidence, motion_residual, detector_class_id, subtarget_region};
   if (evidence.timestamp_ms > frame_->timestamp_ms ||
       (detector && expired({evidence.frame_id, evidence.timestamp_ms}, detector_stale_ms_))) {
     return std::nullopt;
   }
   std::optional<RecoveryCandidateKey> matched;
   for (const auto& candidate : entries_) {
-    if (!geometry_consistent(candidate.preferred_evidence().bbox, bbox)) continue;
+    const auto& previous_detector = candidate.from(RecoveryCandidateSource::kDetector);
+    const bool compare_regions = detector && subtarget_region &&
+        previous_detector && previous_detector->subtarget_region;
+    const BBox& reference = compare_regions ? *previous_detector->subtarget_region
+                                           : candidate.preferred_evidence().bbox;
+    const BBox& observed = compare_regions ? *subtarget_region : bbox;
+    if (!geometry_consistent(reference, observed)) continue;
     if (matched) {
       unrepresented_conflict_ = FrameStamp{evidence.frame_id, evidence.timestamp_ms};
+      mark_identity_conflict();
       return std::nullopt;
     }
     matched = candidate.key;
@@ -213,6 +228,7 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
     if (weakest == entries_.end() || !preferred_detector(evidence, *weakest->from(source)) ||
         weakest->from(RecoveryCandidateSource::kRecent) ||
         weakest->from(RecoveryCandidateSource::kSafe)) {
+      mark_identity_conflict();
       return std::nullopt;
     }
     weakest->evidence[index].reset();
@@ -233,6 +249,19 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   auto& source_evidence = entry->evidence[index];
   if (!detector || !source_evidence || source_evidence->frame_id != evidence.frame_id ||
       preferred_detector(evidence, *source_evidence)) {
+    if (detector && subtarget_region && source_evidence && source_evidence->subtarget_region) {
+      // An async refresh must preserve the probe already sent to NanoTrack.
+      evidence.bbox = source_evidence->bbox;
+      if (entry->subtarget_probes_exhausted &&
+          entry->last_subtarget_probe_frame != frame_->frame_id &&
+          source_evidence->frame_id != evidence.frame_id) {
+        entry->subtarget_probes_attempted = 0;
+        entry->subtarget_probes_exhausted = false;
+      }
+    } else if (detector && subtarget_region) {
+      entry->subtarget_probes_attempted = 0;
+      entry->subtarget_probes_exhausted = false;
+    }
     source_evidence = evidence;
   }
   if (!detector && tracker_verified) {
@@ -243,6 +272,7 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
       hits[1] = evidence;
     }
   }
+  if (conflicted()) mark_identity_conflict();
   return entry->key;
 }
 
@@ -254,8 +284,30 @@ const RecoveryCandidate* RecoveryCandidateTable::find(
 }
 
 const RecoveryCandidate* RecoveryCandidateTable::select_probe() const noexcept {
-  const auto entry = std::min_element(entries_.begin(), entries_.end(), preferred);
-  return entry == entries_.end() ? nullptr : &*entry;
+  const RecoveryCandidate* best = nullptr;
+  for (const auto& candidate : entries_) {
+    if (candidate.subtarget_probes_exhausted &&
+        !candidate.from(RecoveryCandidateSource::kRecent) &&
+        !candidate.from(RecoveryCandidateSource::kSafe)) {
+      continue;
+    }
+    if (!best || preferred(candidate, *best)) best = &candidate;
+  }
+  return best;
+}
+
+void RecoveryCandidateTable::advance_subtarget_probe(
+    RecoveryCandidateKey key, const BBox& bbox,
+    std::size_t index, bool final_probe) noexcept {
+  const auto entry = std::find_if(entries_.begin(), entries_.end(),
+                                  [&](const auto& candidate) { return candidate.key == key; });
+  if (!frame_ || entry == entries_.end()) return;
+  auto& detector = entry->evidence[source_index(RecoveryCandidateSource::kDetector)];
+  if (!detector || !detector->subtarget_region) return;
+  detector->bbox = bbox;
+  entry->subtarget_probes_attempted = index + 1;
+  entry->last_subtarget_probe_frame = frame_->frame_id;
+  entry->subtarget_probes_exhausted = final_probe;
 }
 
 bool RecoveryCandidateTable::conflicted() const noexcept {

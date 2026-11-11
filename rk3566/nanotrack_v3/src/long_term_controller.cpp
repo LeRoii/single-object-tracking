@@ -17,6 +17,13 @@ bool finite_bbox(const BBox& bbox) {
          std::isfinite(bbox.width) && std::isfinite(bbox.height);
 }
 
+bool contains_center(const BBox& region, const BBox& bbox) {
+  const float x = bbox.x + 0.5F * bbox.width;
+  const float y = bbox.y + 0.5F * bbox.height;
+  return x >= region.x && y >= region.y &&
+         x <= region.x + region.width && y <= region.y + region.height;
+}
+
 bool valid_candidate(const DetectorCandidate& candidate, FrameSize frame_size) {
   const BBox& bbox = candidate.bbox;
   return finite_bbox(bbox) && bbox.x >= 0.0F && bbox.y >= 0.0F &&
@@ -330,6 +337,16 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
       ? recovery_candidates_.select_probe() : nullptr;
   if (probe) {
     predicted = probe->preferred_evidence().bbox;
+    const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
+    if (detector && detector->subtarget_region &&
+        !probe->from(RecoveryCandidateSource::kRecent) &&
+        !probe->from(RecoveryCandidateSource::kSafe)) {
+      const auto probes = detector_probes(*detector->subtarget_region);
+      const auto index = std::min(probe->subtarget_probes_attempted, probes.size() - 1);
+      predicted = probes[index];
+      recovery_candidates_.advance_subtarget_probe(
+          probe->key, predicted, index, index + 1 == probes.size());
+    }
     if (probe->key.source == RecoveryCandidateSource::kDetector) {
       source = HypothesisSource::kDetector;
     }
@@ -385,14 +402,17 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
     if (detector) {
       plan.detector_candidate_id = probe->key.id;
-      plan.detector_candidate_region = detector->bbox;
+      plan.detector_candidate_region = detector->subtarget_region.value_or(detector->bbox);
       plan.detector_candidate_class_id = detector->detector_class_id;
       plan.detector_candidate_confidence = detector->confidence;
       plan.detector_candidate_center_ratio = frame_normalized_center_distance(
-          detector->bbox, motion_predicted, frame_size_);
+          *plan.detector_candidate_region, motion_predicted, frame_size_);
       plan.detector_same_class_candidates = recovery_candidates_.detector_count();
       plan.detector_same_class_ambiguous = recovery_candidates_.conflicted();
       plan.detector_candidate_locked = probe->hits() > 0;
+      if (probe->subtarget_probes_attempted > 0) {
+        plan.detector_probe_index = probe->subtarget_probes_attempted - 1;
+      }
     }
   }
   if (active_detector_candidate_ && legacy_detector &&
@@ -890,7 +910,6 @@ LongTermController::confirm_recovery_candidate(
     ControllerOutput& output) {
   if (plan.timestamp_ms - *loss_start_ms_ < config_.search_reacquisition_min_age_ms ||
       rollback_pending_) {
-    if (recovery_candidates_.conflicted()) recovery_candidates_.mark_identity_conflict();
     return std::nullopt;
   }
   if (plan.recovery_probe && !recovery_candidates_.find(*plan.recovery_probe)) {
@@ -904,6 +923,13 @@ LongTermController::confirm_recovery_candidate(
     const BBox& bbox = observation->observation.bbox;
     const bool consistent_with_probe = !plan.recovery_probe ||
         recovery_candidates_.geometry_consistent(plan.predicted_bbox, bbox);
+    if (!consistent_with_probe && plan.detector_target_mode == DetectorTargetMode::kSubtarget &&
+        plan.detector_candidate_region && !plan.detector_candidate_locked &&
+        contains_center(*plan.detector_candidate_region, bbox)) {
+      // This response may be a different part of the same detector region.
+      // Wait for a matching offset probe before admitting it as evidence.
+      return std::optional<RecoveryCandidateKey>{};
+    }
     // An off-probe hit can reveal a competing identity at the motion center
     // even if the chosen probe had a narrower crop than the general search.
     if (observation->quality != QualityLevel::kReliable) {
@@ -941,7 +967,7 @@ LongTermController::confirm_recovery_candidate(
   }
   if (output.recovery_conflict) {
     if (output.search_hint) output.search_hint->rejection = SearchHintRejection::kConflict;
-    recovery_candidates_.mark_identity_conflict();
+    if (probe_conflict) recovery_candidates_.mark_identity_conflict();
     return std::nullopt;
   }
   if (recent_key && recovery_candidates_.confirmed(*recent_key)) return recent;
@@ -950,9 +976,9 @@ LongTermController::confirm_recovery_candidate(
 }
 
 std::vector<BBox> LongTermController::detector_probes(
-    const DetectorCandidate& candidate) const {
+    const BBox& region) const {
   if (config_.detector_target_mode == DetectorTargetMode::kFullObject) {
-    return {candidate.bbox};
+    return {region};
   }
 
   static constexpr float kProbeCoordinates[][2] = {
@@ -964,8 +990,8 @@ std::vector<BBox> LongTermController::detector_probes(
   probes.reserve(config_.detector_subtarget_max_probes);
   for (const auto& coordinate : kProbeCoordinates) {
     if (probes.size() >= config_.detector_subtarget_max_probes) break;
-    const float center_x = candidate.bbox.x + coordinate[0] * candidate.bbox.width;
-    const float center_y = candidate.bbox.y + coordinate[1] * candidate.bbox.height;
+    const float center_x = region.x + coordinate[0] * region.width;
+    const float center_y = region.y + coordinate[1] * region.height;
     const BBox probe = centered_box(center_x, center_y, current_bbox_, frame_size_);
     const bool duplicate = std::any_of(
         probes.begin(), probes.end(), [&](const BBox& existing) {
@@ -1396,7 +1422,7 @@ LongTermController::ingest_detector_batch(
     const float center_ratio = frame_normalized_center_distance(
         projected, plan.motion_predicted_bbox, frame_size_);
     diagnostic.center_ratio = center_ratio;
-    if (center_ratio <=
+    if (unified || center_ratio <=
         config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
       diagnostic.position_gate_pass = true;
       positioned.push_back(PositionedCandidate{index, center_ratio});
@@ -1436,11 +1462,18 @@ LongTermController::ingest_detector_batch(
       auto& diagnostic = result.diagnostics[item.diagnostic_index];
       DetectorCandidate candidate = diagnostic.candidate;
       candidate.bbox = *diagnostic.projected_bbox;
-      const BBox probe = config_.detector_target_mode == DetectorTargetMode::kFullObject
-          ? candidate.bbox : detector_probes(candidate).front();
+      std::optional<BBox> subtarget_region;
+      BBox probe = candidate.bbox;
+      if (config_.detector_target_mode == DetectorTargetMode::kSubtarget) {
+        subtarget_region = candidate.bbox;
+        probe = centered_box(candidate.bbox.x + 0.5F * candidate.bbox.width,
+                             candidate.bbox.y + 0.5F * candidate.bbox.height,
+                             current_bbox_, frame_size_);
+      }
       const auto key = recovery_candidates_.observe(
           RecoveryCandidateSource::kDetector, probe, candidate.confidence,
-          batch->source_timestamp_ms, candidate.class_id, false, item.center_ratio);
+          batch->source_timestamp_ms, candidate.class_id, false, item.center_ratio,
+          subtarget_region);
       keys.push_back(key);
     }
     for (std::size_t index = 0; index < positioned.size(); ++index) {
@@ -1492,7 +1525,7 @@ LongTermController::ingest_detector_batch(
     queued.source_frame_id = batch->source_frame_id;
     queued.source_timestamp_ms = batch->source_timestamp_ms;
     queued.generation = batch->generation;
-    queued.probes = detector_probes(candidate);
+    queued.probes = detector_probes(candidate.bbox);
     if (!queued.probes.empty()) {
       diagnostic.candidate_id = queued.id;
       diagnostic.queued = true;
@@ -1595,8 +1628,16 @@ ControllerOutput LongTermController::finish_frame(
   output.detector_candidate_diagnostics = ingest_result.diagnostics;
 
   const bool ordinary_recent =
-      !legacy_anchor_observations_ && !loss_start_ms_ &&
+      (!legacy_anchor_observations_ || recovery_probation_) && !loss_start_ms_ &&
       (plan.mode == TrackingMode::kTracking || plan.mode == TrackingMode::kSuspected);
+  const auto& probation_template =
+      legacy_anchor_observations_ && !recovery_probation_ ? anchor : staged;
+  const bool probation_templates_agree =
+      probation_template && recent &&
+      probation_template->quality == QualityLevel::kReliable &&
+      recent->quality == QualityLevel::kReliable &&
+      bbox_iou(probation_template->observation.bbox, recent->observation.bbox) >=
+          config_.template_agreement_iou;
   std::optional<EvaluatedObservation> selected;
   bool force_confirmation = false;
   if (ordinary_recent) {
@@ -1605,12 +1646,13 @@ ControllerOutput LongTermController::finish_frame(
     if (recent && other) {
       output.template_iou = bbox_iou(recent->observation.bbox, other->observation.bbox);
     }
-    auto disposition = recent ? assess_recent(plan, *recent) : RecentDisposition::kSearch;
-    if (recovery_probation_ &&
-        (disposition != RecentDisposition::kDirect || !staged ||
-         staged->quality != QualityLevel::kReliable ||
-         !recovery_candidates_.geometry_consistent(
-             staged->observation.bbox, recent->observation.bbox))) {
+    const bool probation_geometry_allows_acceptance = !recovery_probation_ ||
+        (probation_templates_agree &&
+         recovery_candidates_.geometry_consistent(
+             probation_template->observation.bbox, recent->observation.bbox));
+    auto disposition = recent && probation_geometry_allows_acceptance
+        ? assess_recent(plan, *recent) : RecentDisposition::kSearch;
+    if (recovery_probation_ && disposition != RecentDisposition::kDirect) {
       disposition = RecentDisposition::kSearch;
     }
     if (disposition == RecentDisposition::kTentative) {
@@ -1981,13 +2023,7 @@ ControllerOutput LongTermController::finish_frame(
     // The committed heads ran this frame. Retire the abandoned staged slot
     // before a subsequent frame can request a new stage.
   } else if (recent_probation_) {
-    const auto& probation_template = legacy_anchor_observations_ ? anchor : staged;
-    const bool templates_confirm_staged_recent =
-        probation_template && recent &&
-        probation_template->quality == QualityLevel::kReliable &&
-        recent->quality == QualityLevel::kReliable &&
-        output.template_iou >= config_.template_agreement_iou;
-    if (accepted && templates_confirm_staged_recent &&
+    if (accepted && probation_templates_agree &&
         output.quality == QualityLevel::kReliable && !output.reacquired &&
         !force_confirmation) {
       ++probation_reliable_frames_;

@@ -17,6 +17,9 @@ struct RecoveryCandidateEvidence {
   float confidence = 0.0F;
   float motion_residual = 0.0F;
   std::optional<int> detector_class_id;
+  // For a detector subtarget, bbox is the current trusted-size probe and
+  // this region is the projected detection used for identity matching.
+  std::optional<BBox> subtarget_region;
 };
 
 struct RecoveryCandidate {
@@ -24,6 +27,9 @@ struct RecoveryCandidate {
   std::array<std::optional<RecoveryCandidateEvidence>, 3> evidence{};
   std::array<std::optional<RecoveryCandidateEvidence>, 2> verifications{};
   bool identity_conflicted = false;
+  std::size_t subtarget_probes_attempted = 0;
+  std::optional<std::uint64_t> last_subtarget_probe_frame = std::nullopt;
+  bool subtarget_probes_exhausted = false;
 
   const RecoveryCandidateEvidence& preferred_evidence() const;
   const std::optional<RecoveryCandidateEvidence>& from(
@@ -44,9 +50,12 @@ class RecoveryCandidateTable {
       RecoveryCandidateSource source, const BBox& bbox, float confidence = 0.0F,
       std::optional<std::int64_t> source_timestamp_ms = std::nullopt,
       std::optional<int> detector_class_id = std::nullopt,
-      bool tracker_verified = true, float motion_residual = 0.0F);
+      bool tracker_verified = true, float motion_residual = 0.0F,
+      std::optional<BBox> subtarget_region = std::nullopt);
   const RecoveryCandidate* find(RecoveryCandidateKey key) const noexcept;
   const RecoveryCandidate* select_probe() const noexcept;
+  void advance_subtarget_probe(RecoveryCandidateKey key, const BBox& bbox,
+                               std::size_t index, bool final_probe) noexcept;
   bool conflicted() const noexcept;
   bool confirmed(RecoveryCandidateKey key) const noexcept;
   void mark_identity_conflict() noexcept;
@@ -60,11 +69,15 @@ class RecoveryCandidateTable {
     std::int64_t timestamp_ms;
   };
 
-  bool expired(FrameStamp evidence, std::int64_t max_age_ms) const noexcept;
+  static constexpr std::uint64_t kConfirmationWindow = 3;
+
+  bool expired(FrameStamp evidence, std::int64_t max_age_ms,
+               std::uint64_t max_age_frames = kConfirmationWindow) const noexcept;
 
   std::size_t detector_capacity_;
   std::int64_t gap_ms_;
   std::int64_t detector_stale_ms_;
+  std::uint64_t detector_window_frames_;
   float min_iou_;
   float max_center_distance_;
   float max_area_log_change_;

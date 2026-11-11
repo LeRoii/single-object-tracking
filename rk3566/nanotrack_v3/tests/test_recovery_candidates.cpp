@@ -55,7 +55,6 @@ int main() {
   expect(table.observe(Source::kRecent, moved) == recent && !table.confirmed(*recent),
          "competing identity evidence prevents temporal acceptance");
 
-  table.mark_identity_conflict();
   table.expire(9, 360, 1);
   table.observe(Source::kRecent, moved);
   table.expire(10, 400, 1);

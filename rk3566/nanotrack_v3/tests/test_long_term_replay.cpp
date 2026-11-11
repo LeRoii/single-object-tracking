@@ -1,6 +1,7 @@
 #include "long_term_controller.hpp"
 #include "target_class.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <optional>
@@ -177,10 +178,141 @@ void test_recent_safe_recovery_replay() {
   }
 }
 
+void test_delayed_detector_recovery_replay() {
+  using namespace nanotrack;
+  const BBox initial{40, 30, 20, 20};
+  const BBox far{190, 60, 20, 20};
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 80;
+  config.detector_interval_ms = 100;
+  config.detector_candidate_max_center_ratio = 0.02F;
+  LongTermController controller(config);
+  controller.initialize(initial, 0, 0, {320, 200}, make_fixed_target_class(0, true));
+  step(controller, 1, 20, BBox{43, 30, 20, 20}, TemplateKind::kRecent);
+  step(controller, 2, 40, BBox{46, 30, 20, 20}, TemplateKind::kRecent);
+  step(controller, 3, 80, std::nullopt);
+  auto plan = controller.begin_frame(4, 110, true);
+  expect_true(plan.detector_request.has_value(), "search schedules the eligible detector");
+  if (!plan.detector_request) return;
+  const auto request = *plan.detector_request;
+  const BBox request_motion = plan.motion_predicted_bbox;
+  controller.finish_frame(plan, {}, std::nullopt);
+
+  plan = controller.begin_frame(5, 140, true);
+  const float projection_dx = plan.motion_predicted_bbox.x - request_motion.x;
+  const float expected_x = far.x + projection_dx;
+  DetectorBatch delayed{request.frame_id, request.timestamp_ms, {{far, 0.99F, 0}}};
+  delayed.generation = request.generation;
+  auto out = controller.finish_frame(plan, {}, delayed);
+  expect_true(!plan.request_detector && out.detector_status == DetectorBatchStatus::kAccepted &&
+                  out.detector_candidates_queued == 1 &&
+                  out.detector_candidate_diagnostics.size() == 1 &&
+                  out.detector_candidate_diagnostics[0].center_ratio.value_or(0.0F) > 0.02F &&
+                  std::fabs(projection_dx) > 0.001F &&
+                  out.detector_candidate_diagnostics[0].projected_bbox &&
+                  std::fabs(out.detector_candidate_diagnostics[0].projected_bbox->x -
+                            expected_x) < 0.001F &&
+                  !out.accepted && !out.control_valid && !out.search_hint,
+              "delayed far detection projects from the request frame without authorizing control");
+
+  plan = controller.begin_frame(6, 170, true);
+  const BBox probe_bbox = plan.predicted_bbox;
+  expect_true(!plan.request_detector && plan.hypothesis_source == HypothesisSource::kDetector &&
+                  std::fabs(probe_bbox.x - expected_x) < 0.001F,
+              "next frame probes the projected far detector region at normal request cadence");
+  out = controller.finish_frame(
+      plan, {reliable_for_plan(plan, probe_bbox, 6, TemplateKind::kRecent)}, std::nullopt);
+  expect_true(!out.accepted && !out.control_valid && out.recovery_confirmation_hits == 1,
+              "far detector still requires two NanoTrack hits before control can resume");
+  plan = controller.begin_frame(7, 200, true);
+  out = controller.finish_frame(
+      plan, {reliable_for_plan(plan, probe_bbox, 7, TemplateKind::kRecent)}, std::nullopt);
+  expect_true(!plan.request_detector && out.reacquired && out.control_valid &&
+                  out.recovery_confirmation_hits == 2,
+              "far detector identity commits through the common NanoTrack gate");
+}
+
+void test_unified_subtarget_offset_replay() {
+  using namespace nanotrack;
+  const BBox initial{40, 30, 20, 20};
+  const BBox detected_region{110, 60, 100, 80};
+  const BBox offset_target{180, 90, 20, 20};
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_interval_ms = 40;
+  config.detector_candidate_max_center_ratio = 0.70F;
+  config.detector_target_mode = DetectorTargetMode::kSubtarget;
+  config.detector_subtarget_max_probes = 5;
+  LongTermController controller(config);
+  controller.initialize(initial, 0, 0, {400, 240}, make_fixed_target_class(0, true));
+  step(controller, 1, 20, std::nullopt);
+  auto plan = controller.begin_frame(2, 40, true);
+  if (!plan.detector_request) {
+    expect_true(false, "subtarget fixture has a real detector request");
+    return;
+  }
+  const auto request = *plan.detector_request;
+  DetectorBatch batch{request.frame_id, request.timestamp_ms, {{detected_region, 0.99F, 0}}};
+  batch.generation = request.generation;
+  controller.finish_frame(plan, {}, batch);
+
+  constexpr float expected_centers[][2] = {
+      {150, 90}, {150, 66}, {150, 114}, {120, 90}, {180, 90},
+  };
+  for (std::uint64_t frame = 3; frame <= 7; ++frame) {
+    const auto index = static_cast<std::size_t>(frame - 3);
+    plan = controller.begin_frame(frame, frame * 20, frame == 7);
+    const bool at_target = plan.predicted_bbox.x == offset_target.x &&
+                           plan.predicted_bbox.y == offset_target.y;
+    expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                    plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                    plan.detector_probe_index == index &&
+                    plan.detector_candidate_region &&
+                    plan.detector_candidate_region->width == detected_region.width &&
+                    plan.predicted_bbox.x == expected_centers[index][0] &&
+                    plan.predicted_bbox.y == expected_centers[index][1] &&
+                    plan.predicted_bbox.width == initial.width,
+                "subtarget advances one deterministic trusted-size center per frame");
+    std::vector<TrackerObservation> observations;
+    if (at_target || frame == 3) {
+      observations.push_back(reliable_for_plan(plan, offset_target, frame, TemplateKind::kRecent));
+    }
+    std::optional<DetectorBatch> refresh;
+    if (frame == 7 && plan.detector_request) {
+      const auto fresh_request = *plan.detector_request;
+      BBox moved_region = detected_region;
+      moved_region.x += 1;
+      refresh = DetectorBatch{fresh_request.frame_id, fresh_request.timestamp_ms,
+                              {{moved_region, 0.95F, 0}}};
+      refresh->generation = fresh_request.generation;
+    }
+    const auto out = controller.finish_frame(plan, observations, refresh);
+    if (frame == 7) {
+      expect_true(refresh && out.detector_status == DetectorBatchStatus::kAccepted &&
+                      out.detector_candidates_queued == 1,
+                  "a fresh detector update preserves the selected offset and its identity");
+    }
+    expect_true(!out.accepted && !out.recovery_conflict &&
+                    out.recovery_confirmation_hits == (frame == 7 ? 1U : 0U),
+                "a response outside the chosen offset cannot count as a verification hit");
+  }
+  plan = controller.begin_frame(8, 160, false);
+  const auto out = controller.finish_frame(
+      plan, {reliable_for_plan(plan, offset_target, 8, TemplateKind::kRecent)}, std::nullopt);
+  expect_true(plan.predicted_bbox.x == offset_target.x && plan.recovery_probe &&
+                  plan.recovery_probe->source == RecoveryCandidateSource::kDetector &&
+                  plan.search_hint && plan.search_hint->confirmation_count == 1 &&
+                  out.reacquired && out.recovery_confirmation_hits == 2,
+              "offset subtarget locks and confirms through the shared two-hit path");
+}
+
 }  // namespace
 
 int main() {
   test_recent_safe_recovery_replay();
+  test_delayed_detector_recovery_replay();
+  test_unified_subtarget_offset_replay();
   using namespace nanotrack;
   const BBox initial{40, 30, 20, 20};
   const FrameSize frame_size{240, 160};
