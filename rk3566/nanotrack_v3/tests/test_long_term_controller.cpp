@@ -2351,6 +2351,7 @@ void test_recent_safe_tentative_tracking() {
                   "ordinary recent-only observations are direct and trusted");
     }
     const auto trusted = controller->motion_.snapshot(120);
+    float previous_control_x = controller->current_bbox().x;
     for (std::uint64_t id = 4; id <= 6; ++id) {
       const auto out = track(*controller, id, shifted, degraded);
       expect_true(out.mode == (id == 6 ? TrackingMode::kSuspected
@@ -2363,8 +2364,11 @@ void test_recent_safe_tentative_tracking() {
                       out.template_action == TemplateAction::kNone &&
                       out.tracking_bbox.x == shifted.x && out.tracking_bbox.width == 30,
                   "tentative output carries the exact recent observation without accepting it");
-      expect_true(out.control_bbox.x > 73.0F && out.control_bbox.x <= 76.001F,
-                  "tentative control applies the existing center correction limit");
+      expect_true(out.control_bbox.x >= previous_control_x &&
+                      out.control_bbox.x <= previous_control_x + 3.001F &&
+                      out.control_bbox.x <= shifted.x,
+                  "tentative control applies the existing center correction limit per output");
+      previous_control_x = out.control_bbox.x;
       const auto saved = controller->motion_.snapshot(120);
       expect_true(saved.bbox.x == trusted.bbox.x &&
                       saved.velocity_x == trusted.velocity_x &&
@@ -2478,6 +2482,99 @@ void test_recent_safe_transient_and_probation() {
               "response gating resumes after a fresh ordinary minimum");
 }
 
+void test_production_observation_preserves_collapse() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.stable_frames_for_update = 1;
+  config.recent_update_interval_ms = 1;
+  LongTermController controller(config);
+  const FrameSize frame{400, 300};
+  const BBox committed{50, 50, 100, 100};
+  controller.initialize(committed, 0, 0, frame);
+  const auto plan = controller.begin_frame(1, 40, false);
+  const auto decoded = reliable_observation(
+      plan, TemplateKind::kRecent, {95, 95, 10, 10});
+  const auto bounded = constrain_tracker_observation(decoded, committed, frame);
+  expect_true(bounded.bbox.width == 75 && bounded.bbox.height == 75 &&
+                  bounded.decoded_bbox && bounded.decoded_bbox->width == 10,
+              "production geometry preserves pre-clamp collapse alongside bounded bbox");
+  const auto out = controller.finish_frame(plan, {bounded}, std::nullopt);
+  expect_true(!out.accepted && !out.observation_present &&
+                  out.tracking_phase == TrackingPhase::kSearching &&
+                  out.template_action == TemplateAction::kNone &&
+                  controller.current_bbox().width == 100,
+              "production-clamped high-response collapse cannot update bbox or stage");
+}
+
+void test_tentative_control_envelopes() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.occlusion_min_reference_samples = 3;
+  config.stable_frames_for_update = 50;
+  config.max_accepted_scale_step_ratio = 0.05F;
+  config.motion_scale_rate_limit_per_s = 0.50F;
+  config.motion_max_speed_diagonals_per_s = 0.03F;
+  config.accepted_center_max_correction_ratio = 0.01F;
+  const FrameSize frame{400, 300};
+  const BBox initial{0, 50, 100, 100};
+  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
+  const ResponseMetrics degraded{0.98F, 0.96F, 11, 16, 0.15F};
+  const auto track = [&](LongTermController& controller, std::uint64_t id,
+                         std::int64_t time, BBox bbox, ResponseMetrics metrics) {
+    const auto plan = controller.begin_frame(id, time, false);
+    auto observation = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    observation.metrics = metrics;
+    return controller.finish_frame(plan, {observation}, std::nullopt);
+  };
+  const auto check_step = [&](const BBox& previous, const ControllerOutput& out,
+                              float elapsed_s) {
+    const auto& next = out.control_bbox;
+    expect_true(out.tracking_phase == TrackingPhase::kSuspected && out.control_valid,
+                "fixture emits authorized tentative control");
+    expect_true(next.x >= 0 && next.y >= 0 && next.x + next.width <= frame.width &&
+                    next.y + next.height <= frame.height,
+                "the final tentative control box fits in-frame");
+    const float scale_limit = std::min(0.05F, 0.50F * elapsed_s);
+    expect_true(std::fabs(next.width / previous.width - 1.0F) <= scale_limit + 1e-6F &&
+                    std::fabs(next.height / previous.height - 1.0F) <= scale_limit + 1e-6F,
+                "consecutive tentative dimensions meet the per-step and elapsed-rate limits");
+    const float dx = next.x + next.width / 2 - previous.x - previous.width / 2;
+    const float dy = next.y + next.height / 2 - previous.y - previous.height / 2;
+    const float center_limit = config.accepted_center_max_correction_ratio *
+                               std::sqrt(next.width * next.height);
+    const float speed_limit = config.motion_max_speed_diagonals_per_s *
+                              std::hypot(frame.width, frame.height) * elapsed_s;
+    expect_true(std::hypot(dx, dy) <= std::min(center_limit, speed_limit) + 1e-5F,
+                "the final clipped center meets the correction and elapsed-speed limits");
+  };
+  for (const BBox trusted : {initial, BBox{130, 80, 100, 100}}) {
+    LongTermController controller(config);
+    controller.initialize(trusted, 0, 0, frame);
+    for (std::uint64_t id = 1; id <= 3; ++id) {
+      track(controller, id, id * 40, trusted, healthy);
+    }
+    const BBox first = trusted.x == 0 ? BBox{0, 50, 110, 100}
+                                     : BBox{135, 85, 90, 90};
+    const BBox second = trusted.x == 0 ? BBox{0, 50, 90, 100}
+                                      : BBox{125, 75, 110, 110};
+    const auto previous = track(controller, 4, 220, first, degraded);
+    check_step(trusted, previous, 0.100F);
+    expect_true(trusted.x == 0 ? previous.control_bbox.width > 100
+                               : previous.control_bbox.width < 100,
+                "the feasible control width moves toward the observed width");
+    const auto next = track(controller, 5, 221, second, degraded);
+    check_step(previous.control_bbox, next, 0.001F);
+    if (trusted.x != 0) {
+      expect_true(next.control_bbox.width > previous.control_bbox.width,
+                  "the elapsed-time bound permits a small scale reversal");
+    }
+    expect_true(next.tracking_bbox.width == second.width &&
+                    controller.current_bbox().width == 100,
+                "the control envelope preserves observation output and trusted geometry");
+  }
+}
+
 void test_recent_safe_rolling_scale() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2526,6 +2623,8 @@ int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();
+  test_production_observation_preserves_collapse();
+  test_tentative_control_envelopes();
   using namespace nanotrack;
   test_external_observation_and_control_contract();
   test_accepted_scale_deadband_smoothing_and_compatibility();

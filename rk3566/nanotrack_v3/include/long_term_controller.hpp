@@ -279,6 +279,10 @@ class LongTermController {
                          ControllerOutput& output);
   void clear_suspicion() noexcept;
   void promote_shadow_prediction() noexcept;
+  void restore_prediction_checkpoint() noexcept;
+  void complete_frame(const SearchPlan& plan, ControllerOutput& output);
+  BBox constrain_tentative_control(const BBox& observation,
+                                  std::int64_t timestamp_ms) const;
   float trusted_elapsed_seconds(std::int64_t timestamp_ms) const;
   bool trusted_control_live(std::int64_t timestamp_ms) const;
   bool search_control_live(std::int64_t timestamp_ms) const;
@@ -315,12 +319,26 @@ class LongTermController {
   static void validate_output_semantics(const ControllerOutput& output);
   static void finalize_output_semantics(ControllerOutput& output);
 
+  struct TentativeControl {
+    BBox bbox;
+    std::int64_t timestamp_ms;
+  };
+
+  struct PredictionCheckpoint {
+    MotionEstimator motion;
+    std::optional<MotionEstimator> shadow_motion;
+    std::optional<TentativeControl> tentative_control;
+    std::optional<std::int64_t> degraded_since_ms;
+    std::optional<std::int64_t> suspected_since_ms;
+    std::optional<std::int64_t> clean_since_ms;
+    TrackingMode mode;
+  };
+
   ControllerConfig config_;
   MotionEstimator motion_;
-  // The first tentative frame moves its prediction into shadow_motion_ and
-  // restores the motion state from before that prediction.
-  std::optional<MotionEstimator> motion_before_prediction_;
   std::optional<MotionEstimator> shadow_motion_;
+  std::optional<TentativeControl> tentative_control_;
+  std::optional<PredictionCheckpoint> prediction_checkpoint_;
   ResponseBaseline response_baseline_;
   std::optional<std::int64_t> response_degraded_since_ms_;
   std::optional<std::int64_t> suspected_since_ms_;

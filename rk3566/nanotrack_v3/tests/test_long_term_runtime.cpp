@@ -1031,11 +1031,64 @@ void test_tentative_recent_does_not_commit() {
               "tentative frames call no bbox or template learning hooks");
 }
 
+void test_suspected_inference_retry_restores_prediction() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.suspicion_enter_ms = 40;
+  config.suspicion_clear_ms = 80;
+  config.stable_frames_for_update = 50;
+  FakeTracker tracker;
+  FakeDetector detector;
+  LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  runtime.initialize(image, {40, 30, 20, 20}, 0, 0);
+  const auto supply = [&](std::uint64_t id, bool healthy) {
+    const auto time = static_cast<std::int64_t>(id * 40);
+    const ResponseMetrics metrics = healthy ? ResponseMetrics{0.98F, 0.96F, 20, 30, 0.28F}
+                                            : ResponseMetrics{0.98F, 0.96F, 11, 16, 0.15F};
+    tracker.observation_override = std::vector<TrackerObservation>{
+        {id, time, {40.0F + static_cast<float>(id), 30, 20, 20},
+         metrics, TemplateKind::kRecent, id}};
+  };
+  for (std::uint64_t id = 1; id <= 6; ++id) {
+    supply(id, id <= 3 || id == 6);
+    runtime.process_frame(image, id, id * 40);
+  }
+  supply(7, true);
+  tracker.on_infer = [] { throw std::runtime_error("suspected retry fixture"); };
+  bool threw = false;
+  try {
+    runtime.process_frame(image, 7, 280);
+  } catch (const std::runtime_error& error) {
+    threw = std::string(error.what()) == "suspected retry fixture";
+  }
+  expect_true(threw, "suspected inference failure propagates through runtime");
+  const auto failed_plan = tracker.inferred_plans.back();
+  tracker.on_infer = {};
+  try {
+    const auto retried = runtime.process_frame(image, 7, 280);
+    expect_true(retried.plan.mode == TrackingMode::kSuspected &&
+                    retried.plan.motion_predicted_bbox.x == failed_plan.motion_predicted_bbox.x &&
+                    retried.plan.motion_velocity_x == failed_plan.motion_velocity_x &&
+                    retried.output.tracking_phase == TrackingPhase::kSuspected &&
+                    tracker.commit_calls == 3,
+                "same-frame retry preserves prediction, suspicion and frozen learning");
+    supply(8, true);
+    const auto cleared = runtime.process_frame(image, 8, 320);
+    expect_true(cleared.output.accepted && cleared.output.mode == TrackingMode::kTracking,
+                "inference abort does not restart clean hysteresis");
+  } catch (const std::exception& error) {
+    expect_true(false, std::string("same-frame suspected retry failed: ") + error.what());
+  }
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
   test_tentative_recent_does_not_commit();
+  test_suspected_inference_retry_restores_prediction();
 
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};

@@ -122,8 +122,9 @@ void LongTermController::initialize(const BBox& initial_bbox,
   reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   mode_ = TrackingMode::kTracking;
-  motion_before_prediction_.reset();
+  prediction_checkpoint_.reset();
   shadow_motion_.reset();
+  tentative_control_.reset();
   response_baseline_.reset_after_recovery();
   clear_suspicion();
   last_trusted_timestamp_ms_ = timestamp_ms;
@@ -211,14 +212,15 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   BBox motion_predicted;
   MotionEstimator& predictor = shadow_motion_ ? *shadow_motion_ : motion_;
   try {
-    if (!legacy_anchor_observations_ && !loss_start_ms_ && !shadow_motion_) {
-      motion_before_prediction_.emplace(motion_);
-    }
+    prediction_checkpoint_.emplace(PredictionCheckpoint{
+        motion_, shadow_motion_, tentative_control_, response_degraded_since_ms_,
+        suspected_since_ms_, response_clean_since_ms_, mode_});
     // MotionEstimator clips finite predictions while retaining the frozen size.
     // Internal prediction failures abort this frame; no output may authorize it.
     motion_predicted = predictor.predict(timestamp_ms);
     validate_bbox(motion_predicted, frame_size_.width, frame_size_.height);
   } catch (...) {
+    restore_prediction_checkpoint();
     hold_remaining_frames_ = 0;
     occlusion_coast_age_frames_ = 0;
     coast_probe_candidate_.reset();
@@ -229,11 +231,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     motion_.end_search();
     dual_template_reliable_streak_ = 0;
     template_bridge_start_ms_.reset();
-    if (motion_before_prediction_) {
-      motion_ = std::move(*motion_before_prediction_);
-      motion_before_prediction_.reset();
-    }
     shadow_motion_.reset();
+    tentative_control_.reset();
     clear_suspicion();
     mode_ = mode_for_timestamp(timestamp_ms);
     throw;
@@ -394,12 +393,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
 void LongTermController::abort_frame() noexcept {
   if (!frame_open_) return;
   frame_open_ = false;
-  if (motion_before_prediction_) {
-    motion_ = std::move(*motion_before_prediction_);
-    motion_before_prediction_.reset();
-  }
-  response_degraded_since_ms_.reset();
-  response_clean_since_ms_.reset();
+  restore_prediction_checkpoint();
   dual_template_reliable_streak_ = 0;
   template_bridge_start_ms_.reset();
   if (active_plan_.search_hint) {
@@ -540,7 +534,14 @@ LongTermController::EvaluatedObservation LongTermController::evaluate(
                       metrics.apce >= config_.reliable_apce &&
                       metrics.peak_margin >= config_.reliable_peak_margin;
   const bool hard_gate = result.center_gate && result.area_gate && result.aspect_gate;
-  if (!hard_gate) {
+  bool decoded_collapse = false;
+  if (observation.decoded_bbox) {
+    const auto& decoded = *observation.decoded_bbox;
+    const auto bounded =
+        constrain_tracker_observation_dimensions(decoded, current_bbox_, frame_size_);
+    decoded_collapse = decoded.width < bounded.width || decoded.height < bounded.height;
+  }
+  if (!hard_gate || decoded_collapse) {
     result.quality = QualityLevel::kRejected;
   } else if (result.score_gate) {
     result.quality = QualityLevel::kReliable;
@@ -566,6 +567,29 @@ void LongTermController::promote_shadow_prediction() noexcept {
     motion_ = std::move(*shadow_motion_);
     shadow_motion_.reset();
   }
+}
+
+void LongTermController::restore_prediction_checkpoint() noexcept {
+  if (!prediction_checkpoint_) return;
+  auto& checkpoint = *prediction_checkpoint_;
+  motion_ = std::move(checkpoint.motion);
+  shadow_motion_ = std::move(checkpoint.shadow_motion);
+  tentative_control_ = checkpoint.tentative_control;
+  response_degraded_since_ms_ = checkpoint.degraded_since_ms;
+  suspected_since_ms_ = checkpoint.suspected_since_ms;
+  response_clean_since_ms_ = checkpoint.clean_since_ms;
+  mode_ = checkpoint.mode;
+  prediction_checkpoint_.reset();
+}
+
+void LongTermController::complete_frame(const SearchPlan& plan,
+                                        ControllerOutput& output) {
+  finalize_output_semantics(output);
+  if (output.tracking_phase != TrackingPhase::kSuspected) tentative_control_.reset();
+  prediction_checkpoint_.reset();
+  last_frame_id_ = plan.frame_id;
+  last_timestamp_ms_ = plan.timestamp_ms;
+  frame_open_ = false;
 }
 
 float LongTermController::trusted_elapsed_seconds(std::int64_t timestamp_ms) const {
@@ -646,15 +670,87 @@ BBox LongTermController::bound_recent_scale(const BBox& bbox,
       frame_size_.width, frame_size_.height);
 }
 
+BBox LongTermController::constrain_tentative_control(
+    const BBox& observation, std::int64_t timestamp_ms) const {
+  const auto previous = tentative_control_.value_or(
+      TentativeControl{current_bbox_, last_trusted_timestamp_ms_});
+  const double seconds = static_cast<double>(std::min(
+      timestamp_ms - previous.timestamp_ms, config_.motion_max_dt_ms)) / 1000.0;
+  const double step = std::min(
+      static_cast<double>(config_.max_accepted_scale_step_ratio),
+      config_.motion_scale_rate_limit_per_s * seconds);
+  const double minimum_width = previous.bbox.width * std::max(0.5, 1.0 - step);
+  const double minimum_height = previous.bbox.height * std::max(0.5, 1.0 - step);
+  const double previous_x = previous.bbox.x + 0.5 * previous.bbox.width;
+  const double previous_y = previous.bbox.y + 0.5 * previous.bbox.height;
+  double dx = observation.x + 0.5 * observation.width - previous_x;
+  double dy = observation.y + 0.5 * observation.height - previous_y;
+  const double diagonal = std::hypot(frame_size_.width, frame_size_.height);
+  const double speed_limit =
+      config_.motion_max_speed_diagonals_per_s * diagonal * seconds;
+  const double correction_ratio = config_.accepted_center_max_correction_ratio;
+  double center_limit = speed_limit;
+  if (correction_ratio > 0.0) {
+    // Any feasible final size is at least this large, including at the edge.
+    center_limit = std::min(center_limit,
+                            correction_ratio * std::sqrt(minimum_width * minimum_height));
+  }
+  const double distance = std::hypot(dx, dy);
+  if (distance > center_limit) {
+    dx *= center_limit / distance;
+    dy *= center_limit / distance;
+  }
+
+  // This rectangle contains the preceding center, so projecting onto it
+  // cannot increase the displacement. Fit the dimensions at that center.
+  const double x = std::clamp(previous_x + dx, 0.5 * minimum_width,
+                              frame_size_.width - 0.5 * minimum_width);
+  const double y = std::clamp(previous_y + dy, 0.5 * minimum_height,
+                              frame_size_.height - 0.5 * minimum_height);
+  const double available_width = 2.0 * std::min(x, frame_size_.width - x);
+  const double available_height = 2.0 * std::min(y, frame_size_.height - y);
+  const double maximum_width = previous.bbox.width * (1.0 + step);
+  const double maximum_height = previous.bbox.height * (1.0 + step);
+  const auto bounded = constrain_tracker_observation_dimensions(
+      observation, current_bbox_, frame_size_);
+  const auto fit_dimension = [](float observed, double minimum, double maximum,
+                                double available) {
+    const double upper = std::max(minimum, std::min(maximum, available));
+    float size = static_cast<float>(
+        std::clamp(static_cast<double>(observed), minimum, upper));
+    if (size < minimum) size = std::nextafter(size, std::numeric_limits<float>::infinity());
+    if (size > upper) size = std::nextafter(size, 0.0F);
+    return size;
+  };
+  const float width = fit_dimension(bounded.width, minimum_width, maximum_width,
+                                    available_width);
+  const float height = fit_dimension(bounded.height, minimum_height, maximum_height,
+                                     available_height);
+  const BBox result = centered_box(static_cast<float>(x), static_cast<float>(y),
+                                   BBox{0.0F, 0.0F, width, height}, frame_size_);
+  const double emitted_distance = std::hypot(
+      result.x + 0.5 * result.width - previous_x,
+      result.y + 0.5 * result.height - previous_y);
+  // A float conversion or the final frame clip can move the center or size.
+  // Keep the preceding box if the emitted geometry cannot satisfy the limits.
+  if (emitted_distance > speed_limit ||
+      (correction_ratio > 0.0 &&
+       emitted_distance > correction_ratio * std::sqrt(
+           static_cast<double>(result.width) * result.height)) ||
+      result.width < minimum_width || result.width > maximum_width ||
+      result.height < minimum_height || result.height > maximum_height) {
+    return previous.bbox;
+  }
+  return result;
+}
+
 void LongTermController::publish_tentative(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     ControllerOutput& output) {
   if (!shadow_motion_) {
-    auto& trusted_motion = motion_before_prediction_.value();
     shadow_motion_.emplace(std::move(motion_));
-    motion_ = std::move(trusted_motion);
+    motion_ = prediction_checkpoint_.value().motion;
   }
-  motion_before_prediction_.reset();
   response_baseline_.freeze();
 
   const auto& bbox = recent.observation.bbox;
@@ -666,29 +762,11 @@ void LongTermController::publish_tentative(
   output.area_log_change = recent.area_log_change;
   output.aspect_log_change = recent.aspect_log_change;
   output.tracking_bbox = bbox;
-  const BBox scaled = bound_recent_scale(bbox, plan.timestamp_ms);
-  output.display_bbox = stabilize_accepted_center(plan, bbox, scaled, false, output);
+  output.control_bbox = constrain_tentative_control(bbox, plan.timestamp_ms);
+  tentative_control_ = TentativeControl{output.control_bbox, plan.timestamp_ms};
+  output.display_bbox = stabilize_accepted_center(
+      plan, bbox, output.control_bbox, false, output);
   output.bbox = output.display_bbox;
-
-  const float previous_x = current_bbox_.x + 0.5F * current_bbox_.width;
-  const float previous_y = current_bbox_.y + 0.5F * current_bbox_.height;
-  float delta_x = bbox.x + 0.5F * bbox.width - previous_x;
-  float delta_y = bbox.y + 0.5F * bbox.height - previous_y;
-  const float dt = trusted_elapsed_seconds(plan.timestamp_ms);
-  const float diagonal = std::hypot(static_cast<float>(frame_size_.width),
-                                    static_cast<float>(frame_size_.height));
-  float limit = config_.motion_max_speed_diagonals_per_s * diagonal * dt;
-  if (config_.accepted_center_max_correction_ratio > 0.0F) {
-    limit = std::min(limit, config_.accepted_center_max_correction_ratio *
-                                std::sqrt(scaled.width * scaled.height));
-  }
-  const float distance = std::hypot(delta_x, delta_y);
-  if (distance > limit) {
-    delta_x *= limit / distance;
-    delta_y *= limit / distance;
-  }
-  output.control_bbox = centered_box(previous_x + delta_x, previous_y + delta_y,
-                                     scaled, frame_size_);
   output.observation_present = true;
   output.control_valid = trusted_control_live(plan.timestamp_ms);
   mode_ = mode_for_timestamp(plan.timestamp_ms);
@@ -1371,10 +1449,7 @@ ControllerOutput LongTermController::finish_frame(
         recent ? assess_recent(plan, *recent) : RecentDisposition::kSearch;
     if (disposition == RecentDisposition::kTentative) {
       publish_tentative(plan, *recent, output);
-      finalize_output_semantics(output);
-      last_frame_id_ = plan.frame_id;
-      last_timestamp_ms_ = plan.timestamp_ms;
-      frame_open_ = false;
+      complete_frame(plan, output);
       return output;
     }
     if (disposition == RecentDisposition::kSearch && selected) {
@@ -1488,10 +1563,7 @@ ControllerOutput LongTermController::finish_frame(
       output.motion_control_authorized = false;
       output.occlusion_hold_remaining_frames = 0;
       output.occlusion_probe_confirmation_hits = 2;
-      last_frame_id_ = plan.frame_id;
-      last_timestamp_ms_ = plan.timestamp_ms;
-      frame_open_ = false;
-      finalize_output_semantics(output);
+      complete_frame(plan, output);
       return output;
     }
     // No observation-side effects are allowed before two consistent hits.
@@ -1500,10 +1572,7 @@ ControllerOutput LongTermController::finish_frame(
     if (hold_remaining_frames_ == 0) coast_probe_candidate_.reset();
     mode_ = hold_remaining_frames_ > 0 ? TrackingMode::kOcclusionHold
                                       : mode_for_timestamp(plan.timestamp_ms);
-    last_frame_id_ = plan.frame_id;
-    last_timestamp_ms_ = plan.timestamp_ms;
-    frame_open_ = false;
-    finalize_output_semantics(output);
+    complete_frame(plan, output);
     return output;
   }
 
@@ -1600,10 +1669,7 @@ ControllerOutput LongTermController::finish_frame(
       diagnostic.candidate_id.reset();
       diagnostic.rejection = DetectorCandidateRejection::kHoldInvalidated;
     }
-    last_frame_id_ = plan.frame_id;
-    last_timestamp_ms_ = plan.timestamp_ms;
-    frame_open_ = false;
-    finalize_output_semantics(output);
+    complete_frame(plan, output);
     return output;
   }
   const bool candidate_search_path =
@@ -1879,11 +1945,7 @@ ControllerOutput LongTermController::finish_frame(
   }
 
   output.detector_candidates_queued = detector_candidates_.size();
-  motion_before_prediction_.reset();
-  last_frame_id_ = plan.frame_id;
-  last_timestamp_ms_ = plan.timestamp_ms;
-  frame_open_ = false;
-  finalize_output_semantics(output);
+  complete_frame(plan, output);
   return output;
 } catch (...) {
   // Keep the frame open until it has a complete result so malformed probe

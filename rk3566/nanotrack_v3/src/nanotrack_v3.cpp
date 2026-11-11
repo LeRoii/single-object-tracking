@@ -156,18 +156,8 @@ std::optional<DecodeResult> NanoTrackV3::run_head(
   if (head_outputs.size() != 2) {
     throw std::runtime_error("head returned an unexpected output count");
   }
-  std::optional<DecodeResult> decoded =
-      try_decode_head(head_outputs[0], head_outputs[1], reference_state,
-                      config_, scale_z, frame_width_, frame_height_);
-  if (decoded) {
-    decoded->bbox = constrain_tracker_observation_dimensions(
-        decoded->bbox, committed_bbox_, FrameSize{frame_width_, frame_height_});
-    decoded->state.center_x = decoded->bbox.x + 0.5F * decoded->bbox.width;
-    decoded->state.center_y = decoded->bbox.y + 0.5F * decoded->bbox.height;
-    decoded->state.width = decoded->bbox.width;
-    decoded->state.height = decoded->bbox.height;
-  }
-  return decoded;
+  return try_decode_head(head_outputs[0], head_outputs[1], reference_state,
+                         config_, scale_z, frame_width_, frame_height_);
 }
 
 cv::Mat NanoTrackV3::mat_view(const ImageView& image) const {
@@ -233,9 +223,10 @@ std::vector<TrackerObservation> NanoTrackV3::infer(const ImageView& image,
       },
       [&](TemplateKind kind, const std::optional<DecodeResult>& decoded) {
         if (decoded) {
-          observations.push_back(TrackerObservation{
-              plan.frame_id, plan.timestamp_ms, decoded->bbox, decoded->metrics,
-              kind, token});
+          observations.push_back(constrain_tracker_observation(
+              TrackerObservation{plan.frame_id, plan.timestamp_ms, decoded->bbox,
+                                 decoded->metrics, kind, token},
+              committed_bbox_, FrameSize{frame_width_, frame_height_}));
         }
       });
   search_token_ = token;

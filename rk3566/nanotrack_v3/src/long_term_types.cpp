@@ -13,6 +13,15 @@ BBox constrain_tracker_observation_dimensions(const BBox& candidate,
                                    frame.width, frame.height);
 }
 
+TrackerObservation constrain_tracker_observation(TrackerObservation observation,
+                                                const BBox& committed_bbox,
+                                                FrameSize frame) {
+  if (!observation.decoded_bbox) observation.decoded_bbox = observation.bbox;
+  observation.bbox = constrain_tracker_observation_dimensions(
+      *observation.decoded_bbox, committed_bbox, frame);
+  return observation;
+}
+
 const char* to_string(OcclusionReferenceSource value) {
   switch (value) {
     case OcclusionReferenceSource::kNone: return "NONE";

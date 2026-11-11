@@ -78,7 +78,13 @@ struct TrackerObservation {
   ResponseMetrics metrics{};
   TemplateKind template_kind = TemplateKind::kAnchor;
   std::uint64_t search_token = 0;
+  // Geometry before rolling committed-size bounds are applied.
+  std::optional<BBox> decoded_bbox = std::nullopt;
 };
+
+TrackerObservation constrain_tracker_observation(TrackerObservation observation,
+                                                const BBox& committed_bbox,
+                                                FrameSize frame);
 
 struct DetectorCandidate {
   BBox bbox{};
