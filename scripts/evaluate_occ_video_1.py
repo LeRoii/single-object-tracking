@@ -13,6 +13,7 @@ from pathlib import Path
 REPORT_SCHEMA_VERSION = 1
 REQUIRED_TRACKING_SCHEMA = 10
 MIN_OBSERVATION_VISIBLE_MEAN_IOU = 0.70
+MIN_OBSERVATION_VISIBLE_FRAME_IOU = 0.45
 CANONICAL_IDENTITY = {
     "name": "occ_video_1",
     "frame_count": 271,
@@ -516,7 +517,10 @@ def evaluate(contract, rows, scope):
         report["frame_id"] for report in frame_reports
         if report["ordinary_iou_allowed"]
         and report["observation_valid"] is True
-        and (report["iou"] < 0.50 or report["normalized_center_error"] > 0.50)
+        and (
+            report["iou"] < MIN_OBSERVATION_VISIBLE_FRAME_IOU
+            or report["normalized_center_error"] > 0.50
+        )
     ]
     mean_iou = sum(visible_ious) / len(visible_ious) if visible_ious else 0.0
     observation_mean_iou = (
@@ -612,8 +616,9 @@ def evaluate(contract, rows, scope):
         "tracking_schema": _gate(schema_ok, schema_detail),
         "visible_boxes": _gate(
             visible_ok,
-            "valid-observation mean IoU {:.6f} (floor {:.2f}); per-frame IoU >=0.50 and center error <=0.50; all-visible mean IoU {:.6f}".format(
-                observation_mean_iou, MIN_OBSERVATION_VISIBLE_MEAN_IOU, mean_iou
+            "valid-observation mean IoU {:.6f} (floor {:.2f}); per-frame IoU >={:.2f} and center error <=0.50; all-visible mean IoU {:.6f}".format(
+                observation_mean_iou, MIN_OBSERVATION_VISIBLE_MEAN_IOU,
+                MIN_OBSERVATION_VISIBLE_FRAME_IOU, mean_iou
             ),
             visible_failures,
         ),

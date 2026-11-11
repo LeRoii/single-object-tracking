@@ -323,6 +323,18 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         failing = evaluator.evaluate(synthetic_contract(), rows, "full")
         self.assertFalse(failing["gates"]["visible_boxes"]["passed"])
 
+    def test_visible_per_frame_floor_has_margin_away_from_half_iou_knife_edge(self):
+        rows = passing_rows()
+        rows[2]["tracking_bbox"][0] += 3.6
+        passing = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertGreater(passing["frames"][2]["iou"], 0.45)
+        self.assertTrue(passing["gates"]["visible_boxes"]["passed"])
+
+        rows[2]["tracking_bbox"][0] += 0.5
+        failing = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertLess(failing["frames"][2]["iou"], 0.45)
+        self.assertFalse(failing["gates"]["visible_boxes"]["passed"])
+
     def test_schema9_is_diagnostic_only_and_missing_new_semantics_cannot_pass(self):
         rows = passing_rows(schema=9)
         for row in rows:

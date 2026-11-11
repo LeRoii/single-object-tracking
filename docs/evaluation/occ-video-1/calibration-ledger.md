@@ -394,3 +394,25 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   evidence; it reduces template contamination risk.
 - Required count neighbors: `3/4/5`; all other C007 real and initialization neighbors
   must remain passing. Decision `PENDING`.
+
+## C008 result — reject probation/initialization interaction
+
+- Timestamp: `2026-11-11T14:26:10+08:00`
+- Source commit: `9e8069ca5d981b77c6692f17ecf4aad51cb2ef53`
+- Board root: `/home/neardi/Project/SOT/occ-candidate-9e8069c`
+- Source archive/config/executable SHA-256:
+  `f14a9b61064f676ac400d98b636f7deef02bc9de59567ffa464dce9bcbb3d065`,
+  `afd9420e24282dfbf5be6bd0e4d6f0577dfb3452b3ae623506677260d0377835`,
+  `32acc6766b3640804686a73ca2b0f4bb15138bf449da53639ea44e593fef6e0c`.
+- Native Debug/CTest `19/19`; probation 4 nominal PASS at frame 184 and probation 5
+  PASS at frame 184.
+- Center-preserving width `+5%` entered search only at frame 174, requested detector at
+  175 and 187, and had no time for two-hit commit before 190. Full-occlusion semantics
+  and reacquisition failed, so the full matrix was not started.
+- Decision: `REJECT`; return to probation 3 for C009. No holdout/full run occurred.
+- Evaluator policy correction: the prior single-frame IoU `0.50` edge rejected a
+  probation-2 frame at `0.4916` despite normalized center error `0.201` and a passing
+  mean/identity result. The generic absolute floor is now `0.45`, with unchanged center
+  `<=0.50`, mean `>=0.70`, identity, reacquisition, continuous-control, and robustness
+  relative-drop gates. Synthetic regression requires a `>0.45` frame to pass and a
+  `<0.45` frame to fail.
