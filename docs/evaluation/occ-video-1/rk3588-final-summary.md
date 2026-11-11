@@ -1,5 +1,19 @@
 # RK3588 current result
 
+## C012 accepted canonical candidate
+
+C012 passes the complete `occ_video_1` board contract in three exact runs. Every
+run passes the schema verifier and full truth evaluator, reacquires exactly once at
+frame 185, maintains motion-search control during the full occlusion, and never
+enters search after frame 190. The time-bounded template bridge covers frames
+200--206 and exits naturally; valid-observation mean IoU is `0.732253` and
+all-visible mean IoU is `0.725693`. All three semantic signatures are identical.
+
+Exact source: `30b475f577e46ed8158a40f6463842ef5188169a`.
+Board root: `/home/neardi/Project/SOT/occ-candidate-30b475f`.
+This is post-holdout canonical board acceptance. Real-gimbal-pod acceptance remains
+human-only and has not been claimed.
+
 ## C010 post-holdout candidate
 
 C010 is a partial failure, not an accepted final candidate. Board Debug/RKNN build,

@@ -494,3 +494,22 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
 - Decision: stop repeats for C010. Preserve all artifacts under
   `runs/C010-full-run1`, then design C011 as a generic two-frame bounded bridge without
   changing tracker reliability or evaluator thresholds.
+
+## C011/C012 post-holdout result — reject frame budget, accept time bound
+
+- C011 source `4d5c864a378080da690329a94f19dbd156fedc3f` used a two-frame
+  budget. Board CTest and verifier passed, but full evaluation failed with
+  reacquisitions `[185,218]`; bridge frames were `[200,201]` and later search began
+  at 202. A three-frame diagnostic moved the failure to 203 and reacquisition to 219.
+  This path dependence was treated as evidence that incrementing the frame budget
+  would overfit, so the diagnostic was not promoted.
+- C012 source `30b475f577e46ed8158a40f6463842ef5188169a` replaces the count
+  with a 200 ms time-bound hysteresis. RK3588 Debug/RKNN/`-Werror=switch` build and
+  CTest `19/19` passed. Three exact full runs all passed board verification and every
+  full evaluator gate with identical semantic signatures.
+- Each C012 run reacquired exactly once at frame 185, bridged frames 200--206, and had
+  no search at or after frame 190. Valid-observation mean IoU is `0.732253` and
+  all-visible mean IoU is `0.725693`.
+- Decision: `PASS_CANONICAL_BOARD_ACCEPTANCE`. Retain all three runs under
+  `/home/neardi/Project/SOT/occ-candidate-30b475f/runs`. This is post-holdout
+  canonical-video evidence, not real-gimbal acceptance.
