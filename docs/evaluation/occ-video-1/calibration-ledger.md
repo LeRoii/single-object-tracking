@@ -503,7 +503,7 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   at 202. A three-frame diagnostic moved the failure to 203 and reacquisition to 219.
   This path dependence was treated as evidence that incrementing the frame budget
   would overfit, so the diagnostic was not promoted.
-- C012 source `30b475f577e46ed8158a40f6463842ef5188169a` replaces the count
+- C012 final source `e865c78679247cb45ddbdbf2fb466e49930d5d12` replaces the count
   with a 200 ms time-bound hysteresis. RK3588 Debug/RKNN/`-Werror=switch` build and
   CTest `19/19` passed. Three exact full runs all passed board verification and every
   full evaluator gate with identical semantic signatures.
@@ -511,5 +511,7 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   no search at or after frame 190. Valid-observation mean IoU is `0.732253` and
   all-visible mean IoU is `0.725693`.
 - Decision: `PASS_CANONICAL_BOARD_ACCEPTANCE`. Retain all three runs under
-  `/home/neardi/Project/SOT/occ-candidate-30b475f/runs`. This is post-holdout
+  `/home/neardi/Project/SOT/occ-candidate-e865c78/runs`. Final review additionally
+  made abort and motion-prediction exceptions revoke bridge state before these repeats.
+  This is post-holdout
   canonical-video evidence, not real-gimbal acceptance.

@@ -1855,12 +1855,12 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 
 ## 2026-11-11T15:31:46+08:00 C012 canonical board acceptance PASS
 
-- 分支 `codex/occ-video-1-tracking`，源码提交
-  `30b475f577e46ed8158a40f6463842ef5188169a`，板端根目录
-  `/home/neardi/Project/SOT/occ-candidate-30b475f`。源码归档、配置、可执行 SHA-256
-  分别为 `f06678f5d6c941c856e8c07b45c55240be53461a8195c526c0d1a0b2ea240f64`、
+- 分支 `codex/occ-video-1-tracking`，最终源码提交
+  `e865c78679247cb45ddbdbf2fb466e49930d5d12`，板端根目录
+  `/home/neardi/Project/SOT/occ-candidate-e865c78`。源码归档、配置、可执行 SHA-256
+  分别为 `64896748bbedbe16a8bcea762087e3060db0f0a0ba4b7a64cbc113b56755ef69`、
   `82ce1e035e202f10a46f1aa2a21f4ed42d79839dca01b0629e1848c90919432c`、
-  `274076fe1c505270fd77da5075375ae98465d18d2dbd517292cbb67085239ce0`。
+  `e2a44c74bf6410dc79b5d07a5c134e27cd0096cdca16a81c67d2f27df521ab4d`。
 - C011 两帧预算 full FAIL（重捕获 `[185,218]`），三帧诊断仅将失败平移到 203，
   因此停止按帧追参。C012 改为与帧率无关的 200 ms 短时滞回，不改变 tracker
   reliability、geometry 或 evaluator 阈值。
@@ -1868,8 +1868,9 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   0--270 运行均 verifier PASS、full evaluator PASS，语义签名完全一致：唯一重捕获
   帧 185，模板桥接帧 200--206，190 以后无 SEARCHING；valid-observation mean IoU
   `0.732253`，all-visible mean IoU `0.725693`。
-- 三次 evaluator JSON SHA-256 均为
-  `873c5936dbf3dab3177ae2023b782c8c3e953e5bc7cd14f3efc1c5932004cda2`；
+- 最终审查补充了 abort / motion prediction exception 立即撤销 bridge 的 fail-closed
+  负例；修复后重新构建并重新执行三次。三次 evaluator JSON SHA-256 均为
+  `8748b91ca59a8a91ecb013099d3aa43cb7868b1227c6123a5008c4f16f530aaf`；
   verifier log 均为
   `86808013d246f358f354b6101ef4e84470bb2cd29dfb95fa89482d31d735f02e`。
   49 帧复核视频保留在 run1，SHA-256
