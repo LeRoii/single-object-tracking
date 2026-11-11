@@ -98,37 +98,45 @@ void test_tracking_artifact_paths() {
   expect_true(contents == "existing evidence", "collision detection precedes truncation");
 
   const auto paths = resolve_tracking_artifact_paths(csv, meta, video);
+  const auto row = make_initial_log_row(0, 0, BBox{1, 1, 4, 4});
   {
     TrackingFrameJsonWriter writer(paths);
     writer.open();
-    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+    expect_true(!fs::exists(companion), "open leaves no final pathname");
+    writer.append(row);
+    expect_true(!fs::exists(companion), "append leaves no final pathname");
     expect_true(writer.finish(false).empty() && !fs::exists(companion),
-                "incomplete primary output removes the companion and advertises nothing");
+                "incomplete primary output leaves no companion to advertise");
+  }
+  for (bool before_append : {false, true}) {
+    for (bool primary_complete : {false, true}) {
+      TrackingFrameJsonWriter writer(paths);
+      writer.open();
+      if (!before_append) writer.append(row);
+      const auto foreign = root / "results" / "independent-artifact";
+      std::ofstream(foreign) << "concurrent evidence";
+      std::error_code publication_error;
+      fs::create_hard_link(foreign, companion, publication_error);
+      if (before_append) writer.append(row);
+      expect_true(!publication_error && writer.finish(primary_complete).empty() &&
+                      fs::exists(companion) && fs::equivalent(foreign, companion),
+                  "concurrent final creation survives every pre-publication stage");
+      std::ifstream replacement(companion);
+      std::string replacement_contents;
+      std::getline(replacement, replacement_contents);
+      expect_true(replacement_contents == "concurrent evidence",
+                  "another writer's final inode remains byte-identical");
+      fs::remove(companion);
+    }
   }
   {
     TrackingFrameJsonWriter writer(paths);
     writer.open();
-    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
-    const auto renamed = root / "results" / "renamed.jsonl";
-    fs::rename(companion, renamed);
-    std::ofstream(companion) << "replacement evidence";
-    expect_true(writer.finish(false).empty() && fs::exists(renamed),
-                "abandoned writer cannot advertise a renamed file");
-    std::ifstream replacement(companion);
-    std::string replacement_contents;
-    std::getline(replacement, replacement_contents);
-    expect_true(replacement_contents == "replacement evidence",
-                "failure cleanup must leave a replacement inode byte-identical");
-    fs::remove(companion);
-  }
-  {
-    TrackingFrameJsonWriter writer(paths);
-    writer.open();
-    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
-    fs::rename(companion, root / "results" / "renamed-before-completion.jsonl");
-    std::ofstream(companion) << "different completed artifact";
-    expect_true(writer.finish(true).empty() && fs::exists(companion),
-                "successful close cannot advertise a replacement path");
+    writer.append(row);
+    std::error_code alias_error;
+    fs::create_symlink(csv, companion, alias_error);
+    expect_true(!alias_error && writer.finish(true).empty() && fs::is_symlink(companion),
+                "a final symlink alias is never followed or replaced");
     fs::remove(companion);
   }
   {
@@ -140,17 +148,42 @@ void test_tracking_artifact_paths() {
   {
     TrackingFrameJsonWriter writer(paths);
     writer.open();
-    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+    writer.append(row);
     const auto reference = writer.finish(true);
     expect_true(!reference.empty() && fs::equivalent(meta.parent_path() / reference, companion),
                 "completed companion resolves from the metadata directory");
+    std::ifstream final(companion);
+    std::string complete_json;
+    std::getline(final, complete_json);
+    expect_true(complete_json == tracking_frame_json(row) && final.peek() == EOF,
+                "published companion has the complete serialized row");
   }
   {
     TrackingFrameJsonWriter writer(paths);
     writer.open();
-    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+    writer.append(row);
     expect_true(writer.finish(true).empty() && fs::exists(companion),
                 "an earlier companion is preserved and is not advertised by a new run");
+  }
+  {
+    const auto elsewhere = root / "other-output";
+    fs::create_directory(elsewhere);
+    const auto changed = resolve_tracking_artifact_paths(elsewhere / "bboxes.csv", meta, video);
+    TrackingFrameJsonWriter writer(changed);
+    writer.open();
+    writer.append(row);
+    const auto moved = root / "moved-output";
+    fs::rename(elsewhere, moved);
+    fs::create_directory(elsewhere);
+    std::ofstream(changed.frame_json) << "replacement directory evidence";
+    expect_true(writer.finish(true).empty() &&
+                    !fs::exists(moved / "bboxes.csv.jsonl"),
+                "moving the publication directory does not advertise or publish to the old path");
+    std::ifstream replacement(changed.frame_json);
+    std::string replacement_contents;
+    std::getline(replacement, replacement_contents);
+    expect_true(replacement_contents == "replacement directory evidence",
+                "a replacement publication directory remains untouched");
   }
   fs::remove_all(root);
 }

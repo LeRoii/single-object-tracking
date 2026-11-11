@@ -1,6 +1,7 @@
 #include "tracking_log.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <iomanip>
 #include <iterator>
@@ -699,23 +700,27 @@ TrackingArtifactPaths resolve_tracking_artifact_paths(
 }
 
 TrackingFrameJsonWriter::TrackingFrameJsonWriter(const TrackingArtifactPaths& paths)
-    : path_(paths.frame_json), reference_(paths.frame_json_reference) {}
+    : directory_(paths.frame_json.parent_path()),
+      filename_(paths.frame_json.filename()), reference_(paths.frame_json_reference) {}
 
 TrackingFrameJsonWriter::~TrackingFrameJsonWriter() { discard(); }
 
 void TrackingFrameJsonWriter::open() noexcept {
-  if (path_.empty() || identity_fd_ >= 0) return;
-  identity_fd_ = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
-  if (identity_fd_ < 0) return;
-  wrote_frame_ = false;
-  // Retain the exclusive-open handle past fclose so the inode cannot be
-  // recycled before the final pathname identity check or failure cleanup.
-  const int stream_fd = ::fcntl(identity_fd_, F_DUPFD_CLOEXEC, 0);
-  if (stream_fd >= 0) {
-    stream_ = ::fdopen(stream_fd, "w");
-    if (!stream_) ::close(stream_fd);
+#if defined(__linux__) && defined(O_TMPFILE) && defined(AT_EMPTY_PATH) && defined(AT_SYMLINK_FOLLOW)
+  if (filename_.empty() || publication_fd_ >= 0) return;
+  directory_fd_ = ::open(directory_.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (directory_fd_ < 0) return;
+  publication_fd_ = ::openat(directory_fd_, ".", O_TMPFILE | O_WRONLY | O_CLOEXEC, 0666);
+  if (publication_fd_ >= 0) {
+    const int stream_fd = ::fcntl(publication_fd_, F_DUPFD_CLOEXEC, 0);
+    if (stream_fd >= 0) {
+      stream_ = ::fdopen(stream_fd, "w");
+      if (!stream_) ::close(stream_fd);
+    }
   }
+  wrote_frame_ = false;
   if (!stream_) discard();
+#endif
 }
 
 void TrackingFrameJsonWriter::append(const TrackingLogRow& row) {
@@ -731,26 +736,42 @@ void TrackingFrameJsonWriter::append(const TrackingLogRow& row) {
 
 std::string TrackingFrameJsonWriter::finish(bool primary_complete) {
   if (!stream_) return {};
+  const bool complete = primary_complete && wrote_frame_ &&
+      std::fflush(stream_) == 0 && ::fsync(publication_fd_) == 0;
   const bool closed = std::fclose(stream_) == 0;
   stream_ = nullptr;
-  if (!primary_complete || !closed || !wrote_frame_ || !path_matches_open_file()) {
-    discard();
-    return {};
-  }
-  const bool identity_closed = ::close(identity_fd_) == 0;
-  identity_fd_ = -1;
-  if (!identity_closed) {
-    std::fprintf(stderr, "Could not finish frame JSON companion: %s\n", path_.c_str());
-    return {};
-  }
-  return reference_;
+  const bool published = complete && closed && publish();
+  discard();
+  return published ? reference_ : std::string{};
 }
 
-bool TrackingFrameJsonWriter::path_matches_open_file() const noexcept {
-  struct stat opened{}, current{};
-  return identity_fd_ >= 0 && ::fstat(identity_fd_, &opened) == 0 &&
-         ::lstat(path_.c_str(), &current) == 0 &&
-         opened.st_dev == current.st_dev && opened.st_ino == current.st_ino;
+bool TrackingFrameJsonWriter::directory_matches_open_path() const noexcept {
+  struct stat held{}, current{};
+  return ::fstat(directory_fd_, &held) == 0 &&
+         ::stat(directory_.c_str(), &current) == 0 &&
+         held.st_dev == current.st_dev && held.st_ino == current.st_ino;
+}
+
+bool TrackingFrameJsonWriter::publish() const noexcept {
+#if defined(__linux__) && defined(O_TMPFILE) && defined(AT_EMPTY_PATH) && defined(AT_SYMLINK_FOLLOW)
+  if (!directory_matches_open_path()) return false;
+  int linked = ::linkat(publication_fd_, "", directory_fd_, filename_.c_str(), AT_EMPTY_PATH);
+  if (linked != 0 && (errno == ENOENT || errno == EPERM)) {
+    // Unprivileged Linux processes may not use AT_EMPTY_PATH. This form
+    // follows the procfs link to the same held anonymous inode. Both forms
+    // create the final name only if it is absent.
+    char source[64];
+    std::snprintf(source, sizeof(source), "/proc/self/fd/%d", publication_fd_);
+    linked = ::linkat(AT_FDCWD, source, directory_fd_, filename_.c_str(), AT_SYMLINK_FOLLOW);
+  }
+  struct stat opened{}, published{};
+  return linked == 0 && directory_matches_open_path() &&
+         ::fstat(publication_fd_, &opened) == 0 &&
+         ::fstatat(directory_fd_, filename_.c_str(), &published, AT_SYMLINK_NOFOLLOW) == 0 &&
+         opened.st_dev == published.st_dev && opened.st_ino == published.st_ino;
+#else
+  return false;
+#endif
 }
 
 void TrackingFrameJsonWriter::discard() noexcept {
@@ -758,17 +779,14 @@ void TrackingFrameJsonWriter::discard() noexcept {
     std::fclose(stream_);
     stream_ = nullptr;
   }
-  if (identity_fd_ < 0) return;
-  if (path_matches_open_file()) {
-    if (::unlink(path_.c_str()) != 0) {
-      std::fprintf(stderr, "Could not remove incomplete frame JSON companion: %s\n", path_.c_str());
-    }
-  } else {
-    std::fprintf(stderr, "Frame JSON companion cleanup skipped because its path changed: %s\n",
-                 path_.c_str());
+  if (publication_fd_ >= 0) {
+    ::close(publication_fd_);
+    publication_fd_ = -1;
   }
-  ::close(identity_fd_);
-  identity_fd_ = -1;
+  if (directory_fd_ >= 0) {
+    ::close(directory_fd_);
+    directory_fd_ = -1;
+  }
 }
 
 TrackingLogRow make_initial_log_row(std::uint64_t frame_id,

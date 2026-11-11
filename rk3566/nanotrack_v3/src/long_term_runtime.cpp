@@ -2,6 +2,7 @@
 #include "scoped_cleanup.hpp"
 #include "target_class.hpp"
 
+#include <cassert>
 #include <chrono>
 #include <exception>
 #include <limits>
@@ -43,6 +44,7 @@ TargetClassInitializationResult LongTermRuntime::initialize(
     const ImageView& image, const BBox& initial_bbox,
     std::uint64_t frame_id, std::int64_t timestamp_ms) {
   if (frame_open_) throw std::logic_error("cannot initialize an open runtime frame");
+  if (revocation_waiting_for_ack_) throw std::logic_error("template slot revocation has not been logged");
   validate_image(image);
   validate_bbox(initial_bbox, image.width, image.height);
 
@@ -102,6 +104,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                                                   std::int64_t timestamp_ms) {
   if (!initialized_) throw std::logic_error("long-term runtime is not initialized");
   if (frame_open_) throw std::logic_error("previous runtime frame is unfinished");
+  if (revocation_waiting_for_ack_) throw std::logic_error("template slot revocation has not been logged");
   const auto total_start = std::chrono::steady_clock::now();
   RuntimeFrameResult result;
   result.target_class = last_initialization_.target_class;
@@ -225,6 +228,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                           std::chrono::steady_clock::now() - total_start)
                           .count();
   result.template_slot_revocation = pending_template_slot_revocation_;
+  revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
   application_checkpoint.reset();
   bbox_restore.reset();
   completed = true;
@@ -232,16 +236,20 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
 }
 
 bool LongTermRuntime::acknowledge_template_slot_revocation(std::uint64_t slot_id) noexcept {
-  if (!pending_template_slot_revocation_ ||
+  if (!revocation_waiting_for_ack_ ||
       pending_template_slot_revocation_->slot_id != slot_id) return false;
   pending_template_slot_revocation_.reset();
+  revocation_waiting_for_ack_ = false;
   return true;
 }
 
 void LongTermRuntime::abandon_staged_recent(
     std::optional<TemplateSlotRevocationReason> reason) noexcept {
   if (staged_template_slot_id_) {
-    if (reason && !pending_template_slot_revocation_) {
+    if (reason) {
+      // A pending undelivered revocation owns no physical slot. Once a new
+      // slot is returned alongside it, the writer gate prevents further work.
+      assert(!pending_template_slot_revocation_);
       pending_template_slot_revocation_ = TemplateSlotRevocation{*staged_template_slot_id_, *reason};
     }
     if (!tracker_.abort_recent(*staged_template_slot_id_)) {

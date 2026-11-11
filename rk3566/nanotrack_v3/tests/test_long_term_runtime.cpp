@@ -689,6 +689,8 @@ void test_runtime_reports_unlogged_slot_revocations(const nanotrack::ImageView& 
   catch (const std::runtime_error&) { threw = true; }
   tracker.on_commit_after_write = {};
   expect_true(threw && !tracker.pending_template_id, "unlogged failure revokes physical stage");
+  expect_true(!runtime.acknowledge_template_slot_revocation(1),
+              "a revocation cannot be acknowledged before a row delivers it");
   const auto retry = runtime.process_frame(image, 2, 80);
   const auto row = make_tracking_log_row(retry);
   expect_true(retry.output.template_transition_applied &&
@@ -700,20 +702,44 @@ void test_runtime_reports_unlogged_slot_revocations(const nanotrack::ImageView& 
               "retry records the old slot revocation alongside a fresh stage after the burned ID");
   expect_true(!runtime.acknowledge_template_slot_revocation(3),
               "acknowledging a new stage cannot consume a pending revocation");
-  const auto unacknowledged = runtime.process_frame(image, 3, 120);
-  expect_true(unacknowledged.template_slot_revocation &&
-                  unacknowledged.template_slot_revocation->slot_id == 1,
-              "revocation survives delivery until a successful writer acknowledgement");
+  const auto before_rejected_frame = tracker.infer_calls;
+  const auto before_rejected_commit = tracker.commit_calls;
+  const auto trusted_bbox = runtime.controller().current_bbox();
+  bool unacknowledged_frame_rejected = false;
+  try { runtime.process_frame(image, 3, 120); }
+  catch (const std::logic_error&) { unacknowledged_frame_rejected = true; }
+  bool unacknowledged_reset_rejected = false;
+  try { runtime.initialize(image, bbox, 2, 80); }
+  catch (const std::logic_error&) { unacknowledged_reset_rejected = true; }
+  expect_true(unacknowledged_frame_rejected && unacknowledged_reset_rejected &&
+                  tracker.infer_calls == before_rejected_frame &&
+                  tracker.commit_calls == before_rejected_commit &&
+                  tracker.pending_template_id == 3 &&
+                  same_bbox(runtime.controller().current_bbox(), trusted_bbox),
+              "an unacknowledged revocation blocks later frames and reselection before mutation");
   expect_true(runtime.acknowledge_template_slot_revocation(1) &&
                   !runtime.acknowledge_template_slot_revocation(1),
               "successful revocation acknowledgement matches once");
-  const auto later = runtime.process_frame(image, 4, 160);
-  expect_true(!later.template_slot_revocation &&
-                  later.output.template_transition_applied,
-              "acknowledged revocation clears while normal tracking continues");
+  // Avoid masking the failure on the old runtime if it already consumed frame 3.
+  if (!unacknowledged_frame_rejected) return;
+
+  tracker.on_commit_after_write = [] { throw std::runtime_error("second bbox write failed"); };
+  threw = false;
+  try { runtime.process_frame(image, 3, 120); }
+  catch (const std::runtime_error&) { threw = true; }
+  tracker.on_commit_after_write = {};
+  const auto later = runtime.process_frame(image, 3, 120);
+  expect_true(threw && later.template_slot_revocation &&
+                  later.template_slot_revocation->slot_id == 3 &&
+                  later.output.template_transition_applied &&
+                  later.output.template_transition->template_slot_id == 5 &&
+                  !later.template_heads.staged,
+              "acknowledgement makes room for the next revocation and fresh stage");
+  expect_true(runtime.acknowledge_template_slot_revocation(3),
+              "second revocation can be acknowledged independently");
   const auto replacement = later.output.template_transition->template_slot_id;
-  runtime.initialize(image, bbox, 4, 160);
-  const auto reinitialized = runtime.process_frame(image, 5, 200);
+  runtime.initialize(image, bbox, 3, 120);
+  const auto reinitialized = runtime.process_frame(image, 4, 160);
   expect_true(reinitialized.template_slot_revocation &&
                   reinitialized.template_slot_revocation->slot_id == replacement &&
                   reinitialized.template_slot_revocation->reason == TemplateSlotRevocationReason::kReinitialized,

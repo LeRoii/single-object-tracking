@@ -505,9 +505,10 @@ fi
 for schema_case in valid no_decode missing_safe_raw no_decode_with_raw missing_trust tentative_trusted \
                    ambiguous_observation ambiguous_unauthorized applied_without_id wrong_slot \
                    failed_commit_probation rejected_claimed_committed recovery_without_identity \
-                   accepted_no_decode live_slot_replaced live_slot_disappeared valid_retry_revocation wrong_revoked_slot missing_revoked_slot \
+                   accepted_no_decode live_slot_replaced live_slot_disappeared valid_retry_revocation staged_head_at_stage staged_head_at_retry wrong_revoked_slot missing_revoked_slot \
                    revocation_without_live_slot revocation_without_reason unrecorded_reinitialization valid_reinitialized valid_commit valid_rejected_recovery_commit \
-                   valid_rollback valid_failed_rollback companion_cross_directory companion_alias json_mismatch json_missing_field; do
+                   valid_rollback valid_failed_rollback companion_cross_directory companion_alias json_mismatch \
+                   json_missing_field valid_two_retry_revocations; do
   python3 - "$artifact_dir" "$schema_case" <<'PY'
 import csv
 import json
@@ -592,7 +593,8 @@ elif case in {"accepted_no_decode", "recovery_without_identity"}:
                        recovery_reason="RECOVERY_STAGED", accepted_observation_path="search_reacquisition")
 elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected_claimed_committed",
               "live_slot_replaced", "live_slot_disappeared", "valid_rollback", "valid_failed_rollback",
-              "valid_rejected_recovery_commit", "valid_retry_revocation", "wrong_revoked_slot",
+              "valid_rejected_recovery_commit", "valid_retry_revocation", "staged_head_at_stage",
+              "staged_head_at_retry", "valid_two_retry_revocations", "wrong_revoked_slot",
               "missing_revoked_slot", "revocation_without_live_slot", "revocation_without_reason",
               "unrecorded_reinitialization", "valid_reinitialized"}:
     rows[1].update(state="TRACKING", tracking_phase="TRACKING",
@@ -640,7 +642,8 @@ elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected
         rows[2].update(template_action="NONE", template_slot_id="", template_transaction_id="",
                        template_transition_reason="NONE", template_transition_result="NONE",
                        template_transition_applied="0")
-    if case in {"valid_retry_revocation", "wrong_revoked_slot", "missing_revoked_slot",
+    if case in {"valid_retry_revocation", "valid_two_retry_revocations", "staged_head_at_retry",
+                "wrong_revoked_slot", "missing_revoked_slot",
                 "revocation_without_live_slot", "revocation_without_reason",
                 "unrecorded_reinitialization", "valid_reinitialized"}:
         rows[1].update(template_transaction_id="1", template_slot_id="1")
@@ -665,9 +668,23 @@ elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected
             rows[1].update(template_action="NONE", template_transaction_id="", template_slot_id="",
                            template_transition_reason="NONE", template_transition_result="NONE",
                            template_transition_applied="0", template_probation_active="0")
+    if case == "staged_head_at_stage":
+        rows[1].update(staged_head_executed="1", staged_decode_status="NO_DECODE",
+                       safe_head_executed="0", safe_decode_status="NOT_RUN", safe_template_used="0")
+        rows[1].update({f"safe_raw_{key}": "" for key in raw})
+    if case == "staged_head_at_retry":
+        rows[2].update(staged_head_executed="1", staged_decode_status="DECODED")
+        rows[2].update({f"staged_raw_{key}": rows[2][f"recent_raw_{key}"] for key in raw})
     if case == "failed_commit_probation":
         rows[2].update(template_transition_result="TRACKER_REJECTED",
                        template_transition_applied="0", template_probation_active="1")
+
+if case == "valid_two_retry_revocations":
+    rows.append(dict(rows[2], frame_id="3", timestamp_ms="99",
+                     revoked_template_slot_id="3", template_transaction_id="5", template_slot_id="5"))
+    metadata["tracked_frames"] = 3
+    run_log = root / "run.log"
+    run_log.write_text(run_log.read_text().replace("tracked_frames=2", "tracked_frames=3"))
 
 shared = set(defaults) | {
     "frame_id", "timestamp_ms", "state", "tracking_phase", "observation_valid", "accepted",
@@ -697,6 +714,10 @@ json_path.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
 (root / "session-metadata.json").write_text(json.dumps(metadata))
 PY
   case "$schema_case" in
+    valid_two_retry_revocations)
+      ffmpeg -y -loglevel error -f lavfi -i color=size=16x16:rate=1 \
+        -frames:v 4 "$artifact_dir/output.avi"
+      bash "$verify_script" "$artifact_dir" "$model_dir" 4 16 16 ;;
     valid|no_decode|valid_commit|valid_rollback|valid_failed_rollback|valid_rejected_recovery_commit|valid_retry_revocation|valid_reinitialized|companion_cross_directory)
       bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 ;;
     *)

@@ -77,7 +77,8 @@ class LongTermRuntime {
                                    std::uint64_t frame_id,
                                    std::int64_t timestamp_ms);
 
-  // Acknowledge after the revocation-bearing row is successfully written.
+  // After returning a revocation-bearing frame, processing and reinitialization
+  // wait until the writer acknowledges that exact slot.
   bool acknowledge_template_slot_revocation(std::uint64_t slot_id) noexcept;
 
   const LongTermController& controller() const { return controller_; }
@@ -102,6 +103,7 @@ class LongTermRuntime {
   bool frame_open_ = false;
   std::optional<std::uint64_t> staged_template_slot_id_;
   std::optional<TemplateSlotRevocation> pending_template_slot_revocation_;
+  bool revocation_waiting_for_ack_ = false;
 };
 
 }  // namespace nanotrack

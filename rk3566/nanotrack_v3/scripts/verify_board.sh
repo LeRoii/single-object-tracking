@@ -360,6 +360,8 @@ def verify_recent_safe(row, index, last_transaction, staged_slot, reinitialized)
         if transaction_id <= last_transaction or slot_id <= 0 or transition_reason not in valid_reasons[action]:
             reject("invalid template transaction identity or reason")
         if action == "STAGE_RECENT":
+            if row["staged_head_executed"] == "1":
+                reject("stage transition claims a staged head before preparation")
             if (staged_slot is not None or slot_id != transaction_id or
                     probation != applied or (applied and not accepted)):
                 reject("inconsistent stage acknowledgement")

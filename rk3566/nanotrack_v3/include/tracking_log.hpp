@@ -198,13 +198,16 @@ class TrackingFrameJsonWriter {
   std::string finish(bool primary_complete);
 
  private:
-  bool path_matches_open_file() const noexcept;
+  bool publish() const noexcept;
+  bool directory_matches_open_path() const noexcept;
   void discard() noexcept;
 
-  std::filesystem::path path_;
+  std::filesystem::path directory_;
+  std::filesystem::path filename_;
   std::string reference_;
   std::FILE* stream_ = nullptr;
-  int identity_fd_ = -1;
+  int directory_fd_ = -1;
+  int publication_fd_ = -1;
   bool wrote_frame_ = false;
 };
 
