@@ -1901,4 +1901,6 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   进程。日志保留于板端 `/tmp/rk3588-interactive-config-smoke.log`。
 - 证据边界：本次只验证新配置通过既有二进制加载并进入等待鼠标选框状态；未人工画框、
   未运行完整视频、未生成新的算法验收结论，也未声称真实云台 pod 验收。C012 的
-  canonical acceptance 及其源码/可执行身份不因本次运行配置部署而改变。
+  canonical acceptance 及其源码/可执行身份不因本次运行配置部署而改变。SSH 登录环境
+  的 `DISPLAY` 为空，本次冒烟因此显式使用 `DISPLAY=:0`；用户给出的原样两行命令应在
+  RK3588 图形桌面终端（已继承 `DISPLAY`）执行，不能把 SSH 冒烟误记为字面命令验收。

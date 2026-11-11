@@ -184,7 +184,9 @@ The shipped profile omits `bbox`, pauses on its first frame, and waits for a
 mouse selection.
 
 On the RK3588 final accepted Debug candidate, the profile is also deployed at
-the candidate root. Run the current accepted binary and configuration with:
+the candidate root. From a terminal opened in the RK3588 graphical desktop
+(where `DISPLAY` is already set), run the current accepted binary and
+configuration with:
 
 ```bash
 cd /home/neardi/Project/SOT/occ-candidate-e865c78
@@ -195,7 +197,9 @@ This profile loads the C012 `visible-occlusion-calibrated.conf`, the RK3588
 tracker and VisDrone9 detector artifacts, and writes the latest manual Debug
 run to `/tmp/rk3588-interactive-debug.avi`, `.csv`, and `.json`. It deliberately
 contains no `bbox`: draw the initial ROI with the mouse, then press `Space` to
-play. Re-running the command replaces those fixed `/tmp` Debug artifacts.
+play. Re-running the command replaces those fixed `/tmp` Debug artifacts. A
+headless SSH shell does not inherit the desktop display; use `DISPLAY=:0` before
+the executable there if remote GUI startup is required.
 
 The controls are:
 
