@@ -1,5 +1,20 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T13:46:23+08:00 C004 鲁棒性矩阵拒绝冻结
+
+- RK3588 已执行 37 组 development-only 真实运行；临时视频每组评分后删除，保留 CSV、
+  metadata、日志和报告。多数阈值 `+/-10%`、中心 `+/-2 px`、中心保持的高度 `+/-5%`
+  均 PASS。
+- 两个有效失败阻止冻结：`detector_interval_ms +10%` 无法在 190 前重捕，说明 nominal
+  500 ms 卡在截止边缘；中心保持的 width `+5%` 在搜索后得到两个走廊内同类候选，安全地拒绝
+  授权。width `-5%` 没有单帧质量失败且相对 mean IoU 只下降 `0.019565`，但被 evaluator
+  与聚合器不一致的固定 `0.75` mean 门槛提前判死。
+- evaluator 已以合成测试统一合同：单报告仍要求每有效观测 IoU `>=0.50`、中心误差
+  `<=0.50`，绝对 mean floor 为 `0.70`；Task 8 聚合器继续要求所有变体 PASS 且相对 nominal
+  下降 `<=0.03`。evaluator/robustness 单测 `16/16` 通过。
+- C004 明确 `REJECT for freeze`；运行时 recent-veto-only 逻辑保留。下一候选只做通用的探测
+  周期内移与归一化走廊收紧，再重跑有效邻域。没有 holdout/full 运行。
+
 ## 2026-11-11T13:25:34+08:00 C004 nominal PASS 与 provenance 接口补齐
 
 - 同一 C004 产物经提交 `007f201ff998ec8b3d5f21ee134d406cc81d6870` 的 evaluator

@@ -308,6 +308,21 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertFalse(frame6["observation_valid"])
         self.assertLess(frame6["iou"], 0.10)
 
+    def test_visible_mean_uses_absolute_floor_while_robustness_owns_relative_drop(self):
+        rows = passing_rows()
+        for row in rows:
+            if row["observation_valid"]:
+                row["tracking_bbox"][2] = 14.0
+        passing = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertTrue(passing["gates"]["visible_boxes"]["passed"])
+        self.assertGreater(passing["strata"]["observation_visible"]["mean_iou"], 0.70)
+
+        for row in rows:
+            if row["observation_valid"]:
+                row["tracking_bbox"][2] = 15.0
+        failing = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertFalse(failing["gates"]["visible_boxes"]["passed"])
+
     def test_schema9_is_diagnostic_only_and_missing_new_semantics_cannot_pass(self):
         rows = passing_rows(schema=9)
         for row in rows:

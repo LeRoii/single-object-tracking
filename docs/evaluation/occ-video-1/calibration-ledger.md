@@ -249,3 +249,32 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
 - Evidence boundary: a diagnostic status-file command unintentionally displayed status
   text for frames 190--193, but no post-189 video frame, bbox label, runtime output, or
   evaluator result was read. This partial metadata exposure must remain declared.
+
+## C004 robustness result — reject deadline-edge nominal
+
+- Timestamp: `2026-11-11T13:46:23+08:00`
+- Board root: `/home/neardi/Project/SOT/occ-candidate-0e19dec/runs/C004-robustness`
+- Matrix executor SHA-256 after the required output-video correction:
+  `13efa246819945d9767a47940b0210d2297057904a98ebb744890fb50814e86d`.
+- Real neighbors that passed included reliable score, template agreement, corridor,
+  minimum search age, motion confidence/speed/acceleration, and detector confirmation
+  IoU/center gates. Corridor `-10%` remained legal but moved reacquisition to frame 189.
+- `detector_interval_ms -10%` passed at frame 187, while `+10%` produced no
+  reacquisition before 190. The nominal 500 ms setting is therefore deadline-edge and
+  not inside a plateau.
+- Center `x/y +/-2 px` and center-preserving height `+/-5%` passed. Center-preserving
+  width `-5%` preserved all per-frame IoU/center gates and dropped all-visible mean IoU
+  by only `0.019565`, but the evaluator's independent `0.75` mean floor conflicted with
+  the robustness contract's allowed `0.03` relative drop. Width `+5%` entered search but
+  retained two same-class candidates inside the corridor and correctly refused identity
+  authorization.
+- Invalid `confirmation_window +/-1` and `detector_max_candidates +1` variants were
+  rejected by existing parser safety bounds; these fixed-contract values are not legal
+  tunable neighbors and are excluded from the next manifest rather than counted PASS.
+- Decision: `REJECT` for freeze. Retain the recent-veto-only algorithm, move detector
+  scheduling away from the deadline edge, narrow the normalized motion corridor, and
+  rerun the complete valid matrix as C005. No holdout/full run occurred.
+- Evaluator clarification: a single report now enforces an absolute valid-observation
+  mean IoU floor of `0.70` plus unchanged per-frame IoU `>=0.50` and center error
+  `<=0.50`; the robustness aggregator remains responsible for the stricter candidate
+  relative-drop limit `<=0.03`.
