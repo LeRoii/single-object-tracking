@@ -1859,14 +1859,48 @@ void test_search_detector_shadow_hint_isolation() {
   plan = conflict.begin_frame(3, 120, false);
   output = conflict.finish_frame(
       plan, reliable_pair(plan, plan.predicted_bbox, 3), std::nullopt);
+  const SearchHint seeded_conflict_hint = *output.search_hint;
   plan = conflict.begin_frame(4, 160, false);
   output = conflict.finish_frame(
       plan, reliable_pair(plan, BBox{180, 100, 20, 20}, 4), std::nullopt);
   expect_true(!output.accepted && output.search_hint &&
                   output.search_hint->rejection == SearchHintRejection::kConflict &&
+                  output.search_hint->candidate_id ==
+                      seeded_conflict_hint.candidate_id &&
+                  output.search_hint->first_hit_frame ==
+                      seeded_conflict_hint.first_hit_frame &&
+                  output.search_hint->confirmation_count == 1 &&
+                  output.search_hint->projected_bbox.x ==
+                      seeded_conflict_hint.projected_bbox.x &&
                   output.control_valid &&
                   output.control_source == ControlSource::kMotionSearch,
-              "conflicting next hit discards hint without disturbing motion control");
+              "conflicting next hit preserves complete hint identity without disturbing motion control");
+
+  ControllerConfig immature_config = config;
+  immature_config.search_reacquisition_min_age_ms = 400;
+  LongTermController immature(immature_config);
+  immature.initialize(initial, 0, 0, {240, 160},
+                      make_fixed_target_class(0, true));
+  immature.finish_frame(immature.begin_frame(1, 40, false), {}, std::nullopt);
+  plan = immature.begin_frame(2, 80, true);
+  const DetectorRequest immature_request = *plan.detector_request;
+  DetectorBatch immature_batch{
+      immature_request.frame_id, immature_request.timestamp_ms,
+      {{plan.motion_predicted_bbox, 0.99F, 0}}};
+  immature_batch.generation = immature_request.generation;
+  immature.finish_frame(plan, {}, immature_batch);
+  plan = immature.begin_frame(3, 120, false);
+  output = immature.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 3), std::nullopt);
+  expect_true(!output.accepted && !output.search_hint &&
+                  output.detector_candidate_locked,
+              "first pre-min-age detector hit may lock a candidate but cannot create a hint");
+  plan = immature.begin_frame(4, 160, false);
+  output = immature.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 4), std::nullopt);
+  expect_true(!output.accepted && !output.search_hint &&
+                  output.control_source == ControlSource::kMotionSearch,
+              "a locked pre-min-age candidate never fabricates a zero-valued conflict hint");
 
   LongTermController ambiguous(config);
   ambiguous.initialize(initial, 0, 0, {240, 160},

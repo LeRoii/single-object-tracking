@@ -1481,9 +1481,11 @@ ControllerOutput LongTermController::finish_frame(
       } else if (was_locked || plan.search_hint) {
         search_confirmation_candidate_.reset();
         pending_search_hint_.reset();
-        SearchHint diagnostic = plan.search_hint.value_or(SearchHint{});
-        diagnostic.rejection = SearchHintRejection::kConflict;
-        output.search_hint = diagnostic;
+        if (plan.search_hint) {
+          SearchHint diagnostic = *plan.search_hint;
+          diagnostic.rejection = SearchHintRejection::kConflict;
+          output.search_hint = diagnostic;
+        }
       }
       if (was_locked || plan.search_hint) discard_active_detector = true;
     }
