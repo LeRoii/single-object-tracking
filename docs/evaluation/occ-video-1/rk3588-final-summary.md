@@ -1,4 +1,19 @@
-# RK3588 C009 frozen holdout result
+# RK3588 current result
+
+## C010 post-holdout candidate
+
+C010 is a partial failure, not an accepted final candidate. Board Debug/RKNN build,
+CTest 19/19, schema verifier, full-occlusion motion-control semantics, identity proxy,
+trajectory continuity, and visible-box quality all pass. Frame 200 uses the new bounded
+`template_bridge`, but the anchor peak-margin dip lasts through frame 201. Because C010
+permits only one bridge frame, search starts at 201 and a second reacquisition occurs at
+217. Full evaluator reacquisition frames are `[185, 217]`; therefore the full verdict is
+`FAIL` and no repeat runs were performed.
+
+Retained board evidence:
+`/home/neardi/Project/SOT/occ-candidate-033dc90/runs/C010-full-run1`.
+
+## C009 frozen holdout result
 
 - Result: **FAIL / rejected for release**.
 - Frozen runtime source: `05cf4d92debd6799be2b59102b6546078f30a8e8`.

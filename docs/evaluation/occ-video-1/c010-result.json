@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "candidate_id": "C010",
+  "status": "PARTIAL_FAIL",
+  "development_mode": "post_holdout",
+  "runtime_source_commit": "033dc9058dfc4bf86d46fc74b1b472f689c6922b",
+  "board_root": "/home/neardi/Project/SOT/occ-candidate-033dc90",
+  "run_root": "/home/neardi/Project/SOT/occ-candidate-033dc90/runs/C010-full-run1",
+  "identities": {
+    "source_archive_sha256": "82d41764a70fecbd6b48cf89571d05fb6c6f0d699d133e125e1347732690009b",
+    "executable_sha256": "5802f441e8907007f54d1cacfa9fa4e0ba362f44786daa12689adde97daf7f51",
+    "config_sha256": "83f1382e57942d44692c687c388133639a2cc94c91de3eff9a09ca688895d274",
+    "evaluator_sha256": "cabdbe3562bb065f5183e69f2f40765d2a40b398df694133d9ac9a4148d0df1d",
+    "tracker_manifest_sha256": "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261",
+    "video_sha256": "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d"
+  },
+  "board_build": {
+    "type": "Debug",
+    "rknn_enabled": true,
+    "warnings_as_errors_switch": true,
+    "ctest": "19/19 PASS"
+  },
+  "full_run": {
+    "verifier": "PASS",
+    "decoded_video": "1920x1080, 271 frames",
+    "evaluator": "FAIL",
+    "reacquisition_frames": [185, 217],
+    "visible_observation_mean_iou": 0.7348410842394689,
+    "all_visible_mean_iou": 0.7213681248161073,
+    "template_bridge_frames": [200],
+    "later_search_frames": [201, 216],
+    "bboxes_sha256": "754e43299434e47a0b5e2c58420f905f1de6de2bf330bb054ce48dbfbe8b8a97",
+    "output_video_sha256": "6c19199d98d54a11536ffc8e81f658a917b6a701b64feaca68063bd314c6933a",
+    "session_metadata_sha256": "5efb298f781c2fdbb91ddc28d880c25d277f1d01d1b1bec91afbe5c60202b1eb",
+    "run_log_sha256": "d5d267b5c3377194d110ec9158a6a416646402e42d1fe12b6ec44e83aad60f5e",
+    "verifier_log_sha256": "86808013d246f358f354b6101ef4e84470bb2cd29dfb95fa89482d31d735f02e",
+    "evaluator_json_sha256": "198beaafcbdf985d2ca78735e9c0cc5650370edd7eb7fab4600d218910f012a7",
+    "evaluator_markdown_sha256": "725fcfe7a15c97fe0f3f95e091d72916529956df1e371945cce1c74881915d5d"
+  },
+  "decision": "Do not repeat. The one-frame bridge fixes frame 200 and visible-box quality, but frame 201 is a second score-only anchor dip and still starts search. Design C011 as a generic bounded two-frame bridge; do not lower reliability or evaluator thresholds."
+}

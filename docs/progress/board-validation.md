@@ -1835,3 +1835,20 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 类别误判/样本覆盖的独立修复与重测；不得把本次原生编译成功写成 target-class
 功能通过或生产交付批准。完整任务报告在工作树
 `.superpowers/sdd/2026-10-29-target-class-establishment/task-9-report.md`（不纳入 Git）。
+## 2026-11-11T15:17:45+08:00 C010 post-holdout PARTIAL FAIL
+
+- 分支 `codex/occ-video-1-tracking`，源码提交
+  `033dc9058dfc4bf86d46fc74b1b472f689c6922b`，板端根目录
+  `/home/neardi/Project/SOT/occ-candidate-033dc90`。源码归档、配置、板端可执行 SHA-256
+  分别为 `82d41764a70fecbd6b48cf89571d05fb6c6f0d699d133e125e1347732690009b`、
+  `83f1382e57942d44692c687c388133639a2cc94c91de3eff9a09ca688895d274`、
+  `5802f441e8907007f54d1cacfa9fa4e0ba362f44786daa12689adde97daf7f51`。
+- RK3588 原生 Debug、RKNN、`-Werror=switch` 构建成功，CTest `19/19`；完整运行
+  verifier PASS，视频 1920x1080/271 帧，CSV 271 行。运行证据保留于
+  `/home/neardi/Project/SOT/occ-candidate-033dc90/runs/C010-full-run1`。
+- full evaluator FAIL，仅 `reacquisition` 门失败：帧 200 由 `template_bridge`
+  正常接受，但 anchor 的 score-only 低谷持续到 201；单帧预算耗尽后 201--216
+  再次 SEARCHING，重捕获帧为 `[185,217]`。其余门全部通过，valid-observation
+  mean IoU `0.734841`，all-visible mean IoU `0.721368`。
+- 证据边界：这是 C009 揭盲后的迭代，不是盲测；没有执行 C010 重复运行，也没有
+  声称云台实机验收。下一步为通用、有界的 C011 两帧桥接设计，不降低可靠性或评估阈值。

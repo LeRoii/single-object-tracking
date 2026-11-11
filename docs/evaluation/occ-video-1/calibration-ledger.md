@@ -476,3 +476,21 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   `ac527664f99b1211d6ffa505d4bb65f9cc69b7795b7aaf870c97d3de30a63f36`.
 - Decision: `REJECT C009 for release`. The holdout is now exposed. Any later candidate
   must be identified as post-holdout work and cannot reuse a blind-holdout claim.
+
+## C010 post-holdout result — one-frame bridge PARTIAL FAIL
+
+- Timestamp: `2026-11-11T15:17:45+08:00`; source commit
+  `033dc9058dfc4bf86d46fc74b1b472f689c6922b`; RK3588 root
+  `/home/neardi/Project/SOT/occ-candidate-033dc90`.
+- Native Debug/RKNN/`-Werror=switch` build and CTest `19/19` passed. The complete run
+  verifier passed with a 1920x1080, 271-frame video and 271 CSV rows.
+- Full evaluator remained `FAIL`: the bridge accepted frame 200 as
+  `template_bridge`, but the same score-only anchor dip persisted at frame 201. The
+  consumed one-frame budget then entered search and produced a second reacquisition at
+  frame 217; observed reacquisitions were `[185, 217]`.
+- The change materially improved the previously failing geometry gate: valid-observation
+  mean IoU is `0.734841 >= 0.70`, all-visible mean IoU is `0.721368`, and all other full
+  gates passed. This is not sufficient because exactly-one-reacquisition still fails.
+- Decision: stop repeats for C010. Preserve all artifacts under
+  `runs/C010-full-run1`, then design C011 as a generic two-frame bounded bridge without
+  changing tracker reliability or evaluator thresholds.
