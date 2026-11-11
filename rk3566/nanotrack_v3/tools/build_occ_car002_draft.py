@@ -34,6 +34,9 @@ ESTIMATE_METHODS = {
     "manual_judgement",
     "not_estimated",
 }
+ESTIMATE_CONFIDENCES = {"low", "medium", "high"}
+APPEARANCE_SIMILARITIES = {"low", "medium", "high"}
+CANDIDATE_SOURCE_STATUSES = {"anchor", "bidirectional_candidate", "needs_human_review"}
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,13 @@ def _validate_distractors(payload: dict, frame_count: int, width: int, height: i
             ):
                 if required not in record:
                     raise ValueError(f"missing distractor field {required}")
+            for boolean_field in (
+                "same_class", "overlaps_target", "identity_ambiguous_with_target"
+            ):
+                if not isinstance(record[boolean_field], bool):
+                    raise ValueError(f"invalid distractor boolean {boolean_field}")
+            if record["appearance_similarity"] not in APPEARANCE_SIMILARITIES:
+                raise ValueError("invalid distractor appearance_similarity")
             if record["review_status"] not in REVIEW_STATUSES:
                 raise ValueError("invalid distractor review_status")
             by_frame[frame_id].append(record)
@@ -365,7 +375,9 @@ def _build_draft_at_root(config: BuildConfig) -> dict:
             "estimate_basis_frames": (
                 [int(value) for value in policy.get("estimate_basis_frames", "").split(";") if value]
             ),
-            "estimate_reviewer_note": policy.get("reviewer_note") or None,
+            "estimate_reviewer_note": (
+                policy.get("reviewer_note") or None if estimate_box is not None else None
+            ),
             "distractors": distractors_by_frame[frame_id],
         }
         frame_records.append(record)
@@ -480,6 +492,7 @@ def build_draft(config: BuildConfig) -> dict:
         staging = temporary_root / "package"
         staged_config = replace(config, output_root=staging, replace_draft=False)
         result = _build_draft_at_root(staged_config)
+        validate_draft(staging, require_confirmed=False)
         backup = temporary_root / "previous"
         moved_previous = False
         try:
@@ -520,10 +533,14 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
     metadata = json.loads((root / "annotation_metadata.json").read_text(encoding="utf-8"))
     if metadata.get("ground_truth_schema_version") != SCHEMA_VERSION or not metadata.get("draft"):
         raise ValueError("not a car_002 draft package")
+    if metadata.get("formal_evaluation_authorized") is not False:
+        raise ValueError("formal_evaluation_authorized must be false for a draft")
     frame_count = int(metadata["video"]["frame_count"])
     width = int(metadata["video"]["width"])
     height = int(metadata["video"]["height"])
-    if frame_count <= 0 or width <= 0 or height <= 0:
+    fps_num = int(metadata["video"]["fps_num"])
+    fps_den = int(metadata["video"]["fps_den"])
+    if frame_count <= 0 or width <= 0 or height <= 0 or fps_num <= 0 or fps_den <= 0:
         raise ValueError("invalid package video geometry")
     _verify_manifest(root, "labels.sha256", "labels", frame_count)
     _verify_manifest(root, "candidate_labels.sha256", "candidate_labels", frame_count)
@@ -577,6 +594,9 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
         visibility = record.get("visibility_ratio")
         if not isinstance(visibility, (int, float)) or not math.isfinite(visibility) or not 0 <= visibility <= 1:
             raise ValueError(f"invalid visibility_ratio at frame {frame_id}")
+        expected_timestamp = round(frame_id * 1_000_000 * fps_den / fps_num)
+        if record.get("timestamp_us") != expected_timestamp:
+            raise ValueError(f"timestamp_us mismatch at frame {frame_id}")
         target_box = record.get("target_bbox_xywh")
         candidate_box = record.get("candidate_bbox_xywh")
         estimate_box = record.get("estimated_bbox_xywh")
@@ -602,6 +622,47 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
             raise ValueError(f"non-observable candidate bbox at frame {frame_id}")
         if review_status == "estimated_non_observable" and estimate_box is None:
             raise ValueError(f"missing non-observable estimate at frame {frame_id}")
+        if record.get("bbox_valid") is not (target_box is not None):
+            raise ValueError(f"bbox_valid mismatch at frame {frame_id}")
+        expected_source = "human_confirmed" if target_box is not None else "not_available"
+        if record.get("bbox_source") != expected_source:
+            raise ValueError(f"bbox_source mismatch at frame {frame_id}")
+        expected_truncation = 1.0 if target_state == "out_of_view" else 0.0
+        if record.get("truncation_ratio") != expected_truncation:
+            raise ValueError(f"truncation_ratio mismatch at frame {frame_id}")
+        if record.get("candidate_source_status") not in CANDIDATE_SOURCE_STATUSES:
+            raise ValueError(f"candidate source status mismatch at frame {frame_id}")
+        if estimate_box is not None:
+            if record.get("estimate_method") not in ESTIMATE_METHODS - {"not_estimated"}:
+                raise ValueError(f"invalid estimate method at frame {frame_id}")
+            if record.get("estimate_confidence") not in ESTIMATE_CONFIDENCES:
+                raise ValueError(f"invalid estimate confidence at frame {frame_id}")
+            uncertainty = record.get("estimate_uncertainty_px")
+            scale_uncertainty = record.get("estimate_scale_uncertainty_ratio")
+            if (not isinstance(uncertainty, (int, float)) or
+                    not math.isfinite(uncertainty) or uncertainty < 0):
+                raise ValueError(f"invalid estimate uncertainty at frame {frame_id}")
+            if (not isinstance(scale_uncertainty, (int, float)) or
+                    not math.isfinite(scale_uncertainty) or scale_uncertainty < 0):
+                raise ValueError(f"invalid estimate scale uncertainty at frame {frame_id}")
+            basis = record.get("estimate_basis_frames")
+            if (not isinstance(basis, list) or not basis or
+                    any(not isinstance(value, int) or not 0 <= value < frame_count
+                        for value in basis)):
+                raise ValueError(f"invalid estimate basis at frame {frame_id}")
+            note = record.get("estimate_reviewer_note")
+            if note is not None and not isinstance(note, str):
+                raise ValueError(f"invalid estimate reviewer note at frame {frame_id}")
+        else:
+            empty_estimate_fields = (
+                record.get("estimate_method"), record.get("estimate_confidence"),
+                record.get("estimate_uncertainty_px"),
+                record.get("estimate_scale_uncertainty_ratio"),
+                record.get("estimate_reviewer_note"),
+            )
+            if any(value is not None for value in empty_estimate_fields) or record.get(
+                    "estimate_basis_frames") != []:
+                raise ValueError(f"estimate provenance without estimate at frame {frame_id}")
         if record.get("distractors") != distractors_by_frame[frame_id]:
             raise ValueError(f"distractor mapping mismatch at frame {frame_id}")
         status_counts[review_status] += 1

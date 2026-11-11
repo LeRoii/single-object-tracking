@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from rk3566.nanotrack_v3.tools import build_occ_car002_draft as draft
 
@@ -119,8 +120,8 @@ class DraftFixture:
                 if frame_id == 0:
                     row.update(review_status="manual_confirmed_visible",
                                annotation_quality="reliable",
-                               confirmed_x="10", confirmed_y="20",
-                               confirmed_width="30", confirmed_height="40")
+                               confirmed_x="12", confirmed_y="22",
+                               confirmed_width="28", confirmed_height="36")
                 elif frame_id == 2 and self.frame_count >= 5:
                     row.update(
                         target_state="full_occlusion",
@@ -179,7 +180,7 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             self.assertEqual(summary["frame_count"], 5)
             self.assertEqual(
                 (fixture.output / "labels/frame_000000.txt").read_text(),
-                "0 0.250000 0.200000 0.300000 0.200000\n",
+                "0 0.260000 0.200000 0.280000 0.180000\n",
             )
             self.assertEqual(
                 (fixture.output / "candidate_labels/frame_000000.txt").read_text(),
@@ -203,6 +204,8 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             frames = [json.loads(line) for line in
                       (fixture.output / "frames.jsonl").read_text().splitlines()]
             self.assertIsNone(frames[1]["target_bbox_xywh"])
+            self.assertEqual(frames[0]["target_bbox_xywh"], [12.0, 22.0, 28.0, 36.0])
+            self.assertEqual(frames[0]["candidate_bbox_xywh"], [10.0, 20.0, 30.0, 40.0])
             self.assertEqual(frames[1]["candidate_bbox_xywh"], [11.0, 20.0, 30.0, 40.0])
             self.assertIsNone(frames[2]["target_bbox_xywh"])
             self.assertIsNone(frames[2]["candidate_bbox_xywh"])
@@ -267,6 +270,75 @@ class BuildOccCar002DraftTests(unittest.TestCase):
                 draft.build_draft(replace(fixture.config(), replace_draft=True))
             self.assertEqual((fixture.output / "checksums.sha256").read_bytes(), before)
             draft.validate_draft(fixture.output, require_confirmed=False)
+
+    def test_invalid_completed_staging_preserves_previous_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DraftFixture(Path(directory))
+            draft.build_draft(fixture.config())
+            before = (fixture.output / "checksums.sha256").read_bytes()
+            original_build = draft._build_draft_at_root
+
+            def build_corrupt_staging(config):
+                result = original_build(config)
+                frames_path = config.output_root / "frames.jsonl"
+                frames = [json.loads(line) for line in frames_path.read_text().splitlines()]
+                frames[0]["bbox_valid"] = False
+                frames_path.write_text(
+                    "".join(json.dumps(row) + "\n" for row in frames), encoding="utf-8"
+                )
+                draft._write_checksums(config.output_root)
+                return result
+
+            with mock.patch.object(
+                draft, "_build_draft_at_root", side_effect=build_corrupt_staging
+            ):
+                with self.assertRaisesRegex(ValueError, "bbox_valid"):
+                    draft.build_draft(replace(fixture.config(), replace_draft=True))
+            self.assertEqual((fixture.output / "checksums.sha256").read_bytes(), before)
+            draft.validate_draft(fixture.output, require_confirmed=False)
+
+    def test_validate_rejects_rehashed_semantic_corruption(self):
+        def corrupt_derived(fixture):
+            path = fixture.output / "frames.jsonl"
+            frames = [json.loads(line) for line in path.read_text().splitlines()]
+            frames[0]["timestamp_us"] = 999
+            frames[0]["bbox_valid"] = False
+            path.write_text("".join(json.dumps(row) + "\n" for row in frames))
+
+        def corrupt_estimate(fixture):
+            path = fixture.output / "frames.jsonl"
+            frames = [json.loads(line) for line in path.read_text().splitlines()]
+            frames[2]["estimate_confidence"] = "invented"
+            frames[2]["estimate_uncertainty_px"] = -1
+            path.write_text("".join(json.dumps(row) + "\n" for row in frames))
+
+        def corrupt_metadata(fixture):
+            path = fixture.output / "annotation_metadata.json"
+            value = json.loads(path.read_text())
+            value["formal_evaluation_authorized"] = True
+            path.write_text(json.dumps(value))
+
+        def corrupt_distractor(fixture):
+            path = fixture.output / "distractors.json"
+            value = json.loads(path.read_text())
+            value["distractors"][0]["frames"][0]["same_class"] = "yes"
+            value["distractors"][0]["frames"][0]["appearance_similarity"] = "invented"
+            path.write_text(json.dumps(value))
+
+        cases = [
+            (corrupt_derived, "timestamp_us|bbox_valid"),
+            (corrupt_estimate, "estimate"),
+            (corrupt_metadata, "formal_evaluation_authorized"),
+            (corrupt_distractor, "distractor"),
+        ]
+        for mutate, message in cases:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                fixture = DraftFixture(Path(directory))
+                draft.build_draft(fixture.config())
+                mutate(fixture)
+                draft._write_checksums(fixture.output)
+                with self.assertRaisesRegex(ValueError, message):
+                    draft.validate_draft(fixture.output, require_confirmed=False)
 
     def test_build_rejects_invalid_enums_and_duplicate_distractor_ids(self):
         with tempfile.TemporaryDirectory() as directory:
