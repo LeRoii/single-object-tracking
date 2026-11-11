@@ -451,11 +451,13 @@ ControllerConfig load_controller_config(const std::string& path) {
         std::string("missing recovery_policy=") +
         to_string(RecoveryPolicy::kUnifiedCandidatesV1) + "; use " + replacement_profile);
   }
-  // Preserve the previous file profile's gates until unified recovery replaces
-  // the legacy controller paths.
-  config.search_reacquisition_requires_detector = true;
-  config.template_bridge_min_stable_frames = 3;
-  config.template_bridge_max_duration_ms = 200;
+  // Preserve the visible occlusion profile's motion search gates until unified
+  // recovery replaces the legacy controller paths.
+  if (config.sensor == "visible" && config.motion_search_enabled) {
+    config.search_reacquisition_requires_detector = true;
+    config.template_bridge_min_stable_frames = 3;
+    config.template_bridge_max_duration_ms = 200;
+  }
   validate_controller_config(config);
   return config;
 }

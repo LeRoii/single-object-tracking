@@ -403,12 +403,25 @@ int main() {
   write_file(config_path,
              "sensor=infrared\n"
              "calibrated=false\n"
+             "motion_search_enabled=true\n"
              "reliable_score=0.74\n");
   const ControllerConfig infrared = load_controller_config(config_path);
-  expect_true(infrared.sensor == "infrared",
+  expect_true(infrared.sensor == "infrared" && infrared.motion_search_enabled,
               "infrared config keeps a separate identity");
+  expect_true(!infrared.search_reacquisition_requires_detector &&
+                  infrared.template_bridge_min_stable_frames == 0 &&
+                  infrared.template_bridge_max_duration_ms == 0,
+              "infrared motion search keeps the legacy overrides disabled");
   expect_near(infrared.reliable_score, 0.74F, 1e-6F,
               "infrared override does not inherit visible values");
+
+  write_file(config_path, "sensor=visible\nmotion_search_enabled=false\n");
+  const ControllerConfig no_motion_search = load_controller_config(config_path);
+  expect_true(!no_motion_search.motion_search_enabled &&
+                  !no_motion_search.search_reacquisition_requires_detector &&
+                  no_motion_search.template_bridge_min_stable_frames == 0 &&
+                  no_motion_search.template_bridge_max_duration_ms == 0,
+              "visible profiles with motion search disabled keep the legacy overrides disabled");
 
   const std::string default_identity = controller_config_identity(default_visible);
   ControllerConfig identity_variant = default_visible;
