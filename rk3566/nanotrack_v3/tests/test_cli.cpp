@@ -345,16 +345,32 @@ int main() {
       parse_options({"nanotrack_v3", "--config", rk3588_config.string()});
   expect_true(rk3588.interactive && !rk3588.has_bbox,
               "RK3588 debug config starts interactive for mouse selection");
-  expect_true(rk3588.video ==
-                      (source_dir / "data/occ_video_1/1.mp4").string() &&
-                  rk3588.model_dir == (source_dir / "models").string() &&
-                  rk3588.controller_config ==
-                      (source_dir / "config/visible-default.conf").string(),
-              "RK3588 debug config resolves canonical video and runtime paths");
   expect_true(
-      rk3588.detector_model.find(
-          "releases/yolov8n-visdrone9-rk3588-fp16-v1/") != std::string::npos,
-      "RK3588 debug config selects the RK3588 detector release");
+      rk3588.video ==
+          "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/data/occ_video_1/1.mp4" &&
+          rk3588.model_dir ==
+          "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/models" &&
+          rk3588.controller_config ==
+          "/home/neardi/Project/SOT/occ-candidate-e865c78/source/rk3566/nanotrack_v3/config/visible-occlusion-calibrated.conf",
+      "RK3588 debug config binds the accepted video, models, and controller");
+  expect_true(
+      rk3588.detector_model ==
+          "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn" &&
+          rk3588.detector_manifest ==
+          "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/detector-manifest.json" &&
+          rk3588.detector_labels ==
+          "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/visdrone9.txt",
+      "RK3588 debug config selects the complete RK3588 detector release");
+  expect_true(rk3588.max_frames == 270 &&
+                  rk3588.output_width == 1920 &&
+                  rk3588.output_height == 1080 &&
+                  rk3588.output_video ==
+                      "/tmp/rk3588-interactive-debug.avi" &&
+                  rk3588.output_boxes ==
+                      "/tmp/rk3588-interactive-debug.csv" &&
+                  rk3588.session_metadata ==
+                      "/tmp/rk3588-interactive-debug.json",
+              "RK3588 debug config carries the bounded run and output settings");
 
   const std::filesystem::path occlusion_candidate =
       source_dir / "config/visible-occlusion-calibrated.conf";
