@@ -746,6 +746,8 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
       config.search_reacquisition_min_age_ms;
   metadata.template_bridge_min_stable_frames =
       config.template_bridge_min_stable_frames;
+  metadata.template_bridge_max_consecutive_frames =
+      config.template_bridge_max_consecutive_frames;
   metadata.motion_search_confidence_ms = config.motion_search_confidence_ms;
   metadata.motion_max_speed_diagonals_per_s =
       config.motion_max_speed_diagonals_per_s;
@@ -927,6 +929,8 @@ std::string tracking_session_metadata_json(
          << metadata.search_reacquisition_min_age_ms << ",\n"
          << "  \"template_bridge_min_stable_frames\": "
          << metadata.template_bridge_min_stable_frames << ",\n"
+         << "  \"template_bridge_max_consecutive_frames\": "
+         << metadata.template_bridge_max_consecutive_frames << ",\n"
          << "  \"motion_search_confidence_ms\": "
          << metadata.motion_search_confidence_ms << ",\n"
          << "  \"motion_max_speed_diagonals_per_s\": "

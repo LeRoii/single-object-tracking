@@ -248,6 +248,7 @@ int main() {
              "accepted_center_max_correction_ratio=0.30\n"
              "max_reacquisition_center_distance=0.80\n"
              "template_bridge_min_stable_frames=4\n"
+             "template_bridge_max_consecutive_frames=2\n"
              "uncertain_ms=200\n"
              "local_recovery_ms=1000\n"
              "assisted_recovery_ms=3000\n"
@@ -297,6 +298,8 @@ int main() {
               "ordinary recovery center distance parses explicitly");
   expect_true(visible.template_bridge_min_stable_frames == 4,
               "template bridge history parses explicitly");
+  expect_true(visible.template_bridge_max_consecutive_frames == 2,
+              "template bridge consecutive budget parses explicitly");
   expect_true(visible.uncertain_ms == 200 &&
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
@@ -361,6 +364,10 @@ int main() {
   identity_variant.template_bridge_min_stable_frames = 3;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes template bridge history");
+  identity_variant = default_visible;
+  identity_variant.template_bridge_max_consecutive_frames = 2;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes template bridge consecutive budget");
   identity_variant = default_visible;
   identity_variant.motion_search_enabled = true;
   expect_true(controller_config_identity(identity_variant) != default_identity,
@@ -445,6 +452,13 @@ int main() {
   invalid_bridge.template_bridge_min_stable_frames = -1;
   expect_throws([&] { validate_controller_config(invalid_bridge); },
                 "template bridge history cannot be negative");
+  invalid_bridge = default_visible;
+  invalid_bridge.template_bridge_max_consecutive_frames = 0;
+  expect_throws([&] { validate_controller_config(invalid_bridge); },
+                "template bridge consecutive budget must be positive");
+  invalid_bridge.template_bridge_max_consecutive_frames = 11;
+  expect_throws([&] { validate_controller_config(invalid_bridge); },
+                "template bridge consecutive budget has a bounded maximum");
 
   const std::string occlusion_path = "/tmp/nanotrack_occlusion_test.conf";
   write_file(occlusion_path,

@@ -241,6 +241,7 @@ struct TrackingSessionMetadata {
   bool search_reacquisition_requires_detector = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   int template_bridge_min_stable_frames = 0;
+  int template_bridge_max_consecutive_frames = 1;
   std::int64_t motion_search_confidence_ms = 0;
   float motion_max_speed_diagonals_per_s = 0.0F;
   float motion_max_acceleration_diagonals_per_s2 = 0.0F;
