@@ -30,7 +30,7 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def synthetic_contract(schema=10):
+def synthetic_contract(schema=11):
     truth = []
     for frame_id in range(11):
         status = "visible"
@@ -62,7 +62,7 @@ def synthetic_contract(schema=10):
     }
 
 
-def passing_rows(schema=10):
+def passing_rows(schema=11):
     rows = []
     for frame_id in range(11):
         searching = 3 <= frame_id <= 6
@@ -74,6 +74,8 @@ def passing_rows(schema=10):
                 "state": "OCCLUSION_HOLD" if searching else "TRACKING",
                 "tracking_phase": "SEARCHING" if searching else "TRACKING",
                 "observation_valid": not searching,
+                "observation_present": not searching,
+                "trusted_for_state_update": not searching,
                 "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
                 "control_valid": True,
                 "accepted": not searching,
@@ -318,12 +320,14 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                 searching = item["frame_id"] in {1, 2}
                 rows.append(
                     {
-                        "schema_version": 10,
+                        "schema_version": 11,
                         "frame_id": item["frame_id"],
                         "timestamp_ms": item["frame_id"] * 33,
                         "state": "OCCLUSION_HOLD" if searching else "TRACKING",
                         "tracking_phase": "SEARCHING" if searching else "TRACKING",
                         "observation_valid": not searching,
+                        "observation_present": not searching,
+                        "trusted_for_state_update": not searching,
                         "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
                         "control_valid": True,
                         "accepted": not searching,
@@ -341,6 +345,8 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             "state",
             "tracking_phase",
             "observation_valid",
+            "observation_present",
+            "trusted_for_state_update",
             "control_source",
             "control_valid",
             "accepted",
@@ -360,7 +366,10 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                     tracking_x=box[0], tracking_y=box[1],
                     tracking_width=box[2], tracking_height=box[3]
                 )
-                for key in ("observation_valid", "control_valid", "accepted", "reacquired"):
+                for key in (
+                    "observation_valid", "observation_present", "trusted_for_state_update",
+                    "control_valid", "accepted", "reacquired",
+                ):
                     serialized[key] = "1" if row[key] else "0"
                 writer.writerow(serialized)
 
@@ -371,6 +380,8 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             self.write_tracking_csv(path, rows)
             parsed = evaluator.load_tracking_csv(path)
             self.assertEqual([row["frame_id"] for row in parsed], [0, 1, 2])
+            self.assertIs(parsed[0]["observation_present"], True)
+            self.assertIs(parsed[0]["trusted_for_state_update"], True)
 
             duplicate = rows + [dict(rows[-1])]
             self.write_tracking_csv(path, duplicate)
@@ -438,12 +449,14 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             )
             rows.append(
                 {
-                    "schema_version": 10,
+                    "schema_version": 11,
                     "frame_id": frame_id,
                     "timestamp_ms": frame_id * 33,
                     "state": "TRACKING",
                     "tracking_phase": "TRACKING",
                     "observation_valid": True,
+                    "observation_present": True,
+                    "trusted_for_state_update": True,
                     "control_source": "OBSERVATION",
                     "control_valid": True,
                     "accepted": True,
@@ -549,6 +562,45 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertFalse(report["gates"]["tracking_schema"]["passed"])
         self.assertIn("legacy schema 9", report["gates"]["tracking_schema"]["detail"])
         self.assertGreater(report["strata"]["visible"]["mean_iou"], 0.99)
+
+    def test_candidate_rejects_archived_v10_and_missing_v11_semantics(self):
+        archived = passing_rows(schema=10)
+        for row in archived:
+            row.pop("observation_present")
+            row.pop("trusted_for_state_update")
+        self.assertEqual(evaluator.evaluate(synthetic_contract(schema=10), archived, "full")["verdict"], "PASS")
+        candidate = evaluator.evaluate(synthetic_contract(), archived, "full")
+        self.assertEqual(candidate["verdict"], "FAIL")
+        self.assertFalse(candidate["gates"]["tracking_schema"]["passed"])
+
+        rows = passing_rows()
+        rows[0].pop("trusted_for_state_update")
+        self.assertFalse(evaluator.evaluate(synthetic_contract(), rows, "full")["gates"]["tracking_schema"]["passed"])
+
+    def test_candidate_rejects_metadata_schema_mismatch(self):
+        contract = synthetic_contract()
+        contract["tracking_session_metadata"] = {"schema_version": 10}
+        report = evaluator.evaluate(contract, passing_rows(), "full")
+        self.assertFalse(report["gates"]["tracking_schema"]["passed"])
+
+    def test_tentative_control_requires_present_untrusted_observation_and_preserves_identity(self):
+        rows = passing_rows()
+        tentative = rows[2]
+        tentative.update(
+            state="SUSPECTED", tracking_phase="SUSPECTED",
+            observation_valid=False, trusted_for_state_update=False, accepted=False,
+        )
+        self.assertEqual(evaluator.evaluate(synthetic_contract(), rows, "full")["verdict"], "PASS")
+
+        tentative["tracking_bbox"] = [80.0, 20.0, 10.0, 10.0]
+        report = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertFalse(report["gates"]["identity_proxy"]["passed"])
+        self.assertIn(2, report["gates"]["identity_proxy"]["frames"])
+
+        tentative["observation_present"] = False
+        report = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertFalse(report["gates"]["continuous_control"]["passed"])
+        self.assertIn(2, report["gates"]["continuous_control"]["frames"])
 
     def test_render_markdown_reports_scope_verdict_and_worst_frames(self):
         rows = passing_rows()

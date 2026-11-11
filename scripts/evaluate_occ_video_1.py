@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 REPORT_SCHEMA_VERSION = 1
-REQUIRED_TRACKING_SCHEMA = 10
+REQUIRED_TRACKING_SCHEMA = 11
 MIN_OBSERVATION_VISIBLE_MEAN_IOU = 0.70
 MIN_OBSERVATION_VISIBLE_FRAME_IOU = 0.45
 CANONICAL_IDENTITY = {
@@ -395,7 +395,7 @@ def _parse_float(value, field, frame_id, allow_empty=False):
 
 
 def load_tracking_csv(path):
-    """Parse schema-9/10 tracking rows into a stable evaluator representation."""
+    """Parse candidate tracking rows and archived rows used for diagnostics."""
     path = _require_file(path, "tracking CSV")
     rows = []
     with path.open(newline="", encoding="utf-8") as handle:
@@ -448,6 +448,11 @@ def load_tracking_csv(path):
                         _parse_bool(raw["observation_valid"], "observation_valid", frame_id)
                         if str(raw.get("observation_valid", "")).strip() else None
                     ),
+                    **{
+                        field: _parse_bool(raw[field], field, frame_id)
+                        if str(raw.get(field, "")).strip() else None
+                        for field in ("observation_present", "trusted_for_state_update")
+                    },
                     "control_source": raw.get("control_source", "").strip() or None,
                     "control_valid": _parse_bool(raw["control_valid"], "control_valid", frame_id),
                     "accepted": _parse_bool(raw["accepted"], "accepted", frame_id),
@@ -637,20 +642,23 @@ def evaluate(contract, rows, scope):
         )
 
     required_schema = int(contract.get("required_tracking_schema", REQUIRED_TRACKING_SCHEMA))
-    schema_versions = sorted({int(row["schema_version"]) for row in scoped_rows})
+    schema_versions = sorted({int(row["schema_version"]) for row in rows})
+    semantic_fields = ["tracking_phase", "observation_valid", "control_source"]
+    recent_safe = required_schema == REQUIRED_TRACKING_SCHEMA
+    if recent_safe:
+        semantic_fields.extend(("observation_present", "trusted_for_state_update"))
     semantic_columns_present = all(
-        row.get("tracking_phase") is not None
-        and row.get("observation_valid") is not None
-        and row.get("control_source") is not None
-        for row in scoped_rows
+        row.get(field) is not None for row in rows for field in semantic_fields
     )
     explicit_tracking_boxes = all(
-        row.get("tracking_box_source", "tracking") == "tracking" for row in scoped_rows
+        row.get("tracking_box_source", "tracking") == "tracking" for row in rows
     )
+    metadata = contract.get("tracking_session_metadata")
     schema_ok = (
         schema_versions == [required_schema]
         and semantic_columns_present
         and explicit_tracking_boxes
+        and (metadata is None or metadata.get("schema_version") == required_schema)
     )
     if schema_versions == [9]:
         schema_detail = "legacy schema 9 is diagnostic-only; schema {} semantics are required".format(
@@ -704,6 +712,27 @@ def evaluate(contract, rows, scope):
             or (row.get("control_source") == "MOTION_SEARCH" and row.get("observation_valid") is True)
         )
     ]
+    if recent_safe and semantic_columns_present:
+        for row in scoped_rows:
+            phase = row["tracking_phase"]
+            present = row["observation_present"]
+            trusted = row["trusted_for_state_update"]
+            if (
+                trusted != row["accepted"]
+                or row["observation_valid"] != trusted
+                or row["control_valid"] != (row["control_source"] != "NONE")
+                or phase not in {"TRACKING", "SUSPECTED", "SEARCHING"}
+                or (phase == "TRACKING" and (
+                    not present or not trusted or row["control_source"] != "OBSERVATION"
+                ))
+                or (phase == "SUSPECTED" and (
+                    not present or trusted or row["control_source"] not in {"OBSERVATION", "NONE"}
+                ))
+                or (phase == "SEARCHING" and (
+                    present or trusted or row["control_source"] not in {"MOTION_SEARCH", "NONE"}
+                ))
+            ):
+                source_failures.append(row["frame_id"])
 
     truth_motion_items = []
     for frame_id in required_frames:
@@ -750,7 +779,11 @@ def evaluate(contract, rows, scope):
             current_truth["observable"]
             and current_truth["bbox"] is not None
             and current["frame_id"] not in estimated_frames
-            and current.get("observation_valid") is True
+            and (
+                current.get("observation_valid") is True
+                or (recent_safe and current.get("observation_present") is True
+                    and current.get("control_source") == "OBSERVATION" and current["control_valid"])
+            )
         ):
             if (
                 (
@@ -802,7 +835,7 @@ def evaluate(contract, rows, scope):
         "continuous_control": _gate(
             not control_failures and not source_failures,
             "post-initialization control and source invariants",
-            control_failures + source_failures,
+            sorted(set(control_failures + source_failures)),
         ),
         "identity_proxy": _gate(
             not identity_failures,

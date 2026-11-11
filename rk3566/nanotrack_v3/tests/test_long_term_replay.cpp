@@ -1,6 +1,7 @@
 #include "resolved_controller_fixture.hpp"
 #include "target_class.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -68,6 +69,108 @@ std::vector<nanotrack::TrackerObservation> reliable_pair_for_plan(
   };
 }
 
+void test_stable_size_occlusion_replay() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.occlusion_min_reference_samples = 3;
+  config.suspicion_enter_ms = 80;
+  config.uncertain_ms = 120;
+  config.motion_search_confidence_ms = 180;
+  config.stable_frames_for_update = 50;
+  const BBox initial{70, 50, 30, 30};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(initial, 0, 0, {320, 240});
+  std::uint64_t frame = 0;
+  const auto track = [&](const BBox& bbox, const ResponseMetrics& metrics) {
+    ++frame;
+    const auto plan = controller.begin_frame(frame, frame * 40, false);
+    auto recent = reliable_for_plan(plan, bbox, frame, TemplateKind::kRecent);
+    recent.metrics = metrics;
+    std::vector<TrackerObservation> observations{recent};
+    if (plan.template_run_mode == TemplateRunMode::kRecentAndSafe) {
+      observations.push_back(reliable_for_plan(plan, initial, frame, TemplateKind::kSafe));
+    }
+    return controller.finish_frame(plan, observations, std::nullopt);
+  };
+  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
+  const ResponseMetrics degraded{0.98F, 0.96F, 11, 16, 0.15F};
+  for (int step = 1; step <= config.occlusion_min_reference_samples; ++step) {
+    const auto out = track({initial.x + step, initial.y, initial.width, initial.height}, healthy);
+    expect_true(out.trusted_for_state_update && out.control_valid,
+                "a stable-size moving target establishes trusted response history");
+  }
+  const BBox occluded{77, 50, 30, 30};
+  const auto tentative = track(occluded, degraded);
+  expect_true(tentative.tracking_phase == TrackingPhase::kSuspected &&
+                  tentative.observation_present && !tentative.trusted_for_state_update &&
+                  !tentative.accepted && tentative.control_valid &&
+                  tentative.control_source == ControlSource::kObservation &&
+                  tentative.tracking_bbox.x == occluded.x &&
+                  tentative.tracking_bbox.width == initial.width &&
+                  tentative.template_action == TemplateAction::kNone,
+              "stable-size high-score degradation publishes the recent box without learning");
+  bool entered_suspected = false;
+  bool expired = false;
+  bool searched = false;
+  for (int step = 0; step < 6; ++step) {
+    const auto out = track(occluded, degraded);
+    entered_suspected |= out.mode == TrackingMode::kSuspected;
+    expired |= !out.control_valid;
+    searched |= out.tracking_phase == TrackingPhase::kSearching;
+    expect_true(!out.accepted && !out.trusted_for_state_update &&
+                    out.template_action == TemplateAction::kNone &&
+                    (!expired || (!out.control_valid && out.control_source == ControlSource::kNone)) &&
+                    (!searched || !out.observation_present),
+                "sustained degradation freezes learning and never renews expired control");
+  }
+  expect_true(entered_suspected && expired && searched,
+              "sustained stable-size occlusion enters suspicion and search and revokes control");
+}
+
+void test_viewpoint_and_turn_replay() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.stable_frames_for_update = 4;
+  config.recent_update_interval_ms = 1;
+  config.recent_probation_frames = 2;
+  config.motion_scale_rate_limit_per_s = 0.60F;
+  config.max_accepted_scale_step_ratio = 0.10F;
+  const BBox initial{80, 75, 20, 20};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(initial, 0, 0, {320, 240});
+  int rotations = 0;
+  float final_width = 0.0F;
+  for (std::uint64_t frame = 1; frame <= 24; ++frame) {
+    const auto plan = controller.begin_frame(frame, frame * 100, false);
+    const auto step = static_cast<float>(frame);
+    const bool turning = frame > 12;
+    const auto turn_step = turning ? step - 12.0F : 0.0F;
+    const BBox recent_bbox{initial.x + std::min(step, 12.0F) * 2.0F - turn_step,
+                           initial.y + turn_step * 2.0F,
+                           initial.width + step * 0.50F,
+                           initial.height + std::min(step, 12.0F) * 0.40F - turn_step * 0.30F};
+    auto recent = reliable_for_plan(plan, recent_bbox, frame, TemplateKind::kRecent);
+    std::vector<TrackerObservation> observations{recent};
+    if (plan.template_run_mode == TemplateRunMode::kStagedAndRecent) {
+      auto staged = recent;
+      staged.template_kind = TemplateKind::kStaged;
+      observations.push_back(staged);
+    }
+    expect_true(plan.template_run_mode != TemplateRunMode::kRecentAndSafe,
+                "normal viewpoint and large-angle turn do not wake the safe head");
+    const auto out = controller.finish_frame(plan, observations, std::nullopt);
+    expect_true(out.tracking_phase == TrackingPhase::kTracking &&
+                    out.accepted && out.observation_present && out.trusted_for_state_update &&
+                    out.control_valid && !out.recovery_conflict && !out.reacquired,
+                "reliable recent geometry stays trusted through scale change and direction reversal");
+    rotations += out.template_action == TemplateAction::kCommitRecent;
+    final_width = out.tracking_bbox.width;
+  }
+  expect_true(rotations >= 2 && final_width > initial.width * 1.33F,
+              "multiple probation commits preserve tracking beyond the initial scale envelope");
+}
+
 void test_recent_safe_recovery_replay() {
   using namespace nanotrack;
   const BBox initial{40, 30, 20, 20};
@@ -93,7 +196,10 @@ void test_recent_safe_recovery_replay() {
       plan, {reliable_for_plan(plan, initial, 2, TemplateKind::kRecent),
              reliable_for_plan(plan, initial, 2, TemplateKind::kSafe)}, std::nullopt);
   expect_true(!out.accepted && !out.observation_present &&
-                  out.template_action == TemplateAction::kNone && out.control_valid,
+                  out.template_action == TemplateAction::kNone && out.control_valid &&
+                  out.recovery_candidate_key &&
+                  out.recovery_candidate_key->source == RecoveryCandidateSource::kRecent &&
+                  out.recovery_confirmation_hits == 1,
               "agreeing templates count as one hit and leave motion control untouched");
   plan = tracker_only.begin_frame(3, 120, true);
   out = tracker_only.finish_frame(plan, {}, std::nullopt);
@@ -106,6 +212,9 @@ void test_recent_safe_recovery_replay() {
       plan, {reliable_for_plan(plan, initial, 4, TemplateKind::kRecent), weak_safe},
       std::nullopt);
   expect_true(out.reacquired && out.accepted && out.control_valid &&
+                  out.trusted_for_state_update && out.recovery_confirmation_hits == 2 &&
+                  out.recovery_candidate_key &&
+                  out.recovery_candidate_key->source == RecoveryCandidateSource::kRecent &&
                   out.selected_template == TemplateKind::kRecent &&
                   out.template_action == TemplateAction::kStageRecent &&
                   !plan.request_detector,
@@ -175,6 +284,59 @@ void test_recent_safe_recovery_replay() {
       expect_true(out.detector_candidates_queued == 0,
                   "detector rivals age out even while their identity conflict remains");
     }
+  }
+}
+
+void test_same_class_crossing_replay() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 500;
+  config.detector_candidate_max_center_ratio = 0.30F;
+  const BBox initial{80, 50, 20, 20};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(initial, 0, 0, {320, 240}, make_fixed_target_class(0, true));
+  std::uint64_t frame = 0;
+  const auto open = [&](bool detector) {
+    ++frame;
+    return controller.begin_frame(frame, frame * 30, detector);
+  };
+  for (float x : {84.0F, 88.0F, 92.0F}) {
+    const auto plan = open(false);
+    const auto out = controller.finish_frame(
+        plan, {reliable_for_plan(plan, {x, 50, 20, 20}, frame, TemplateKind::kRecent)},
+        std::nullopt);
+    expect_true(out.trusted_for_state_update, "the approaching target has a trusted track");
+  }
+  const auto overlap = controller.finish_frame(open(false), {}, std::nullopt);
+  expect_true(overlap.tracking_phase == TrackingPhase::kSearching && overlap.control_valid &&
+                  overlap.control_source == ControlSource::kMotionSearch,
+              "indistinguishable overlap keeps bounded motion control");
+
+  const BBox target_after_crossing{112, 50, 20, 20};
+  const BBox distractor_after_crossing{80, 50, 20, 20};
+  auto plan = open(true);
+  expect_true(plan.detector_request.has_value(), "search can ask for same-class candidates");
+  if (!plan.detector_request) return;
+  DetectorBatch batch{plan.frame_id, plan.timestamp_ms,
+                      {{target_after_crossing, 0.80F, 0},
+                       {distractor_after_crossing, 0.99F, 0}}};
+  batch.generation = plan.detector_request->generation;
+  const auto seeded = controller.finish_frame(plan, {}, batch);
+  expect_true(!seeded.accepted && !seeded.observation_present &&
+                  seeded.control_source == ControlSource::kMotionSearch,
+              "separated detections cannot authorize either identity at the crossing");
+  for (int step = 0; step < 3; ++step) {
+    plan = open(false);
+    const auto out = controller.finish_frame(
+        plan, {reliable_for_plan(plan, distractor_after_crossing, frame, TemplateKind::kRecent)},
+        std::nullopt);
+    expect_true(out.recovery_conflict && out.recovery_confirmation_hits == 0 &&
+                    out.tracking_phase == TrackingPhase::kSearching &&
+                    !out.reacquired && !out.trusted_for_state_update &&
+                    out.template_action == TemplateAction::kNone &&
+                    out.control_source == ControlSource::kMotionSearch,
+                "repeated high-score distractor hits do not resolve a same-class crossing");
   }
 }
 
@@ -403,7 +565,10 @@ void test_subtarget_recovery_identity_and_eligibility() {
 }  // namespace
 
 int main() {
+  test_stable_size_occlusion_replay();
+  test_viewpoint_and_turn_replay();
   test_recent_safe_recovery_replay();
+  test_same_class_crossing_replay();
   test_delayed_detector_recovery_replay();
   test_unified_subtarget_offset_replay();
   test_subtarget_recovery_identity_and_eligibility();
