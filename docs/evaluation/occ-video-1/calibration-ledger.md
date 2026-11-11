@@ -365,3 +365,32 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
 - Synthetic tests cover comparable neighbors (reject) and a lower-confidence but
   geometrically dominant nearest candidate (first hit remains shadow-only). Decision
   `PENDING` until full host/board/matrix verification.
+
+## C007 result — ambiguity fixed, recent-template neighbor fails
+
+- Timestamp: `2026-11-11T14:21:16+08:00`
+- Source commit: `93b4c66f3805c084761f696a77119f334db41982`
+- Board root: `/home/neardi/Project/SOT/occ-candidate-93b4c66`
+- Source archive/config/executable SHA-256:
+  `b9c39c094cfff535ffa07a657e8abda47e138a48b11be29878f00ed9fc7d8597`,
+  `87b4b818e740a5a4137e4ab7339a26b5d70e93e5c7852e468dd26c8a73e06791`,
+  `366f867e128de2b8903ab571655b1903391f16920820f17da0939c02fc3f68c4`.
+- Native Debug, `-Werror=switch`, board CTest `19/19`, nominal PASS at frame 185,
+  and the previously failing center-preserving width `+5%` PASS at frame 185.
+- Every real-valued `+/-10%` neighbor completed before the matrix was stopped;
+  reacquisition stayed in `184--187` with all gates PASS.
+- Count neighbor `recent_probation_frames=2` failed the unchanged per-frame visible-box
+  gate at frame 166. This parameter governs pre-occlusion recent-template commit and is
+  therefore behaviorally relevant; the failure is not discarded as timing noise.
+- Decision: `REJECT` for freeze. C008 moves the nominal to the already passing, more
+  conservative value 4 and must prove the `3/4/5` plateau. No holdout/full run occurred.
+
+## C008 — four-frame recent-template probation
+
+- Timestamp: `2026-11-11T14:21:16+08:00`
+- Parent: `C007`; only `recent_probation_frames 3 -> 4` changes.
+- Rationale: require one additional reliable frame before committing a staged recent
+  template. This cannot authorize detector control or reduce two-hit reacquisition
+  evidence; it reduces template contamination risk.
+- Required count neighbors: `3/4/5`; all other C007 real and initialization neighbors
+  must remain passing. Decision `PENDING`.
