@@ -4,11 +4,13 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 
 namespace {
 
@@ -39,6 +41,25 @@ void expect_throws(Function function, const std::string& message) {
 
 const std::string template_policy_line = "template_policy=recent_safe_v1\n";
 const std::string recovery_policy_line = "recovery_policy=unified_candidates_v1\n";
+
+class TemporaryConfigFile {
+ public:
+  TemporaryConfigFile() {
+    const int fd = ::mkstemp(path_.data());
+    if (fd == -1) throw std::runtime_error("cannot create test config");
+    ::close(fd);
+  }
+
+  ~TemporaryConfigFile() { ::unlink(path_.c_str()); }
+
+  TemporaryConfigFile(const TemporaryConfigFile&) = delete;
+  TemporaryConfigFile& operator=(const TemporaryConfigFile&) = delete;
+
+  const std::string& path() const { return path_; }
+
+ private:
+  std::string path_ = "/tmp/nanotrack-controller-support-XXXXXX";
+};
 
 void write_raw_file(const std::string& path, const std::string& contents) {
   std::ofstream stream(path);
@@ -194,26 +215,27 @@ int main() {
       0, source_file.find_last_of("/\\"));
   const std::string config_dir = source_dir + "/../config/";
   const std::string profile = "visible-recent-safe-v1.conf";
-  const std::string migration_path = "/tmp/nanotrack_policy_test.conf";
-  write_raw_file(migration_path, recovery_policy_line + "sensor=visible\n");
-  expect_config_error(migration_path, "template_policy", profile);
-  write_raw_file(migration_path, template_policy_line + "sensor=visible\n");
-  expect_config_error(migration_path, "recovery_policy", profile);
-  write_raw_file(migration_path,
+  const TemporaryConfigFile fixture;
+  const std::string& config_path = fixture.path();
+  write_raw_file(config_path, recovery_policy_line + "sensor=visible\n");
+  expect_config_error(config_path, "template_policy", profile);
+  write_raw_file(config_path, template_policy_line + "sensor=visible\n");
+  expect_config_error(config_path, "recovery_policy", profile);
+  write_raw_file(config_path,
                  "template_policy=anchor\n" + recovery_policy_line);
-  expect_config_error(migration_path, "template_policy", "recent_safe_v1");
-  write_raw_file(migration_path,
+  expect_config_error(config_path, "template_policy", "recent_safe_v1");
+  write_raw_file(config_path,
                  template_policy_line + "recovery_policy=detector_only\n");
-  expect_config_error(migration_path, "recovery_policy", "unified_candidates_v1");
+  expect_config_error(config_path, "recovery_policy", "unified_candidates_v1");
   for (const std::string& key : {"search_reacquisition_requires_detector",
                                  "template_bridge_min_stable_frames",
                                  "template_bridge_max_duration_ms"}) {
     const std::string value =
         key == "search_reacquisition_requires_detector" ? "false" : "0";
-    write_raw_file(migration_path, key + "=" + value + "\n");
-    expect_config_error(migration_path, key, profile);
-    write_file(migration_path, key + "=" + value + "\n");
-    expect_config_error(migration_path, key, profile);
+    write_raw_file(config_path, key + "=" + value + "\n");
+    expect_config_error(config_path, key, profile);
+    write_file(config_path, key + "=" + value + "\n");
+    expect_config_error(config_path, key, profile);
   }
 
   struct HistoricalConfig {
@@ -257,6 +279,11 @@ int main() {
                     candidate.confirmation_window == 3 &&
                     candidate.search_reacquisition_min_age_ms == 400,
                 "recent-safe profile preserves the existing recovery gates");
+    expect_true(candidate.search_reacquisition_requires_detector,
+                "recent-safe profile requires detector confirmation during migration");
+    expect_true(candidate.template_bridge_min_stable_frames == 3 &&
+                    candidate.template_bridge_max_duration_ms == 200,
+                "recent-safe profile preserves the existing template bridge during migration");
     expect_near(candidate.detector_candidate_max_center_ratio, 0.02F, 1e-6F,
                 "recent-safe profile preserves the calibrated scalar position gate");
   } catch (const std::exception& error) {
@@ -264,8 +291,7 @@ int main() {
   }
   if (failures != 0) return 1;
 
-  const std::string visible_path = "/tmp/nanotrack_visible_test.conf";
-  write_file(visible_path,
+  write_file(config_path,
              "sensor=visible\n"
              "calibrated=false\n"
              "detector_target_mode=subtarget\n"
@@ -305,7 +331,7 @@ int main() {
              "motion_max_acceleration_diagonals_per_s2=2.5\n"
              "motion_scale_rate_limit_per_s=0.30\n"
              "search_probe_interval_ms=120\n");
-  const ControllerConfig visible = load_controller_config(visible_path);
+  const ControllerConfig visible = load_controller_config(config_path);
   expect_occlusion_defaults(visible, "configuration with omitted occlusion keys");
   expect_true(visible.sensor == "visible" && !visible.calibrated,
               "visible config identity and calibration marker");
@@ -351,15 +377,15 @@ int main() {
 
   for (const std::string& key : {"suspicion_enter_ms", "suspicion_clear_ms"}) {
     for (const std::string& value : {"0", "-1", "1.5"}) {
-      write_file(migration_path, key + "=" + value + "\n");
-      expect_config_error(migration_path, key);
+      write_file(config_path, key + "=" + value + "\n");
+      expect_config_error(config_path, key);
     }
   }
   for (const std::string& key : {"response_psr_drop_ratio",
                                  "response_apce_drop_ratio"}) {
     for (const std::string& value : {"0", "-0.1", "1.01", "nan"}) {
-      write_file(migration_path, key + "=" + value + "\n");
-      expect_config_error(migration_path, key);
+      write_file(config_path, key + "=" + value + "\n");
+      expect_config_error(config_path, key);
     }
   }
   expect_true(visible.motion_search_enabled &&
@@ -374,12 +400,11 @@ int main() {
   expect_near(visible.motion_scale_rate_limit_per_s, 0.30F, 1e-6F,
               "motion scale-rate cap parses explicitly");
 
-  const std::string infrared_path = "/tmp/nanotrack_infrared_test.conf";
-  write_file(infrared_path,
+  write_file(config_path,
              "sensor=infrared\n"
              "calibrated=false\n"
              "reliable_score=0.74\n");
-  const ControllerConfig infrared = load_controller_config(infrared_path);
+  const ControllerConfig infrared = load_controller_config(config_path);
   expect_true(infrared.sensor == "infrared",
               "infrared config keeps a separate identity");
   expect_near(infrared.reliable_score, 0.74F, 1e-6F,
@@ -447,49 +472,37 @@ int main() {
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes normalized motion speed cap");
 
-  const std::string unknown_path = "/tmp/nanotrack_unknown_test.conf";
-  write_file(unknown_path, "sensor=visible\nunknown_key=1\n");
-  expect_throws([&] { load_controller_config(unknown_path); },
+  write_file(config_path, "sensor=visible\nunknown_key=1\n");
+  expect_throws([&] { load_controller_config(config_path); },
                 "unknown config keys must fail");
-  const std::string duplicate_path = "/tmp/nanotrack_duplicate_test.conf";
-  write_file(duplicate_path, "sensor=visible\nsensor=infrared\n");
-  expect_throws([&] { load_controller_config(duplicate_path); },
+  write_file(config_path, "sensor=visible\nsensor=infrared\n");
+  expect_throws([&] { load_controller_config(config_path); },
                 "duplicate config keys must fail");
-  const std::string invalid_path = "/tmp/nanotrack_invalid_test.conf";
-  write_file(invalid_path, "sensor=visible\nreliable_score=nan\n");
-  expect_throws([&] { load_controller_config(invalid_path); },
+  write_file(config_path, "sensor=visible\nreliable_score=nan\n");
+  expect_throws([&] { load_controller_config(config_path); },
                 "non-finite config values must fail");
-  const std::string invalid_detector_ratio_nan_path =
-      "/tmp/nanotrack_invalid_detector_ratio_nan_test.conf";
-  write_file(invalid_detector_ratio_nan_path,
+  write_file(config_path,
              "sensor=visible\ndetector_candidate_max_center_ratio=nan\n");
   expect_throws(
-      [&] { load_controller_config(invalid_detector_ratio_nan_path); },
+      [&] { load_controller_config(config_path); },
       "non-finite detector center ratio must fail");
-  const std::string invalid_detector_ratio_negative_path =
-      "/tmp/nanotrack_invalid_detector_ratio_negative_test.conf";
-  write_file(invalid_detector_ratio_negative_path,
+  write_file(config_path,
              "sensor=visible\ndetector_candidate_max_center_ratio=-0.01\n");
   expect_throws(
-      [&] { load_controller_config(invalid_detector_ratio_negative_path); },
+      [&] { load_controller_config(config_path); },
       "negative detector center ratio must fail");
-  const std::string invalid_detector_ratio_large_path =
-      "/tmp/nanotrack_invalid_detector_ratio_large_test.conf";
-  write_file(invalid_detector_ratio_large_path,
+  write_file(config_path,
              "sensor=visible\ndetector_candidate_max_center_ratio=1.01\n");
   expect_throws(
-      [&] { load_controller_config(invalid_detector_ratio_large_path); },
+      [&] { load_controller_config(config_path); },
       "detector center ratio above one must fail");
-  const std::string timing_path = "/tmp/nanotrack_timing_test.conf";
-  write_file(timing_path,
+  write_file(config_path,
              "sensor=visible\nuncertain_ms=1000\nlocal_recovery_ms=500\n");
-  expect_throws([&] { load_controller_config(timing_path); },
+  expect_throws([&] { load_controller_config(config_path); },
                 "non-increasing state timing must fail");
-  const std::string invalid_mode_path =
-      "/tmp/nanotrack_invalid_target_mode_test.conf";
-  write_file(invalid_mode_path,
+  write_file(config_path,
              "sensor=visible\ndetector_target_mode=automatic\n");
-  expect_throws([&] { load_controller_config(invalid_mode_path); },
+  expect_throws([&] { load_controller_config(config_path); },
                 "unsupported detector target mode must fail");
   ControllerConfig invalid_detector_geometry = default_visible;
   invalid_detector_geometry.detector_confirmation_iou = 1.1F;
@@ -518,13 +531,12 @@ int main() {
   expect_throws([&] { validate_controller_config(invalid_bridge); },
                 "template bridge duration has a bounded maximum");
 
-  const std::string occlusion_path = "/tmp/nanotrack_occlusion_test.conf";
-  write_file(occlusion_path,
+  write_file(config_path,
              "occlusion_hold_frames=24\n"
              "occlusion_trigger_consecutive_unreliable=4\n"
              "occlusion_trigger_min_dimension_ratio=0.55\n"
              "occlusion_reference_window=16\n");
-  const ControllerConfig occlusion = load_controller_config(occlusion_path);
+  const ControllerConfig occlusion = load_controller_config(config_path);
   expect_true(occlusion.occlusion_hold_frames == 24 &&
                   occlusion.occlusion_trigger_consecutive_unreliable == 4 &&
                   occlusion.occlusion_reference_window == 16,
@@ -555,9 +567,9 @@ int main() {
   };
   for (const CountLimit& limit : occlusion_counts) {
     for (int value : {limit.minimum, limit.maximum}) {
-      write_file(occlusion_path,
+      write_file(config_path,
                  std::string(limit.key) + "=" + std::to_string(value) + "\n");
-      expect_true(load_controller_config(occlusion_path).*(limit.field) == value,
+      expect_true(load_controller_config(config_path).*(limit.field) == value,
                   std::string(limit.key) + " accepts both inclusive limits");
     }
     for (int value : {limit.minimum - 1, limit.maximum + 1}) {
@@ -565,14 +577,14 @@ int main() {
       invalid.*(limit.field) = value;
       expect_throws([&] { validate_controller_config(invalid); },
                     std::string(limit.key) + " rejects values outside limits");
-      write_file(occlusion_path,
+      write_file(config_path,
                  std::string(limit.key) + "=" + std::to_string(value) + "\n");
-      expect_throws([&] { load_controller_config(occlusion_path); },
+      expect_throws([&] { load_controller_config(config_path); },
                     std::string(limit.key) + " rejects invalid file values");
     }
     for (const std::string& value : {"1.5", "2147483648"}) {
-      write_file(occlusion_path, std::string(limit.key) + "=" + value + "\n");
-      expect_throws([&] { load_controller_config(occlusion_path); },
+      write_file(config_path, std::string(limit.key) + "=" + value + "\n");
+      expect_throws([&] { load_controller_config(config_path); },
                     std::string(limit.key) + " requires an in-range integer");
     }
   }
@@ -614,16 +626,16 @@ int main() {
                          (!limit.bounded_at_one || value <= 1.0F);
       ControllerConfig candidate = default_visible;
       candidate.*(limit.field) = value;
-      write_file(occlusion_path,
+      write_file(config_path,
                  std::string(limit.key) + "=" + std::to_string(value) + "\n");
       if (valid) {
         validate_controller_config(candidate);
-        expect_near(load_controller_config(occlusion_path).*(limit.field), value,
+        expect_near(load_controller_config(config_path).*(limit.field), value,
                     1e-6F, std::string(limit.key) + " accepts valid file values");
       } else {
         expect_throws([&] { validate_controller_config(candidate); },
                       std::string(limit.key) + " rejects invalid direct values");
-        expect_throws([&] { load_controller_config(occlusion_path); },
+        expect_throws([&] { load_controller_config(config_path); },
                       std::string(limit.key) + " rejects invalid file values");
       }
     }
@@ -653,16 +665,16 @@ int main() {
                          (deadband ? value < 1.0F : value <= 1.0F);
       ControllerConfig candidate = default_visible;
       candidate.*(limit.field) = value;
-      write_file(occlusion_path,
+      write_file(config_path,
                  std::string(limit.key) + "=" + std::to_string(value) + "\n");
       if (valid) {
         validate_controller_config(candidate);
-        expect_near(load_controller_config(occlusion_path).*(limit.field), value,
+        expect_near(load_controller_config(config_path).*(limit.field), value,
                     1e-6F, std::string(limit.key) + " accepts its exact range");
       } else {
         expect_throws([&] { validate_controller_config(candidate); },
                       std::string(limit.key) + " rejects invalid direct values");
-        expect_throws([&] { load_controller_config(occlusion_path); },
+        expect_throws([&] { load_controller_config(config_path); },
                       std::string(limit.key) + " rejects invalid file values");
       }
     }
@@ -720,19 +732,19 @@ int main() {
     const bool valid = std::isfinite(value) && value >= 0.0F;
     ControllerConfig candidate = default_visible;
     candidate.max_reacquisition_center_distance = value;
-    write_file(occlusion_path,
+    write_file(config_path,
                "max_reacquisition_center_distance=" + std::to_string(value) +
                    "\n");
     if (valid) {
       validate_controller_config(candidate);
-      expect_near(load_controller_config(occlusion_path)
+      expect_near(load_controller_config(config_path)
                       .max_reacquisition_center_distance,
                   value, 1e-6F,
                   "ordinary recovery center distance accepts zero or positive finite values");
     } else {
       expect_throws([&] { validate_controller_config(candidate); },
                     "ordinary recovery center distance rejects invalid direct values");
-      expect_throws([&] { load_controller_config(occlusion_path); },
+      expect_throws([&] { load_controller_config(config_path); },
                     "ordinary recovery center distance rejects invalid file values");
     }
   }
