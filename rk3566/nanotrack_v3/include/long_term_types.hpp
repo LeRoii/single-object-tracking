@@ -129,6 +129,20 @@ enum class DetectorCandidateRejection {
   kPositionRejected, kCapacityRejected
 };
 
+enum class SearchHintRejection { kNone, kExpired, kConflict, kAborted };
+
+struct SearchHint {
+  std::uint64_t candidate_id = 0;
+  std::uint64_t source_frame_id = 0;
+  std::int64_t source_timestamp_ms = 0;
+  BBox projected_bbox{};
+  std::uint64_t generation = 0;
+  std::uint64_t first_hit_frame = 0;
+  std::size_t confirmation_count = 0;
+  bool used = false;
+  SearchHintRejection rejection = SearchHintRejection::kNone;
+};
+
 struct DetectorCandidateDiagnostic {
   DetectorCandidate candidate{};
   std::optional<float> center_ratio;
@@ -139,6 +153,7 @@ struct DetectorCandidateDiagnostic {
   bool drawable = false;
   DetectorCandidateRejection rejection = DetectorCandidateRejection::kNone;
   DetectorClassDisposition class_disposition = DetectorClassDisposition::kUnchecked;
+  std::optional<BBox> projected_bbox;
 };
 
 struct DetectorRequest {
@@ -203,5 +218,6 @@ const char* to_string(TargetClassReason value);
 const char* to_string(TargetClassCandidateRejection value);
 const char* to_string(DetectorClassDisposition value);
 const char* to_string(DetectorCandidateRejection value);
+const char* to_string(SearchHintRejection value);
 
 }  // namespace nanotrack

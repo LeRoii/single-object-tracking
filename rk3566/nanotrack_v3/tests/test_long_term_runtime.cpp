@@ -323,6 +323,34 @@ void test_uncertain_runtime_cadence(const nanotrack::ImageView& image) {
   }
 }
 
+void test_motion_search_detector_failure_isolation(
+    const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 1000;
+  config.detector_interval_ms = 100;
+  FakeTracker tracker;
+  tracker.emit_reliable = false;
+  FakeDetector detector;
+  detector.enabled = true;
+  LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+  runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+
+  RuntimeFrameResult result = runtime.process_frame(image, 1, 40);
+  expect_true(result.output.control_valid && !result.plan.request_detector,
+              "runtime search entry keeps motion control before scheduling");
+  detector.fail_next_poll = true;
+  result = runtime.process_frame(image, 2, 80);
+  expect_true(result.plan.request_detector && result.detector.request_submitted &&
+                  result.detector.error == "fake detector inference failed" &&
+                  result.output.control_valid &&
+                  result.output.control_source == ControlSource::kMotionSearch &&
+                  !result.output.accepted && tracker.commit_calls == 0 &&
+                  tracker.stage_calls == 0 && tracker.rollback_calls == 0,
+              "detector exception cannot interrupt motion control or mutate tracker templates");
+}
+
 void test_runtime_target_class_recovery_requests(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   const BBox roi{40, 30, 20, 20};
@@ -931,6 +959,7 @@ int main() {
   test_adaptive_coast_execution(image);
   test_runtime_commits_stabilized_bbox(image);
   test_uncertain_runtime_cadence(image);
+  test_motion_search_detector_failure_isolation(image);
   test_runtime_target_class_recovery_requests(image);
   test_late_precoast_batches(image);
   test_probe_failure_and_same_frame_reselect(image);

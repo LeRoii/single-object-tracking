@@ -1,5 +1,30 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T12:27:57+08:00 SEARCHING detector 调度与 shadow hint 隔离
+
+- 在 `codex/occ-video-1-tracking`、Task 4 起点
+  `422cab44043786c755fb81a36063e55e3aa795a3` 完成候选路径的 search-wide detector
+  调度：目标类别允许恢复且 detector ready 时，从第一个已进入 SEARCHING 的帧开始按
+  `detector_interval_ms` 毫秒节流提交全画面请求，不再等待 ASSISTED/LOST；旧默认关闭候选时
+  仍保留原调度与 coast 行为。结果提交可用
+  `git log -1 --format=%H -- rk3566/nanotrack_v3/include/long_term_types.hpp` 查询。
+- 异步候选保留 source frame/timestamp、generation 和 candidate identity，并先用 detector
+  请求时与当前帧的有界 motion 位移投影到当前走廊，再执行类别、位置、多候选容量与歧义门。
+  新增 `SearchHint` 诊断记录 projected bbox、首击帧、确认计数、是否已使用与拒绝原因。
+- 一个合法 detector/anchor 首击只生成恰好供下一已处理帧使用的 shadow hint；hint 可改变
+  NanoTrack 搜索 ROI，但未接受帧的 `tracking_bbox`/`control_bbox` 继续来自 motion，且不会
+  correct/initialize motion、提交 bbox 或更新模板。第二击在本 Task 仅增加诊断或标记冲突，
+  原子重捕提交留给 Task 5；中止帧、冲突、数值异常都会清除 hint/active candidate。
+- runtime 测试确认 detector poll 异常仍保留 `MOTION_SEARCH` 控制，且 bbox commit、recent
+  stage/commit/rollback 均不发生。既有 stale、frame/generation、class、position、capacity、
+  same-class ambiguity 和 legacy HOLD 拒绝顺序继续由原测试覆盖。
+- RED 阶段因 projected bbox、SearchHint 与 search-wide 调度接口缺失编译失败；GREEN 后聚焦
+  `long_term_controller|long_term_runtime` 为 `2/2` 通过。完整构建及 CTest 为 `19/19`
+  通过、`0` 失败、总时间 `3.48 sec`，`git diff --check` 无输出。
+- 本里程碑仍仅为主机合成验证；没有板端同步、构建或视频运行，不能表述为 detector 已在
+  RK3588 上帮助重捕或 `occ_video_1` 已通过。下一步是 Task 5 的两击一致性原子提交与 recent
+  template probation。
+
 ## 2026-11-11T12:20:56+08:00 通用时间制有界 motion search 主机实现
 
 - 在 `codex/occ-video-1-tracking`、Task 3 起点

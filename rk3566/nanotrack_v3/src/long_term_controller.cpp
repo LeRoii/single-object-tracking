@@ -122,8 +122,10 @@ void LongTermController::initialize(const BBox& initial_bbox,
   loss_start_ms_.reset();
   last_detector_request_ms_.reset();
   last_detector_request_frame_.reset();
+  last_detector_request_motion_bbox_.reset();
   detector_candidates_.clear();
   active_detector_candidate_.reset();
+  pending_search_hint_.reset();
   next_detector_candidate_id_ = 1;
   confirmations_.clear();
   coast_probe_candidate_.reset();
@@ -200,6 +202,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     hold_remaining_frames_ = 0;
     occlusion_coast_age_frames_ = 0;
     coast_probe_candidate_.reset();
+    pending_search_hint_.reset();
+    active_detector_candidate_.reset();
     motion_search_active_ = false;
     motion_.end_search();
     mode_ = timestamp_mode;
@@ -242,8 +246,9 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   mode_ = timestamp_mode;
   BBox predicted = motion_predicted;
   HypothesisSource source = HypothesisSource::kMotion;
-  const bool recovery_uses_detector =
-      mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost;
+  const bool recovery_uses_detector = config_.motion_search_enabled
+      ? motion_search_active_
+      : mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost;
   if (recovery_uses_detector && !active_detector_candidate_) {
     activate_next_detector_candidate();
   }
@@ -259,6 +264,14 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     predicted = active.locked ? active.locked_bbox
                               : active.queued.probes[active.next_probe++];
     source = HypothesisSource::kDetector;
+  }
+  std::optional<SearchHint> frame_hint;
+  if (config_.motion_search_enabled && pending_search_hint_) {
+    frame_hint = *pending_search_hint_;
+    frame_hint->used = true;
+    predicted = frame_hint->projected_bbox;
+    source = HypothesisSource::kDetector;
+    pending_search_hint_.reset();
   }
 
   SearchPlan plan;
@@ -284,6 +297,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
                           ? config_.detector_search_scale
                           : search_scale_for(mode_, timestamp_ms);
   plan.hypothesis_source = source;
+  plan.search_hint = frame_hint;
   plan.detector_target_mode = config_.detector_target_mode;
   if (active_detector_candidate_ && source == HypothesisSource::kDetector) {
     const ActiveDetectorCandidate& active = *active_detector_candidate_;
@@ -315,6 +329,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
         detector_eligibility_generation_};
     last_detector_request_ms_ = timestamp_ms;
     last_detector_request_frame_ = frame_id;
+    last_detector_request_motion_bbox_ = motion_predicted;
   }
   active_plan_ = plan;
   frame_open_ = true;
@@ -324,6 +339,10 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
 void LongTermController::abort_frame() noexcept {
   if (!frame_open_) return;
   frame_open_ = false;
+  if (active_plan_.search_hint) {
+    active_detector_candidate_.reset();
+    confirmations_.clear();
+  }
   if (active_plan_.mode == TrackingMode::kOcclusionHold) {
     hold_remaining_frames_ = 0;
     occlusion_coast_age_frames_ = 0;
@@ -759,6 +778,7 @@ void LongTermController::accept_observation(
   confirmations_.clear();
   active_detector_candidate_.reset();
   detector_candidates_.clear();
+  pending_search_hint_.reset();
   mode_ = TrackingMode::kTracking;
   output.mode = mode_;
   ++stable_frames_;
@@ -861,8 +881,28 @@ LongTermController::ingest_detector_batch(
       continue;
     }
     ++class_valid_count;
+    const BBox request_motion = last_detector_request_motion_bbox_.value_or(
+        plan.motion_predicted_bbox);
+    const float request_center_x =
+        request_motion.x + 0.5F * request_motion.width;
+    const float request_center_y =
+        request_motion.y + 0.5F * request_motion.height;
+    const float current_center_x =
+        plan.motion_predicted_bbox.x + 0.5F * plan.motion_predicted_bbox.width;
+    const float current_center_y =
+        plan.motion_predicted_bbox.y + 0.5F * plan.motion_predicted_bbox.height;
+    BBox projected = candidate.bbox;
+    projected.x += current_center_x - request_center_x;
+    projected.y += current_center_y - request_center_y;
+    projected = clip_bbox(projected, frame_size_.width, frame_size_.height);
+    if (projected.width <= 0.0F || projected.height <= 0.0F) {
+      diagnostic.rejection = DetectorCandidateRejection::kPositionRejected;
+      ++result.position_rejected_count;
+      continue;
+    }
+    diagnostic.projected_bbox = projected;
     const float center_ratio = frame_normalized_center_distance(
-        candidate.bbox, plan.motion_predicted_bbox, frame_size_);
+        projected, plan.motion_predicted_bbox, frame_size_);
     diagnostic.center_ratio = center_ratio;
     if (center_ratio <=
         config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
@@ -907,7 +947,8 @@ LongTermController::ingest_detector_batch(
   for (const PositionedCandidate& positioned_candidate : positioned) {
     DetectorCandidateDiagnostic& diagnostic =
         result.diagnostics[positioned_candidate.diagnostic_index];
-    const DetectorCandidate& candidate = diagnostic.candidate;
+    DetectorCandidate candidate = diagnostic.candidate;
+    candidate.bbox = *diagnostic.projected_bbox;
     QueuedDetectorCandidate queued;
     queued.id = next_detector_candidate_id_++;
     queued.candidate = candidate;
@@ -918,6 +959,9 @@ LongTermController::ingest_detector_batch(
           return result.diagnostics[other.diagnostic_index]
                      .candidate.class_id == candidate.class_id;
         }));
+    queued.source_frame_id = batch->source_frame_id;
+    queued.source_timestamp_ms = batch->source_timestamp_ms;
+    queued.generation = batch->generation;
     queued.probes = detector_probes(candidate);
     if (!queued.probes.empty()) {
       diagnostic.candidate_id = queued.id;
@@ -961,6 +1005,7 @@ ControllerOutput LongTermController::finish_frame(
       plan.detector_same_class_ambiguous;
   output.detector_candidate_locked = plan.detector_candidate_locked;
   output.detector_probe_index = plan.detector_probe_index;
+  output.search_hint = plan.search_hint;
 
   const DetectorIngestResult ingest_result =
       ingest_detector_batch(plan, detector_batch);
@@ -1275,7 +1320,31 @@ ControllerOutput LongTermController::finish_frame(
     output.detector_candidate_locked = active.locked;
     output.detector_confirmation_attempts = active.confirmation_attempts;
     output.detector_confirmation_hits = active.confirmation_boxes.size();
-    if (active.locked &&
+    if (config_.motion_search_enabled && plan.search_hint) {
+      SearchHint diagnostic = *plan.search_hint;
+      diagnostic.confirmation_count = active.confirmation_boxes.size();
+      if (!selected || !templates_agree ||
+          selected->quality != QualityLevel::kReliable ||
+          !detector_confirmation_consistent(selected->observation.bbox)) {
+        diagnostic.rejection = SearchHintRejection::kConflict;
+      }
+      output.search_hint = diagnostic;
+      discard_active_detector = true;
+    } else if (config_.motion_search_enabled && active.locked &&
+               active.confirmation_attempts == 1 &&
+               active.confirmation_boxes.size() == 1) {
+      SearchHint hint;
+      hint.candidate_id = active.queued.id;
+      hint.source_frame_id = active.queued.source_frame_id;
+      hint.source_timestamp_ms = active.queued.source_timestamp_ms;
+      hint.projected_bbox = active.locked_bbox;
+      hint.generation = active.queued.generation;
+      hint.first_hit_frame = plan.frame_id;
+      hint.confirmation_count = 1;
+      pending_search_hint_ = hint;
+      output.search_hint = hint;
+    }
+    if (!config_.motion_search_enabled && active.locked &&
         active.confirmation_boxes.size() >=
             static_cast<std::size_t>(config_.confirmation_required)) {
       accepted = true;
@@ -1307,8 +1376,10 @@ ControllerOutput LongTermController::finish_frame(
       coast_probe_candidate_.reset();
       detector_candidates_.clear();
       active_detector_candidate_.reset();
+      pending_search_hint_.reset();
       last_detector_request_ms_.reset();
       last_detector_request_frame_.reset();
+      last_detector_request_motion_bbox_.reset();
     }
     output.motion_control_authorized =
         config_.motion_search_enabled && motion_search_active_ &&

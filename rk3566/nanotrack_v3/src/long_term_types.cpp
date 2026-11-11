@@ -62,6 +62,16 @@ const char* to_string(DetectorCandidateRejection value) {
   return "UNKNOWN";
 }
 
+const char* to_string(SearchHintRejection value) {
+  switch (value) {
+    case SearchHintRejection::kNone: return "NONE";
+    case SearchHintRejection::kExpired: return "EXPIRED";
+    case SearchHintRejection::kConflict: return "CONFLICT";
+    case SearchHintRejection::kAborted: return "ABORTED";
+  }
+  return "UNKNOWN";
+}
+
 const char* to_string(TargetClassStatus value) {
   switch (value) {
     case TargetClassStatus::kFixed: return "FIXED";

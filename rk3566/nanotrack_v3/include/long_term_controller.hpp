@@ -41,6 +41,7 @@ struct SearchPlan {
   std::size_t occlusion_coast_age_frames = 0;
   OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
   bool motion_control_authorized = false;
+  std::optional<SearchHint> search_hint;
 };
 
 enum class AcceptedObservationPath {
@@ -141,6 +142,7 @@ struct ControllerOutput {
   std::optional<bool> occlusion_probe_recent_area_gate;
   std::optional<bool> occlusion_probe_recent_aspect_gate;
   bool motion_control_authorized = false;
+  std::optional<SearchHint> search_hint;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};
 };
@@ -198,6 +200,9 @@ class LongTermController {
     float center_ratio = 0.0F;
     std::vector<BBox> probes;
     std::size_t same_class_candidates = 0;
+    std::uint64_t source_frame_id = 0;
+    std::int64_t source_timestamp_ms = 0;
+    std::uint64_t generation = 0;
   };
 
   struct ActiveDetectorCandidate {
@@ -275,8 +280,10 @@ class LongTermController {
   std::optional<std::int64_t> loss_start_ms_;
   std::optional<std::int64_t> last_detector_request_ms_;
   std::optional<std::uint64_t> last_detector_request_frame_;
+  std::optional<BBox> last_detector_request_motion_bbox_;
   std::deque<QueuedDetectorCandidate> detector_candidates_;
   std::optional<ActiveDetectorCandidate> active_detector_candidate_;
+  std::optional<SearchHint> pending_search_hint_;
   std::uint64_t next_detector_candidate_id_ = 1;
   std::deque<Confirmation> confirmations_;
   std::optional<CoastProbeCandidate> coast_probe_candidate_;

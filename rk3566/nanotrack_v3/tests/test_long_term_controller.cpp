@@ -1759,6 +1759,109 @@ void test_time_based_motion_search_control() {
               "reliable partial-occlusion collapse starts time-based search without committing scale");
 }
 
+void test_search_detector_shadow_hint_isolation() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 1000;
+  config.detector_interval_ms = 100;
+  config.detector_stale_ms = 150;
+  config.detector_candidate_max_center_ratio = 0.30F;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  LongTermController controller(config);
+  const BBox initial{40, 30, 20, 20};
+  controller.initialize(initial, 0, 0, {240, 160},
+                        make_fixed_target_class(0, true));
+
+  auto plan = controller.begin_frame(1, 40, true);
+  auto output = controller.finish_frame(plan, {}, std::nullopt);
+  expect_true(output.control_valid && !plan.request_detector,
+              "entry frame starts search before detector scheduling");
+
+  plan = controller.begin_frame(2, 80, true);
+  expect_true(plan.request_detector && plan.detector_request &&
+                  plan.tracking_phase == TrackingPhase::kSearching,
+              "first SEARCHING frame requests an eligible detector");
+  const DetectorRequest request = *plan.detector_request;
+  const BBox source_candidate = plan.motion_predicted_bbox;
+  output = controller.finish_frame(plan, {}, std::nullopt);
+
+  plan = controller.begin_frame(3, 140, false);
+  DetectorBatch delayed{request.frame_id, request.timestamp_ms,
+                        {{source_candidate, 0.99F, 0}}};
+  delayed.generation = request.generation;
+  delayed.request_id = 77;
+  output = controller.finish_frame(plan, {}, delayed);
+  expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                  output.detector_candidates_queued == 1 &&
+                  output.detector_candidate_diagnostics.size() == 1 &&
+                  output.detector_candidate_diagnostics[0].projected_bbox.has_value(),
+              "delayed matching detector batch is projected and queued during search");
+
+  plan = controller.begin_frame(4, 160, true);
+  expect_true(!plan.request_detector &&
+                  plan.hypothesis_source == HypothesisSource::kDetector,
+              "timestamp interval suppresses an early repeat while probing the hint");
+  const BBox committed_before_hint = controller.current_bbox();
+  const BBox motion_before_hint = plan.motion_predicted_bbox;
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 4), std::nullopt);
+  expect_true(!output.accepted && output.search_hint &&
+                  output.search_hint->confirmation_count == 1 &&
+                  output.control_valid &&
+                  output.control_source == ControlSource::kMotionSearch &&
+                  output.control_bbox.x == motion_before_hint.x &&
+                  controller.current_bbox().x == committed_before_hint.x,
+              "first detector/anchor hit creates a shadow hint without control or state commit");
+
+  plan = controller.begin_frame(5, 180, false);
+  expect_true(plan.search_hint && plan.search_hint->used &&
+                  plan.search_hint->candidate_id == output.search_hint->candidate_id &&
+                  plan.predicted_bbox.x == plan.search_hint->projected_bbox.x,
+              "shadow hint biases exactly the next processed tracker ROI");
+  const BBox motion_during_hint = plan.motion_predicted_bbox;
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 5), std::nullopt);
+  expect_true(!output.accepted && output.control_valid &&
+                  output.control_bbox.x == motion_during_hint.x &&
+                  output.search_hint &&
+                  output.search_hint->confirmation_count == 2,
+              "second shadow observation remains diagnostic until atomic commit task");
+  plan = controller.begin_frame(6, 181, true);
+  expect_true(plan.request_detector && !plan.search_hint,
+              "hint expires after one processed frame and detector interval is elapsed");
+  controller.abort_frame();
+  plan = controller.begin_frame(7, 220, false);
+  expect_true(!plan.search_hint,
+              "aborting a frame cannot retain or replay a consumed shadow hint");
+  controller.finish_frame(plan, {}, std::nullopt);
+
+  LongTermController conflict(config);
+  conflict.initialize(initial, 0, 0, {240, 160},
+                      make_fixed_target_class(0, true));
+  conflict.finish_frame(conflict.begin_frame(1, 40, false), {}, std::nullopt);
+  plan = conflict.begin_frame(2, 80, true);
+  const DetectorRequest conflict_request = *plan.detector_request;
+  DetectorBatch conflict_batch{conflict_request.frame_id,
+                               conflict_request.timestamp_ms,
+                               {{plan.motion_predicted_bbox, 0.99F, 0}}};
+  conflict_batch.generation = conflict_request.generation;
+  conflict.finish_frame(plan, {}, conflict_batch);
+  plan = conflict.begin_frame(3, 120, false);
+  output = conflict.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 3), std::nullopt);
+  plan = conflict.begin_frame(4, 160, false);
+  output = conflict.finish_frame(
+      plan, reliable_pair(plan, BBox{180, 100, 20, 20}, 4), std::nullopt);
+  expect_true(!output.accepted && output.search_hint &&
+                  output.search_hint->rejection == SearchHintRejection::kConflict &&
+                  output.control_valid &&
+                  output.control_source == ControlSource::kMotionSearch,
+              "conflicting next hit discards hint without disturbing motion control");
+}
+
 }  // namespace
 
 int main() {
@@ -1779,6 +1882,7 @@ int main() {
 
   test_target_class_gate();
   test_time_based_motion_search_control();
+  test_search_detector_shadow_hint_isolation();
 
   const auto expect_enum_name = [](auto value, const char* expected) {
     expect_true(std::string(to_string(value)) == expected,
