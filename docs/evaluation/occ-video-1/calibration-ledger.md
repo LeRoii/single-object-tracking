@@ -278,3 +278,23 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   mean IoU floor of `0.70` plus unchanged per-frame IoU `>=0.50` and center error
   `<=0.50`; the robustness aggregator remains responsible for the stricter candidate
   relative-drop limit `<=0.03`.
+
+## C005 — interior detector cadence and corridor
+
+- Timestamp: `2026-11-11T13:47:27+08:00`
+- Parent: `C004`
+- Runtime algorithm: unchanged recent-veto-only implementation from `0e19dec`.
+- Changed parameters: `detector_interval_ms 500 -> 400` and
+  `detector_candidate_max_center_ratio 0.020 -> 0.015`.
+- Rationale: 500 ms failed its valid `+10%` neighbor at the development deadline;
+  400 ms places `360/440 ms` neighbors on both sides while retaining asynchronous
+  rate limiting. The `0.015` normalized corridor is about 33 px on 1920x1080 and
+  separates the second same-class candidate seen by width `+5%`; its future
+  `0.0135/0.0165` neighbors remain normalized, scene-agnostic tests rather than truth
+  coordinates.
+- Safety: faster scheduling changes request opportunity only; detector results remain
+  shadow-only, class/ambiguity/generation/stale gates remain, and two tracker-template
+  confirmations are still mandatory. Narrower corridor can only reduce authorization.
+- Required run: nominal plus all valid real/count/center-preserving initialization
+  neighbors on frames 0--189, followed by synthetic variable-time/delay/drop/generation
+  fault evidence. Decision `PENDING`; no holdout/full run is permitted.
