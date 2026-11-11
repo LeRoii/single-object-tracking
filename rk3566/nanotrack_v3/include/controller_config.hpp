@@ -82,6 +82,12 @@ struct ControllerConfig {
   float motion_alpha = 0.85F;
   float motion_beta = 0.05F;
   std::int64_t motion_max_dt_ms = 200;
+  bool motion_search_enabled = false;
+  std::int64_t motion_search_confidence_ms = 1000;
+  float motion_max_speed_diagonals_per_s = 100.0F;
+  float motion_max_acceleration_diagonals_per_s2 = 1000.0F;
+  float motion_scale_rate_limit_per_s = 100.0F;
+  std::int64_t search_probe_interval_ms = 100;
 };
 
 ControllerConfig default_controller_config(const std::string& sensor);

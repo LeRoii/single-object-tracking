@@ -1661,6 +1661,104 @@ void test_target_class_gate() {
   }
 }
 
+void test_time_based_motion_search_control() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 180;
+  config.motion_max_speed_diagonals_per_s = 0.75F;
+  config.motion_max_acceleration_diagonals_per_s2 = 3.0F;
+  config.motion_scale_rate_limit_per_s = 0.30F;
+  config.search_probe_interval_ms = 80;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  LongTermController controller(config);
+  controller.initialize(BBox{40, 30, 20, 20}, 0, 0, {240, 160});
+
+  auto plan = controller.begin_frame(1, 40, false);
+  auto output = controller.finish_frame(
+      plan, reliable_pair(plan, BBox{44, 30, 20, 20}, 1), std::nullopt);
+  expect_true(output.accepted, "motion-search fixture learns from accepted motion");
+  plan = controller.begin_frame(2, 80, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, BBox{48, 30, 20, 20}, 2), std::nullopt);
+  expect_true(output.accepted, "motion-search fixture has two accepted samples");
+
+  const auto generation_before = controller.detector_eligibility_generation_;
+  plan = controller.begin_frame(3, 120, false);
+  const BBox predicted_at_entry = plan.motion_predicted_bbox;
+  output = controller.finish_frame(
+      plan,
+      {rejected_observation(plan, TemplateKind::kAnchor,
+                            BBox{180, 100, 5, 5}, 3)},
+      std::nullopt);
+  expect_true(!output.accepted && !output.observation_valid &&
+                  output.control_valid && output.motion_control_authorized &&
+                  output.tracking_phase == TrackingPhase::kSearching &&
+                  output.control_source == ControlSource::kMotionSearch &&
+                  output.tracking_bbox.x == predicted_at_entry.x &&
+                  output.control_bbox.x == predicted_at_entry.x,
+              "first rejected observation enters SEARCHING with motion control");
+  expect_true(controller.detector_eligibility_generation_ ==
+                      generation_before + 1 &&
+                  controller.confirmations_.empty() &&
+                  controller.detector_candidates_.empty(),
+              "search entry invalidates old recovery work exactly once");
+
+  plan = controller.begin_frame(4, 200, false);
+  expect_true(plan.tracking_phase == TrackingPhase::kSearching &&
+                  plan.control_source == ControlSource::kMotionSearch &&
+                  plan.motion_control_authorized,
+              "confident search plan advertises motion control");
+  output = controller.finish_frame(plan, {}, std::nullopt);
+  expect_true(output.control_valid && output.motion_control_authorized &&
+                  controller.detector_eligibility_generation_ ==
+                      generation_before + 1,
+              "continued search remains authorized without repeating invalidation");
+
+  plan = controller.begin_frame(5, 301, false);
+  expect_true(!plan.motion_control_authorized,
+              "search plan fails closed one millisecond after confidence expiry");
+  output = controller.finish_frame(plan, {}, std::nullopt);
+  expect_true(!output.control_valid && !output.motion_control_authorized &&
+                  output.tracking_phase == TrackingPhase::kSearching &&
+                  output.control_source == ControlSource::kNone,
+              "expired prediction stays search state but cannot drive control");
+
+  plan = controller.begin_frame(6, 334, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 6), std::nullopt);
+  expect_true(!output.accepted && !output.control_valid,
+              "first visual return remains confirmation-only after expiry");
+  plan = controller.begin_frame(7, 367, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 7), std::nullopt);
+  expect_true(output.accepted && output.control_valid &&
+                  output.control_source == ControlSource::kObservation &&
+                  !controller.motion_.prediction_confident(367),
+              "confirmed visual recovery ends motion search and restores observation control");
+
+  ControllerConfig occlusion_config = config;
+  occlusion_config.occlusion_reference_window = 3;
+  LongTermController partial_occlusion(occlusion_config);
+  const BBox stable{60, 40, 20, 20};
+  partial_occlusion.initialize(stable, 0, 0, {240, 160});
+  for (std::uint64_t frame = 1; frame <= 3; ++frame) {
+    plan = partial_occlusion.begin_frame(frame, frame * 40, false);
+    output = partial_occlusion.finish_frame(
+        plan, reliable_pair(plan, stable, frame), std::nullopt);
+  }
+  plan = partial_occlusion.begin_frame(4, 160, false);
+  output = partial_occlusion.finish_frame(
+      plan, reliable_pair(plan, BBox{63, 40, 14, 20}, 4), std::nullopt);
+  expect_true(!output.accepted && !output.occlusion_hold_triggered &&
+                  output.control_valid && output.motion_control_authorized &&
+                  output.control_source == ControlSource::kMotionSearch &&
+                  output.tracking_bbox.width == stable.width,
+              "reliable partial-occlusion collapse starts time-based search without committing scale");
+}
+
 }  // namespace
 
 int main() {
@@ -1680,6 +1778,7 @@ int main() {
   test_coast_probe_stale_identity_and_reset();
 
   test_target_class_gate();
+  test_time_based_motion_search_control();
 
   const auto expect_enum_name = [](auto value, const char* expected) {
     expect_true(std::string(to_string(value)) == expected,

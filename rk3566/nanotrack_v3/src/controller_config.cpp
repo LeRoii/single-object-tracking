@@ -129,6 +129,12 @@ void set_value(ControllerConfig& config,
   else if (key == "motion_alpha") config.motion_alpha = parse_float(key, value);
   else if (key == "motion_beta") config.motion_beta = parse_float(key, value);
   else if (key == "motion_max_dt_ms") config.motion_max_dt_ms = parse_integer(key, value);
+  else if (key == "motion_search_enabled") config.motion_search_enabled = parse_bool(key, value);
+  else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
+  else if (key == "motion_max_speed_diagonals_per_s") config.motion_max_speed_diagonals_per_s = parse_float(key, value);
+  else if (key == "motion_max_acceleration_diagonals_per_s2") config.motion_max_acceleration_diagonals_per_s2 = parse_float(key, value);
+  else if (key == "motion_scale_rate_limit_per_s") config.motion_scale_rate_limit_per_s = parse_float(key, value);
+  else if (key == "search_probe_interval_ms") config.search_probe_interval_ms = parse_integer(key, value);
   else throw std::invalid_argument("unknown controller config key: " + key);
 }
 
@@ -321,6 +327,20 @@ void validate_controller_config(const ControllerConfig& config) {
       !in_unit_interval(config.motion_beta) || config.motion_max_dt_ms <= 0) {
     throw std::invalid_argument("motion filter parameters are invalid");
   }
+  const float motion_limits[] = {
+      config.motion_max_speed_diagonals_per_s,
+      config.motion_max_acceleration_diagonals_per_s2,
+      config.motion_scale_rate_limit_per_s};
+  for (const float value : motion_limits) {
+    if (!std::isfinite(value) || value <= 0.0F) {
+      throw std::invalid_argument(
+          "motion search limits must be finite and positive");
+    }
+  }
+  if (config.motion_search_confidence_ms <= 0 ||
+      config.search_probe_interval_ms <= 0) {
+    throw std::invalid_argument("motion search timing must be positive");
+  }
 }
 
 ControllerConfig load_controller_config(const std::string& path) {
@@ -396,7 +416,15 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.detector_confirmation_max_area_log_change << '|'
          << config.detector_confirmation_max_aspect_log_change << '|'
          << config.uncertain_ms << '|' << config.local_recovery_ms << '|'
-         << config.assisted_recovery_ms;
+         << config.assisted_recovery_ms << '|'
+         << config.motion_alpha << '|' << config.motion_beta << '|'
+         << config.motion_max_dt_ms << '|'
+         << config.motion_search_enabled << '|'
+         << config.motion_search_confidence_ms << '|'
+         << config.motion_max_speed_diagonals_per_s << '|'
+         << config.motion_max_acceleration_diagonals_per_s2 << '|'
+         << config.motion_scale_rate_limit_per_s << '|'
+         << config.search_probe_interval_ms;
   return stream.str();
 }
 

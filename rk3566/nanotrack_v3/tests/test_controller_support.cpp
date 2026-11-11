@@ -226,7 +226,13 @@ int main() {
              "assisted_recovery_ms=3000\n"
              "motion_alpha=1.0\n"
              "motion_beta=0.5\n"
-             "motion_max_dt_ms=200\n");
+             "motion_max_dt_ms=200\n"
+             "motion_search_enabled=true\n"
+             "motion_search_confidence_ms=900\n"
+             "motion_max_speed_diagonals_per_s=0.75\n"
+             "motion_max_acceleration_diagonals_per_s2=2.5\n"
+             "motion_scale_rate_limit_per_s=0.30\n"
+             "search_probe_interval_ms=120\n");
   const ControllerConfig visible = load_controller_config(visible_path);
   expect_occlusion_defaults(visible, "legacy configuration with missing keys");
   expect_true(visible.sensor == "visible" && !visible.calibrated,
@@ -263,6 +269,16 @@ int main() {
   expect_true(visible.uncertain_ms == 200 &&
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
+  expect_true(visible.motion_search_enabled &&
+                  visible.motion_search_confidence_ms == 900 &&
+                  visible.search_probe_interval_ms == 120,
+              "time-based motion search settings parse explicitly");
+  expect_near(visible.motion_max_speed_diagonals_per_s, 0.75F, 1e-6F,
+              "motion speed cap parses explicitly");
+  expect_near(visible.motion_max_acceleration_diagonals_per_s2, 2.5F, 1e-6F,
+              "motion acceleration cap parses explicitly");
+  expect_near(visible.motion_scale_rate_limit_per_s, 0.30F, 1e-6F,
+              "motion scale-rate cap parses explicitly");
 
   const std::string infrared_path = "/tmp/nanotrack_infrared_test.conf";
   write_file(infrared_path,
@@ -308,6 +324,18 @@ int main() {
   identity_variant.max_reacquisition_center_distance = 0.80F;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes ordinary recovery center distance");
+  identity_variant = default_visible;
+  identity_variant.motion_search_enabled = true;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes motion search enablement");
+  identity_variant = default_visible;
+  identity_variant.motion_search_confidence_ms += 1;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes motion search confidence time");
+  identity_variant = default_visible;
+  identity_variant.motion_max_speed_diagonals_per_s *= 0.5F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes normalized motion speed cap");
 
   const std::string unknown_path = "/tmp/nanotrack_unknown_test.conf";
   write_file(unknown_path, "sensor=visible\nunknown_key=1\n");
@@ -604,6 +632,63 @@ int main() {
                 "repeated prediction timestamp must fail");
   expect_throws([&] { motion.correct(BBox{20, 20, 10, 10}, 199); },
                 "correction timestamp must match latest prediction");
+
+  ControllerConfig bounded_motion_config = motion_config;
+  bounded_motion_config.motion_search_confidence_ms = 200;
+  bounded_motion_config.motion_max_speed_diagonals_per_s = 0.20F;
+  bounded_motion_config.motion_max_acceleration_diagonals_per_s2 = 0.40F;
+  bounded_motion_config.motion_scale_rate_limit_per_s = 0.25F;
+  MotionEstimator bounded_motion(bounded_motion_config);
+  bounded_motion.initialize(BBox{100, 80, 40, 30}, 0, 1000, 600);
+  std::int64_t sample_time = 0;
+  float sample_x = 100.0F;
+  for (const std::int64_t dt_ms : {16, 33, 67, 200}) {
+    sample_time += dt_ms;
+    sample_x += 0.04F * static_cast<float>(dt_ms);
+    bounded_motion.predict(sample_time);
+    bounded_motion.correct(BBox{sample_x, 80, 80, 15}, sample_time);
+    const MotionSnapshot snapshot = bounded_motion.snapshot(sample_time);
+    const float diagonal = std::hypot(1000.0F, 600.0F);
+    expect_true(std::isfinite(snapshot.velocity_x) &&
+                    std::isfinite(snapshot.acceleration_x) &&
+                    std::hypot(snapshot.velocity_x, snapshot.velocity_y) <=
+                        0.20F * diagonal + 1e-3F &&
+                    std::hypot(snapshot.acceleration_x, snapshot.acceleration_y) <=
+                        0.40F * diagonal + 1e-3F,
+                "variable-dt accepted observations keep finite bounded derivatives");
+    expect_true(std::fabs(snapshot.scale_velocity_width) <=
+                        snapshot.bbox.width * 0.25F + 1e-3F &&
+                    std::fabs(snapshot.scale_velocity_height) <=
+                        snapshot.bbox.height * 0.25F + 1e-3F,
+                "accepted scale changes obey the per-second rate limit");
+  }
+  bounded_motion.begin_search(sample_time);
+  expect_true(bounded_motion.prediction_confident(sample_time) &&
+                  bounded_motion.prediction_confident(sample_time + 200) &&
+                  !bounded_motion.prediction_confident(sample_time + 201),
+              "motion confidence is inclusive and expires by elapsed time");
+  const MotionSnapshot searching = bounded_motion.snapshot(sample_time + 67);
+  expect_true(searching.search_age_ms == 67 && searching.prediction_confident,
+              "motion snapshot publishes time-based search age and confidence");
+  bounded_motion.end_search();
+  expect_true(!bounded_motion.prediction_confident(sample_time + 67) &&
+                  bounded_motion.snapshot(sample_time + 67).search_age_ms == -1,
+              "ending search removes motion-control confidence");
+  MotionEstimator uninitialized_motion(bounded_motion_config);
+  expect_throws([&] { uninitialized_motion.snapshot(0); },
+                "uninitialized motion snapshots fail closed");
+
+  for (int invalid_case = 0; invalid_case < 5; ++invalid_case) {
+    ControllerConfig invalid_motion_config;
+    if (invalid_case == 0) invalid_motion_config.motion_search_confidence_ms = 0;
+    if (invalid_case == 1) invalid_motion_config.motion_max_speed_diagonals_per_s = 0.0F;
+    if (invalid_case == 2) invalid_motion_config.motion_max_acceleration_diagonals_per_s2 = -1.0F;
+    if (invalid_case == 3) invalid_motion_config.motion_scale_rate_limit_per_s =
+        std::numeric_limits<float>::quiet_NaN();
+    if (invalid_case == 4) invalid_motion_config.search_probe_interval_ms = 0;
+    expect_throws([&] { validate_controller_config(invalid_motion_config); },
+                  "invalid motion-search limits fail configuration validation");
+  }
 
   MotionEstimator clipped(motion_config);
   clipped.initialize(BBox{90.0F, 70.0F, 10.0F, 10.0F}, 0, 100, 80);

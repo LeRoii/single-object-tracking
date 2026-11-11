@@ -298,6 +298,7 @@ class LongTermController {
   // Keep that interval so late completions retain their invalidation reason
   // after coast expiry/recovery, without retaining an unbounded generation set.
   std::uint64_t detector_session_generation_ = 0;
+  bool motion_search_active_ = false;
   bool initialized_ = false;
   bool frame_open_ = false;
 };

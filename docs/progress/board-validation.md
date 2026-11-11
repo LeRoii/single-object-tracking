@@ -1,5 +1,33 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T12:20:56+08:00 通用时间制有界 motion search 主机实现
+
+- 在 `codex/occ-video-1-tracking`、Task 3 起点
+  `339d5e0a50fef15af8f9666f2664678d35d91e99` 以 TDD 增加默认关闭的
+  `motion_search_enabled`，以及毫秒置信期、按画面对角线归一化的速度/加速度上限、每秒尺度
+  变化上限和搜索探测间隔。配置解析、验证和 identity 均覆盖这些字段；结果提交可用
+  `git log -1 --format=%H -- rk3566/nanotrack_v3/src/motion_estimator.cpp` 查询。
+- motion estimator 只从已接受视觉观测修正速度、加速度和尺度速度，支持 16/33/67 ms
+  变帧率与丢帧时间步，所有导数有界、预测框有限且裁进画面。公开 snapshot 给出运动导数、
+  search age 和时间置信状态；时间倒退、未初始化及非有限状态继续 fail closed。
+- 候选开关启用后，第一个未接受观测立即进入 `SEARCHING`，保留最近接受尺度并以 motion
+  prediction 同时发布 `tracking_bbox`/`control_bbox`，在置信期内明确发布
+  `observation_valid=false`、`control_valid=true`、`control_source=MOTION_SEARCH`；详细模式在
+  UNCERTAIN/LOCAL/ASSISTED 间变化不会中断授权。置信期后仍是搜索态但撤销控制；两次一致的
+  NanoTrack 视觉确认恢复 `OBSERVATION` 控制。高质量但满足遮挡缩框证据的观测不会被提交，
+  也不会走旧的固定帧数 coast 授权。
+- 每个搜索 episode 只递增一次 detector eligibility generation，并清空确认、候选和旧请求；
+  重复拒绝不会重复递增。旧默认 `motion_search_enabled=false`，因此既有 RK3566 配置的普通拒绝
+  与 frame-count coast 行为保持不变。
+- RED 阶段三个聚焦目标因新增字段和接口不存在而编译失败；GREEN 后命令
+  `ctest --test-dir /tmp/nanotrack-occ-plan -R 'controller_support|long_term_controller|long_term_replay' --output-on-failure`
+  为 `3/3` 通过，随后完整构建及 CTest 为 `19/19` 通过、`0` 失败、总时间 `3.29 sec`，
+  `git diff --check` 无输出。
+- 本里程碑仅是主机合成状态矩阵证据，未同步、编译或运行 RK3588/RK3566，未改变 ONNX/RKNN
+  模型或工件哈希，也不能表述为 `occ_video_1` 已通过、阈值已完成真值标定或真实云台验收。
+  下一步仍需实现搜索期 detector shadow hint、两击重捕、schema 10，再按冻结 evaluator 在
+  RK3588 完整复跑。
+
 ## 2026-11-11T12:13:38+08:00 观测有效性与控制来源外部语义契约
 
 - 在 `codex/occ-video-1-tracking`、Task 2 起点

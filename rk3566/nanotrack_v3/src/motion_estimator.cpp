@@ -19,11 +19,14 @@ void MotionEstimator::initialize(const BBox& bbox,
   frame_height_ = frame_height;
   set_state_from_bbox(bbox);
   velocity_x_ = velocity_y_ = velocity_width_ = velocity_height_ = 0.0F;
+  acceleration_x_ = acceleration_y_ = 0.0F;
   last_timestamp_ms_ = timestamp_ms;
   last_dt_seconds_ = 0.0F;
   initialized_ = true;
   correction_allowed_ = false;
   scale_frozen_ = false;
+  correction_count_ = 0;
+  search_start_ms_.reset();
 }
 
 BBox MotionEstimator::predict(std::int64_t timestamp_ms) {
@@ -34,8 +37,14 @@ BBox MotionEstimator::predict(std::int64_t timestamp_ms) {
   const std::int64_t elapsed_ms = timestamp_ms - last_timestamp_ms_;
   const std::int64_t capped_ms = std::min(elapsed_ms, config_.motion_max_dt_ms);
   last_dt_seconds_ = static_cast<float>(capped_ms) / 1000.0F;
-  center_x_ += velocity_x_ * last_dt_seconds_;
-  center_y_ += velocity_y_ * last_dt_seconds_;
+  clamp_derivatives();
+  center_x_ += velocity_x_ * last_dt_seconds_ +
+               0.5F * acceleration_x_ * last_dt_seconds_ * last_dt_seconds_;
+  center_y_ += velocity_y_ * last_dt_seconds_ +
+               0.5F * acceleration_y_ * last_dt_seconds_ * last_dt_seconds_;
+  velocity_x_ += acceleration_x_ * last_dt_seconds_;
+  velocity_y_ += acceleration_y_ * last_dt_seconds_;
+  clamp_derivatives();
   if (!scale_frozen_) {
     width_ = std::max(1.0F, width_ + velocity_width_ * last_dt_seconds_);
     height_ = std::max(1.0F, height_ + velocity_height_ * last_dt_seconds_);
@@ -68,19 +77,33 @@ void MotionEstimator::correct(const BBox& observation, std::int64_t timestamp_ms
   }
   if (last_dt_seconds_ > 0.0F) {
     const float gain = config_.motion_beta / last_dt_seconds_;
+    const float previous_velocity_x = velocity_x_;
+    const float previous_velocity_y = velocity_y_;
     velocity_x_ += gain * residual_x;
     velocity_y_ += gain * residual_y;
     if (!scale_frozen_) {
       velocity_width_ += gain * residual_width;
       velocity_height_ += gain * residual_height;
     }
+    clamp_derivatives();
+    if (correction_count_ > 0) {
+      acceleration_x_ =
+          (velocity_x_ - previous_velocity_x) / last_dt_seconds_;
+      acceleration_y_ =
+          (velocity_y_ - previous_velocity_y) / last_dt_seconds_;
+    } else {
+      acceleration_x_ = 0.0F;
+      acceleration_y_ = 0.0F;
+    }
   }
   if (scale_frozen_) {
     velocity_width_ = 0.0F;
     velocity_height_ = 0.0F;
   }
+  clamp_derivatives();
   clamp_state_to_frame();
   correction_allowed_ = false;
+  ++correction_count_;
 }
 
 void MotionEstimator::freeze_scale(float width, float height) {
@@ -102,6 +125,76 @@ void MotionEstimator::freeze_scale(float width, float height) {
   clamp_state_to_frame();
   velocity_x_ = preserved_velocity_x;
   velocity_y_ = preserved_velocity_y;
+  clamp_derivatives();
+}
+
+void MotionEstimator::begin_search(std::int64_t timestamp_ms) {
+  if (!initialized_) throw std::logic_error("motion estimator is not initialized");
+  if (timestamp_ms != last_timestamp_ms_) {
+    throw std::invalid_argument(
+        "motion search must start at the latest prediction timestamp");
+  }
+  if (!search_start_ms_) search_start_ms_ = timestamp_ms;
+}
+
+void MotionEstimator::end_search() noexcept { search_start_ms_.reset(); }
+
+bool MotionEstimator::prediction_confident(std::int64_t timestamp_ms) const {
+  if (!initialized_ || !search_start_ms_) return false;
+  if (timestamp_ms < *search_start_ms_) {
+    throw std::invalid_argument("motion search timestamp moved backwards");
+  }
+  return timestamp_ms - *search_start_ms_ <=
+         config_.motion_search_confidence_ms;
+}
+
+MotionSnapshot MotionEstimator::snapshot(std::int64_t timestamp_ms) const {
+  if (!initialized_) throw std::logic_error("motion estimator is not initialized");
+  MotionSnapshot result;
+  result.bbox = current_bbox_;
+  result.velocity_x = velocity_x_;
+  result.velocity_y = velocity_y_;
+  result.acceleration_x = acceleration_x_;
+  result.acceleration_y = acceleration_y_;
+  result.scale_velocity_width = velocity_width_;
+  result.scale_velocity_height = velocity_height_;
+  if (search_start_ms_) {
+    if (timestamp_ms < *search_start_ms_) {
+      throw std::invalid_argument("motion snapshot timestamp moved backwards");
+    }
+    result.search_age_ms = timestamp_ms - *search_start_ms_;
+    result.prediction_confident = prediction_confident(timestamp_ms);
+  }
+  return result;
+}
+
+void MotionEstimator::clamp_derivatives() {
+  const float diagonal = std::hypot(static_cast<float>(frame_width_),
+                                    static_cast<float>(frame_height_));
+  const auto clamp_vector = [](float& x, float& y, float limit) {
+    const float magnitude = std::hypot(x, y);
+    if (!std::isfinite(magnitude)) {
+      throw std::runtime_error("motion derivatives became non-finite");
+    }
+    if (magnitude > limit && magnitude > 0.0F) {
+      const float scale = limit / magnitude;
+      x *= scale;
+      y *= scale;
+    }
+  };
+  clamp_vector(velocity_x_, velocity_y_,
+               config_.motion_max_speed_diagonals_per_s * diagonal);
+  clamp_vector(acceleration_x_, acceleration_y_,
+               config_.motion_max_acceleration_diagonals_per_s2 * diagonal);
+  if (!std::isfinite(velocity_width_) || !std::isfinite(velocity_height_)) {
+    throw std::runtime_error("motion scale derivatives became non-finite");
+  }
+  const float width_limit =
+      std::max(1.0F, width_) * config_.motion_scale_rate_limit_per_s;
+  const float height_limit =
+      std::max(1.0F, height_) * config_.motion_scale_rate_limit_per_s;
+  velocity_width_ = std::clamp(velocity_width_, -width_limit, width_limit);
+  velocity_height_ = std::clamp(velocity_height_, -height_limit, height_limit);
 }
 
 BBox MotionEstimator::state_to_bbox() const {

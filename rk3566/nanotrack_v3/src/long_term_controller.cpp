@@ -141,6 +141,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   hold_remaining_frames_ = 0;
   hold_used_for_loss_ = false;
   frozen_scale_reference_.reset();
+  motion_search_active_ = false;
   initialized_ = true;
   frame_open_ = false;
 }
@@ -199,6 +200,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     hold_remaining_frames_ = 0;
     occlusion_coast_age_frames_ = 0;
     coast_probe_candidate_.reset();
+    motion_search_active_ = false;
+    motion_.end_search();
     mode_ = timestamp_mode;
     throw;
   }
@@ -262,13 +265,19 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.frame_id = frame_id;
   plan.timestamp_ms = timestamp_ms;
   plan.mode = mode_;
-  plan.tracking_phase = mode_ == TrackingMode::kTracking
+  plan.tracking_phase = mode_ == TrackingMode::kTracking &&
+                                !motion_search_active_
                             ? TrackingPhase::kTracking
                             : TrackingPhase::kSearching;
   // A plan is created before tracker inference and therefore never claims a
   // current-frame visual observation or observation-derived control.
   plan.observation_valid = false;
-  plan.control_source = ControlSource::kNone;
+  plan.motion_control_authorized =
+      config_.motion_search_enabled && motion_search_active_ &&
+      motion_.prediction_confident(timestamp_ms);
+  plan.control_source = plan.motion_control_authorized
+                            ? ControlSource::kMotionSearch
+                            : ControlSource::kNone;
   plan.motion_predicted_bbox = motion_predicted;
   plan.predicted_bbox = predicted;
   plan.search_scale = source == HypothesisSource::kDetector
@@ -740,6 +749,8 @@ void LongTermController::accept_observation(
   } else {
     motion_.correct(output.tracking_bbox, plan.timestamp_ms);
   }
+  motion_.end_search();
+  motion_search_active_ = false;
   width_scale_state_ = std::move(next_width);
   height_scale_state_ = std::move(next_height);
   current_bbox_ = output.tracking_bbox;
@@ -1134,7 +1145,7 @@ ControllerOutput LongTermController::finish_frame(
     occlusion_decision_ = occlusion_evidence_.observe_gap();
   }
   publish_occlusion_evidence(output);
-  if (selected && !hold_used_for_loss_ && hold_source_mode &&
+  if (!config_.motion_search_enabled && selected && !hold_used_for_loss_ && hold_source_mode &&
       !detector_verification_active && occlusion_decision_.triggered) {
     const ScaleReference reference{*occlusion_decision_.reference_width,
                                    *occlusion_decision_.reference_height};
@@ -1200,6 +1211,7 @@ ControllerOutput LongTermController::finish_frame(
     output.area_log_change = selected->area_log_change;
     output.aspect_log_change = selected->aspect_log_change;
     if (selected->quality == QualityLevel::kReliable &&
+        !(config_.motion_search_enabled && occlusion_decision_.triggered) &&
         plan.hypothesis_source != HypothesisSource::kDetector) {
       const bool recovery = loss_start_ms_.has_value() ||
                             plan.mode != TrackingMode::kTracking ||
@@ -1287,7 +1299,21 @@ ControllerOutput LongTermController::finish_frame(
     if (!loss_start_ms_) loss_start_ms_ = plan.timestamp_ms;
     mode_ = mode_for_timestamp(plan.timestamp_ms);
     output.mode = mode_;
-    output.control_valid = false;
+    if (config_.motion_search_enabled && !motion_search_active_) {
+      motion_.begin_search(plan.timestamp_ms);
+      motion_search_active_ = true;
+      ++detector_eligibility_generation_;
+      confirmations_.clear();
+      coast_probe_candidate_.reset();
+      detector_candidates_.clear();
+      active_detector_candidate_.reset();
+      last_detector_request_ms_.reset();
+      last_detector_request_frame_.reset();
+    }
+    output.motion_control_authorized =
+        config_.motion_search_enabled && motion_search_active_ &&
+        motion_.prediction_confident(plan.timestamp_ms);
+    output.control_valid = output.motion_control_authorized;
     output.accepted = false;
     stable_frames_ = 0;
   }

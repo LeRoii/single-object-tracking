@@ -96,6 +96,30 @@ int main() {
                       AcceptedObservationPath::kShortConfirmation,
               "short gap resumes through bounded confirmation after two consistent frames");
 
+  ControllerConfig motion_search_config = config;
+  motion_search_config.motion_search_enabled = true;
+  motion_search_config.motion_search_confidence_ms = 160;
+  motion_search_config.motion_max_speed_diagonals_per_s = 0.75F;
+  motion_search_config.motion_max_acceleration_diagonals_per_s2 = 3.0F;
+  motion_search_config.motion_scale_rate_limit_per_s = 0.30F;
+  motion_search_config.search_probe_interval_ms = 80;
+  LongTermController motion_search(motion_search_config);
+  motion_search.initialize(initial, 0, 0, frame_size,
+      make_unknown_target_class(TargetClassReason::kNoMatch));
+  output = step(motion_search, 1, 40, BBox{44, 30, 20, 20});
+  output = step(motion_search, 2, 80, BBox{48, 30, 20, 20});
+  output = step(motion_search, 3, 120, std::nullopt);
+  expect_true(output.control_valid && !output.observation_valid &&
+                  output.tracking_phase == TrackingPhase::kSearching &&
+                  output.control_source == ControlSource::kMotionSearch,
+              "candidate replay drives motion search immediately on occlusion");
+  output = step(motion_search, 4, 200, std::nullopt);
+  expect_true(output.control_valid && output.motion_control_authorized,
+              "candidate replay continues motion control across recovery modes");
+  output = step(motion_search, 5, 281, std::nullopt);
+  expect_true(!output.control_valid && !output.motion_control_authorized,
+              "candidate replay fails closed after time confidence expires");
+
   LongTermController assisted(config);
   assisted.initialize(initial, 0, 0, frame_size,
       make_unknown_target_class(TargetClassReason::kNoMatch));
