@@ -1763,6 +1763,7 @@ void test_search_detector_shadow_hint_isolation() {
   using namespace nanotrack;
   ControllerConfig config;
   config.motion_search_enabled = true;
+  config.search_reacquisition_requires_detector = true;
   config.motion_search_confidence_ms = 1000;
   config.detector_interval_ms = 100;
   config.detector_stale_ms = 150;
@@ -1828,7 +1829,8 @@ void test_search_detector_shadow_hint_isolation() {
                       AcceptedObservationPath::kSearchReacquisition &&
                   output.control_bbox.x == plan.predicted_bbox.x &&
                   output.search_hint &&
-                  output.search_hint->confirmation_count == 2,
+                  output.search_hint->confirmation_count == 2 &&
+                  output.search_hint->used,
               "second identity-consistent shadow observation commits atomically");
   plan = controller.begin_frame(6, 181, true);
   expect_true(!plan.request_detector && !plan.search_hint &&
@@ -1893,8 +1895,25 @@ void test_atomic_search_reacquisition_and_template_probation() {
   config.max_center_distance = 10.0F;
   config.max_area_log_change = 10.0F;
   config.max_aspect_log_change = 10.0F;
-  LongTermController controller(config);
+  ControllerConfig detector_required = config;
+  detector_required.search_reacquisition_requires_detector = true;
+  LongTermController tracker_only_rejected(detector_required);
   const BBox initial{40, 30, 20, 20};
+  tracker_only_rejected.initialize(initial, 0, 0, {240, 160});
+  reject_frame(tracker_only_rejected, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    auto tracker_plan = tracker_only_rejected.begin_frame(
+        frame, static_cast<std::int64_t>(frame * 40), false);
+    const auto tracker_output = tracker_only_rejected.finish_frame(
+        tracker_plan,
+        {reliable_observation(tracker_plan, TemplateKind::kAnchor,
+                              tracker_plan.predicted_bbox, frame)},
+        std::nullopt);
+    expect_true(!tracker_output.accepted && !tracker_output.search_hint &&
+                    tracker_output.control_source == ControlSource::kMotionSearch,
+                "detector-required search recovery rejects tracker-only confirmations");
+  }
+  LongTermController controller(config);
   controller.initialize(initial, 0, 0, {240, 160});
   auto output = reject_frame(controller, 1, 40);
   const BBox committed_before = controller.current_bbox();

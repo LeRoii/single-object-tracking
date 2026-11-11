@@ -1,5 +1,31 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T13:01:15+08:00 C001 development 失败与 C002 detector-required 候选
+
+- C001 在 RK3588 `/home/neardi/Project/SOT/occ-candidate-cbd38a5/runs/C001-development`
+  严格以 `--max-frames 189` 完成，SUMMARY `tracked_frames=189`、mean runtime `9.148 ms`、
+  mean pipeline `111.934 ms`、end-to-end `8.934 FPS`；没有读取 190--270。二进制 SHA-256
+  `f58f22bb9e2bb6ba5821841d1402d3869e9978097d921d7bfb0cd5933199439d`，输入和所有
+  RK3588 ONNX 派生模型/detector 哈希在运行前复核与 C000 一致。
+- evaluator development 明确 FAIL：continuous control PASS，但 tracker-only shadow candidate
+  在 171、183、186 三次错误重捕；full-occlusion semantics 于 172--173 失败，visible mean IoU
+  `0.731970`，182--189 可见框与 183 以后 identity proxy 失败，运动速度/加速度也越过真值参考。
+  JSON/Markdown SHA-256 为 `4aeb6e574db8c3fbbb466e176f9a373b559f725fefe1c419ad10bd1d9f290771`、
+  `e616374ebb4b9432d2e5c31c1ffea14b6333ea1a5624e99637160034cb5dac15`。
+- 同一真实输出暴露 verifier 将 `motion_control_authorized` 仍限定为旧
+  `OCCLUSION_HOLD`，从而错误拒绝 frame 169 的 `UNCERTAIN / SEARCHING / MOTION_SEARCH`。
+  新增 valid motion-search fixture 先复现 RED，再改为依据 schema 10 phase/source/confidence
+  授权；旧 HOLD 的 age/budget 约束仍保留。
+- C002 增加通用 `search_reacquisition_requires_detector=true`，默认 false 保持兼容；搜索态的
+  非 detector 观测不再落入 legacy ordinary recovery，只能维持 motion control。detector 仍只是
+  class/generation/position 安全的搜索种子，最终授权继续要求 anchor/recent 与两击几何一致，
+  detector 本身不能直接控制。两击提交的 hint 同时明确记录 `used=true`。
+- 配置解析、identity、metadata、verifier 与候选文件已同步，新候选配置 SHA-256
+  `bb3513919fd4cc78ae3ae78b38057882ffa96d14bf22429a7f3120fd54e51901`；定向
+  `controller_support|long_term_controller|long_term_runtime|tracking_log|verify_board_schema`
+  为 `5/5` 通过。C001/C002 证据已只追加写入 calibration ledger。
+- C002 尚未提交、部署或运行；没有 holdout 证据，不能宣称已重捕或已标定。
+
 ## 2026-11-11T12:53:27+08:00 development-only 鲁棒性聚合器与 RK3588 首次构建审计
 
 - 在 `codex/occ-video-1-tracking`、Task 8 起点

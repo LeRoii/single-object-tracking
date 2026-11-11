@@ -1356,7 +1356,8 @@ ControllerOutput LongTermController::finish_frame(
                     output.template_iou >= config_.template_agreement_iou);
     if (candidate_search_path &&
         plan.hypothesis_source != HypothesisSource::kDetector) {
-      if (anchor && anchor->quality == QualityLevel::kReliable &&
+      if (!config_.search_reacquisition_requires_detector && anchor &&
+          anchor->quality == QualityLevel::kReliable &&
           recent_allows_search_hit && !occlusion_decision_.triggered) {
         selected = anchor;
         accepted = update_search_confirmation(
@@ -1367,8 +1368,10 @@ ControllerOutput LongTermController::finish_frame(
         }
         if (accepted) {
           acceptance_path = AcceptedObservationPath::kSearchReacquisition;
+          output.search_hint->used = true;
         }
-      } else if (anchor || recent) {
+      } else if (!config_.search_reacquisition_requires_detector &&
+                 (anchor || recent)) {
         search_confirmation_candidate_.reset();
         pending_search_hint_.reset();
       }
@@ -1460,6 +1463,7 @@ ControllerOutput LongTermController::finish_frame(
         if (accepted) {
           selected = anchor;
           acceptance_path = AcceptedObservationPath::kSearchReacquisition;
+          output.search_hint->used = true;
         }
       } else if (was_locked || plan.search_hint) {
         search_confirmation_candidate_.reset();

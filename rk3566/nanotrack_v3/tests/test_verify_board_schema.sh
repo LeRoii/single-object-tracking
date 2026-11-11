@@ -155,6 +155,7 @@ metadata = {
     "accepted_center_max_correction_ratio": 0.25,
     "max_reacquisition_center_distance": 0.75,
     "motion_search_enabled": True,
+    "search_reacquisition_requires_detector": True,
     "motion_search_confidence_ms": 1000,
     "motion_max_speed_diagonals_per_s": 1.0,
     "motion_max_acceleration_diagonals_per_s2": 2.0,
@@ -222,7 +223,7 @@ PY
 cp "$artifact_dir/bboxes.csv" "$artifact_dir/bboxes.valid.csv"
 cp "$artifact_dir/session-metadata.json" "$artifact_dir/metadata.base.json"
 review_failures=0
-for review_case in budget_valid budget_age13 recovery_valid recovery_bad_cross recovery_bad_template recovery_bad_geometry; do
+for review_case in budget_valid budget_age13 motion_search_valid recovery_valid recovery_bad_cross recovery_bad_template recovery_bad_geometry; do
   cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
   cp "$artifact_dir/metadata.base.json" "$artifact_dir/session-metadata.json"
   python3 - "$artifact_dir" "$review_case" <<'PY'
@@ -239,6 +240,12 @@ if case.startswith("budget_"):
     if case == "budget_age13":
         rows[2]["occlusion_coast_age_frames"] = "13"
         rows[2]["occlusion_hold_remaining_frames"] = "1"
+elif case == "motion_search_valid":
+    rows[1].update({
+        "state": "UNCERTAIN", "quality": "REJECTED", "accepted": "0",
+        "tracking_phase": "SEARCHING", "observation_valid": "0",
+        "control_source": "MOTION_SEARCH", "motion_control_authorized": "1",
+        "motion_prediction_confident": "1", "motion_search_age_ms": "33"})
 else:
     row = rows[2]
     row.update({"state": "TRACKING", "quality": "RELIABLE", "accepted": "1",

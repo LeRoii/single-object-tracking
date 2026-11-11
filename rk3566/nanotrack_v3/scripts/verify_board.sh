@@ -127,6 +127,8 @@ for key in ("motion_max_speed_diagonals_per_s",
         raise SystemExit(f"invalid metadata {key}")
 if not isinstance(metadata.get("motion_search_enabled"), bool):
     raise SystemExit("invalid metadata motion_search_enabled")
+if not isinstance(metadata.get("search_reacquisition_requires_detector"), bool):
+    raise SystemExit("invalid metadata search_reacquisition_requires_detector")
 if not isinstance(metadata.get("controller_config_identity"), str) or not metadata["controller_config_identity"]:
     raise SystemExit("invalid metadata controller_config_identity")
 
@@ -323,7 +325,15 @@ for index, row in enumerate(rows):
     auth = row["motion_control_authorized"] == "1"
     hold = row["state"] == "OCCLUSION_HOLD"
     coast_budget = min(12, metadata["occlusion_hold_frames"])
-    if age > coast_budget or (hold and (age == 0 or not auth)) or (auth and (not hold or row["control_valid"] != "1" or row["hypothesis_source"] != "MOTION")):
+    semantic_motion_search = (
+        row["tracking_phase"] == "SEARCHING" and
+        row["control_source"] == "MOTION_SEARCH" and
+        row["motion_prediction_confident"] == "1" and
+        row["control_valid"] == "1" and
+        row["hypothesis_source"] == "MOTION"
+    )
+    if (age > coast_budget or (hold and (age == 0 or not auth)) or
+            (auth and not semantic_motion_search)):
         raise SystemExit(f"invalid coast authorization at row {index}")
     if age and not hold and row["reacquired"] != "1":
         raise SystemExit(f"coast age outside hold or recovery at row {index}")
@@ -441,7 +451,8 @@ for key in {
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",
     "end_to_end_fps",
-    "motion_search_enabled", "motion_search_confidence_ms",
+    "motion_search_enabled", "search_reacquisition_requires_detector",
+    "motion_search_confidence_ms",
     "motion_max_speed_diagonals_per_s",
     "motion_max_acceleration_diagonals_per_s2",
     "motion_scale_rate_limit_per_s", "search_probe_interval_ms",

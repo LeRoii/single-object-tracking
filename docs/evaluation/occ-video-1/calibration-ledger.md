@@ -83,3 +83,50 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   `confirmation_window=3` remain unchanged.
 - Decision: `PENDING_NOT_RUN`. This entry authorizes only development-scope iteration;
   it is not a calibrated threshold claim, holdout result, or board acceptance.
+
+## C001 result — rejected tracker-only reacquisition
+
+- Timestamp: `2026-11-11T12:58:00+08:00`
+- Board root: `/home/neardi/Project/SOT/occ-candidate-cbd38a5`
+- Evidence root: `/home/neardi/Project/SOT/occ-candidate-cbd38a5/runs/C001-development`
+- Runtime source commit: `cbd38a5`
+- Executable SHA-256: `f58f22bb9e2bb6ba5821841d1402d3869e9978097d921d7bfb0cd5933199439d`
+- Config SHA-256: `495d5a0bc74d077cb333ae25affc512005b701fc432552f0994ed55607aab6c9`
+- Model, manifest, detector, labels, and video hashes: rechecked before the run and
+  identical to C000; exact lines are retained in `pre-run.sha256`.
+- Run artifact SHA-256: bboxes
+  `124b3789568f841cd571984dff28668ab3327c3d230fb04321457a9005943776`, video
+  `0ddd1840ffe3b67b07f94e2d4256e4c56c240b4b673fdf0d294a18383875c8c9`, log
+  `0921bd015662b9354615cfed7c27708302624235de62cf82949d4e235864daf0`, metadata
+  `4cde24ae30523c7c2db29c9356064a7cb5d1827dec17c1789e33b3b7a0f86f4a`.
+- Evaluator development report SHA-256: JSON
+  `4aeb6e574db8c3fbbb466e176f9a373b559f725fefe1c419ad10bd1d9f290771`, Markdown
+  `e616374ebb4b9432d2e5c31c1ffea14b6333ea1a5624e99637160034cb5dac15`.
+- Result: `FAIL`. Continuous control passed. Tracker-only two-hit candidates falsely
+  reacquired at frames 171, 183, and 186; full-occlusion semantics failed at 172--173,
+  visible mean IoU was `0.731970`, and post-reappearance identity/box gates failed.
+- Verifier observation: the committed verifier rejected frame 169 because its legacy
+  coast authorization rule incorrectly required `OCCLUSION_HOLD`; this is a verifier
+  defect, not permission to ignore the evaluator failure.
+- Decision: `REJECT`; do not use C001 for perturbation or holdout.
+
+## C002 — detector-required search authorization
+
+- Timestamp: `2026-11-11T13:00:00+08:00`
+- Parent: `C001`
+- Rationale: the failed frames show that two locally consistent anchor responses can
+  still be bridge/occluder texture. Require a class-filtered, generation-safe detector
+  candidate to seed search confirmation; NanoTrack anchor/recent evidence remains the
+  final verifier and detector still never directly authorizes control.
+- Runtime parent commit: `cbd38a5`
+- Candidate config SHA-256: `bb3513919fd4cc78ae3ae78b38057882ffa96d14bf22429a7f3120fd54e51901`
+- Changed parameter: `search_reacquisition_requires_detector false -> true`.
+- Code correction: a detector-required non-detector frame stays on motion control and
+  cannot fall through to legacy ordinary recovery; a committed two-hit hint records
+  `used=true`. Verifier authorization now recognizes semantic motion search outside
+  legacy HOLD.
+- Safety invariants: confirmation remains two hits; detector supplies only a search
+  hypothesis; anchor reliability/template geometry, ambiguity, stale/generation, and
+  fault gates remain mandatory.
+- Planned command and development scope: identical to C001 with run directory
+  `runs/C002-development`; board paths, executable/report hashes, and decision `PENDING`.
