@@ -47,7 +47,7 @@ def synthetic_contract(schema=11):
             }
         )
     return {
-        "identity": {"name": "synthetic", "frame_count": 11},
+        "identity": {"name": "synthetic", "frame_count": 11, "width": 320, "height": 240},
         "truth": truth,
         "event_frames": {
             "estimated_start": 3,
@@ -60,6 +60,27 @@ def synthetic_contract(schema=11):
         },
         "required_tracking_schema": schema,
     }
+
+
+def mark_recovery(row):
+    row.update(
+        reacquired=True,
+        motion_control_authorized=False,
+        rect0_source="ACCEPTED_OBSERVATION",
+        accepted_observation_path="search_reacquisition",
+        template_action="STAGE_RECENT",
+        template_transition_applied=True,
+        template_transition_recovery=True,
+        template_transition_result="APPLIED",
+        template_probation_active=True,
+        template_transition_reason="RECOVERY_CONFIRMED",
+        template_transaction_id=1,
+        template_slot_id=1,
+        recovery_reason="RECOVERY_STAGED",
+        recovery_confirmation_hits=2,
+        recovery_conflict=False,
+        candidate_source="RECENT",
+    )
 
 
 def passing_rows(schema=11):
@@ -78,16 +99,15 @@ def passing_rows(schema=11):
                 "trusted_for_state_update": not searching,
                 "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
                 "control_valid": True,
+                "motion_control_authorized": searching,
+                "motion_prediction_confident": searching,
+                "rect0_source": "MOTION_PREDICTION" if searching else "ACCEPTED_OBSERVATION",
                 "accepted": not searching,
                 "reacquired": frame_id == 7,
                 "tracking_bbox": [10.0 + frame_id, 20.0, 10.0, 10.0],
             }
         )
-    rows[6]["accepted"] = False
-    rows[7]["accepted"] = True
-    rows[7]["observation_valid"] = True
-    rows[7]["tracking_phase"] = "TRACKING"
-    rows[7]["control_source"] = "OBSERVATION"
+    mark_recovery(rows[7])
     return rows
 
 
@@ -330,11 +350,15 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                         "trusted_for_state_update": not searching,
                         "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
                         "control_valid": True,
+                        "motion_control_authorized": searching,
+                        "motion_prediction_confident": searching,
+                        "rect0_source": "MOTION_PREDICTION" if searching else "ACCEPTED_OBSERVATION",
                         "accepted": not searching,
                         "reacquired": item["frame_id"] == 3,
                         "tracking_bbox": box,
                     }
                 )
+            mark_recovery(rows[3])
             self.assertEqual(evaluator.evaluate(contract, rows, "full")["verdict"], "PASS")
 
     def write_tracking_csv(self, path, rows):
@@ -351,6 +375,22 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             "control_valid",
             "accepted",
             "reacquired",
+            "motion_control_authorized",
+            "motion_prediction_confident",
+            "rect0_source",
+            "accepted_observation_path",
+            "template_action",
+            "template_transition_applied",
+            "template_transition_recovery",
+            "template_transition_result",
+            "template_probation_active",
+            "template_transition_reason",
+            "template_transaction_id",
+            "template_slot_id",
+            "recovery_reason",
+            "recovery_confirmation_hits",
+            "recovery_conflict",
+            "candidate_source",
             "tracking_x",
             "tracking_y",
             "tracking_width",
@@ -369,8 +409,12 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                 for key in (
                     "observation_valid", "observation_present", "trusted_for_state_update",
                     "control_valid", "accepted", "reacquired",
+                    "motion_control_authorized", "motion_prediction_confident",
+                    "template_transition_applied", "template_transition_recovery",
+                    "template_probation_active", "recovery_conflict",
                 ):
-                    serialized[key] = "1" if row[key] else "0"
+                    if key in row:
+                        serialized[key] = "1" if row[key] else "0"
                 writer.writerow(serialized)
 
     def test_tracking_csv_parser_rejects_duplicate_nan_and_partial_boxes(self):
@@ -473,7 +517,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertFalse(passing["gates"]["full_occlusion_semantics"]["applicable"])
         self.assertIn("N/A", evaluator.render_markdown(passing))
 
-        rows[190]["reacquired"] = True
+        mark_recovery(rows[190])
         failing = evaluator.evaluate(contract, rows, "holdout")
 
         self.assertEqual(failing["verdict"], "FAIL")
@@ -488,7 +532,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         rows[4]["control_source"] = "NONE"
         rows[5]["observation_valid"] = True
         rows[7]["reacquired"] = False
-        rows[9]["reacquired"] = True
+        mark_recovery(rows[9])
         report = evaluator.evaluate(synthetic_contract(), rows, "full")
         self.assertEqual(report["verdict"], "FAIL")
         self.assertFalse(report["gates"]["visible_boxes"]["passed"])
@@ -582,6 +626,90 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         contract["tracking_session_metadata"] = {"schema_version": 10}
         report = evaluator.evaluate(contract, passing_rows(), "full")
         self.assertFalse(report["gates"]["tracking_schema"]["passed"])
+
+    def test_v11_recovery_counts_only_trusted_tracking_with_applied_recovery_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "rows.csv")
+            self.write_tracking_csv(path, passing_rows())
+            report = evaluator.evaluate(synthetic_contract(), evaluator.load_tracking_csv(path), "full")
+        self.assertTrue(report["gates"]["reacquisition"]["passed"])
+        self.assertEqual(report["reacquisition"]["frames"], [7])
+        for changes in (
+            {"state": "LOCAL_RECOVERY", "tracking_phase": "SEARCHING"},
+            {"trusted_for_state_update": False},
+            {"observation_present": False},
+            {"observation_valid": False},
+            {"accepted": False},
+            {"state": "LOST"},
+            {"control_valid": False},
+            {"control_source": "MOTION_SEARCH"},
+            {"motion_control_authorized": True},
+            {"tracking_bbox": [17.0, 20.0, 0.0, 10.0]},
+            {"tracking_bbox": [-1.0, 20.0, 10.0, 10.0]},
+            {"tracking_bbox": [319.0, 20.0, 10.0, 10.0]},
+            {"template_transition_applied": False},
+            {"template_transition_recovery": False},
+            {"template_transition_result": "TRACKER_REJECTED"},
+            {"template_action": "COMMIT_RECENT", "recovery_reason": "RECOVERY_COMMITTED"},
+            {"template_slot_id": 2},
+            {"recovery_confirmation_hits": 1},
+            {"recovery_conflict": True},
+        ):
+            with self.subTest(changes=changes):
+                rows = passing_rows()
+                rows[7].update(changes)
+                report = evaluator.evaluate(synthetic_contract(), rows, "full")
+                self.assertFalse(report["gates"]["reacquisition"]["passed"])
+                self.assertEqual(report["gates"]["reacquisition"]["frames"], [7])
+                self.assertEqual(report["reacquisition"]["frames"], [])
+
+    def test_bare_v11_recovery_flag_cannot_exempt_identity_jump(self):
+        rows = passing_rows()
+        rows[7]["reacquired"] = False
+        rows[8]["reacquired"] = True
+        rows[8]["tracking_bbox"][0] += 6.0
+        report = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertFalse(report["gates"]["reacquisition"]["passed"])
+        self.assertEqual(report["reacquisition"]["frames"], [])
+        self.assertIn(8, report["gates"]["identity_proxy"]["frames"])
+
+    def test_lost_rejects_authorized_motion_and_claimed_observation(self):
+        for changes in (
+            {"control_valid": True, "control_source": "MOTION_SEARCH"},
+            {"control_valid": True, "control_source": "OBSERVATION"},
+            {"motion_control_authorized": True},
+            {"observation_present": True},
+            {"trusted_for_state_update": True, "accepted": True, "observation_valid": True},
+        ):
+            with self.subTest(changes=changes):
+                rows = passing_rows()
+                rows[0].update(
+                    state="LOST", tracking_phase="SEARCHING", control_valid=False,
+                    control_source="NONE", observation_present=False,
+                    trusted_for_state_update=False, accepted=False, observation_valid=False,
+                )
+                clean = evaluator.evaluate(synthetic_contract(), rows, "full")
+                self.assertTrue(clean["gates"]["continuous_control"]["passed"])
+                rows[0].update(changes)
+                report = evaluator.evaluate(synthetic_contract(), rows, "full")
+                self.assertEqual(report["gates"]["continuous_control"]["frames"], [0])
+
+    def test_full_occlusion_attributes_false_observation_and_unauthorized_motion(self):
+        for changes in (
+            {"observation_present": True},
+            {"accepted": True},
+            {"trusted_for_state_update": True},
+            {"motion_control_authorized": False},
+            {"motion_prediction_confident": False},
+            {"rect0_source": "RECENT_OBSERVATION"},
+        ):
+            with self.subTest(changes=changes):
+                rows = passing_rows()
+                rows[4].update(changes)
+                report = evaluator.evaluate(synthetic_contract(), rows, "full")
+                gate = report["gates"]["full_occlusion_semantics"]
+                self.assertFalse(gate["passed"])
+                self.assertEqual(gate["frames"], [4])
 
     def test_tentative_control_requires_present_untrusted_observation_and_preserves_identity(self):
         rows = passing_rows()

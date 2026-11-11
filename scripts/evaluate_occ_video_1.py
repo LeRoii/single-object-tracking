@@ -437,6 +437,20 @@ def load_tracking_csv(path):
             ]
             if bbox[2] <= 0.0 or bbox[3] <= 0.0:
                 raise ValueError("frame {} tracking box must have positive size".format(frame_id))
+            semantic_flags = (
+                "observation_valid", "observation_present", "trusted_for_state_update",
+                "motion_control_authorized", "motion_prediction_confident",
+                "template_transition_recovery", "template_transition_applied",
+                "template_probation_active", "recovery_conflict",
+            )
+            flags = {}
+            for field in semantic_flags:
+                value = (raw.get(field) or "").strip()
+                flags[field] = _parse_bool(value, field, frame_id) if value else None
+            recovery_numbers = {}
+            for field in ("template_transaction_id", "template_slot_id", "recovery_confirmation_hits"):
+                value = (raw.get(field) or "").strip()
+                recovery_numbers[field] = int(value) if value.isascii() and value.isdecimal() else None
             rows.append(
                 {
                     "schema_version": schema_version,
@@ -444,15 +458,16 @@ def load_tracking_csv(path):
                     "timestamp_ms": timestamp_ms,
                     "state": raw["state"].strip(),
                     "tracking_phase": raw.get("tracking_phase", "").strip() or None,
-                    "observation_valid": (
-                        _parse_bool(raw["observation_valid"], "observation_valid", frame_id)
-                        if str(raw.get("observation_valid", "")).strip() else None
-                    ),
+                    **flags,
                     **{
-                        field: _parse_bool(raw[field], field, frame_id)
-                        if str(raw.get(field, "")).strip() else None
-                        for field in ("observation_present", "trusted_for_state_update")
+                        field: (raw.get(field) or "").strip() or None
+                        for field in (
+                            "rect0_source", "accepted_observation_path", "template_action",
+                            "template_transition_result", "template_transition_reason",
+                            "recovery_reason", "candidate_source",
+                        )
                     },
+                    **recovery_numbers,
                     "control_source": raw.get("control_source", "").strip() or None,
                     "control_valid": _parse_bool(raw["control_valid"], "control_valid", frame_id),
                     "accepted": _parse_bool(raw["accepted"], "accepted", frame_id),
@@ -539,7 +554,7 @@ def _gate(passed, detail, frames=None, applicable=True):
     }
 
 
-def _continuity_segments(rows):
+def _continuity_segments(rows, reacquisition_frames):
     """Split output rows at semantic control handoffs.
 
     Search motion and accepted observations are each required to be smooth
@@ -551,7 +566,7 @@ def _continuity_segments(rows):
     previous_phase = None
     for row in rows:
         phase = row.get("tracking_phase")
-        if current and (phase != previous_phase or row["reacquired"]):
+        if current and (phase != previous_phase or row["frame_id"] in reacquisition_frames):
             segments.append(current)
             current = []
         current.append(
@@ -561,6 +576,41 @@ def _continuity_segments(rows):
     if current:
         segments.append(current)
     return segments
+
+
+def _is_v11_reacquisition(row, frame_width, frame_height):
+    # A recovery stage is acknowledged on the reacquisition frame. The
+    # template commit is a separate acknowledgement after probation.
+    transaction_id = row.get("template_transaction_id")
+    bbox = row["tracking_bbox"]
+    return (
+        row["schema_version"] == REQUIRED_TRACKING_SCHEMA
+        and row["state"] == row.get("tracking_phase") == "TRACKING"
+        and all(row.get(field) is True for field in (
+            "observation_present", "accepted", "observation_valid",
+            "trusted_for_state_update", "control_valid",
+            "template_transition_recovery", "template_transition_applied",
+            "template_probation_active",
+        ))
+        and row.get("control_source") == "OBSERVATION"
+        and row.get("motion_control_authorized") is False
+        and row.get("rect0_source") == "ACCEPTED_OBSERVATION"
+        and row.get("tracking_box_source", "tracking") == "tracking"
+        and len(bbox) == 4 and all(math.isfinite(value) for value in bbox)
+        and bbox[0] >= 0.0 and bbox[1] >= 0.0 and bbox[2] > 0.0 and bbox[3] > 0.0
+        and bbox[0] + bbox[2] <= frame_width + 1e-3
+        and bbox[1] + bbox[3] <= frame_height + 1e-3
+        and row.get("accepted_observation_path") == "search_reacquisition"
+        and row.get("template_action") == "STAGE_RECENT"
+        and row.get("template_transition_result") == "APPLIED"
+        and row.get("template_transition_reason") == "RECOVERY_CONFIRMED"
+        and isinstance(transaction_id, int) and transaction_id > 0
+        and row.get("template_slot_id") == transaction_id
+        and row.get("recovery_reason") == "RECOVERY_STAGED"
+        and row.get("recovery_confirmation_hits") == 2
+        and row.get("candidate_source") in {"RECENT", "SAFE", "DETECTOR"}
+        and row.get("recovery_conflict") is False
+    )
 
 
 def evaluate(contract, rows, scope):
@@ -697,6 +747,15 @@ def evaluate(contract, rows, scope):
             and row.get("observation_valid") is False
             and row["control_valid"] is True
             and row.get("control_source") == "MOTION_SEARCH"
+            and (not recent_safe or (
+                row["state"] != "LOST"
+                and all(row.get(field) is False for field in (
+                    "observation_present", "accepted", "trusted_for_state_update",
+                ))
+                and row.get("rect0_source") == "MOTION_PREDICTION"
+                and row.get("motion_control_authorized") is True
+                and row.get("motion_prediction_confident") is True
+            ))
         ):
             semantic_failures.append(frame_id)
 
@@ -733,6 +792,43 @@ def evaluate(contract, rows, scope):
                 ))
             ):
                 source_failures.append(row["frame_id"])
+    if recent_safe:
+        source_failures.extend(
+            row["frame_id"] for row in scoped_rows
+            if row["state"] == "LOST" and (
+                row.get("tracking_phase") != "SEARCHING"
+                or row.get("control_source") != "NONE"
+                or row.get("motion_control_authorized") is True
+                or any(row.get(field) is not False for field in (
+                    "control_valid", "observation_present", "trusted_for_state_update",
+                    "accepted", "observation_valid",
+                ))
+            )
+        )
+
+    claimed_reacquisitions = [row for row in rows if row["reacquired"]]
+    frame_width = contract["identity"].get("width", math.inf)
+    frame_height = contract["identity"].get("height", math.inf)
+    invalid_reacquisitions = sorted(
+        row["frame_id"] for row in claimed_reacquisitions
+        if recent_safe and not _is_v11_reacquisition(row, frame_width, frame_height)
+    )
+    valid_reacquisitions = {row["frame_id"] for row in claimed_reacquisitions}.difference(
+        invalid_reacquisitions
+    )
+    reacquisition_frames = sorted(valid_reacquisitions)
+    first_reliable = int(events["first_reliable_reappearance"])
+    deadline = int(events.get("reacquisition_deadline_exclusive", 190))
+    reacquisition_ok = (
+        not invalid_reacquisitions
+        and len(reacquisition_frames) == 1
+        and first_reliable <= reacquisition_frames[0] < deadline
+    )
+    reacquisition_detail = "exactly one reacquisition in [{}, {}) observed {}".format(
+        first_reliable, deadline, reacquisition_frames
+    )
+    if recent_safe:
+        reacquisition_detail += ". Invalid v11 claims {}".format(invalid_reacquisitions)
 
     truth_motion_items = []
     for frame_id in required_frames:
@@ -745,7 +841,7 @@ def evaluate(contract, rows, scope):
             )
     predicted_velocity = []
     predicted_acceleration = []
-    for segment in _continuity_segments(scoped_rows):
+    for segment in _continuity_segments(scoped_rows, valid_reacquisitions):
         velocities, accelerations = _kinematics(segment, "bbox")
         predicted_velocity.extend(velocities)
         predicted_acceleration.extend(accelerations)
@@ -756,14 +852,6 @@ def evaluate(contract, rows, scope):
     trajectory_motion_ok = (
         (not predicted_velocity or max(predicted_velocity) <= velocity_limit)
         and (not predicted_acceleration or max(predicted_acceleration) <= acceleration_limit)
-    )
-
-    reacquisition_frames = sorted(row["frame_id"] for row in rows if row["reacquired"])
-    first_reliable = int(events["first_reliable_reappearance"])
-    deadline = int(events.get("reacquisition_deadline_exclusive", 190))
-    reacquisition_ok = (
-        len(reacquisition_frames) == 1
-        and first_reliable <= reacquisition_frames[0] < deadline
     )
 
     reference_steps = []
@@ -787,7 +875,7 @@ def evaluate(contract, rows, scope):
         ):
             if (
                 (
-                    not current["reacquired"]
+                    current["frame_id"] not in valid_reacquisitions
                     and _center_distance(
                         previous["tracking_bbox"], current["tracking_bbox"]
                     ) > jump_limit
@@ -827,10 +915,8 @@ def evaluate(contract, rows, scope):
         ),
         "reacquisition": _gate(
             reacquisition_ok,
-            "exactly one reacquisition in [{}, {}) observed {}".format(
-                first_reliable, deadline, reacquisition_frames
-            ),
-            reacquisition_frames if not reacquisition_ok else [],
+            reacquisition_detail,
+            (reacquisition_frames + invalid_reacquisitions) if not reacquisition_ok else [],
         ),
         "continuous_control": _gate(
             not control_failures and not source_failures,
@@ -908,6 +994,7 @@ def evaluate(contract, rows, scope):
         },
         "reacquisition": {
             "frames": reacquisition_frames,
+            **({"invalid_claim_frames": invalid_reacquisitions} if recent_safe else {}),
             "first_frame": reacquisition_frames[0] if reacquisition_frames else None,
             "first_reliable_reappearance_frame": first_reliable,
             "deadline_exclusive": deadline,
