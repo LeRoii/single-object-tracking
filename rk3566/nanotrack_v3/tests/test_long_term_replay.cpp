@@ -119,6 +119,14 @@ int main() {
   output = step(motion_search, 5, 281, std::nullopt);
   expect_true(!output.control_valid && !output.motion_control_authorized,
               "candidate replay fails closed after time confidence expires");
+  output = step(motion_search, 6, 320, initial);
+  expect_true(!output.accepted && !output.reacquired,
+              "candidate replay first visual return stays shadow-only");
+  output = step(motion_search, 7, 360, initial);
+  expect_true(output.accepted && output.reacquired &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kSearchReacquisition,
+              "candidate replay commits only after the second consistent visual hit");
 
   LongTermController assisted(config);
   assisted.initialize(initial, 0, 0, frame_size,

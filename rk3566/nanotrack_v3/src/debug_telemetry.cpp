@@ -83,6 +83,8 @@ const char* acceptance_path_name(AcceptedObservationPath path) {
       return "detector_recovery";
     case AcceptedObservationPath::kOcclusionProbeRecovery:
       return "occlusion_probe_recovery";
+    case AcceptedObservationPath::kSearchReacquisition:
+      return "search_reacquisition";
   }
   return "unknown";
 }

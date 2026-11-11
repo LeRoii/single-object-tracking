@@ -50,6 +50,7 @@ enum class AcceptedObservationPath {
   kLocalOrDeeperRecovery,
   kDetectorRecovery,
   kOcclusionProbeRecovery,
+  kSearchReacquisition,
 };
 
 struct ControllerOutput {
@@ -189,6 +190,15 @@ class LongTermController {
     BBox bbox{};
   };
 
+  struct SearchConfirmationCandidate {
+    std::uint64_t identity = 0;
+    BBox bbox{};
+    std::uint64_t first_hit_frame = 0;
+    std::uint64_t last_hit_frame = 0;
+    std::size_t confirmation_count = 0;
+    std::optional<std::uint64_t> detector_candidate_id;
+  };
+
   struct CoastProbeCandidate {
     std::uint64_t frame_id = 0;
     BBox bbox{};
@@ -240,6 +250,11 @@ class LongTermController {
   EvaluatedObservation evaluate(const TrackerObservation& observation,
                                 const SearchPlan& plan) const;
   bool add_confirmation(std::uint64_t frame_id, const BBox& bbox);
+  bool update_search_confirmation(
+      std::uint64_t frame_id, const BBox& bbox,
+      const std::optional<std::uint64_t>& detector_candidate_id);
+  SearchHint search_hint_for(const SearchConfirmationCandidate& candidate,
+                             const SearchPlan& plan) const;
   std::vector<BBox> detector_probes(const DetectorCandidate& candidate) const;
   void activate_next_detector_candidate();
   bool detector_geometry_consistent(const BBox& reference,
@@ -286,6 +301,8 @@ class LongTermController {
   std::optional<SearchHint> pending_search_hint_;
   std::uint64_t next_detector_candidate_id_ = 1;
   std::deque<Confirmation> confirmations_;
+  std::optional<SearchConfirmationCandidate> search_confirmation_candidate_;
+  std::uint64_t next_search_confirmation_identity_ = 1;
   std::optional<CoastProbeCandidate> coast_probe_candidate_;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_timestamp_ms_ = 0;

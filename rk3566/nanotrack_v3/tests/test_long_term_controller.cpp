@@ -1821,17 +1821,19 @@ void test_search_detector_shadow_hint_isolation() {
                   plan.search_hint->candidate_id == output.search_hint->candidate_id &&
                   plan.predicted_bbox.x == plan.search_hint->projected_bbox.x,
               "shadow hint biases exactly the next processed tracker ROI");
-  const BBox motion_during_hint = plan.motion_predicted_bbox;
   output = controller.finish_frame(
       plan, reliable_pair(plan, plan.predicted_bbox, 5), std::nullopt);
-  expect_true(!output.accepted && output.control_valid &&
-                  output.control_bbox.x == motion_during_hint.x &&
+  expect_true(output.accepted && output.reacquired &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kSearchReacquisition &&
+                  output.control_bbox.x == plan.predicted_bbox.x &&
                   output.search_hint &&
                   output.search_hint->confirmation_count == 2,
-              "second shadow observation remains diagnostic until atomic commit task");
+              "second identity-consistent shadow observation commits atomically");
   plan = controller.begin_frame(6, 181, true);
-  expect_true(plan.request_detector && !plan.search_hint,
-              "hint expires after one processed frame and detector interval is elapsed");
+  expect_true(!plan.request_detector && !plan.search_hint &&
+                  plan.tracking_phase == TrackingPhase::kTracking,
+              "successful hint expires into ordinary tracking without detector work");
   controller.abort_frame();
   plan = controller.begin_frame(7, 220, false);
   expect_true(!plan.search_hint,
@@ -1860,6 +1862,156 @@ void test_search_detector_shadow_hint_isolation() {
                   output.control_valid &&
                   output.control_source == ControlSource::kMotionSearch,
               "conflicting next hit discards hint without disturbing motion control");
+
+  LongTermController ambiguous(config);
+  ambiguous.initialize(initial, 0, 0, {240, 160},
+                       make_fixed_target_class(0, true));
+  ambiguous.finish_frame(ambiguous.begin_frame(1, 40, false), {}, std::nullopt);
+  plan = ambiguous.begin_frame(2, 80, true);
+  const DetectorRequest ambiguous_request = *plan.detector_request;
+  DetectorBatch ambiguous_batch{
+      ambiguous_request.frame_id, ambiguous_request.timestamp_ms,
+      {{plan.motion_predicted_bbox, 0.99F, 0},
+       {BBox{42, 30, 20, 20}, 0.98F, 0}}};
+  ambiguous_batch.generation = ambiguous_request.generation;
+  ambiguous.finish_frame(plan, {}, ambiguous_batch);
+  plan = ambiguous.begin_frame(3, 120, false);
+  expect_true(plan.detector_same_class_ambiguous,
+              "neighboring same-class candidates remain explicitly ambiguous");
+  output = ambiguous.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 3), std::nullopt);
+  expect_true(!output.accepted && !output.search_hint && output.control_valid,
+              "same-class ambiguity cannot seed search confirmation or control");
+}
+
+void test_atomic_search_reacquisition_and_template_probation() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 1000;
+  config.recent_probation_frames = 2;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  LongTermController controller(config);
+  const BBox initial{40, 30, 20, 20};
+  controller.initialize(initial, 0, 0, {240, 160});
+  auto output = reject_frame(controller, 1, 40);
+  const BBox committed_before = controller.current_bbox();
+
+  auto plan = controller.begin_frame(2, 80, false);
+  output = controller.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor,
+                            plan.predicted_bbox, 2)},
+      std::nullopt);
+  expect_true(!output.accepted && output.control_valid &&
+                  output.template_action == TemplateAction::kNone &&
+                  controller.current_bbox().x == committed_before.x,
+              "one anchor hit remains shadow-only with motion control");
+
+  plan = controller.begin_frame(3, 120, false);
+  const BBox confirmed = plan.predicted_bbox;
+  output = controller.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor, confirmed, 3)},
+      std::nullopt);
+  expect_true(output.accepted && output.reacquired &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kSearchReacquisition &&
+                  output.control_source == ControlSource::kObservation &&
+                  output.template_action == TemplateAction::kStageRecent &&
+                  controller.current_bbox().x == confirmed.x &&
+                  !controller.motion_search_active_,
+              "second identity-consistent anchor hit commits atomically and stages recent probation");
+
+  plan = controller.begin_frame(4, 160, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 4), std::nullopt);
+  expect_true(output.accepted && !output.reacquired &&
+                  output.template_action == TemplateAction::kNone,
+              "first post-commit reliable probation frame does not commit recent");
+  plan = controller.begin_frame(5, 200, false);
+  output = controller.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 5), std::nullopt);
+  expect_true(output.accepted && !output.reacquired &&
+                  output.template_action == TemplateAction::kCommitRecent,
+              "configured reliable probation frames commit recent exactly once");
+
+  LongTermController rollback_probation(config);
+  rollback_probation.initialize(initial, 0, 0, {240, 160});
+  reject_frame(rollback_probation, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    plan = rollback_probation.begin_frame(frame, frame * 40, false);
+    output = rollback_probation.finish_frame(
+        plan,
+        {reliable_observation(plan, TemplateKind::kAnchor,
+                              plan.predicted_bbox, frame)},
+        std::nullopt);
+  }
+  expect_true(output.template_action == TemplateAction::kStageRecent,
+              "atomic search recovery stages a probationary recent template");
+  plan = rollback_probation.begin_frame(4, 160, false);
+  output = rollback_probation.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor,
+                            plan.predicted_bbox, 4),
+       rejected_observation(plan, TemplateKind::kRecent,
+                            plan.predicted_bbox, 4)},
+      std::nullopt);
+  expect_true(output.accepted && output.template_action ==
+                                     TemplateAction::kRollbackRecent,
+              "probation disagreement rolls recent back without losing anchor tracking");
+
+  LongTermController recent_only(config);
+  recent_only.initialize(initial, 0, 0, {240, 160});
+  reject_frame(recent_only, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    plan = recent_only.begin_frame(frame, frame * 40, false);
+    output = recent_only.finish_frame(
+        plan,
+        {reliable_observation(plan, TemplateKind::kRecent,
+                              plan.predicted_bbox, frame)},
+        std::nullopt);
+    expect_true(!output.accepted && !output.reacquired,
+                "recent-only search hit can never authorize reacquisition");
+  }
+
+  LongTermController disagreement(config);
+  disagreement.initialize(initial, 0, 0, {240, 160});
+  reject_frame(disagreement, 1, 40);
+  plan = disagreement.begin_frame(2, 80, false);
+  output = disagreement.finish_frame(
+      plan, reliable_pair(plan, plan.predicted_bbox, 2), std::nullopt);
+  plan = disagreement.begin_frame(3, 120, false);
+  output = disagreement.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor,
+                            plan.predicted_bbox, 3),
+       reliable_observation(plan, TemplateKind::kRecent,
+                            BBox{180, 100, 20, 20}, 3)},
+      std::nullopt);
+  expect_true(!output.accepted && output.control_valid &&
+                  output.template_action == TemplateAction::kNone,
+              "anchor/recent disagreement discards shadow candidate without template mutation");
+
+  LongTermController expired(config);
+  expired.initialize(initial, 0, 0, {240, 160});
+  reject_frame(expired, 1, 40);
+  plan = expired.begin_frame(2, 80, false);
+  expired.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor,
+                            plan.predicted_bbox, 2)},
+      std::nullopt);
+  plan = expired.begin_frame(5, 200, false);
+  output = expired.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kAnchor,
+                            plan.predicted_bbox, 5)},
+      std::nullopt);
+  expect_true(!output.accepted && !output.reacquired,
+              "second hit outside confirmation window cannot commit");
 }
 
 }  // namespace
@@ -1883,6 +2035,7 @@ int main() {
   test_target_class_gate();
   test_time_based_motion_search_control();
   test_search_detector_shadow_hint_isolation();
+  test_atomic_search_reacquisition_and_template_probation();
 
   const auto expect_enum_name = [](auto value, const char* expected) {
     expect_true(std::string(to_string(value)) == expected,

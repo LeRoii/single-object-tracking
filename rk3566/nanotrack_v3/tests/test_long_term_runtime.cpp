@@ -351,6 +351,39 @@ void test_motion_search_detector_failure_isolation(
               "detector exception cannot interrupt motion control or mutate tracker templates");
 }
 
+void test_runtime_atomic_search_commit(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 1000;
+  config.recent_probation_frames = 2;
+  FakeTracker tracker;
+  tracker.emit_reliable = false;
+  FakeDetector detector;
+  LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+  runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  runtime.process_frame(image, 1, 40);
+  tracker.emit_reliable = true;
+  RuntimeFrameResult first = runtime.process_frame(image, 2, 80);
+  expect_true(!first.output.accepted && tracker.commit_calls == 0 &&
+                  tracker.stage_calls == 0,
+              "runtime first search hit performs no bbox or template commit");
+  RuntimeFrameResult second = runtime.process_frame(image, 3, 120);
+  expect_true(second.output.accepted && second.output.reacquired &&
+                  second.output.accepted_observation_path ==
+                      AcceptedObservationPath::kSearchReacquisition &&
+                  tracker.commit_calls == 1 && tracker.stage_calls == 1 &&
+                  same_bbox(tracker.committed_bbox,
+                            second.output.tracking_bbox) &&
+                  same_bbox(tracker.staged_bbox,
+                            second.output.tracking_bbox),
+              "runtime commits bbox and stages recent only on the atomic second hit");
+  RuntimeFrameResult ordinary = runtime.process_frame(image, 4, 160);
+  expect_true(ordinary.output.accepted && !ordinary.output.reacquired &&
+                  tracker.commit_calls == 2 && tracker.stage_calls == 1,
+              "later ordinary tracking cannot repeat the reacquired pulse or stage");
+}
+
 void test_runtime_target_class_recovery_requests(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   const BBox roi{40, 30, 20, 20};
@@ -960,6 +993,7 @@ int main() {
   test_runtime_commits_stabilized_bbox(image);
   test_uncertain_runtime_cadence(image);
   test_motion_search_detector_failure_isolation(image);
+  test_runtime_atomic_search_commit(image);
   test_runtime_target_class_recovery_requests(image);
   test_late_precoast_batches(image);
   test_probe_failure_and_same_frame_reselect(image);

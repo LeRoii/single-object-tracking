@@ -1,5 +1,29 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T12:33:39+08:00 两击一致性重捕与模板 probation 原子提交
+
+- 在 `codex/occ-video-1-tracking`、Task 5 起点
+  `6b8c9f950b77b3b95ff3227d46d1c7d746fe7d9f` 将 tracker-seeded 与
+  detector-seeded 重捕统一到一个 shadow confirmation candidate；结果提交可用
+  `git log -1 --format=%H -- rk3566/nanotrack_v3/src/long_term_controller.cpp` 查询。
+- 搜索中只有 anchor 可靠观测能建立/确认候选；recent 可以通过模板一致性门或否决，但
+  recent-only 永远不能授权。第二击必须在 `confirmation_window` 内、identity/source 一致且满足
+  IoU、中心、面积和宽高比门；同类邻近歧义、远框、模板冲突、窗口过期和 generation/source
+  变化均不会提交。
+- 第一击继续发布 motion control，不修改 committed bbox、motion 或模板；第二个合法击中才
+  使用真实确认 tracker bbox 一次性重置 motion，清空 hint/候选队列，发布
+  `TRACKING / OBSERVATION` 和单帧 `reacquired=true`，路径标记为
+  `search_reacquisition`。后续普通跟踪不会重复发出 reacquired pulse。
+- 原子提交帧只 `STAGE_RECENT`，不替换 anchor；后续普通可靠帧累计
+  `recent_probation_frames` 后才 `COMMIT_RECENT`，期间 anchor/recent 不一致则
+  `ROLLBACK_RECENT`，但 anchor 跟踪可继续。runtime 测试确认第一击零 bbox/template commit，
+  第二击恰好一次 bbox commit 与一次 recent stage。
+- RED 阶段首先因缺少 `kSearchReacquisition` 编译失败；GREEN 后聚焦
+  `long_term_controller|long_term_runtime|long_term_replay` 为 `3/3` 通过。完整构建及 CTest
+  为 `19/19` 通过、`0` 失败、总时间 `3.22 sec`，`git diff --check` 无输出。
+- 本里程碑仍未在 RK3588/RK3566 或真实云台上运行；尚缺 schema 10 遥测、通用配置候选标定、
+  冻结 holdout 与板端三次复跑，不能宣称 190 帧前重捕门已通过。
+
 ## 2026-11-11T12:27:57+08:00 SEARCHING detector 调度与 shadow hint 隔离
 
 - 在 `codex/occ-video-1-tracking`、Task 4 起点
