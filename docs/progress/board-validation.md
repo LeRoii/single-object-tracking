@@ -1,5 +1,53 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T10:53:22+08:00 `occ_video_1` 完整基线与方案 2 设计待批准
+
+- 新任务在隔离工作树
+  `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking` 的独立分支
+  `codex/occ-video-1-tracking` 开始，输入基线为已推送 RK3588 Debug 提交
+  `201991a92bba95b542c97505c37053d1c4fe1da8`。本里程碑只包含诊断与设计，尚未修改算法；
+  结果提交以 `git log -1 --format=%H -- docs/progress/board-validation.md` 查询。
+- 用户确认完全遮挡不算永久丢失：172--180 帧仍输出运动预测框并持续驱动云台；用户选择
+  “真值 evaluator + 状态机/运动/detector/NanoTrack/模板闭环重构”的方案 2，并把正确重捕
+  硬门定为第 190 帧之前。设计在
+  `docs/superpowers/specs/2026-11-11-occ-video-1-closed-loop-tracking-design.md`，仍需用户批准后
+  才能写实现计划或代码。
+- 在 RK3588 `192.168.1.102` 对当前候选运行完整 271 帧基线，实际核心命令为：
+
+```bash
+cd /home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f
+stdbuf -oL -eL ./build/nanotrack_v3 \
+  --video data/occ_video_1/1.mp4 --bbox 992,582,37,39 --model-dir models \
+  --sensor visible --controller-config config/visible-default.conf --max-frames 270 \
+  --detector-model releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn \
+  --detector-manifest releases/yolov8n-visdrone9-rk3588-fp16-v1/models/detector-manifest.json \
+  --detector-labels releases/yolov8n-visdrone9-rk3588-fp16-v1/models/visdrone9.txt \
+  --detector-class-id 2 --detector-conf 0.25 --detector-nms 0.45 \
+  --output-video runs/occ-baseline-full-20261111/output.avi \
+  --output-boxes runs/occ-baseline-full-20261111/bboxes.csv \
+  --session-metadata runs/occ-baseline-full-20261111/session-metadata.json \
+  > runs/occ-baseline-full-20261111/run.log 2>&1
+```
+
+- 运行 exit 0，SUMMARY `tracked_frames=270`、mean runtime `9.196 ms`、runtime FPS
+  `108.744`、mean pipeline `111.414 ms`、end-to-end FPS `8.976`。按 frozen truth 排除
+  169--181 后，可评价 258 帧 mean IoU `0.579`；0--168 为 `0.631`，182--270 为
+  `0.479`。遮挡状态从未触发、detector 从未请求；174--178 和 180--184
+  `control_valid=0`；182 帧 IoU `0.303`，185 帧才恢复普通接受且 `reacquired=0`。
+- 证据目录
+  `/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/runs/occ-baseline-full-20261111`；
+  `bboxes.csv`、`output.avi`、`run.log`、`session-metadata.json` SHA-256 依次为
+  `b2ba9d7328f0554d1806a36f817ece8a42a5cdd0e4275b9cae44f1b87271eb6f`、
+  `0002caa118473ee41e2c015e29728445f157ac2b2f70996d179670fe8c2906e4`、
+  `511e02d7e6aca3eac432ceb472bd54fb7c964ea1ef31d362b3fe632260c138cf`、
+  `08f34c2452ad379eed26cd2e14e7c8cfd58960bc2ad450ff2b74e65005c8f9a8`。
+  本次诊断目录未生成 `manifest.json`，故 `verify_board.sh` 明确报
+  `missing or empty artifact`；它是失败基线，不计正式 board PASS。
+- 独立 builder 审查的五项歧义已写入设计：一次 detector hit 只允许 shadow search hint；
+  改动进入共享 core 但只由独立 Debug 配置启用；identity 自动代理门后仍需人工视频签署；
+  本轮是离线帧序功能验收而非 30 Hz 实时门；最终运行必须同时通过 evaluator、run manifest 和
+  `verify_board.sh`。未修改协调方专属 `STATUS.md` 或 `integration-contract.yaml`。
+
 ## 2026-11-10T19:21:14+08:00 RK3588 独立 Debug 迁移与实板运行
 
 - 本轮按用户确认的“方案 1”在隔离工作树
