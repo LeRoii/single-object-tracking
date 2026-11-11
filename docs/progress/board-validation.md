@@ -2054,3 +2054,53 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   `integration-contract.yaml`，并决定板端数据复制路径；本任务按所有权规则未直接修改
   `STATUS.md` 或公共契约。此次仅完成主机数据安装和 evaluator 消费能力，不是新的 RK3588
   算法运行、阈值标定、板端验收或吊舱验收。
+
+## 2026-11-12T02:38:54+08:00 RS001 recent/safe RK3588 原生验证 HOLD
+
+- 分支 `codex/occ-video-1-tracking`，工作树
+  `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking`，Task 6 基线
+  `68b527659e8be39304ab805c9a6f85219c2af5ce`。板端源码先提交为
+  `e027006339f0cdafb0b8d38c4dfa5e14abe66593`，证据与本条记录同提交
+  （`test: validate recent-safe recovery on RK3588`）。
+  `git archive` 两端 SHA-256 均为
+  `fc8deb4fd4f96d28ab27be34feaf2133e6e8dc75937380b8304b913220af080e`；
+  板端逐文件比对 314 个归档文件内容与执行权限通过。
+- 实际板为 `LKD3588`，Linux 6.1.84 aarch64。独立候选根
+  `/home/neardi/Project/SOT/occ-recent-safe-rs001`。RKNN API
+  `2.1.0 (967d001cc8@2024-08-07T19:28:19)`、driver `0.9.8`；
+  运行前用同一提交的 RKNN loader 逐一查询三份 tracker 模型和 detector。
+  `build/nanotrack_v3` SHA-256
+  `c4161c0a448351f4a6d84be60bc00ce8c7c6e98ed28134efb5069d7562821304`，
+  `visible-recent-safe-v1.conf` SHA-256
+  `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`（`calibrated=false`）。
+  原生 CMake 使用 Debug、`ENABLE_RKNN_RUNTIME=ON`、`BUILD_TESTING=ON`、
+  `-Werror=switch`，`cmake --build build --parallel 4` 和
+  `ctest --test-dir build --output-on-failure` 通过 22/22（13.85 s）。
+  主机 RKNN-off CTest 22/22、evaluator Python 19/19、语法检查和 `git diff --check` 通过。
+- 两次各读取独立 ROI 和真值，`car_001=992,582,37,39` 使用 canonical 标注，
+  `car_002=967,513,42,42` 使用已确认包（252 帧正式可观测框）。
+  两次均运行 0–270 帧，1920×1080、30/1 fps，runtime exit 0，
+  schema v11 verifier PASS，271 行 CSV 与实际 CLI 发布的 271 行 JSONL companion 均完整。
+  模型、标注、输出哈希、完整 evaluator 门槛、源码与运行命令记录在
+  [RS001 评估记录](../evaluation/occ-video-1/recent-safe-candidate.json)；
+  大工件留在板端 `runs/car_001/` 与 `runs/car_002/`，每个目录有 `SHA256SUMS`。
+- `car_001` full evaluator **FAIL**。172–173 帧未满足完全遮挡语义，174 帧开始搜索，
+  `[182,190)` 内及整段均无重捕获，248–270 帧控制无效。最后可信帧 172，
+  到首次失去控制经过 2534 ms。有效观测 mean IoU 0.764074（168 帧），
+  全部可见帧 mean IoU 0.602621。候选冲突 76 帧。
+- `car_002` full evaluator **FAIL**。70 帧进入搜索后无重捕获，145–270 帧控制无效；
+  213–216 帧完全遮挡语义和估计轨迹连续性均失败，`[230,271)` 无重捕获。
+  最后可信帧 69，到首次失去控制经过 2533 ms。有效观测 mean IoU 0.910586（70 帧），
+  全部可见帧 mean IoU 0.302287。候选冲突 143 帧。两目标 identity proxy 均 PASS，
+  其结论限于有权使用的可见观测，两次均未提交新恢复身份。
+- recent/safe/staged 物理 head 调用分别为 `270/96/14` 与 `270/200/6`，
+  safe 复用各 0 次，任何帧最多 2 次，未观察到模板事务应用失败。
+  runtime p50/p95 分别为 7.82/9.97 ms 和 8.71/10.55 ms，pipeline p50/p95 为
+  109.90/113.42 ms 和 111.02/113.78 ms。板端缺少 `/usr/bin/time`，以约 100 ms
+  间隔采样进程 `/proc/<PID>/status`，观察到 VmHWM 237260 / 235476 kB。
+- **Handoff**：RS001 保持 HOLD 和 `calibrated=false`。两次均按原配置一次运行，
+  C012 图形启动仍使用原路径与配置；其二进制、交互配置和控制器配置 SHA-256
+  前后一致。需复查 RS001 时，在候选根执行
+  `cat runs/car_001/commands.txt runs/car_002/commands.txt` 查阅准确诊断命令，
+  新诊断使用新的输出路径。证据限 RK3588 原生 Debug 的两目标算法结果。
+  请求协调对话继续保留正式 handoff 门槛，生产交叉编译与人工吊舱验收未启动。
