@@ -531,8 +531,8 @@ std::vector<std::string> DebugTelemetry::frame_events(
   }
 
   const bool heartbeat = force_heartbeat || observed_frames_ % heartbeat_interval_ == 0;
-  if (heartbeat || o.template_transition || (o.observation_present && !o.accepted) ||
-      o.recovery_candidate_key || o.recovery_conflict) {
+  if (heartbeat || o.template_transition || result.template_slot_revocation ||
+      (o.observation_present && !o.accepted) || o.recovery_candidate_key || o.recovery_conflict) {
     std::ostringstream stream = event_stream("frame_observation");
     stream << tracking_frame_event_fields(make_tracking_log_row(result));
     events.push_back(stream.str());

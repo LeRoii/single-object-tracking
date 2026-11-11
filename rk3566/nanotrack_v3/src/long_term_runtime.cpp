@@ -11,6 +11,15 @@
 
 namespace nanotrack {
 
+const char* to_string(TemplateSlotRevocationReason reason) {
+  switch (reason) {
+    case TemplateSlotRevocationReason::kFrameAborted: return "FRAME_ABORTED";
+    case TemplateSlotRevocationReason::kFrameApplicationFailed: return "FRAME_APPLICATION_FAILED";
+    case TemplateSlotRevocationReason::kReinitialized: return "REINITIALIZED";
+  }
+  return "UNKNOWN";
+}
+
 LongTermRuntime::LongTermRuntime(const ControllerConfig& config,
                                  ShortTermTracker& tracker,
                                  DetectorAdapter& detector,
@@ -79,7 +88,7 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   }
 
   initialized_ = false;
-  abandon_staged_recent();
+  abandon_staged_recent(TemplateSlotRevocationReason::kReinitialized);
   controller_.initialize(initial_bbox, frame_id, timestamp_ms,
                          FrameSize{image.width, image.height}, result.target_class);
   tracker_.initialize(image, initial_bbox);
@@ -98,10 +107,14 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.target_class = last_initialization_.target_class;
   result.detector.configured = detector_configured_;
   bool completed = false;
+  const auto slot_before_frame = staged_template_slot_id_;
   std::optional<LongTermController> application_checkpoint;
   std::optional<BBox> bbox_restore;
-  const auto rollback_application = [&]() noexcept {
-    abandon_staged_recent();
+  const auto rollback_application = [&](std::optional<TemplateSlotRevocationReason> reason) noexcept {
+    // A prepare can fail after allocating a new slot in this frame. Only a
+    // slot that predated the failed frame could already be visible in the log.
+    abandon_staged_recent(staged_template_slot_id_ == slot_before_frame
+                              ? reason : std::nullopt);
     if (bbox_restore) {
       tracker_.restore_bbox(*bbox_restore);
       bbox_restore.reset();
@@ -117,7 +130,11 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   frame_open_ = true;
   ScopedCleanup frame_cleanup(
       [&]() noexcept {
-        if (!completed) rollback_application();
+        if (!completed) {
+          rollback_application(application_checkpoint
+              ? TemplateSlotRevocationReason::kFrameApplicationFailed
+              : TemplateSlotRevocationReason::kFrameAborted);
+        }
         frame_open_ = false;
         return 0;
       },
@@ -189,7 +206,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         throw std::logic_error("template transition acknowledgement did not match its request");
       }
       const char* reason = result.output.template_transition_reason;
-      rollback_application();
+      rollback_application(std::nullopt);
       // Evaluate an observation-free frame from the last trusted motion state.
       // This advances the timestamp once and rechecks search authorization.
       const auto search = controller_.begin_frame(frame_id, timestamp_ms, false);
@@ -207,14 +224,26 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.runtime_ms = std::chrono::duration<float, std::milli>(
                           std::chrono::steady_clock::now() - total_start)
                           .count();
+  result.template_slot_revocation = pending_template_slot_revocation_;
   application_checkpoint.reset();
   bbox_restore.reset();
   completed = true;
   return result;
 }
 
-void LongTermRuntime::abandon_staged_recent() noexcept {
+bool LongTermRuntime::acknowledge_template_slot_revocation(std::uint64_t slot_id) noexcept {
+  if (!pending_template_slot_revocation_ ||
+      pending_template_slot_revocation_->slot_id != slot_id) return false;
+  pending_template_slot_revocation_.reset();
+  return true;
+}
+
+void LongTermRuntime::abandon_staged_recent(
+    std::optional<TemplateSlotRevocationReason> reason) noexcept {
   if (staged_template_slot_id_) {
+    if (reason && !pending_template_slot_revocation_) {
+      pending_template_slot_revocation_ = TemplateSlotRevocation{*staged_template_slot_id_, *reason};
+    }
     if (!tracker_.abort_recent(*staged_template_slot_id_)) {
       tracker_.discard_staged_recent();
     }

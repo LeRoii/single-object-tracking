@@ -505,7 +505,8 @@ fi
 for schema_case in valid no_decode missing_safe_raw no_decode_with_raw missing_trust tentative_trusted \
                    ambiguous_observation ambiguous_unauthorized applied_without_id wrong_slot \
                    failed_commit_probation rejected_claimed_committed recovery_without_identity \
-                   accepted_no_decode live_slot_replaced live_slot_disappeared valid_commit valid_rejected_recovery_commit \
+                   accepted_no_decode live_slot_replaced live_slot_disappeared valid_retry_revocation wrong_revoked_slot missing_revoked_slot \
+                   revocation_without_live_slot revocation_without_reason unrecorded_reinitialization valid_reinitialized valid_commit valid_rejected_recovery_commit \
                    valid_rollback valid_failed_rollback companion_cross_directory companion_alias json_mismatch json_missing_field; do
   python3 - "$artifact_dir" "$schema_case" <<'PY'
 import csv
@@ -531,6 +532,7 @@ defaults = {
     "response_psr_relative_delta": "", "response_apce_relative_delta": "",
     "response_peak_margin_absolute_delta": "", "template_action": "NONE",
     "template_transaction_id": "", "template_slot_id": "",
+    "revoked_template_slot_id": "", "template_slot_revocation_reason": "NONE",
     "template_transition_recovery": "0", "template_transition_applied": "0",
     "template_transition_result": "NONE", "template_transition_reason": "NONE",
     "template_probation_active": "0", "candidate_source": "NONE", "candidate_id": "",
@@ -590,7 +592,9 @@ elif case in {"accepted_no_decode", "recovery_without_identity"}:
                        recovery_reason="RECOVERY_STAGED", accepted_observation_path="search_reacquisition")
 elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected_claimed_committed",
               "live_slot_replaced", "live_slot_disappeared", "valid_rollback", "valid_failed_rollback",
-              "valid_rejected_recovery_commit"}:
+              "valid_rejected_recovery_commit", "valid_retry_revocation", "wrong_revoked_slot",
+              "missing_revoked_slot", "revocation_without_live_slot", "revocation_without_reason",
+              "unrecorded_reinitialization", "valid_reinitialized"}:
     rows[1].update(state="TRACKING", tracking_phase="TRACKING",
                    accepted="1", observation_valid="1", trusted_for_state_update="1",
                    rect0_source="ACCEPTED_OBSERVATION", template_action="STAGE_RECENT",
@@ -636,6 +640,31 @@ elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected
         rows[2].update(template_action="NONE", template_slot_id="", template_transaction_id="",
                        template_transition_reason="NONE", template_transition_result="NONE",
                        template_transition_applied="0")
+    if case in {"valid_retry_revocation", "wrong_revoked_slot", "missing_revoked_slot",
+                "revocation_without_live_slot", "revocation_without_reason",
+                "unrecorded_reinitialization", "valid_reinitialized"}:
+        rows[1].update(template_transaction_id="1", template_slot_id="1")
+        rows[2].update(template_action="STAGE_RECENT", template_transaction_id="3",
+                       template_slot_id="3", template_transition_reason="STABLE_TRACKING",
+                       template_probation_active="1", revoked_template_slot_id="1",
+                       template_slot_revocation_reason="FRAME_APPLICATION_FAILED")
+        if case == "wrong_revoked_slot":
+            rows[2]["revoked_template_slot_id"] = "2"
+        elif case == "missing_revoked_slot":
+            rows[2]["revoked_template_slot_id"] = ""
+        elif case == "revocation_without_reason":
+            rows[2]["template_slot_revocation_reason"] = "NONE"
+        elif case in {"unrecorded_reinitialization", "valid_reinitialized"}:
+            rows[2]["template_slot_revocation_reason"] = "REINITIALIZED"
+            if case == "valid_reinitialized":
+                metadata["target_class_initializations"] = [
+                    {"frame_id": 0, "initialization_index": 1},
+                    {"frame_id": 1, "initialization_index": 2},
+                ]
+        elif case == "revocation_without_live_slot":
+            rows[1].update(template_action="NONE", template_transaction_id="", template_slot_id="",
+                           template_transition_reason="NONE", template_transition_result="NONE",
+                           template_transition_applied="0", template_probation_active="0")
     if case == "failed_commit_probation":
         rows[2].update(template_transition_result="TRACKER_REJECTED",
                        template_transition_applied="0", template_probation_active="1")
@@ -668,7 +697,7 @@ json_path.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
 (root / "session-metadata.json").write_text(json.dumps(metadata))
 PY
   case "$schema_case" in
-    valid|no_decode|valid_commit|valid_rollback|valid_failed_rollback|valid_rejected_recovery_commit|companion_cross_directory)
+    valid|no_decode|valid_commit|valid_rollback|valid_failed_rollback|valid_rejected_recovery_commit|valid_retry_revocation|valid_reinitialized|companion_cross_directory)
       bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 ;;
     *)
       if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then

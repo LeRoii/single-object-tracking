@@ -51,6 +51,7 @@ struct TrackingLogRow {
   TemplateKind selected_template = TemplateKind::kAnchor;
   TemplateAction template_action = TemplateAction::kNone;
   std::optional<TemplateTransitionRequest> template_transition;
+  std::optional<TemplateSlotRevocation> template_slot_revocation;
   TemplateTransitionResult template_transition_result = TemplateTransitionResult::kNone;
   bool template_transition_applied = false;
   bool template_probation_active = false;
@@ -177,6 +178,7 @@ struct TrackingArtifactPaths {
   std::filesystem::path video;
   std::filesystem::path frame_json;
   std::string frame_json_reference;
+  std::string frame_json_disabled_reason;
 };
 
 TrackingArtifactPaths resolve_tracking_artifact_paths(
@@ -196,12 +198,13 @@ class TrackingFrameJsonWriter {
   std::string finish(bool primary_complete);
 
  private:
+  bool path_matches_open_file() const noexcept;
   void discard() noexcept;
 
   std::filesystem::path path_;
   std::string reference_;
   std::FILE* stream_ = nullptr;
-  bool owns_path_ = false;
+  int identity_fd_ = -1;
   bool wrote_frame_ = false;
 };
 

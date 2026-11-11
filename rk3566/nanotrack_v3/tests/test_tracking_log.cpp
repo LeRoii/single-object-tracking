@@ -65,15 +65,33 @@ void test_tracking_artifact_paths() {
   std::ofstream(csv) << "existing evidence";
   const auto relative_alias = fs::relative(root / "alias", fs::current_path()) / "bboxes.csv";
   expect_true(rejects(csv, relative_alias, video) &&
-                  rejects(csv, meta, root / "results" / ".." / "alias" / "bboxes.csv") &&
-                  rejects(csv, root / "alias" / "bboxes.csv.jsonl", video),
+                  rejects(csv, meta, root / "results" / ".." / "alias" / "bboxes.csv"),
               "relative, parent and symlink aliases cannot overwrite outputs");
   fs::create_hard_link(csv, root / "metadata" / "hard-link");
   expect_true(rejects(csv, root / "metadata" / "hard-link", video),
               "existing hard links count as the same artifact");
   fs::create_symlink(companion, root / "metadata" / "dangling-alias");
-  expect_true(rejects(csv, root / "metadata" / "dangling-alias", video),
-              "a dangling symlink aliases the output it would create");
+  for (const auto& metadata : {companion, root / "alias" / "bboxes.csv.jsonl",
+                               root / "metadata" / "dangling-alias"}) {
+    bool primary_outputs_preserved = false;
+    try {
+      const auto collision = resolve_tracking_artifact_paths(csv, metadata, video);
+      std::ofstream(collision.metadata) << "required session metadata";
+      TrackingFrameJsonWriter writer(collision);
+      writer.open();
+      writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+      std::ifstream metadata_contents(collision.metadata);
+      std::string written;
+      std::getline(metadata_contents, written);
+      primary_outputs_preserved = collision.frame_json.empty() &&
+          collision.frame_json_reference.empty() && !collision.frame_json_disabled_reason.empty() &&
+          !collision.boxes.empty() && !collision.metadata.empty() && !collision.video.empty() &&
+          writer.finish(true).empty() && written == "required session metadata";
+      fs::remove(companion);
+    } catch (const std::invalid_argument&) {}
+    expect_true(primary_outputs_preserved,
+                "a derived companion collision leaves required outputs enabled");
+  }
   std::ifstream original(csv);
   std::string contents;
   std::getline(original, contents);
@@ -86,6 +104,32 @@ void test_tracking_artifact_paths() {
     writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
     expect_true(writer.finish(false).empty() && !fs::exists(companion),
                 "incomplete primary output removes the companion and advertises nothing");
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+    const auto renamed = root / "results" / "renamed.jsonl";
+    fs::rename(companion, renamed);
+    std::ofstream(companion) << "replacement evidence";
+    expect_true(writer.finish(false).empty() && fs::exists(renamed),
+                "abandoned writer cannot advertise a renamed file");
+    std::ifstream replacement(companion);
+    std::string replacement_contents;
+    std::getline(replacement, replacement_contents);
+    expect_true(replacement_contents == "replacement evidence",
+                "failure cleanup must leave a replacement inode byte-identical");
+    fs::remove(companion);
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+    fs::rename(companion, root / "results" / "renamed-before-completion.jsonl");
+    std::ofstream(companion) << "different completed artifact";
+    expect_true(writer.finish(true).empty() && fs::exists(companion),
+                "successful close cannot advertise a replacement path");
+    fs::remove(companion);
   }
   {
     TrackingFrameJsonWriter writer(paths);

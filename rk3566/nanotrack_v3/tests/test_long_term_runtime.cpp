@@ -1,5 +1,6 @@
 #include "long_term_runtime.hpp"
 #include "target_class_session.hpp"
+#include "tracking_log.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -579,8 +580,9 @@ void test_runtime_transition_failures(const nanotrack::ImageView& image) {
   tracker.on_commit = {};
   frame = runtime.process_frame(image, 13, 520);
   expect_true(!frame.output.accepted && frame.output.recovery_confirmation_hits == 1 &&
-                  frame.plan.template_run_mode == TemplateRunMode::kRecentAndSafe,
-              "post-finish exception cannot replay a recovery transition");
+                  frame.plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                  !frame.template_slot_revocation,
+              "post-finish exception neither replays recovery nor revokes an unlogged new slot");
 
 }
 
@@ -662,6 +664,60 @@ void test_runtime_rolls_back_finished_frames(const nanotrack::ImageView& image) 
                   expired_commit.output.control_source == ControlSource::kNone &&
                   expired_commit.output.template_transition_result == TemplateTransitionResult::kTrackerRejected,
               "failed recovery commit cannot create a fresh motion authorization window");
+}
+
+void test_runtime_reports_unlogged_slot_revocations(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.stable_frames_for_update = 1;
+  config.recent_update_interval_ms = 1;
+  config.recent_probation_frames = 1;
+  const BBox bbox{40, 30, 20, 20};
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  NullDetectorAdapter detector;
+  LongTermRuntime runtime(config, tracker, detector);
+  runtime.initialize(image, bbox, 0, 0);
+  const auto staged = runtime.process_frame(image, 1, 40);
+  expect_true(staged.output.template_transition_applied &&
+                  staged.output.template_transition->template_slot_id == 1,
+              "revocation fixture starts with logged stage slot one");
+
+  tracker.on_commit_after_write = [] { throw std::runtime_error("bbox write failed"); };
+  bool threw = false;
+  try { runtime.process_frame(image, 2, 80); }
+  catch (const std::runtime_error&) { threw = true; }
+  tracker.on_commit_after_write = {};
+  expect_true(threw && !tracker.pending_template_id, "unlogged failure revokes physical stage");
+  const auto retry = runtime.process_frame(image, 2, 80);
+  const auto row = make_tracking_log_row(retry);
+  expect_true(retry.output.template_transition_applied &&
+                  retry.output.template_transition->transaction_id == 3 &&
+                  retry.output.template_transition->template_slot_id == 3 &&
+                  retry.template_slot_revocation && retry.template_slot_revocation->slot_id == 1 &&
+                  retry.template_slot_revocation->reason == TemplateSlotRevocationReason::kFrameApplicationFailed &&
+                  tracking_frame_json(row).find("\"revoked_template_slot_id\":1") != std::string::npos,
+              "retry records the old slot revocation alongside a fresh stage after the burned ID");
+  expect_true(!runtime.acknowledge_template_slot_revocation(3),
+              "acknowledging a new stage cannot consume a pending revocation");
+  const auto unacknowledged = runtime.process_frame(image, 3, 120);
+  expect_true(unacknowledged.template_slot_revocation &&
+                  unacknowledged.template_slot_revocation->slot_id == 1,
+              "revocation survives delivery until a successful writer acknowledgement");
+  expect_true(runtime.acknowledge_template_slot_revocation(1) &&
+                  !runtime.acknowledge_template_slot_revocation(1),
+              "successful revocation acknowledgement matches once");
+  const auto later = runtime.process_frame(image, 4, 160);
+  expect_true(!later.template_slot_revocation &&
+                  later.output.template_transition_applied,
+              "acknowledged revocation clears while normal tracking continues");
+  const auto replacement = later.output.template_transition->template_slot_id;
+  runtime.initialize(image, bbox, 4, 160);
+  const auto reinitialized = runtime.process_frame(image, 5, 200);
+  expect_true(reinitialized.template_slot_revocation &&
+                  reinitialized.template_slot_revocation->slot_id == replacement &&
+                  reinitialized.template_slot_revocation->reason == TemplateSlotRevocationReason::kReinitialized,
+              "reinitialization explicitly reports the revoked physical slot");
 }
 
 void test_runtime_target_class_recovery_requests(const nanotrack::ImageView& image) {
@@ -1378,6 +1434,7 @@ int main() {
   test_controller_rejects_stale_transition_acknowledgements();
   test_runtime_transition_failures(image);
   test_runtime_rolls_back_finished_frames(image);
+  test_runtime_reports_unlogged_slot_revocations(image);
   test_runtime_target_class_recovery_requests(image);
   test_late_precoast_batches(image);
   test_probe_failure_and_same_frame_reselect(image);

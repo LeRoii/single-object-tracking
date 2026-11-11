@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace nanotrack {
@@ -250,6 +251,7 @@ void visit_head(const std::string& name, bool executed, bool reused,
 template <typename Field>
 void visit_observability_fields(const TrackingLogRow& row, Field field) {
   const auto& request = row.template_transition;
+  const auto& revocation = row.template_slot_revocation;
   const auto& reference = row.trusted_response_reference;
   const auto& candidate = row.recovery_candidate_key;
   const auto& probe = row.recovery_probe;
@@ -277,6 +279,8 @@ void visit_observability_fields(const TrackingLogRow& row, Field field) {
   field("template_transition_result", to_string(row.template_transition_result));
   field("template_transition_reason", row.template_transition_reason);
   field("template_probation_active", row.template_probation_active);
+  field("revoked_template_slot_id", revocation ? std::optional<std::uint64_t>(revocation->slot_id) : std::nullopt);
+  field("template_slot_revocation_reason", revocation ? to_string(revocation->reason) : "NONE");
   field("candidate_source", candidate ? candidate_source(candidate->source) : "NONE");
   field("candidate_id", candidate ? std::optional<std::uint64_t>(candidate->id) : std::nullopt);
   field("candidate_generation", candidate ? std::optional<std::uint64_t>(candidate->generation) : std::nullopt);
@@ -653,26 +657,43 @@ TrackingArtifactPaths resolve_tracking_artifact_paths(
   if (!boxes.empty()) {
     paths.frame_json = artifact_open_path(boxes.string() + ".jsonl");
   }
-  const std::filesystem::path identities[] = {
+  std::filesystem::path identities[] = {
       artifact_identity(paths.boxes), artifact_identity(paths.metadata),
-      artifact_identity(paths.video), artifact_identity(paths.frame_json),
+      artifact_identity(paths.video), {},
   };
-  const char* labels[] = {"CSV", "session metadata", "video", "frame JSON"};
-  for (std::size_t i = 0; i < std::size(identities); ++i) {
-    if (identities[i].empty()) continue;
-    for (std::size_t j = i + 1; j < std::size(identities); ++j) {
-      if (identities[j].empty()) continue;
-      std::error_code error;
-      if (identities[i] == identities[j] ||
-          std::filesystem::equivalent(identities[i], identities[j], error)) {
+  const char* labels[] = {"CSV", "session metadata", "video"};
+  constexpr auto companion_index = std::size(labels);
+  try {
+    identities[companion_index] = artifact_identity(paths.frame_json);
+  } catch (const std::filesystem::filesystem_error&) {
+    paths.frame_json.clear();
+    paths.frame_json_disabled_reason = "could not resolve derived companion path";
+  } catch (const std::invalid_argument&) {
+    paths.frame_json.clear();
+    paths.frame_json_disabled_reason = "derived companion has a cyclic symlink";
+  }
+  const auto aliases = [&](std::size_t first, std::size_t second) {
+    if (identities[first].empty() || identities[second].empty()) return false;
+    std::error_code error;
+    return identities[first] == identities[second] ||
+           std::filesystem::equivalent(identities[first], identities[second], error);
+  };
+  for (std::size_t i = 0; i < std::size(labels); ++i) {
+    for (std::size_t j = i + 1; j < std::size(labels); ++j) {
+      if (aliases(i, j)) {
         throw std::invalid_argument(std::string("tracking outputs share a destination: ") +
                                     labels[i] + " and " + labels[j]);
       }
     }
+    if (aliases(i, companion_index)) {
+      paths.frame_json.clear();
+      paths.frame_json_disabled_reason = std::string("derived companion aliases ") + labels[i];
+    }
   }
   if (!paths.frame_json.empty()) {
-    const auto reference = identities[3].lexically_relative(identities[1].parent_path());
-    paths.frame_json_reference = (reference.empty() ? identities[3] : reference).generic_string();
+    const auto& companion = identities[companion_index];
+    const auto reference = companion.lexically_relative(identities[1].parent_path());
+    paths.frame_json_reference = (reference.empty() ? companion : reference).generic_string();
   }
   return paths;
 }
@@ -683,15 +704,18 @@ TrackingFrameJsonWriter::TrackingFrameJsonWriter(const TrackingArtifactPaths& pa
 TrackingFrameJsonWriter::~TrackingFrameJsonWriter() { discard(); }
 
 void TrackingFrameJsonWriter::open() noexcept {
-  if (path_.empty() || owns_path_) return;
-  const int file = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
-  if (file < 0) return;
-  owns_path_ = true;
-  stream_ = ::fdopen(file, "w");
-  if (!stream_) {
-    ::close(file);
-    discard();
+  if (path_.empty() || identity_fd_ >= 0) return;
+  identity_fd_ = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+  if (identity_fd_ < 0) return;
+  wrote_frame_ = false;
+  // Retain the exclusive-open handle past fclose so the inode cannot be
+  // recycled before the final pathname identity check or failure cleanup.
+  const int stream_fd = ::fcntl(identity_fd_, F_DUPFD_CLOEXEC, 0);
+  if (stream_fd >= 0) {
+    stream_ = ::fdopen(stream_fd, "w");
+    if (!stream_) ::close(stream_fd);
   }
+  if (!stream_) discard();
 }
 
 void TrackingFrameJsonWriter::append(const TrackingLogRow& row) {
@@ -709,12 +733,24 @@ std::string TrackingFrameJsonWriter::finish(bool primary_complete) {
   if (!stream_) return {};
   const bool closed = std::fclose(stream_) == 0;
   stream_ = nullptr;
-  if (!primary_complete || !closed || !wrote_frame_) {
+  if (!primary_complete || !closed || !wrote_frame_ || !path_matches_open_file()) {
     discard();
     return {};
   }
-  owns_path_ = false;
+  const bool identity_closed = ::close(identity_fd_) == 0;
+  identity_fd_ = -1;
+  if (!identity_closed) {
+    std::fprintf(stderr, "Could not finish frame JSON companion: %s\n", path_.c_str());
+    return {};
+  }
   return reference_;
+}
+
+bool TrackingFrameJsonWriter::path_matches_open_file() const noexcept {
+  struct stat opened{}, current{};
+  return identity_fd_ >= 0 && ::fstat(identity_fd_, &opened) == 0 &&
+         ::lstat(path_.c_str(), &current) == 0 &&
+         opened.st_dev == current.st_dev && opened.st_ino == current.st_ino;
 }
 
 void TrackingFrameJsonWriter::discard() noexcept {
@@ -722,11 +758,17 @@ void TrackingFrameJsonWriter::discard() noexcept {
     std::fclose(stream_);
     stream_ = nullptr;
   }
-  if (owns_path_) {
-    std::error_code error;
-    std::filesystem::remove(path_, error);
-    owns_path_ = false;
+  if (identity_fd_ < 0) return;
+  if (path_matches_open_file()) {
+    if (::unlink(path_.c_str()) != 0) {
+      std::fprintf(stderr, "Could not remove incomplete frame JSON companion: %s\n", path_.c_str());
+    }
+  } else {
+    std::fprintf(stderr, "Frame JSON companion cleanup skipped because its path changed: %s\n",
+                 path_.c_str());
   }
+  ::close(identity_fd_);
+  identity_fd_ = -1;
 }
 
 TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
@@ -797,6 +839,7 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.selected_template = output.selected_template;
   row.template_action = output.template_action;
   row.template_transition = output.template_transition;
+  row.template_slot_revocation = result.template_slot_revocation;
   row.template_transition_result = output.template_transition_result;
   row.template_transition_applied = output.template_transition_applied;
   row.template_probation_active = output.template_probation_active;

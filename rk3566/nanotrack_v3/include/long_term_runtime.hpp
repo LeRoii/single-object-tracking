@@ -34,10 +34,24 @@ struct TargetClassInitializationResult {
   std::string detector_error;
 };
 
+enum class TemplateSlotRevocationReason {
+  kFrameAborted,
+  kFrameApplicationFailed,
+  kReinitialized,
+};
+
+struct TemplateSlotRevocation {
+  std::uint64_t slot_id = 0;
+  TemplateSlotRevocationReason reason = TemplateSlotRevocationReason::kFrameAborted;
+};
+
+const char* to_string(TemplateSlotRevocationReason reason);
+
 struct RuntimeFrameResult {
   SearchPlan plan{};
   std::vector<TrackerObservation> observations;
   TemplateHeadExecution template_heads;
+  std::optional<TemplateSlotRevocation> template_slot_revocation;
   ControllerOutput output{};
   DetectorDiagnostics detector{};
   float tracker_ms = 0.0F;
@@ -63,6 +77,9 @@ class LongTermRuntime {
                                    std::uint64_t frame_id,
                                    std::int64_t timestamp_ms);
 
+  // Acknowledge after the revocation-bearing row is successfully written.
+  bool acknowledge_template_slot_revocation(std::uint64_t slot_id) noexcept;
+
   const LongTermController& controller() const { return controller_; }
   const TargetClassInitializationResult& last_initialization() const {
     return last_initialization_;
@@ -71,7 +88,8 @@ class LongTermRuntime {
  private:
   TemplateTransitionResult apply_template_transition(
       const ImageView& image, const TemplateTransitionRequest& request);
-  void abandon_staged_recent() noexcept;
+  void abandon_staged_recent(
+      std::optional<TemplateSlotRevocationReason> reason = std::nullopt) noexcept;
   static void validate_image(const ImageView& image);
 
   ShortTermTracker& tracker_;
@@ -83,6 +101,7 @@ class LongTermRuntime {
   bool initialized_ = false;
   bool frame_open_ = false;
   std::optional<std::uint64_t> staged_template_slot_id_;
+  std::optional<TemplateSlotRevocation> pending_template_slot_revocation_;
 };
 
 }  // namespace nanotrack

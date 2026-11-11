@@ -218,6 +218,7 @@ v11_deltas = ("response_psr_relative_delta", "response_apce_relative_delta",
 v11_fields = v11_booleans | {
     "state_change_reason", "rect0_source", "active_template", "selected_template",
     "template_action", "template_transaction_id", "template_slot_id",
+    "revoked_template_slot_id", "template_slot_revocation_reason",
     "template_transition_result", "template_transition_reason",
     "candidate_source", "candidate_id", "candidate_generation",
     "recovery_confirmation_hits", "recovery_probe_source", "recovery_probe_id",
@@ -227,7 +228,7 @@ v11_fields = v11_booleans | {
     *(f"recovery_probe_{component}" for component in bbox_components),
 }
 
-def verify_recent_safe(row, index, last_transaction, staged_slot):
+def verify_recent_safe(row, index, last_transaction, staged_slot, reinitialized):
     def reject(reason):
         raise SystemExit(f"{reason} at row {index}")
 
@@ -310,6 +311,22 @@ def verify_recent_safe(row, index, last_transaction, staged_slot):
         reject("relative response delta without trusted baseline")
     if any(value and not math.isfinite(float(value)) for value in reference + deltas):
         reject("non-finite trusted baseline or response delta")
+
+    revoked_id = row["revoked_template_slot_id"]
+    revocation_reason = row["template_slot_revocation_reason"]
+    if revocation_reason == "NONE":
+        if revoked_id:
+            reject("revoked template slot without a reason")
+    else:
+        if revocation_reason not in {"FRAME_ABORTED", "FRAME_APPLICATION_FAILED", "REINITIALIZED"}:
+            reject("invalid template slot revocation reason")
+        if not revoked_id.isdigit() or staged_slot is None or int(revoked_id) != staged_slot[0]:
+            reject("template revocation does not identify the live slot")
+        if revocation_reason == "REINITIALIZED" and not reinitialized:
+            reject("template revocation claims an unrecorded reinitialization")
+        staged_slot = None
+    if reinitialized and staged_slot is not None:
+        reject("reinitialization omitted its live slot revocation")
 
     action, result = row["template_action"], row["template_transition_result"]
     applied = row["template_transition_applied"] == "1"
@@ -460,9 +477,8 @@ for index, row in enumerate(rows):
     if row["control_source"] == "OBSERVATION" and row["tracking_phase"] not in {"TRACKING", "SUSPECTED"}:
         raise SystemExit(f"observation control outside tracking or suspicion at row {index}")
     if EXPECTED_TRACKING_SCHEMA == 11:
-        if int(row["frame_id"]) - 1 in reset_frames:
-            staged_slot = None
-        last_transaction, staged_slot = verify_recent_safe(row, index, last_transaction, staged_slot)
+        last_transaction, staged_slot = verify_recent_safe(
+            row, index, last_transaction, staged_slot, int(row["frame_id"]) - 1 in reset_frames)
     if row["control_source"] == "MOTION_SEARCH":
         if row["tracking_phase"] != "SEARCHING" or row["motion_control_authorized"] != "1" or row["motion_prediction_confident"] != "1":
             raise SystemExit(f"invalid motion-search control at row {index}")

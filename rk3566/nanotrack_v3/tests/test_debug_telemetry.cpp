@@ -88,6 +88,12 @@ void test_recent_safe_telemetry() {
                   contains(events, "template_transaction_id=13 template_slot_id=10") &&
                   contains(events, "template_transition_result=APPLIED"),
               "tentative frames report full v11 evidence outside heartbeat cadence");
+  auto revocation = frame_result(18);
+  revocation.template_slot_revocation = TemplateSlotRevocation{10, TemplateSlotRevocationReason::kFrameAborted};
+  const auto revocation_events = telemetry.frame_events(revocation, 10.0F, false);
+  expect_true(contains(revocation_events, "event=frame_observation schema_version=11 frame_id=18") &&
+                  contains(revocation_events, "revoked_template_slot_id=10 template_slot_revocation_reason=FRAME_ABORTED"),
+              "revocation is independently emitted outside heartbeat and transition cadence");
 }
 
 void test_adaptive_coast_events() {

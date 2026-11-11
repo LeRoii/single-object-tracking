@@ -406,6 +406,9 @@ int main(int argc, char** argv) {
     nanotrack::validate_input_paths(options);
     const auto artifacts = nanotrack::resolve_tracking_artifact_paths(
         options.output_boxes, options.session_metadata, options.output_video);
+    if (!artifacts.frame_json_disabled_reason.empty()) {
+      std::cerr << "Frame JSON companion disabled: " << artifacts.frame_json_disabled_reason << '\n';
+    }
     nanotrack::ControllerConfig controller_config =
         options.controller_config.empty()
             ? nanotrack::default_controller_config(options.sensor)
@@ -748,9 +751,14 @@ int main(int argc, char** argv) {
       nanotrack::TrackingLogRow log_row =
           nanotrack::make_tracking_log_row(result);
       log_row.pipeline_ms = pipeline_ms;
+      bool revocation_logged = false;
       if (boxes.is_open()) {
         boxes << nanotrack::tracking_csv_row(log_row) << '\n';
         frame_json.append(log_row);
+        if (result.template_slot_revocation) {
+          boxes.flush();
+          revocation_logged = static_cast<bool>(boxes);
+        }
       }
       if (options.interactive) {
         for (const std::string& event :
@@ -758,6 +766,13 @@ int main(int argc, char** argv) {
                                           force_heartbeat)) {
           std::cout << event << '\n';
         }
+        if (!boxes.is_open() && result.template_slot_revocation) {
+          std::cout.flush();
+          revocation_logged = static_cast<bool>(std::cout);
+        }
+      }
+      if (revocation_logged) {
+        runtime.acknowledge_template_slot_revocation(result.template_slot_revocation->slot_id);
       }
     }
     if (options.interactive) {
