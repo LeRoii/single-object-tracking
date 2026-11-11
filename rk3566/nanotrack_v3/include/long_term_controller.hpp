@@ -5,6 +5,7 @@
 #include "motion_estimator.hpp"
 #include "occlusion_evidence.hpp"
 #include "response_baseline.hpp"
+#include "recovery_candidates.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -51,12 +52,13 @@ struct SearchPlan {
   float motion_acceleration_y = 0.0F;
   float motion_scale_velocity_width = 0.0F;
   float motion_scale_velocity_height = 0.0F;
+  std::optional<RecoveryCandidateKey> recovery_probe;
   TemplateRunMode template_run_mode = TemplateRunMode::kRecentOnly;
 };
 
 enum class AcceptedObservationPath {
   kDirect,
-  kTemplateBridge,
+  kTemplateBridge,  // Historical telemetry value.
   kShortConfirmation,
   kLocalOrDeeperRecovery,
   kDetectorRecovery,
@@ -165,6 +167,9 @@ struct ControllerOutput {
   float motion_acceleration_y = 0.0F;
   float motion_scale_velocity_width = 0.0F;
   float motion_scale_velocity_height = 0.0F;
+  std::optional<RecoveryCandidateKey> recovery_candidate_key;
+  std::size_t recovery_confirmation_hits = 0;
+  bool recovery_conflict = false;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};
 };
@@ -209,15 +214,6 @@ class LongTermController {
   struct Confirmation {
     std::uint64_t frame_id = 0;
     BBox bbox{};
-  };
-
-  struct SearchConfirmationCandidate {
-    std::uint64_t identity = 0;
-    BBox bbox{};
-    std::uint64_t first_hit_frame = 0;
-    std::uint64_t last_hit_frame = 0;
-    std::size_t confirmation_count = 0;
-    std::optional<std::uint64_t> detector_candidate_id;
   };
 
   struct CoastProbeCandidate {
@@ -288,11 +284,15 @@ class LongTermController {
   bool search_control_live(std::int64_t timestamp_ms) const;
   BBox bound_recent_scale(const BBox& bbox, std::int64_t timestamp_ms) const;
   bool add_confirmation(std::uint64_t frame_id, const BBox& bbox);
-  bool update_search_confirmation(
-      std::uint64_t frame_id, const BBox& bbox,
-      const std::optional<std::uint64_t>& detector_candidate_id);
-  SearchHint search_hint_for(const SearchConfirmationCandidate& candidate,
-                             const SearchPlan& plan) const;
+  bool uses_unified_recovery() const noexcept;
+  void invalidate_unified_recovery() noexcept;
+  void cancel_probation() noexcept;
+  SearchHint search_hint_for(const RecoveryCandidate& candidate) const;
+  std::optional<EvaluatedObservation> confirm_recovery_candidate(
+      const SearchPlan& plan,
+      const std::optional<EvaluatedObservation>& recent,
+      const std::optional<EvaluatedObservation>& safe,
+      ControllerOutput& output);
   std::vector<BBox> detector_probes(const DetectorCandidate& candidate) const;
   void activate_next_detector_candidate();
   bool detector_geometry_consistent(const BBox& reference,
@@ -345,6 +345,8 @@ class LongTermController {
   std::optional<std::int64_t> response_clean_since_ms_;
   std::int64_t last_trusted_timestamp_ms_ = 0;
   bool legacy_anchor_observations_ = false;
+  bool recent_safe_observations_ = false;
+  RecoveryCandidateTable recovery_candidates_;
   OcclusionEvidenceTracker occlusion_evidence_;
   OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};
@@ -360,20 +362,19 @@ class LongTermController {
   std::optional<BBox> last_detector_request_motion_bbox_;
   std::deque<QueuedDetectorCandidate> detector_candidates_;
   std::optional<ActiveDetectorCandidate> active_detector_candidate_;
-  std::optional<SearchHint> pending_search_hint_;
   std::uint64_t next_detector_candidate_id_ = 1;
   std::deque<Confirmation> confirmations_;
-  std::optional<SearchConfirmationCandidate> search_confirmation_candidate_;
-  std::uint64_t next_search_confirmation_identity_ = 1;
+  std::optional<std::uint64_t> last_consumed_detector_frame_;
   std::optional<CoastProbeCandidate> coast_probe_candidate_;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_timestamp_ms_ = 0;
   SearchPlan active_plan_{};
   int stable_frames_ = 0;
-  int dual_template_reliable_streak_ = 0;
-  std::optional<std::int64_t> template_bridge_start_ms_;
   std::int64_t last_recent_update_ms_ = 0;
   bool recent_probation_ = false;
+  bool recovery_probation_ = false;
+  bool rollback_pending_ = false;
+  bool resume_search_after_rollback_ = false;
   int probation_reliable_frames_ = 0;
   int consecutive_unreliable_frames_ = 0;
   std::size_t hold_remaining_frames_ = 0;

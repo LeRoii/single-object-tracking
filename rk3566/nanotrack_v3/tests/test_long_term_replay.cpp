@@ -22,7 +22,8 @@ nanotrack::ControllerOutput step(
     nanotrack::LongTermController& controller,
     std::uint64_t frame_id,
     std::int64_t timestamp_ms,
-    const std::optional<nanotrack::BBox>& observation_bbox) {
+    const std::optional<nanotrack::BBox>& observation_bbox,
+    nanotrack::TemplateKind kind = nanotrack::TemplateKind::kAnchor) {
   using namespace nanotrack;
   const SearchPlan plan = controller.begin_frame(frame_id, timestamp_ms, false);
   std::vector<TrackerObservation> observations;
@@ -30,7 +31,7 @@ nanotrack::ControllerOutput step(
     observations.push_back(TrackerObservation{
         frame_id, timestamp_ms, *observation_bbox,
         ResponseMetrics{0.93F, 0.91F, 11.0F, 14.0F, 0.22F},
-        TemplateKind::kAnchor, frame_id});
+        kind, frame_id});
   }
   return controller.finish_frame(plan, observations, std::nullopt);
 }
@@ -66,9 +67,120 @@ std::vector<nanotrack::TrackerObservation> reliable_pair_for_plan(
   };
 }
 
+void test_recent_safe_recovery_replay() {
+  using namespace nanotrack;
+  const BBox initial{40, 30, 20, 20};
+  const BBox other{68, 30, 20, 20};
+  const FrameSize frame_size{240, 160};
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 100;
+  config.detector_candidate_max_center_ratio = 0.20F;
+  config.search_reacquisition_requires_detector = true;  // Ignored migration field.
+
+  LongTermController tracker_only(config);
+  tracker_only.initialize(initial, 0, 0, frame_size);
+  auto plan = tracker_only.begin_frame(1, 40, true);
+  auto out = tracker_only.finish_frame(plan, {}, std::nullopt);
+  expect_true(out.control_source == ControlSource::kMotionSearch,
+              "search starts with motion authorization and no accepted observation");
+  plan = tracker_only.begin_frame(2, 80, true);
+  expect_true(plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                  !plan.request_detector,
+              "unknown detector class still permits dual-template search");
+  out = tracker_only.finish_frame(
+      plan, {reliable_for_plan(plan, initial, 2, TemplateKind::kRecent),
+             reliable_for_plan(plan, initial, 2, TemplateKind::kSafe)}, std::nullopt);
+  expect_true(!out.accepted && !out.observation_present &&
+                  out.template_action == TemplateAction::kNone && out.control_valid,
+              "agreeing templates count as one hit and leave motion control untouched");
+  plan = tracker_only.begin_frame(3, 120, true);
+  out = tracker_only.finish_frame(plan, {}, std::nullopt);
+  expect_true(!out.accepted && !out.control_valid && !plan.request_detector,
+              "one missing hit expires motion authorization from the last trusted time");
+  plan = tracker_only.begin_frame(4, 160, true);
+  auto weak_safe = reliable_for_plan(plan, other, 4, TemplateKind::kSafe);
+  weak_safe.metrics.psr = 2.0F;
+  out = tracker_only.finish_frame(
+      plan, {reliable_for_plan(plan, initial, 4, TemplateKind::kRecent), weak_safe},
+      std::nullopt);
+  expect_true(out.reacquired && out.accepted && out.control_valid &&
+                  out.selected_template == TemplateKind::kRecent &&
+                  out.template_action == TemplateAction::kStageRecent &&
+                  !plan.request_detector,
+              "continuous recent identity recovers across one gap without detector or safe veto");
+
+  LongTermController safe_only(config);
+  safe_only.initialize(initial, 0, 0, frame_size);
+  safe_only.finish_frame(safe_only.begin_frame(1, 30, false), {}, std::nullopt);
+  for (std::uint64_t frame = 2; frame <= 3; ++frame) {
+    plan = safe_only.begin_frame(frame, frame * 30, true);
+    out = safe_only.finish_frame(
+        plan, {reliable_for_plan(plan, initial, frame, TemplateKind::kSafe)}, std::nullopt);
+    expect_true(!plan.request_detector && out.reacquired == (frame == 3) &&
+                    (frame == 2 || out.selected_template == TemplateKind::kSafe),
+                "safe alone follows the same two-hit path without detector");
+  }
+
+  LongTermController detector(config);
+  detector.initialize(initial, 0, 0, frame_size, make_fixed_target_class(0, true));
+  plan = detector.begin_frame(1, 30, false);
+  detector.finish_frame(plan, {}, std::nullopt);
+  plan = detector.begin_frame(2, 60, true);
+  const auto request = *plan.detector_request;
+  DetectorBatch batch{request.frame_id, request.timestamp_ms,
+                      {{other, 0.99F, 0}}};
+  batch.generation = request.generation;
+  out = detector.finish_frame(plan, {}, batch);
+  expect_true(!out.accepted && !out.search_hint &&
+                  out.control_bbox.x == plan.motion_predicted_bbox.x,
+              "a detector-only candidate preserves motion control and has no verification hint");
+  plan = detector.begin_frame(3, 90, false);
+  out = detector.finish_frame(
+      plan, {reliable_for_plan(plan, other, 3, TemplateKind::kSafe)}, std::nullopt);
+  expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                  !out.accepted && out.template_action == TemplateAction::kNone &&
+                  out.control_bbox.x == plan.motion_predicted_bbox.x,
+              "first safe verification of a detector seed still cannot authorize control");
+  plan = detector.begin_frame(4, 120, false);
+  out = detector.finish_frame(
+      plan, {reliable_for_plan(plan, other, 4, TemplateKind::kSafe)}, std::nullopt);
+  expect_true(out.reacquired && out.accepted &&
+                  out.selected_template == TemplateKind::kSafe &&
+                  out.template_action == TemplateAction::kStageRecent &&
+                  out.search_hint && out.search_hint->used &&
+                  out.search_hint->confirmation_count == 2,
+              "the same detector-seeded identity commits through two safe verifications");
+
+  LongTermController ambiguous(config);
+  ambiguous.initialize(initial, 0, 0, frame_size, make_fixed_target_class(0, true));
+  plan = ambiguous.begin_frame(1, 30, false);
+  ambiguous.finish_frame(plan, {}, std::nullopt);
+  plan = ambiguous.begin_frame(2, 60, true);
+  const auto competing_request = *plan.detector_request;
+  DetectorBatch competing{competing_request.frame_id, competing_request.timestamp_ms,
+                          {{initial, 0.80F, 0}, {other, 0.99F, 0}}};
+  competing.generation = competing_request.generation;
+  ambiguous.finish_frame(plan, {}, competing);
+  for (std::uint64_t frame = 3; frame <= 8; ++frame) {
+    plan = ambiguous.begin_frame(frame, frame * 30, false);
+    out = ambiguous.finish_frame(
+        plan, {reliable_for_plan(plan, other, frame, TemplateKind::kRecent)},
+        std::nullopt);
+    expect_true(!out.accepted && out.tracking_phase == TrackingPhase::kSearching &&
+                    out.recovery_conflict && out.template_action == TemplateAction::kNone,
+                "repeated hits at the higher-confidence object cannot resolve identity as its rival ages out");
+    if (frame > 4) {
+      expect_true(out.detector_candidates_queued == 0,
+                  "detector rivals age out even while their identity conflict remains");
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
+  test_recent_safe_recovery_replay();
   using namespace nanotrack;
   const BBox initial{40, 30, 20, 20};
   const FrameSize frame_size{240, 160};
@@ -119,10 +231,10 @@ int main() {
   output = step(motion_search, 5, 281, std::nullopt);
   expect_true(!output.control_valid && !output.motion_control_authorized,
               "candidate replay fails closed after time confidence expires");
-  output = step(motion_search, 6, 320, initial);
+  output = step(motion_search, 6, 320, initial, TemplateKind::kRecent);
   expect_true(!output.accepted && !output.reacquired,
               "candidate replay first visual return stays shadow-only");
-  output = step(motion_search, 7, 360, initial);
+  output = step(motion_search, 7, 360, initial, TemplateKind::kRecent);
   expect_true(output.accepted && output.reacquired &&
                   output.accepted_observation_path ==
                       AcceptedObservationPath::kSearchReacquisition,

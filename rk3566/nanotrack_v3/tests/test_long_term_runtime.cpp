@@ -47,16 +47,26 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
     const nanotrack::BBox bbox = emit_weak ? weak_bbox :
         reliable_bbox.value_or(plan.predicted_bbox);
     const auto observed_frame = invalid_observation ? plan.frame_id + 1 : plan.frame_id;
-    return {
+    auto secondary_template = nanotrack::TemplateKind::kAnchor;
+    if (emit_recent_safe_roles) {
+      secondary_template = plan.template_run_mode == nanotrack::TemplateRunMode::kStagedAndRecent
+          ? nanotrack::TemplateKind::kStaged : nanotrack::TemplateKind::kSafe;
+    }
+    std::vector<nanotrack::TrackerObservation> observations{
         nanotrack::TrackerObservation{observed_frame, plan.timestamp_ms,
                                       bbox, metrics,
-                                      nanotrack::TemplateKind::kAnchor,
+                                      secondary_template,
                                       search_token},
         nanotrack::TrackerObservation{plan.frame_id, plan.timestamp_ms,
                                       bbox, metrics,
                                       nanotrack::TemplateKind::kRecent,
                                       search_token},
     };
+    if (emit_recent_safe_roles &&
+        plan.template_run_mode == nanotrack::TemplateRunMode::kRecentOnly) {
+      observations.erase(observations.begin());
+    }
+    return observations;
   }
 
   void commit_bbox(const nanotrack::BBox& bbox) override {
@@ -87,6 +97,7 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
 
   bool initialized = false;
   bool emit_reliable = true;
+  bool emit_recent_safe_roles = false;
   bool emit_weak = false;
   bool invalid_observation = false;
   std::optional<nanotrack::BBox> reliable_bbox;
@@ -364,6 +375,7 @@ void test_runtime_atomic_search_commit(const nanotrack::ImageView& image) {
   config.motion_search_confidence_ms = 1000;
   config.recent_probation_frames = 2;
   FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
   tracker.emit_reliable = false;
   FakeDetector detector;
   LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
@@ -371,11 +383,12 @@ void test_runtime_atomic_search_commit(const nanotrack::ImageView& image) {
   runtime.process_frame(image, 1, 40);
   tracker.emit_reliable = true;
   RuntimeFrameResult first = runtime.process_frame(image, 2, 80);
-  expect_true(!first.output.accepted && tracker.commit_calls == 0 &&
-                  tracker.stage_calls == 0,
+  expect_true(!first.output.accepted && first.output.recovery_candidate_key &&
+                  tracker.commit_calls == 0 && tracker.stage_calls == 0,
               "runtime first search hit performs no bbox or template commit");
   RuntimeFrameResult second = runtime.process_frame(image, 3, 120);
-  expect_true(second.output.accepted && second.output.reacquired &&
+  expect_true(second.plan.recovery_probe == first.output.recovery_candidate_key &&
+                  second.output.accepted && second.output.reacquired &&
                   second.output.accepted_observation_path ==
                       AcceptedObservationPath::kSearchReacquisition &&
                   tracker.commit_calls == 1 && tracker.stage_calls == 1 &&
@@ -383,9 +396,10 @@ void test_runtime_atomic_search_commit(const nanotrack::ImageView& image) {
                             second.output.tracking_bbox) &&
                   same_bbox(tracker.staged_bbox,
                             second.output.tracking_bbox),
-              "runtime commits bbox and stages recent only on the atomic second hit");
+              "completed runtime cleanup preserves the first hit for atomic second-hit commit");
   RuntimeFrameResult ordinary = runtime.process_frame(image, 4, 160);
-  expect_true(ordinary.output.accepted && !ordinary.output.reacquired &&
+  expect_true(ordinary.plan.template_run_mode == TemplateRunMode::kStagedAndRecent &&
+                  ordinary.output.accepted && !ordinary.output.reacquired &&
                   tracker.commit_calls == 2 && tracker.stage_calls == 1,
               "later ordinary tracking cannot repeat the reacquired pulse or stage");
 }

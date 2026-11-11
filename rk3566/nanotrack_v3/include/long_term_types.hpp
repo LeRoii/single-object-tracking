@@ -44,6 +44,21 @@ enum class TemplateKind { kAnchor, kRecent, kSafe, kStaged };
 enum class TemplateRunMode { kRecentOnly, kStagedAndRecent, kRecentAndSafe };
 enum class TemplateAction { kNone, kStageRecent, kCommitRecent, kRollbackRecent };
 enum class HypothesisSource { kMotion, kDetector };
+enum class RecoveryCandidateSource { kRecent, kSafe, kDetector };
+
+struct RecoveryCandidateKey {
+  RecoveryCandidateSource source = RecoveryCandidateSource::kRecent;
+  std::uint64_t id = 0;
+  std::uint64_t generation = 0;
+
+  bool operator==(const RecoveryCandidateKey& other) const noexcept {
+    return source == other.source && id == other.id && generation == other.generation;
+  }
+  bool operator!=(const RecoveryCandidateKey& other) const noexcept {
+    return !(*this == other);
+  }
+};
+
 enum class DetectorTargetMode { kFullObject, kSubtarget };
 enum class DetectorBatchStatus {
   kNone,

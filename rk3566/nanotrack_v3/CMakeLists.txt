@@ -71,6 +71,7 @@ add_library(nanotrack_controller_support
   src/long_term_types.cpp
   src/recent_safe_templates.cpp
   src/response_baseline.cpp
+  src/recovery_candidates.cpp
   src/target_class.cpp
   src/motion_estimator.cpp
   src/occlusion_evidence.cpp
@@ -165,6 +166,10 @@ if(BUILD_TESTING)
   add_executable(test_response_baseline tests/test_response_baseline.cpp)
   target_link_libraries(test_response_baseline PRIVATE nanotrack_controller_support)
   add_test(NAME response_baseline COMMAND test_response_baseline)
+
+  add_executable(test_recovery_candidates tests/test_recovery_candidates.cpp)
+  target_link_libraries(test_recovery_candidates PRIVATE nanotrack_controller_support)
+  add_test(NAME recovery_candidates COMMAND test_recovery_candidates)
 
   add_executable(test_tracking_log tests/test_tracking_log.cpp)
   target_link_libraries(test_tracking_log PRIVATE nanotrack_controller_support)
