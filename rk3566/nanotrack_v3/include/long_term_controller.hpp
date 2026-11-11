@@ -54,6 +54,7 @@ struct SearchPlan {
 
 enum class AcceptedObservationPath {
   kDirect,
+  kTemplateBridge,
   kShortConfirmation,
   kLocalOrDeeperRecovery,
   kDetectorRecovery,
@@ -325,6 +326,7 @@ class LongTermController {
   std::int64_t last_timestamp_ms_ = 0;
   SearchPlan active_plan_{};
   int stable_frames_ = 0;
+  int dual_template_reliable_streak_ = 0;
   std::int64_t last_recent_update_ms_ = 0;
   bool recent_probation_ = false;
   int probation_reliable_frames_ = 0;

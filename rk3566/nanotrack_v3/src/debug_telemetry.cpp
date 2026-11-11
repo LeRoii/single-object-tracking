@@ -75,6 +75,7 @@ const char* rejection_name(DetectorCandidateRejection rejection) {
 const char* acceptance_path_name(AcceptedObservationPath path) {
   switch (path) {
     case AcceptedObservationPath::kDirect: return "direct";
+    case AcceptedObservationPath::kTemplateBridge: return "template_bridge";
     case AcceptedObservationPath::kShortConfirmation:
       return "short_confirmation";
     case AcceptedObservationPath::kLocalOrDeeperRecovery:

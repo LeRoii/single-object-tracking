@@ -247,6 +247,7 @@ int main() {
              "accepted_center_smoothing_alpha=0.45\n"
              "accepted_center_max_correction_ratio=0.30\n"
              "max_reacquisition_center_distance=0.80\n"
+             "template_bridge_min_stable_frames=4\n"
              "uncertain_ms=200\n"
              "local_recovery_ms=1000\n"
              "assisted_recovery_ms=3000\n"
@@ -294,6 +295,8 @@ int main() {
               "accepted center correction ratio parses explicitly");
   expect_near(visible.max_reacquisition_center_distance, 0.80F, 1e-6F,
               "ordinary recovery center distance parses explicitly");
+  expect_true(visible.template_bridge_min_stable_frames == 4,
+              "template bridge history parses explicitly");
   expect_true(visible.uncertain_ms == 200 &&
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
@@ -354,6 +357,10 @@ int main() {
   identity_variant.max_reacquisition_center_distance = 0.80F;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes ordinary recovery center distance");
+  identity_variant = default_visible;
+  identity_variant.template_bridge_min_stable_frames = 3;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes template bridge history");
   identity_variant = default_visible;
   identity_variant.motion_search_enabled = true;
   expect_true(controller_config_identity(identity_variant) != default_identity,
@@ -431,6 +438,13 @@ int main() {
   unsafe_confirmation.confirmation_required = 1;
   expect_throws([&] { validate_controller_config(unsafe_confirmation); },
                 "recovery confirmation policy must remain two of three");
+  ControllerConfig invalid_bridge = default_visible;
+  invalid_bridge.template_bridge_min_stable_frames = 61;
+  expect_throws([&] { validate_controller_config(invalid_bridge); },
+                "template bridge history has a bounded maximum");
+  invalid_bridge.template_bridge_min_stable_frames = -1;
+  expect_throws([&] { validate_controller_config(invalid_bridge); },
+                "template bridge history cannot be negative");
 
   const std::string occlusion_path = "/tmp/nanotrack_occlusion_test.conf";
   write_file(occlusion_path,

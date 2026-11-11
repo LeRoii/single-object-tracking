@@ -118,6 +118,7 @@ void set_value(ControllerConfig& config,
   else if (key == "stable_frames_for_update") config.stable_frames_for_update = parse_int(key, value);
   else if (key == "recent_update_interval_ms") config.recent_update_interval_ms = parse_integer(key, value);
   else if (key == "recent_probation_frames") config.recent_probation_frames = parse_int(key, value);
+  else if (key == "template_bridge_min_stable_frames") config.template_bridge_min_stable_frames = parse_int(key, value);
   else if (key == "confirmation_window") config.confirmation_window = parse_int(key, value);
   else if (key == "confirmation_required") config.confirmation_required = parse_int(key, value);
   else if (key == "search_tracking") config.search_tracking = parse_float(key, value);
@@ -314,6 +315,10 @@ void validate_controller_config(const ControllerConfig& config) {
       config.confirmation_required > config.confirmation_window) {
     throw std::invalid_argument("template or confirmation counts are invalid");
   }
+  if (config.template_bridge_min_stable_frames < 0 ||
+      config.template_bridge_min_stable_frames > 60) {
+    throw std::invalid_argument("template bridge stable history is invalid");
+  }
   if (config.confirmation_window != 3 || config.confirmation_required != 2) {
     throw std::invalid_argument("recovery confirmation policy must be two of three");
   }
@@ -396,6 +401,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.accepted_center_smoothing_alpha << '|'
          << config.accepted_center_max_correction_ratio << '|'
          << config.max_reacquisition_center_distance << '|'
+         << config.template_bridge_min_stable_frames << '|'
          << config.detector_candidate_max_center_ratio << '|'
          << config.occlusion_hold_frames << '|'
          << config.occlusion_trigger_consecutive_unreliable << '|'

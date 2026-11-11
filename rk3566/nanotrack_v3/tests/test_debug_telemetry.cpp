@@ -274,6 +274,16 @@ void test_center_filter_events() {
                   contains(events, "reacquired=1"),
               "true recovery center event identifies its reset path");
 
+  RuntimeFrameResult bridged = accepted;
+  bridged.output.frame_id = 93;
+  bridged.plan.frame_id = 93;
+  bridged.output.accepted_observation_path =
+      AcceptedObservationPath::kTemplateBridge;
+  events = telemetry.frame_events(bridged, 7.0F, false);
+  expect_true(contains(events, "acceptance_path=template_bridge") &&
+                  contains(events, "reacquired=0"),
+              "template bridge remains visible as a non-recovery acceptance path");
+
   RuntimeFrameResult rejected = accepted;
   rejected.output.frame_id = 92;
   rejected.plan.frame_id = 92;

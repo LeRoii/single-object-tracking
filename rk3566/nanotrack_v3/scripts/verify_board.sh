@@ -82,6 +82,7 @@ for key, low, high in [
     ("occlusion_suspicion_clear_frames", 1, 60),
     ("accepted_scale_median_window_frames", 1, 31),
     ("accepted_scale_direction_confirm_frames", 1, 31),
+    ("template_bridge_min_stable_frames", 0, 60),
     ("motion_search_confidence_ms", 1, 60000),
     ("search_probe_interval_ms", 1, 60000),
 ]:
@@ -220,7 +221,7 @@ for index, row in enumerate(rows):
             "TEMPLATE_AGREEMENT", "MISSING_CANDIDATE", "CONFIRM_GEOMETRY"},
         "tracking_phase": {"TRACKING", "SEARCHING"},
         "control_source": {"NONE", "OBSERVATION", "MOTION_SEARCH"},
-        "accepted_observation_path": {"direct", "short_confirmation",
+        "accepted_observation_path": {"direct", "template_bridge", "short_confirmation",
             "local_or_deeper_recovery", "detector_recovery",
             "occlusion_probe_recovery", "search_reacquisition"},
     }
@@ -458,6 +459,7 @@ for key in {
     "end_to_end_fps",
     "motion_search_enabled", "search_reacquisition_requires_detector",
     "search_reacquisition_min_age_ms", "motion_search_confidence_ms",
+    "template_bridge_min_stable_frames",
     "motion_max_speed_diagonals_per_s",
     "motion_max_acceleration_diagonals_per_s2",
     "motion_scale_rate_limit_per_s", "search_probe_interval_ms",

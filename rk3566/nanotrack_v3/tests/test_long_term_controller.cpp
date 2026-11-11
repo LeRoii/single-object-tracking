@@ -2124,6 +2124,136 @@ void test_atomic_search_reacquisition_and_template_probation() {
               "second hit outside confirmation window cannot commit");
 }
 
+void test_bounded_template_bridge() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.template_bridge_min_stable_frames = 3;
+  config.motion_search_enabled = true;
+  config.search_reacquisition_requires_detector = true;
+  LongTermController controller(config);
+  const BBox stable{60, 40, 20, 20};
+  controller.initialize(stable, 0, 0, {240, 160},
+                        make_fixed_target_class(0, true));
+
+  for (int frame = 1; frame <= 3; ++frame) {
+    const auto plan = controller.begin_frame(frame, frame * 40, false);
+    const auto output = controller.finish_frame(
+        plan, reliable_pair(plan, stable, frame), std::nullopt);
+    expect_true(output.accepted, "bridge fixture builds stable dual-template history");
+  }
+  auto plan = controller.begin_frame(4, 160, false);
+  auto observations = reliable_pair(plan, stable, 4);
+  observations[0].metrics.peak_margin = 0.0F;
+  auto output = controller.finish_frame(plan, observations, std::nullopt);
+  expect_true(output.accepted && !output.reacquired &&
+                  output.accepted_observation_path ==
+                      AcceptedObservationPath::kTemplateBridge &&
+                  output.tracking_phase == TrackingPhase::kTracking,
+              "one isolated anchor score miss is bridged after stable agreement");
+
+  plan = controller.begin_frame(5, 200, false);
+  observations = reliable_pair(plan, stable, 5);
+  observations[0].metrics.peak_margin = 0.0F;
+  output = controller.finish_frame(plan, observations, std::nullopt);
+  expect_true(!output.accepted &&
+                  output.accepted_observation_path !=
+                      AcceptedObservationPath::kTemplateBridge,
+              "consuming a bridge resets history and prevents consecutive bypasses");
+
+  LongTermController immature(config);
+  immature.initialize(stable, 0, 0, {240, 160},
+                      make_fixed_target_class(0, true));
+  for (int frame = 1; frame <= 2; ++frame) {
+    plan = immature.begin_frame(frame, frame * 40, false);
+    immature.finish_frame(plan, reliable_pair(plan, stable, frame), std::nullopt);
+  }
+  plan = immature.begin_frame(3, 120, false);
+  observations = reliable_pair(plan, stable, 3);
+  observations[0].metrics.peak_margin = 0.0F;
+  output = immature.finish_frame(plan, observations, std::nullopt);
+  expect_true(!output.accepted,
+              "bridge cannot activate before the configured stable history");
+
+  LongTermController reset(config);
+  reset.initialize(stable, 0, 0, {240, 160},
+                   make_fixed_target_class(0, true));
+  for (int frame = 1; frame <= 3; ++frame) {
+    plan = reset.begin_frame(frame, frame * 40, false);
+    reset.finish_frame(plan, reliable_pair(plan, stable, frame), std::nullopt);
+  }
+  reset.initialize(stable, 10, 400, {240, 160},
+                   make_fixed_target_class(0, true));
+  plan = reset.begin_frame(11, 440, false);
+  observations = reliable_pair(plan, stable, 11);
+  observations[0].metrics.peak_margin = 0.0F;
+  output = reset.finish_frame(plan, observations, std::nullopt);
+  expect_true(!output.accepted,
+              "reinitialization clears bridge eligibility state");
+
+  LongTermController disagreement(config);
+  disagreement.initialize(stable, 0, 0, {240, 160},
+                          make_fixed_target_class(0, true));
+  for (int frame = 1; frame <= 3; ++frame) {
+    plan = disagreement.begin_frame(frame, frame * 40, false);
+    disagreement.finish_frame(plan, reliable_pair(plan, stable, frame),
+                              std::nullopt);
+  }
+  plan = disagreement.begin_frame(4, 160, false);
+  observations = reliable_pair(plan, stable, 4);
+  observations[0].bbox.x += 18.0F;
+  observations[0].metrics.peak_margin = 0.0F;
+  output = disagreement.finish_frame(plan, observations, std::nullopt);
+  expect_true(!output.accepted,
+              "template geometry disagreement cannot use the bridge");
+
+  ControllerConfig hard_geometry_config = config;
+  hard_geometry_config.max_center_distance = 0.40F;
+  LongTermController hard_geometry(hard_geometry_config);
+  hard_geometry.initialize(stable, 0, 0, {240, 160},
+                           make_fixed_target_class(0, true));
+  for (int frame = 1; frame <= 3; ++frame) {
+    plan = hard_geometry.begin_frame(frame, frame * 40, false);
+    hard_geometry.finish_frame(plan, reliable_pair(plan, stable, frame),
+                               std::nullopt);
+  }
+  plan = hard_geometry.begin_frame(4, 160, false);
+  observations = reliable_pair(plan, stable, 4);
+  observations[0].bbox.x += 10.0F;
+  observations[0].metrics.peak_margin = 0.0F;
+  output = hard_geometry.finish_frame(plan, observations, std::nullopt);
+  expect_true(!output.accepted,
+              "an anchor hard-geometry failure cannot use the bridge");
+
+  LongTermController probation(config);
+  probation.initialize(stable, 0, 0, {240, 160},
+                       make_fixed_target_class(0, true));
+  for (int frame = 1; frame <= 3; ++frame) {
+    plan = probation.begin_frame(frame, frame * 40, false);
+    probation.finish_frame(plan, reliable_pair(plan, stable, frame),
+                           std::nullopt);
+  }
+  probation.recent_probation_ = true;
+  plan = probation.begin_frame(4, 160, false);
+  observations = reliable_pair(plan, stable, 4);
+  observations[0].metrics.peak_margin = 0.0F;
+  output = probation.finish_frame(plan, observations, std::nullopt);
+  expect_true(!output.accepted,
+              "recent-template probation disables and resets bridge history");
+
+  ControllerConfig disabled_config = config;
+  disabled_config.template_bridge_min_stable_frames = 0;
+  LongTermController disabled(disabled_config);
+  disabled.initialize(stable, 0, 0, {240, 160},
+                      make_fixed_target_class(0, true));
+  disabled.dual_template_reliable_streak_ = 60;
+  plan = disabled.begin_frame(1, 40, false);
+  observations = reliable_pair(plan, stable, 1);
+  observations[0].metrics.peak_margin = 0.0F;
+  output = disabled.finish_frame(plan, observations, std::nullopt);
+  expect_true(!output.accepted,
+              "default-zero configuration preserves historical behavior");
+}
+
 }  // namespace
 
 int main() {
@@ -2146,6 +2276,7 @@ int main() {
   test_time_based_motion_search_control();
   test_search_detector_shadow_hint_isolation();
   test_atomic_search_reacquisition_and_template_probation();
+  test_bounded_template_bridge();
 
   const auto expect_enum_name = [](auto value, const char* expected) {
     expect_true(std::string(to_string(value)) == expected,

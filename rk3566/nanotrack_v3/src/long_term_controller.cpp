@@ -135,6 +135,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   last_frame_id_ = frame_id;
   last_timestamp_ms_ = timestamp_ms;
   stable_frames_ = 0;
+  dual_template_reliable_streak_ = 0;
   last_recent_update_ms_ = timestamp_ms;
   recent_probation_ = false;
   probation_reliable_frames_ = 0;
@@ -800,6 +801,7 @@ void LongTermController::accept_observation(
     AcceptedObservationPath acceptance_path, ControllerOutput& output) {
   const bool reacquired =
       acceptance_path != AcceptedObservationPath::kDirect &&
+      acceptance_path != AcceptedObservationPath::kTemplateBridge &&
       acceptance_path != AcceptedObservationPath::kShortConfirmation;
   DimensionScaleState next_width = width_scale_state_;
   DimensionScaleState next_height = height_scale_state_;
@@ -1275,6 +1277,17 @@ ControllerOutput LongTermController::finish_frame(
       plan.mode == TrackingMode::kTracking ||
       plan.mode == TrackingMode::kUncertain ||
       plan.mode == TrackingMode::kLocalRecovery;
+  const bool template_bridge_eligible =
+      config_.template_bridge_min_stable_frames > 0 &&
+      dual_template_reliable_streak_ >=
+          config_.template_bridge_min_stable_frames &&
+      plan.mode == TrackingMode::kTracking && !loss_start_ms_ &&
+      !motion_search_active_ && !recent_probation_ &&
+      !detector_verification_active && anchor && recent &&
+      recent->quality == QualityLevel::kReliable &&
+      anchor->quality != QualityLevel::kReliable && !anchor->score_gate &&
+      anchor->center_gate && anchor->area_gate && anchor->aspect_gate &&
+      output.template_iou >= config_.template_agreement_iou;
   if (selected && !hold_used_for_loss_) {
     // Only normal, accepted tracking observations may enter stable history.
     // Confirmation and all motion/template effects happen after evidence.
@@ -1387,6 +1400,13 @@ ControllerOutput LongTermController::finish_frame(
         search_confirmation_candidate_.reset();
         pending_search_hint_.reset();
       }
+    } else if (template_bridge_eligible &&
+               !(config_.motion_search_enabled &&
+                 occlusion_decision_.triggered) &&
+               plan.hypothesis_source != HypothesisSource::kDetector) {
+      selected = recent;
+      accepted = true;
+      acceptance_path = AcceptedObservationPath::kTemplateBridge;
     } else if (selected->quality == QualityLevel::kReliable &&
         !(config_.motion_search_enabled && occlusion_decision_.triggered) &&
         plan.hypothesis_source != HypothesisSource::kDetector) {
@@ -1585,6 +1605,19 @@ ControllerOutput LongTermController::finish_frame(
     recent_probation_ = true;
     probation_reliable_frames_ = 0;
     stable_frames_ = 0;
+  }
+
+  const bool dual_template_reliable =
+      anchor && recent && anchor->quality == QualityLevel::kReliable &&
+      recent->quality == QualityLevel::kReliable &&
+      output.template_iou >= config_.template_agreement_iou;
+  if (accepted && acceptance_path == AcceptedObservationPath::kDirect &&
+      dual_template_reliable && !recent_probation_ &&
+      output.template_action == TemplateAction::kNone) {
+    dual_template_reliable_streak_ = std::min(
+        dual_template_reliable_streak_ + 1, 1000000);
+  } else {
+    dual_template_reliable_streak_ = 0;
   }
 
   output.detector_candidates_queued = detector_candidates_.size();

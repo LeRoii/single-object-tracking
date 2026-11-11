@@ -116,6 +116,8 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
             "tracker_ms": "1",
             "runtime_ms": "2", "pipeline_ms": "3",
         })
+        if frame_id == 1:
+            row["accepted_observation_path"] = "template_bridge"
         if frame_id == 2:
             row.update({
                 "state": "OCCLUSION_HOLD", "quality": "REJECTED",
@@ -157,6 +159,7 @@ metadata = {
     "motion_search_enabled": True,
     "search_reacquisition_requires_detector": True,
     "search_reacquisition_min_age_ms": 400,
+    "template_bridge_min_stable_frames": 3,
     "motion_search_confidence_ms": 1000,
     "motion_max_speed_diagonals_per_s": 1.0,
     "motion_max_acceleration_diagonals_per_s2": 2.0,

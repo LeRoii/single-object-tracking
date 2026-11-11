@@ -69,6 +69,7 @@ struct ControllerConfig {
   int stable_frames_for_update = 15;
   std::int64_t recent_update_interval_ms = 1000;
   int recent_probation_frames = 3;
+  int template_bridge_min_stable_frames = 0;
   int confirmation_window = 3;
   int confirmation_required = 2;
 
