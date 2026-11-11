@@ -279,11 +279,11 @@ int main() {
                     candidate.confirmation_window == 3 &&
                     candidate.search_reacquisition_min_age_ms == 400,
                 "recent-safe profile preserves the existing recovery gates");
-    expect_true(candidate.search_reacquisition_requires_detector,
-                "recent-safe profile requires detector confirmation during migration");
-    expect_true(candidate.template_bridge_min_stable_frames == 3 &&
-                    candidate.template_bridge_max_duration_ms == 200,
-                "recent-safe profile preserves the existing template bridge during migration");
+    expect_true(!candidate.search_reacquisition_requires_detector,
+                "recent-safe profile leaves the legacy detector requirement inactive");
+    expect_true(candidate.template_bridge_min_stable_frames == 0 &&
+                    candidate.template_bridge_max_duration_ms == 0,
+                "recent-safe profile leaves the legacy template bridge inactive");
     expect_near(candidate.detector_candidate_max_center_ratio, 0.02F, 1e-6F,
                 "recent-safe profile preserves the calibrated scalar position gate");
   } catch (const std::exception& error) {
@@ -411,7 +411,7 @@ int main() {
   expect_true(!infrared.search_reacquisition_requires_detector &&
                   infrared.template_bridge_min_stable_frames == 0 &&
                   infrared.template_bridge_max_duration_ms == 0,
-              "infrared motion search keeps the legacy overrides disabled");
+              "infrared motion search leaves the legacy recovery settings inactive");
   expect_near(infrared.reliable_score, 0.74F, 1e-6F,
               "infrared override does not inherit visible values");
 
@@ -421,7 +421,7 @@ int main() {
                   !no_motion_search.search_reacquisition_requires_detector &&
                   no_motion_search.template_bridge_min_stable_frames == 0 &&
                   no_motion_search.template_bridge_max_duration_ms == 0,
-              "visible profiles with motion search disabled keep the legacy overrides disabled");
+              "visible profiles with motion search disabled leave the legacy recovery settings inactive");
 
   const std::string default_identity = controller_config_identity(default_visible);
   ControllerConfig identity_variant = default_visible;

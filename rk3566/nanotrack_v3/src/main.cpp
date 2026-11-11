@@ -363,7 +363,6 @@ void write_session_metadata(const std::string& path,
   metadata.controller_config_hash_algorithm = "fnv1a64";
   metadata.controller_config_hash = config_hash;
   metadata.sensor = config.sensor;
-  metadata.calibrated = config.calibrated;
   metadata.detector_target_mode = config.detector_target_mode;
   metadata.detector_candidate_max_center_ratio =
       config.detector_candidate_max_center_ratio;

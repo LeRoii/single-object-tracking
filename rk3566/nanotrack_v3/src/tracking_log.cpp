@@ -1069,6 +1069,9 @@ void record_target_class_initialization(
 
 void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
                                       const ControllerConfig& config) {
+  metadata.calibrated = config.calibrated;
+  metadata.template_policy = config.template_policy;
+  metadata.recovery_policy = config.recovery_policy;
   metadata.occlusion_probe_interval_frames = config.occlusion_probe_interval_frames;
   metadata.occlusion_gradual_dimension_ratio = config.occlusion_gradual_dimension_ratio;
   metadata.occlusion_gradual_consecutive_frames = config.occlusion_gradual_consecutive_frames;
@@ -1191,6 +1194,10 @@ std::string tracking_session_metadata_json(
          << "  \"sensor\": \"" << json_escape(metadata.sensor) << "\",\n"
          << "  \"calibrated\": " << (metadata.calibrated ? "true" : "false")
          << ",\n"
+         << "  \"template_policy\": \"" << to_string(metadata.template_policy)
+         << "\",\n"
+         << "  \"recovery_policy\": \"" << to_string(metadata.recovery_policy)
+         << "\",\n"
          << "  \"requested_target_class_mode\": \""
          << (metadata.requested_target_class_id < 0 ? "AUTO" : "FIXED")
          << "\",\n"

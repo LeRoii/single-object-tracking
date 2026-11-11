@@ -250,6 +250,28 @@ void test_recent_safe_serialization() {
               "v11 CSV includes exactly one value per named column");
 }
 
+void test_recent_safe_profile_metadata() {
+  using namespace nanotrack;
+  const auto profile = std::filesystem::path(__FILE__).parent_path() /
+      "../config/visible-recent-safe-v1.conf";
+  const ControllerConfig config = load_controller_config(profile.string());
+  TrackingSessionMetadata metadata;
+  metadata.calibrated = true;
+  apply_controller_config_metadata(metadata, config);
+  const auto json = tracking_session_metadata_json(metadata);
+
+  expect_true(contains(json, "\"schema_version\": 11,\n") &&
+                  contains(json, "\"template_policy\": \"recent_safe_v1\",\n") &&
+                  contains(json, "\"recovery_policy\": \"unified_candidates_v1\",\n") &&
+                  contains(json, "|recent_safe_v1|unified_candidates_v1|") &&
+                  contains(json, "  \"calibrated\": false,\n"),
+              "v11 session metadata identifies the uncalibrated recent-safe profile");
+  expect_true(contains(json, "\"search_reacquisition_requires_detector\": false,\n") &&
+                  contains(json, "\"template_bridge_min_stable_frames\": 0,\n") &&
+                  contains(json, "\"template_bridge_max_duration_ms\": 0,\n"),
+              "v11 recent-safe session metadata reports inactive legacy recovery settings");
+}
+
 void test_adaptive_coast_serialization() {
   using namespace nanotrack;
   RuntimeFrameResult result;
@@ -404,6 +426,7 @@ int main() {
   using namespace nanotrack;
   test_tracking_artifact_paths();
   test_recent_safe_serialization();
+  test_recent_safe_profile_metadata();
   test_adaptive_coast_serialization();
 
   MonotonicVideoClock clock(30.0);

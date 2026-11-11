@@ -262,6 +262,8 @@ struct TrackingSessionMetadata {
   std::string controller_config_hash;
   std::string sensor;
   bool calibrated = false;
+  TemplatePolicy template_policy = TemplatePolicy::kRecentSafeV1;
+  RecoveryPolicy recovery_policy = RecoveryPolicy::kUnifiedCandidatesV1;
   int requested_target_class_id = -1;
   int engine_class_filter = -1;
   TargetClassMatchConfig target_class_match_config{};
