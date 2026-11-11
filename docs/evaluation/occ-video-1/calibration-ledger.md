@@ -416,3 +416,15 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   `<=0.50`, mean `>=0.70`, identity, reacquisition, continuous-control, and robustness
   relative-drop gates. Synthetic regression requires a `>0.45` frame to pass and a
   `<0.45` frame to fail.
+
+## C009 — C007 runtime with non-knife-edge evaluator
+
+- Timestamp: `2026-11-11T14:26:43+08:00`
+- Parent runtime: `C007`; restore `recent_probation_frames=3`. Keep 400 ms cadence,
+  `0.020` corridor, and the fixed `2/3` geometric-dominance policy.
+- Evaluator: per-frame valid-observation IoU floor `0.45`; every other runtime and
+  evaluator gate is unchanged.
+- Required evidence: re-evaluate exact C007 retained CSVs with the committed evaluator,
+  rerun any report whose provenance or output is incomplete, run probation `2/3/4`,
+  all initialization variants, fault-state CTests, and the robustness aggregator before
+  freeze. Decision `PENDING`.

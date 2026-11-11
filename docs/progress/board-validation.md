@@ -1,5 +1,12 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T14:26:43+08:00 C009 候选
+
+- C009 恢复已通过 nominal/width+5 的 C007 runtime（probation=3），保留 400 ms、0.020
+  和固定 `2/3` 几何显著规则；仅配套使用已提交的非刀刃 evaluator。
+- 下一步优先重签 C007 保留 CSV，补跑缺失项并由 robustness aggregator 实际判定；尚未冻结，
+  无 holdout/full 运行。
+
 ## 2026-11-11T14:26:10+08:00 C008 拒绝与视觉单帧绝对底线校正
 
 - C008 板端 Debug/CTest `19/19`；probation 4/5 均 nominal PASS，但 width `+5%` 到帧 174
