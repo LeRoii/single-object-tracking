@@ -50,6 +50,12 @@ nanotrack::RuntimeFrameResult complete_result() {
   result.output.bbox = BBox{53, 63, 27, 37};
   result.output.accepted = true;
   result.output.control_valid = true;
+  result.output.tracking_phase = TrackingPhase::kTracking;
+  result.output.observation_valid = true;
+  result.output.control_source = ControlSource::kObservation;
+  result.output.tracking_bbox = result.output.bbox;
+  result.output.display_bbox = result.output.bbox;
+  result.output.control_bbox = result.output.bbox;
   result.output.hypothesis_source = HypothesisSource::kDetector;
   result.output.detector_candidate_id = 7;
   result.output.detector_probe_index = 2;
@@ -98,7 +104,7 @@ void test_target_class_presentation() {
   result.target_class.target_class_allows_recovery = true;
   auto overlay = make_interactive_debug_overlay(result, labels);
   expect_true(has_text(overlay, "TARGET CLS car(2) AUTO") &&
-                  overlay.status_label == "ACCEPTED CTRL" &&
+                  overlay.status_label == "TRACKING / OBSERVATION" &&
                   overlay.boxes.back().kind == DebugBoxKind::kAcceptedControl,
               "established shared class does not change accepted-control rendering");
   // The raw candidate is class 0; it must never replace the shared class 2.
@@ -238,8 +244,8 @@ int main() {
                   overlay.boxes[8].label == "NT RECENT score=0.860",
               "NanoTrack descriptors expose raw template scores");
   expect_true(same_bbox(overlay.boxes[9].bbox, result.output.bbox) &&
-                  overlay.boxes[9].label == "ACCEPTED CTRL" &&
-                  overlay.status_label == "ACCEPTED CTRL" &&
+                  overlay.boxes[9].label == "TRACKING / OBSERVATION" &&
+                  overlay.status_label == "TRACKING / OBSERVATION" &&
                   overlay.control_valid,
               "accepted control is last and explicit");
 
@@ -251,7 +257,7 @@ int main() {
 
   for (const DebugBoxDescriptor& box : overlay.boxes) {
     if (box.kind != DebugBoxKind::kAcceptedControl) {
-      expect_true(box.label.find("ACCEPTED CTRL") == std::string::npos,
+      expect_true(box.label.find("TRACKING / OBSERVATION") == std::string::npos,
                   "raw detector and probe descriptors never claim control acceptance");
     }
   }
@@ -270,6 +276,9 @@ int main() {
   RuntimeFrameResult rejected = complete_result();
   rejected.output.accepted = false;
   rejected.output.control_valid = false;
+  rejected.output.tracking_phase = TrackingPhase::kSearching;
+  rejected.output.observation_valid = false;
+  rejected.output.control_source = ControlSource::kNone;
   const InteractiveDebugOverlay rejected_overlay =
       make_interactive_debug_overlay(rejected);
   bool contains_accepted = false;
@@ -278,7 +287,7 @@ int main() {
   }
   expect_true(!contains_accepted &&
                   rejected_overlay.boxes.size() == 9 &&
-                  rejected_overlay.status_label == "REJECTED NO_CTRL" &&
+                  rejected_overlay.status_label == "SEARCHING / NO_CONTROL" &&
                   !rejected_overlay.control_valid,
               "unconfirmed hypotheses never manufacture an accepted control box");
 
@@ -291,6 +300,9 @@ int main() {
   hold.output.mode = TrackingMode::kOcclusionHold;
   hold.output.accepted = false;
   hold.output.control_valid = false;
+  hold.output.tracking_phase = TrackingPhase::kSearching;
+  hold.output.observation_valid = false;
+  hold.output.control_source = ControlSource::kNone;
   hold.output.occlusion_hold_remaining_frames = 5;
   hold.tracker_skipped = true;
   hold.tracker_ms = 0.0F;
@@ -303,7 +315,7 @@ int main() {
                            box.kind == DebugBoxKind::kNanoTrackRecent;
   }
   expect_true(!has_anchor_or_recent &&
-                  hold_overlay.status_label == "OCCLUSION HOLD remaining=5" &&
+                  hold_overlay.status_label == "SEARCHING / NO_CONTROL" &&
                   !hold_overlay.control_valid &&
                   !hold_overlay.boxes.empty() &&
                   same_bbox(hold_overlay.boxes.front().bbox,
@@ -315,14 +327,17 @@ int main() {
   hold.output.control_valid = true;
   hold.output.motion_control_authorized = true;
   hold.output.bbox = BBox{10, 20, 30, 40};
+  hold.output.control_bbox = hold.output.bbox;
+  hold.output.control_source = ControlSource::kMotionSearch;
+  hold.output.motion_prediction_confident = true;
   hold.output.occlusion_probe_type = OcclusionProbeType::kSearch;
   hold.observations = result.observations;
   const auto coast = make_interactive_debug_overlay(hold);
   bool motion_control = false;
   bool search_probe = false;
   for (const auto& box : coast.boxes) {
-    motion_control |= box.label == "CTRL MOTION COAST" &&
-                      box.kind == DebugBoxKind::kAcceptedControl;
+    motion_control |= box.label == "SEARCHING / MOTION_SEARCH PREDICTION" &&
+                      box.kind == DebugBoxKind::kSearchControlPrediction;
     search_probe |= box.label.find("COAST SEARCH") != std::string::npos &&
                     box.kind != DebugBoxKind::kAcceptedControl;
   }

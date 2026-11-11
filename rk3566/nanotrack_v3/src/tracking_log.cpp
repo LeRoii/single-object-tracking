@@ -59,6 +59,21 @@ std::string optional_number(const std::optional<float>& value) {
   return value ? number(*value) : "";
 }
 
+const char* acceptance_path_name(AcceptedObservationPath path) {
+  switch (path) {
+    case AcceptedObservationPath::kDirect: return "direct";
+    case AcceptedObservationPath::kShortConfirmation: return "short_confirmation";
+    case AcceptedObservationPath::kLocalOrDeeperRecovery:
+      return "local_or_deeper_recovery";
+    case AcceptedObservationPath::kDetectorRecovery: return "detector_recovery";
+    case AcceptedObservationPath::kOcclusionProbeRecovery:
+      return "occlusion_probe_recovery";
+    case AcceptedObservationPath::kSearchReacquisition:
+      return "search_reacquisition";
+  }
+  return "unknown";
+}
+
 template <typename Value>
 void append_json_optional(std::ostream& stream, const std::optional<Value>& value) {
   if (value) stream << *value;
@@ -286,7 +301,19 @@ std::string tracking_csv_header() {
          "occlusion_probe_recent_area_gate,"
          "occlusion_probe_recent_aspect_gate,"
          "target_class_status,target_class_id,"
-         "target_class_reason,detector_recovery_enabled";
+         "target_class_reason,detector_recovery_enabled,"
+         "tracking_phase,observation_valid,control_source,accepted_observation_path,"
+         "tracking_x,tracking_y,tracking_width,tracking_height,"
+         "display_x,display_y,display_width,display_height,"
+         "control_x,control_y,control_width,control_height,"
+         "motion_search_age_ms,motion_prediction_confident,"
+         "motion_velocity_x,motion_velocity_y,motion_acceleration_x,motion_acceleration_y,"
+         "motion_scale_velocity_width,motion_scale_velocity_height,"
+         "search_hint_present,search_hint_candidate_id,search_hint_source_frame_id,"
+         "search_hint_source_timestamp_ms,search_hint_projected_x,search_hint_projected_y,"
+         "search_hint_projected_width,search_hint_projected_height,search_hint_generation,"
+         "search_hint_first_hit_frame,search_hint_confirmation_count,search_hint_used,"
+         "search_hint_rejection";
 }
 
 std::string tracking_csv_row(const TrackingLogRow& row) {
@@ -409,6 +436,37 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                  optional_integer(row.target_class.target_class_id),
                  to_string(row.target_class.reason),
                  row.target_class.target_class_allows_recovery ? "1" : "0"});
+  const SearchHint* hint = row.search_hint ? &*row.search_hint : nullptr;
+  fields.insert(fields.end(),
+                {to_string(row.tracking_phase),
+                 row.observation_valid ? "1" : "0",
+                 to_string(row.control_source),
+                 acceptance_path_name(row.accepted_observation_path),
+                 number(row.tracking_bbox.x), number(row.tracking_bbox.y),
+                 number(row.tracking_bbox.width), number(row.tracking_bbox.height),
+                 number(row.display_bbox.x), number(row.display_bbox.y),
+                 number(row.display_bbox.width), number(row.display_bbox.height),
+                 number(row.control_bbox.x), number(row.control_bbox.y),
+                 number(row.control_bbox.width), number(row.control_bbox.height),
+                 std::to_string(row.motion_search_age_ms),
+                 row.motion_prediction_confident ? "1" : "0",
+                 number(row.motion_velocity_x), number(row.motion_velocity_y),
+                 number(row.motion_acceleration_x), number(row.motion_acceleration_y),
+                 number(row.motion_scale_velocity_width),
+                 number(row.motion_scale_velocity_height),
+                 hint ? "1" : "0",
+                 hint ? std::to_string(hint->candidate_id) : "",
+                 hint ? std::to_string(hint->source_frame_id) : "",
+                 hint ? std::to_string(hint->source_timestamp_ms) : "",
+                 hint ? number(hint->projected_bbox.x) : "",
+                 hint ? number(hint->projected_bbox.y) : "",
+                 hint ? number(hint->projected_bbox.width) : "",
+                 hint ? number(hint->projected_bbox.height) : "",
+                 hint ? std::to_string(hint->generation) : "",
+                 hint ? std::to_string(hint->first_hit_frame) : "",
+                 hint ? std::to_string(hint->confirmation_count) : "",
+                 hint ? (hint->used ? "1" : "0") : "",
+                 hint ? to_string(hint->rejection) : ""});
   return join(fields);
 }
 
@@ -423,10 +481,16 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.frame_id = frame_id;
   row.timestamp_ms = timestamp_ms;
   row.mode = TrackingMode::kTracking;
+  row.tracking_phase = TrackingPhase::kTracking;
+  row.observation_valid = true;
+  row.control_source = ControlSource::kObservation;
   row.quality = QualityLevel::kReliable;
   row.control_valid = true;
   row.accepted = true;
   row.bbox = bbox;
+  row.tracking_bbox = bbox;
+  row.display_bbox = bbox;
+  row.control_bbox = bbox;
   row.motion_predicted_bbox = bbox;
   row.anchor_present = true;
   row.recent_present = true;
@@ -450,11 +514,18 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.frame_id = output.frame_id;
   row.timestamp_ms = output.timestamp_ms;
   row.mode = output.mode;
+  row.tracking_phase = output.tracking_phase;
+  row.observation_valid = output.observation_valid;
+  row.control_source = output.control_source;
+  row.accepted_observation_path = output.accepted_observation_path;
   row.quality = output.quality;
   row.control_valid = output.control_valid;
   row.accepted = output.accepted;
   row.reacquired = output.reacquired;
   row.bbox = output.bbox;
+  row.tracking_bbox = output.tracking_bbox;
+  row.display_bbox = output.display_bbox;
+  row.control_bbox = output.control_bbox;
   row.selected_template = output.selected_template;
   row.template_action = output.template_action;
   for (const TrackerObservation& observation : result.observations) {
@@ -546,6 +617,15 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.occlusion_probe_confirmation_hits = output.occlusion_probe_confirmation_hits;
   row.occlusion_probe_confirmation_required = output.occlusion_probe_confirmation_required;
   row.motion_control_authorized = output.motion_control_authorized;
+  row.motion_search_age_ms = output.motion_search_age_ms;
+  row.motion_prediction_confident = output.motion_prediction_confident;
+  row.motion_velocity_x = output.motion_velocity_x;
+  row.motion_velocity_y = output.motion_velocity_y;
+  row.motion_acceleration_x = output.motion_acceleration_x;
+  row.motion_acceleration_y = output.motion_acceleration_y;
+  row.motion_scale_velocity_width = output.motion_scale_velocity_width;
+  row.motion_scale_velocity_height = output.motion_scale_velocity_height;
+  row.search_hint = output.search_hint;
   row.occlusion_probe_rejection = output.occlusion_probe_rejection;
   row.occlusion_probe_motion_bbox = output.occlusion_probe_motion_bbox;
   row.occlusion_probe_bbox = output.occlusion_probe_bbox;
@@ -658,6 +738,16 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
       config.accepted_center_max_correction_ratio;
   metadata.max_reacquisition_center_distance =
       config.max_reacquisition_center_distance;
+  metadata.motion_search_enabled = config.motion_search_enabled;
+  metadata.motion_search_confidence_ms = config.motion_search_confidence_ms;
+  metadata.motion_max_speed_diagonals_per_s =
+      config.motion_max_speed_diagonals_per_s;
+  metadata.motion_max_acceleration_diagonals_per_s2 =
+      config.motion_max_acceleration_diagonals_per_s2;
+  metadata.motion_scale_rate_limit_per_s =
+      config.motion_scale_rate_limit_per_s;
+  metadata.search_probe_interval_ms = config.search_probe_interval_ms;
+  metadata.controller_config_identity = controller_config_identity(config);
 }
 
 std::string tracking_session_metadata_json(
@@ -675,6 +765,9 @@ std::string tracking_session_metadata_json(
       metadata.accepted_center_smoothing_alpha,
       metadata.accepted_center_max_correction_ratio,
       metadata.max_reacquisition_center_distance,
+      metadata.motion_max_speed_diagonals_per_s,
+      metadata.motion_max_acceleration_diagonals_per_s2,
+      metadata.motion_scale_rate_limit_per_s,
       metadata.detector_candidate_max_center_ratio,
       metadata.occlusion_trigger_min_dimension_ratio,
       metadata.occlusion_gradual_dimension_ratio,
@@ -818,6 +911,20 @@ std::string tracking_session_metadata_json(
          << "  \"local_recovery_ms\": " << metadata.local_recovery_ms << ",\n"
          << "  \"assisted_recovery_ms\": " << metadata.assisted_recovery_ms
          << ",\n"
+         << "  \"motion_search_enabled\": "
+         << (metadata.motion_search_enabled ? "true" : "false") << ",\n"
+         << "  \"motion_search_confidence_ms\": "
+         << metadata.motion_search_confidence_ms << ",\n"
+         << "  \"motion_max_speed_diagonals_per_s\": "
+         << metadata.motion_max_speed_diagonals_per_s << ",\n"
+         << "  \"motion_max_acceleration_diagonals_per_s2\": "
+         << metadata.motion_max_acceleration_diagonals_per_s2 << ",\n"
+         << "  \"motion_scale_rate_limit_per_s\": "
+         << metadata.motion_scale_rate_limit_per_s << ",\n"
+         << "  \"search_probe_interval_ms\": "
+         << metadata.search_probe_interval_ms << ",\n"
+         << "  \"controller_config_identity\": \""
+         << json_escape(metadata.controller_config_identity) << "\",\n"
          << "  \"tracked_frames\": " << metadata.tracked_frames << ",\n"
          << "  \"mean_runtime_ms\": " << metadata.latency.mean_runtime_ms << ",\n"
          << "  \"p50_runtime_ms\": " << metadata.latency.p50_runtime_ms << ",\n"

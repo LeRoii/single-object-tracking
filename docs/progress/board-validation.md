@@ -1,5 +1,29 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T12:43:43+08:00 schema 10 搜索控制证据契约与 fail-closed 校验
+
+- 在 `codex/occ-video-1-tracking`、Task 6 起点
+  `936a5e77510786ec6631d94939f236492ae3e643` 将 tracking CSV 与 session metadata
+  升级为 schema 10；结果提交可用
+  `git log -1 --format=%H -- rk3566/nanotrack_v3/include/tracking_log.hpp` 查询。
+- 每行现在直接序列化 controller/runtime 的 `tracking_phase`、`observation_valid`、
+  `control_source`、真实 tracking/display/control 三类框、接受路径、搜索年龄与置信状态、
+  速度/加速度/尺度速度，以及 shadow hint 的 source frame/timestamp、generation、projected
+  bbox、确认计数、使用状态和拒绝原因；没有从旧 mode 或显示框反推这些语义。
+- overlay 明确把搜索期云台框显示为 `SEARCHING / MOTION_SEARCH PREDICTION`，与
+  `TRACKING / OBSERVATION` 分开；telemetry 以显式 phase/source 产生 `search_enter`、
+  `search_expired`、`hint_first_hit`、`hint_reject` 和两击 `reacquired` 事件。
+- 板端 verifier 现在要求 schema 10、连续帧/时间戳、三类有限且在画面内的框、通用运动搜索
+  配置 identity、搜索控制置信状态和完整 hint 诊断；会拒绝 SEARCHING 冒充 observation、
+  detector 直接授权、无置信 motion control、单击重捕、partial hint 以及 metadata/CSV schema
+  不一致。旧模型/manifest/hash/runtime 检查继续保留。
+- 新鲜验证命令重新配置并构建 `/tmp/nanotrack-occ-plan`，完整 CTest 为 `19/19` 通过、
+  `0` 失败、总时间 `3.65 sec`；`git diff --check` 无输出。定向
+  `tracking_log|debug_telemetry|interactive_debug_overlay|verify_board_schema` 为 `4/4` 通过。
+- 本里程碑仍只有主机合成证据，没有改 ONNX/RKNN 模型，也没有同步或运行 RK3588/RK3566；
+  不能宣称 `occ_video_1` 已达成 190 帧前重捕、阈值已由真值标定或真实云台已验收。下一步是
+  Task 7 形成少量通用可见光候选配置，再在 0--189 development 段进行候选标定与扰动筛选。
+
 ## 2026-11-11T12:33:39+08:00 两击一致性重捕与模板 probation 原子提交
 
 - 在 `codex/occ-video-1-tracking`、Task 5 起点

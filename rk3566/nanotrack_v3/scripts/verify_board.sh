@@ -70,7 +70,7 @@ detector_model = pathlib.Path(sys.argv[6]) if sys.argv[6] else None
 detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
 expected_rknn_target = sys.argv[9]
-EXPECTED_TRACKING_SCHEMA = 9
+EXPECTED_TRACKING_SCHEMA = 10
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
 for key, low, high in [
@@ -82,6 +82,8 @@ for key, low, high in [
     ("occlusion_suspicion_clear_frames", 1, 60),
     ("accepted_scale_median_window_frames", 1, 31),
     ("accepted_scale_direction_confirm_frames", 1, 31),
+    ("motion_search_confidence_ms", 1, 60000),
+    ("search_probe_interval_ms", 1, 60000),
 ]:
     value = metadata.get(key)
     if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
@@ -117,6 +119,16 @@ for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimensio
         valid = value > 0
     if not valid:
         raise SystemExit(f"out of range metadata {key}")
+for key in ("motion_max_speed_diagonals_per_s",
+            "motion_max_acceleration_diagonals_per_s2",
+            "motion_scale_rate_limit_per_s"):
+    value = metadata.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise SystemExit(f"invalid metadata {key}")
+if not isinstance(metadata.get("motion_search_enabled"), bool):
+    raise SystemExit("invalid metadata motion_search_enabled")
+if not isinstance(metadata.get("controller_config_identity"), str) or not metadata["controller_config_identity"]:
+    raise SystemExit("invalid metadata controller_config_identity")
 
 manifest = json.loads((artifact_dir / "manifest.json").read_text())
 manifest_target = manifest.get("provenance", {}).get("target_platform")
@@ -160,6 +172,21 @@ required = {
     "occlusion_reference_source", "occlusion_suspicion_active", "occlusion_suspicion_started", "occlusion_suspicion_cleared", "occlusion_suspicion_frames", "occlusion_clean_frames", "occlusion_width_shrink_frames", "occlusion_height_shrink_frames", "occlusion_severe_evidence", "occlusion_gradual_evidence", "occlusion_template_evidence", "occlusion_peak_margin_evidence", "occlusion_motion_residual_evidence", "occlusion_trigger_reason", "occlusion_coast_age_frames", "occlusion_probe_type", "occlusion_probe_confirmation_hits", "occlusion_probe_confirmation_required", "motion_control_authorized",
     "target_class_status", "target_class_id", "target_class_reason",
     "detector_recovery_enabled",
+    "tracking_phase", "observation_valid", "control_source",
+    "accepted_observation_path",
+    "tracking_x", "tracking_y", "tracking_width", "tracking_height",
+    "display_x", "display_y", "display_width", "display_height",
+    "control_x", "control_y", "control_width", "control_height",
+    "motion_search_age_ms", "motion_prediction_confident",
+    "motion_velocity_x", "motion_velocity_y", "motion_acceleration_x",
+    "motion_acceleration_y", "motion_scale_velocity_width",
+    "motion_scale_velocity_height", "search_hint_present",
+    "search_hint_candidate_id", "search_hint_source_frame_id",
+    "search_hint_source_timestamp_ms", "search_hint_projected_x",
+    "search_hint_projected_y", "search_hint_projected_width",
+    "search_hint_projected_height", "search_hint_generation",
+    "search_hint_first_hit_frame", "search_hint_confirmation_count",
+    "search_hint_used", "search_hint_rejection",
 }
 missing = required - set(rows[0])
 if missing:
@@ -183,6 +210,11 @@ for index, row in enumerate(rows):
         "occlusion_probe_type": {"NONE", "SEARCH", "CONFIRM"},
         "occlusion_probe_rejection": {"NONE", "MISSING_TEMPLATE", "QUALITY_OR_MOTION_GEOMETRY",
             "TEMPLATE_AGREEMENT", "MISSING_CANDIDATE", "CONFIRM_GEOMETRY"},
+        "tracking_phase": {"TRACKING", "SEARCHING"},
+        "control_source": {"NONE", "OBSERVATION", "MOTION_SEARCH"},
+        "accepted_observation_path": {"direct", "short_confirmation",
+            "local_or_deeper_recovery", "detector_recovery",
+            "occlusion_probe_recovery", "search_reacquisition"},
     }
     for key, valid in enums.items():
         if row[key] not in valid:
@@ -191,10 +223,27 @@ for index, row in enumerate(rows):
         "detector_requested", "detector_recovery_enabled", "occlusion_suspicion_active", "occlusion_suspicion_started",
         "occlusion_suspicion_cleared", "occlusion_severe_evidence", "occlusion_gradual_evidence",
         "occlusion_template_evidence", "occlusion_peak_margin_evidence",
-        "occlusion_motion_residual_evidence", "motion_control_authorized"}
+        "occlusion_motion_residual_evidence", "motion_control_authorized",
+        "observation_valid", "motion_prediction_confident", "search_hint_present"}
     for key in boolean_keys:
         if row[key] not in {"0", "1"}:
             raise SystemExit(f"invalid {key} at row {index}")
+    observation_valid = row["observation_valid"] == "1"
+    control_valid = row["control_valid"] == "1"
+    if observation_valid != (row["accepted"] == "1"):
+        raise SystemExit(f"observation/acceptance mismatch at row {index}")
+    if row["tracking_phase"] == "TRACKING":
+        if not observation_valid or not control_valid or row["control_source"] != "OBSERVATION":
+            raise SystemExit(f"invalid tracking semantics at row {index}")
+    elif observation_valid:
+        raise SystemExit(f"searching row reports observation at row {index}")
+    if (row["control_source"] == "NONE") != (not control_valid):
+        raise SystemExit(f"control source/valid mismatch at row {index}")
+    if row["control_source"] == "OBSERVATION" and row["tracking_phase"] != "TRACKING":
+        raise SystemExit(f"observation control outside tracking at row {index}")
+    if row["control_source"] == "MOTION_SEARCH":
+        if row["tracking_phase"] != "SEARCHING" or row["motion_control_authorized"] != "1" or row["motion_prediction_confident"] != "1":
+            raise SystemExit(f"invalid motion-search control at row {index}")
     optional_gates = [key for key in required if key.startswith("occlusion_probe_") and
                       (key.endswith("_gate") or key.endswith("_reliable") or
                        key in {"occlusion_probe_cross_iou", "occlusion_probe_cross_center",
@@ -223,6 +272,47 @@ for index, row in enumerate(rows):
                 "occlusion_probe_width", "occlusion_probe_height"):
         if row[key] and float(row[key]) <= 0:
             raise SystemExit(f"nonpositive {key} at row {index}")
+    for prefix in ("tracking_", "display_", "control_"):
+        box = [row[prefix + suffix] for suffix in ("x", "y", "width", "height")]
+        if not all(box):
+            raise SystemExit(f"missing {prefix}box at row {index}")
+        x, y, box_width, box_height = map(float, box)
+        if not all(math.isfinite(value) for value in (x, y, box_width, box_height)) or box_width <= 0 or box_height <= 0:
+            raise SystemExit(f"invalid {prefix}box at row {index}")
+        if x < 0 or y < 0 or x + box_width > width + 1e-3 or y + box_height > height + 1e-3:
+            raise SystemExit(f"out-of-frame {prefix}box at row {index}")
+    for key in ("motion_velocity_x", "motion_velocity_y", "motion_acceleration_x",
+                "motion_acceleration_y", "motion_scale_velocity_width",
+                "motion_scale_velocity_height"):
+        if not math.isfinite(float(row[key])):
+            raise SystemExit(f"invalid {key} at row {index}")
+    try:
+        motion_age = int(row["motion_search_age_ms"])
+    except ValueError:
+        raise SystemExit(f"invalid motion_search_age_ms at row {index}")
+    if motion_age < -1:
+        raise SystemExit(f"invalid motion_search_age_ms at row {index}")
+    hint_present = row["search_hint_present"] == "1"
+    hint_keys = ("search_hint_candidate_id", "search_hint_source_frame_id",
+                 "search_hint_source_timestamp_ms", "search_hint_projected_x",
+                 "search_hint_projected_y", "search_hint_projected_width",
+                 "search_hint_projected_height", "search_hint_generation",
+                 "search_hint_first_hit_frame", "search_hint_confirmation_count",
+                 "search_hint_used", "search_hint_rejection")
+    if hint_present != all(bool(row[key]) for key in hint_keys):
+        raise SystemExit(f"partial search hint at row {index}")
+    if hint_present:
+        if row["search_hint_used"] not in {"0", "1"} or row["search_hint_rejection"] not in {"NONE", "EXPIRED", "CONFLICT", "ABORTED"}:
+            raise SystemExit(f"invalid search hint status at row {index}")
+        confirmation_count = int(row["search_hint_confirmation_count"])
+        if confirmation_count not in {1, 2}:
+            raise SystemExit(f"invalid search hint confirmation count at row {index}")
+        hint_box = [float(row["search_hint_projected_" + suffix]) for suffix in ("x", "y", "width", "height")]
+        if not all(math.isfinite(value) for value in hint_box) or hint_box[2] <= 0 or hint_box[3] <= 0:
+            raise SystemExit(f"invalid search hint box at row {index}")
+    if row["accepted_observation_path"] == "search_reacquisition":
+        if not hint_present or int(row["search_hint_confirmation_count"]) != 2 or row["search_hint_used"] != "1" or row["tracking_phase"] != "TRACKING":
+            raise SystemExit(f"invalid search reacquisition at row {index}")
     for prefix in ("occlusion_probe_motion_", "occlusion_probe_"):
         box = [row[prefix + suffix] for suffix in ("x", "y", "width", "height")]
         if any(box) and not all(box):
@@ -351,6 +441,11 @@ for key in {
     "mean_runtime_ms", "p50_runtime_ms", "p95_runtime_ms", "runtime_fps",
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",
     "end_to_end_fps",
+    "motion_search_enabled", "motion_search_confidence_ms",
+    "motion_max_speed_diagonals_per_s",
+    "motion_max_acceleration_diagonals_per_s2",
+    "motion_scale_rate_limit_per_s", "search_probe_interval_ms",
+    "controller_config_identity",
 }:
     if key not in metadata:
         raise SystemExit(f"session metadata missing {key}")

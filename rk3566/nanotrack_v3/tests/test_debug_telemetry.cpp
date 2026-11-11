@@ -46,6 +46,12 @@ nanotrack::RuntimeFrameResult frame_result(std::uint64_t frame_id) {
   result.output.bbox = nanotrack::BBox{10.0F, 20.0F, 30.0F, 40.0F};
   result.output.control_valid = true;
   result.output.accepted = true;
+  result.output.tracking_phase = nanotrack::TrackingPhase::kTracking;
+  result.output.observation_valid = true;
+  result.output.control_source = nanotrack::ControlSource::kObservation;
+  result.output.tracking_bbox = result.output.bbox;
+  result.output.display_bbox = result.output.bbox;
+  result.output.control_bbox = result.output.bbox;
   result.output.selected_metrics =
       nanotrack::ResponseMetrics{0.81F, 9.25F, 31.5F, 0.17F};
   result.output.search_scale = 2.0F;
@@ -278,12 +284,60 @@ void test_center_filter_events() {
               "unaccepted frames never publish a center correction event");
 }
 
+void test_search_semantic_events() {
+  using namespace nanotrack;
+  DebugTelemetry telemetry(1000);
+  auto tracked = frame_result(100);
+  telemetry.frame_events(tracked, 7.0F, false);
+
+  auto searching = frame_result(101);
+  searching.output.tracking_phase = TrackingPhase::kSearching;
+  searching.output.observation_valid = false;
+  searching.output.accepted = false;
+  searching.output.control_source = ControlSource::kMotionSearch;
+  searching.output.motion_control_authorized = true;
+  searching.output.motion_prediction_confident = true;
+  searching.output.motion_search_age_ms = 33;
+  searching.output.search_hint = SearchHint{
+      7, 99, 3267, BBox{11, 21, 30, 40}, 3, 101, 1, false,
+      SearchHintRejection::kNone};
+  auto events = telemetry.frame_events(searching, 7.0F, false);
+  expect_true(contains(events, "event=search_enter frame=101") &&
+                  contains(events, "control_source=MOTION_SEARCH") &&
+                  contains(events, "event=hint_first_hit frame=101 candidate_id=7"),
+              "search entry and first shadow hit use explicit search semantics");
+
+  auto expired = searching;
+  expired.output.frame_id = 102;
+  expired.plan.frame_id = 102;
+  expired.output.motion_prediction_confident = false;
+  expired.output.motion_search_age_ms = 1033;
+  expired.output.search_hint->rejection = SearchHintRejection::kConflict;
+  events = telemetry.frame_events(expired, 7.0F, false);
+  expect_true(contains(events, "event=search_expired frame=102 search_age_ms=1033") &&
+                  contains(events, "event=hint_reject frame=102 candidate_id=7 reason=CONFLICT"),
+              "search expiry and rejected hints remain independently visible");
+
+  auto reacquired = frame_result(103);
+  reacquired.output.reacquired = true;
+  reacquired.output.accepted_observation_path =
+      AcceptedObservationPath::kSearchReacquisition;
+  reacquired.output.search_hint = SearchHint{
+      7, 102, 3366, BBox{12, 22, 30, 40}, 3, 101, 2, true,
+      SearchHintRejection::kNone};
+  events = telemetry.frame_events(reacquired, 7.0F, false);
+  expect_true(contains(events, "event=reacquired frame=103 confirmation_count=2") &&
+                  contains(events, "control_source=OBSERVATION"),
+              "two-hit search reacquisition is reported as observation control");
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
   test_adaptive_coast_events();
   test_center_filter_events();
+  test_search_semantic_events();
 
   DebugTelemetry telemetry(3);
   RuntimeFrameResult first = frame_result(1);

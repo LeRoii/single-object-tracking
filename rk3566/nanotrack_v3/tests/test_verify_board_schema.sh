@@ -59,6 +59,18 @@ header = [
     "occlusion_reference_source", "occlusion_suspicion_active", "occlusion_suspicion_started", "occlusion_suspicion_cleared", "occlusion_suspicion_frames", "occlusion_clean_frames", "occlusion_width_shrink_frames", "occlusion_height_shrink_frames", "occlusion_severe_evidence", "occlusion_gradual_evidence", "occlusion_template_evidence", "occlusion_peak_margin_evidence", "occlusion_motion_residual_evidence", "occlusion_trigger_reason", "occlusion_coast_age_frames", "occlusion_probe_type", "occlusion_probe_confirmation_hits", "occlusion_probe_confirmation_required", "motion_control_authorized",
     "target_class_status", "target_class_id", "target_class_reason",
     "detector_recovery_enabled",
+    "tracking_phase", "observation_valid", "control_source", "accepted_observation_path",
+    "tracking_x", "tracking_y", "tracking_width", "tracking_height",
+    "display_x", "display_y", "display_width", "display_height",
+    "control_x", "control_y", "control_width", "control_height",
+    "motion_search_age_ms", "motion_prediction_confident",
+    "motion_velocity_x", "motion_velocity_y", "motion_acceleration_x", "motion_acceleration_y",
+    "motion_scale_velocity_width", "motion_scale_velocity_height",
+    "search_hint_present", "search_hint_candidate_id", "search_hint_source_frame_id",
+    "search_hint_source_timestamp_ms", "search_hint_projected_x", "search_hint_projected_y",
+    "search_hint_projected_width", "search_hint_projected_height", "search_hint_generation",
+    "search_hint_first_hit_frame", "search_hint_confirmation_count", "search_hint_used",
+    "search_hint_rejection",
 ]
 with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
     writer = csv.DictWriter(stream, fieldnames=header)
@@ -66,7 +78,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
     for frame_id, timestamp_ms in ((0, 0), (1, 33), (2, 66)):
         row = {key: "" for key in header}
         row.update({
-            "schema_version": "9", "frame_id": frame_id,
+            "schema_version": "10", "frame_id": frame_id,
             "timestamp_ms": timestamp_ms, "state": "TRACKING",
             "quality": "RELIABLE", "control_valid": "1", "accepted": "1",
             "hypothesis_source": "MOTION",
@@ -91,6 +103,16 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
             "target_class_status": "UNKNOWN", "target_class_id": "",
             "target_class_reason": "DETECTOR_UNAVAILABLE",
             "detector_recovery_enabled": "0",
+            "tracking_phase": "TRACKING", "observation_valid": "1",
+            "control_source": "OBSERVATION", "accepted_observation_path": "direct",
+            "tracking_x": "1", "tracking_y": "1", "tracking_width": "4", "tracking_height": "4",
+            "display_x": "1", "display_y": "1", "display_width": "4", "display_height": "4",
+            "control_x": "1", "control_y": "1", "control_width": "4", "control_height": "4",
+            "motion_search_age_ms": "-1", "motion_prediction_confident": "0",
+            "motion_velocity_x": "0", "motion_velocity_y": "0",
+            "motion_acceleration_x": "0", "motion_acceleration_y": "0",
+            "motion_scale_velocity_width": "0", "motion_scale_velocity_height": "0",
+            "search_hint_present": "0",
             "tracker_ms": "1",
             "runtime_ms": "2", "pipeline_ms": "3",
         })
@@ -99,6 +121,9 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
                 "state": "OCCLUSION_HOLD", "quality": "REJECTED",
                 "control_valid": "1", "accepted": "0",
                 "motion_control_authorized": "1",
+                "tracking_phase": "SEARCHING", "observation_valid": "0",
+                "control_source": "MOTION_SEARCH", "motion_prediction_confident": "1",
+                "motion_search_age_ms": "66",
                 "occlusion_coast_age_frames": "2",
                 "occlusion_reference_source": "FULL_STABLE_MEDIAN",
                 "occlusion_trigger_reason": "SEVERE_WIDTH",
@@ -113,7 +138,7 @@ with (artifact_dir / "bboxes.csv").open("w", newline="") as stream:
         writer.writerow(row)
 
 metadata = {
-    "schema_version": 9, "manifest_hash": "hash",
+    "schema_version": 10, "manifest_hash": "hash",
     "controller_config_hash": "config", "sensor": "visible",
     "calibrated": False, "detector_target_mode": "FULL_OBJECT",
     "occlusion_hold_frames": 12,
@@ -129,6 +154,13 @@ metadata = {
     "accepted_center_smoothing_alpha": 0.35,
     "accepted_center_max_correction_ratio": 0.25,
     "max_reacquisition_center_distance": 0.75,
+    "motion_search_enabled": True,
+    "motion_search_confidence_ms": 1000,
+    "motion_max_speed_diagonals_per_s": 1.0,
+    "motion_max_acceleration_diagonals_per_s2": 2.0,
+    "motion_scale_rate_limit_per_s": 0.5,
+    "search_probe_interval_ms": 100,
+    "controller_config_identity": "test-generic-motion-search",
     "occlusion_probe_interval_frames": 5, "occlusion_gradual_dimension_ratio": 1, "occlusion_gradual_consecutive_frames": 1, "occlusion_min_reference_samples": 1, "occlusion_shrink_step_ratio": 1, "occlusion_suspicion_clear_frames": 1, "occlusion_peak_margin_drop": 1, "occlusion_motion_residual_threshold": 1, "occlusion_confirmation_iou": 1, "occlusion_confirmation_center_distance": 1, "occlusion_confirmation_max_area_log_change": 1, "occlusion_confirmation_max_aspect_log_change": 1,
     "rknn_api_version": "api", "rknn_driver_version": "driver",
     "tracked_frames": 2, "mean_runtime_ms": 2.0, "p50_runtime_ms": 2.0,
@@ -211,6 +243,9 @@ else:
     row = rows[2]
     row.update({"state": "TRACKING", "quality": "RELIABLE", "accepted": "1",
         "reacquired": "1", "control_valid": "1", "motion_control_authorized": "0",
+        "tracking_phase": "TRACKING", "observation_valid": "1",
+        "control_source": "OBSERVATION", "accepted_observation_path": "occlusion_probe_recovery",
+        "motion_prediction_confident": "0",
         "occlusion_coast_age_frames": "6", "occlusion_hold_remaining_frames": "0",
         "occlusion_probe_type": "CONFIRM", "occlusion_probe_confirmation_hits": "2",
         "occlusion_probe_confirmation_required": "2", "occlusion_probe_rejection": "NONE",
@@ -319,9 +354,46 @@ PY
     exit 1
   fi
 done
+for invalid_case in searching_observation detector_control motion_unconfident partial_hint reacquired_one_hit; do
+  cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
+  python3 - "$artifact_dir/bboxes.csv" "$invalid_case" <<'PY'
+import csv, sys
+path, case = sys.argv[1:]
+with open(path, newline="") as stream:
+    rows = list(csv.DictReader(stream))
+fields = list(rows[0])
+if case == "searching_observation":
+    rows[2].update({"observation_valid": "1", "accepted": "1",
+                    "control_source": "OBSERVATION"})
+elif case == "detector_control":
+    rows[1]["control_source"] = "DETECTOR"
+elif case == "motion_unconfident":
+    rows[2]["motion_prediction_confident"] = "0"
+elif case == "partial_hint":
+    rows[1].update({"search_hint_present": "1", "search_hint_candidate_id": "7"})
+else:
+    rows[1].update({
+        "reacquired": "1", "accepted_observation_path": "search_reacquisition",
+        "search_hint_present": "1", "search_hint_candidate_id": "7",
+        "search_hint_source_frame_id": "0", "search_hint_source_timestamp_ms": "0",
+        "search_hint_projected_x": "1", "search_hint_projected_y": "1",
+        "search_hint_projected_width": "4", "search_hint_projected_height": "4",
+        "search_hint_generation": "1", "search_hint_first_hit_frame": "0",
+        "search_hint_confirmation_count": "1", "search_hint_used": "1",
+        "search_hint_rejection": "NONE"})
+with open(path, "w", newline="") as stream:
+    writer = csv.DictWriter(stream, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(rows)
+PY
+  if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
+    echo "verify_board accepted invalid semantic case: $invalid_case" >&2
+    exit 1
+  fi
+done
 cp "$artifact_dir/bboxes.valid.csv" "$artifact_dir/bboxes.csv"
 cp "$artifact_dir/session-metadata.json" "$artifact_dir/metadata.valid.json"
-for invalid_case in nan_threshold interval0 missing_scale_step invalid_scale_step \
+for invalid_case in schema_mismatch nan_threshold interval0 missing_scale_step invalid_scale_step \
     missing_deadband deadband_negative deadband_one deadband_inf \
     missing_alpha alpha_zero alpha_large alpha_nan \
     missing_median median_even median_large missing_direction direction_zero direction_large \
@@ -334,7 +406,9 @@ for invalid_case in nan_threshold interval0 missing_scale_step invalid_scale_ste
 import json, sys
 path, case = sys.argv[1:]
 with open(path) as stream: data = json.load(stream)
-if case == "nan_threshold":
+if case == "schema_mismatch":
+    data["schema_version"] = 9
+elif case == "nan_threshold":
     data["occlusion_peak_margin_drop"] = float("nan")
 elif case == "interval0":
     data["occlusion_probe_interval_frames"] = 0

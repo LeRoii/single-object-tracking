@@ -240,6 +240,16 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     }
     plan.run_tracker = plan.occlusion_probe_type != OcclusionProbeType::kNone;
     plan.motion_control_authorized = true;
+    const MotionSnapshot snapshot = motion_.snapshot(timestamp_ms);
+    plan.motion_search_age_ms = loss_start_ms_
+        ? timestamp_ms - *loss_start_ms_ : 0;
+    plan.motion_prediction_confident = true;
+    plan.motion_velocity_x = snapshot.velocity_x;
+    plan.motion_velocity_y = snapshot.velocity_y;
+    plan.motion_acceleration_x = snapshot.acceleration_x;
+    plan.motion_acceleration_y = snapshot.acceleration_y;
+    plan.motion_scale_velocity_width = snapshot.scale_velocity_width;
+    plan.motion_scale_velocity_height = snapshot.scale_velocity_height;
     active_plan_ = plan;
     frame_open_ = true;
     return plan;
@@ -294,6 +304,18 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.control_source = plan.motion_control_authorized
                             ? ControlSource::kMotionSearch
                             : ControlSource::kNone;
+  const MotionSnapshot motion_snapshot = motion_.snapshot(timestamp_ms);
+  plan.motion_search_age_ms = motion_snapshot.search_age_ms;
+  plan.motion_prediction_confident =
+      motion_snapshot.prediction_confident;
+  plan.motion_velocity_x = motion_snapshot.velocity_x;
+  plan.motion_velocity_y = motion_snapshot.velocity_y;
+  plan.motion_acceleration_x = motion_snapshot.acceleration_x;
+  plan.motion_acceleration_y = motion_snapshot.acceleration_y;
+  plan.motion_scale_velocity_width =
+      motion_snapshot.scale_velocity_width;
+  plan.motion_scale_velocity_height =
+      motion_snapshot.scale_velocity_height;
   plan.motion_predicted_bbox = motion_predicted;
   plan.predicted_bbox = predicted;
   plan.search_scale = source == HypothesisSource::kDetector
@@ -1070,6 +1092,14 @@ ControllerOutput LongTermController::finish_frame(
   output.detector_candidate_locked = plan.detector_candidate_locked;
   output.detector_probe_index = plan.detector_probe_index;
   output.search_hint = plan.search_hint;
+  output.motion_search_age_ms = plan.motion_search_age_ms;
+  output.motion_prediction_confident = plan.motion_prediction_confident;
+  output.motion_velocity_x = plan.motion_velocity_x;
+  output.motion_velocity_y = plan.motion_velocity_y;
+  output.motion_acceleration_x = plan.motion_acceleration_x;
+  output.motion_acceleration_y = plan.motion_acceleration_y;
+  output.motion_scale_velocity_width = plan.motion_scale_velocity_width;
+  output.motion_scale_velocity_height = plan.motion_scale_velocity_height;
 
   const DetectorIngestResult ingest_result =
       ingest_detector_batch(plan, detector_batch);
@@ -1477,6 +1507,17 @@ ControllerOutput LongTermController::finish_frame(
       last_detector_request_ms_.reset();
       last_detector_request_frame_.reset();
       last_detector_request_motion_bbox_.reset();
+    }
+    if (config_.motion_search_enabled && motion_search_active_) {
+      const MotionSnapshot snapshot = motion_.snapshot(plan.timestamp_ms);
+      output.motion_search_age_ms = snapshot.search_age_ms;
+      output.motion_prediction_confident = snapshot.prediction_confident;
+      output.motion_velocity_x = snapshot.velocity_x;
+      output.motion_velocity_y = snapshot.velocity_y;
+      output.motion_acceleration_x = snapshot.acceleration_x;
+      output.motion_acceleration_y = snapshot.acceleration_y;
+      output.motion_scale_velocity_width = snapshot.scale_velocity_width;
+      output.motion_scale_velocity_height = snapshot.scale_velocity_height;
     }
     output.motion_control_authorized =
         config_.motion_search_enabled && motion_search_active_ &&

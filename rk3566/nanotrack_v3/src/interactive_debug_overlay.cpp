@@ -185,6 +185,18 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
         1});
   }
 
+  if (result.output.search_hint) {
+    overlay.boxes.push_back(DebugBoxDescriptor{
+        DebugBoxKind::kSearchHint,
+        result.output.search_hint->projected_bbox,
+        "SEARCH HINT id=" +
+            std::to_string(result.output.search_hint->candidate_id) +
+            " hits=" +
+            std::to_string(result.output.search_hint->confirmation_count) +
+            " reason=" + to_string(result.output.search_hint->rejection),
+        1});
+  }
+
   if (result.output.mode != TrackingMode::kOcclusionHold) {
     for (const TemplateKind kind :
          {TemplateKind::kAnchor, TemplateKind::kRecent}) {
@@ -236,24 +248,31 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
     }
   }
 
-  const bool coast_control = result.output.mode == TrackingMode::kOcclusionHold &&
-                             result.output.motion_control_authorized &&
-                             result.output.control_valid;
-  overlay.control_valid = (result.output.accepted && result.output.control_valid) ||
-                          coast_control;
+  const bool motion_search_control =
+      result.output.tracking_phase == TrackingPhase::kSearching &&
+      result.output.control_source == ControlSource::kMotionSearch &&
+      result.output.motion_control_authorized &&
+      result.output.control_valid;
+  const bool observation_control =
+      result.output.tracking_phase == TrackingPhase::kTracking &&
+      result.output.control_source == ControlSource::kObservation &&
+      result.output.observation_valid && result.output.control_valid;
+  overlay.control_valid = motion_search_control || observation_control;
   if (overlay.control_valid) {
-    const std::string label = coast_control ? "CTRL MOTION COAST" : "ACCEPTED CTRL";
-    if (drawable_bbox(result.output.bbox)) {
+    const std::string label = motion_search_control
+        ? "SEARCHING / MOTION_SEARCH PREDICTION"
+        : "TRACKING / OBSERVATION";
+    if (drawable_bbox(result.output.control_bbox)) {
       overlay.boxes.push_back(DebugBoxDescriptor{
-          DebugBoxKind::kAcceptedControl, result.output.bbox, label, 3});
+          motion_search_control ? DebugBoxKind::kSearchControlPrediction
+                                : DebugBoxKind::kAcceptedControl,
+          result.output.control_bbox, label, 3});
     } else {
       overlay.texts.push_back(DebugTextDescriptor{label});
     }
     overlay.status_label = label;
-  } else if (result.output.mode == TrackingMode::kOcclusionHold) {
-    overlay.status_label = "OCCLUSION HOLD remaining=" +
-                           std::to_string(
-                               result.output.occlusion_hold_remaining_frames);
+  } else if (result.output.tracking_phase == TrackingPhase::kSearching) {
+    overlay.status_label = "SEARCHING / NO_CONTROL";
   } else {
     overlay.status_label = "REJECTED NO_CTRL";
   }

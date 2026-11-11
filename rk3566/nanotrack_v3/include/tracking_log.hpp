@@ -9,7 +9,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 9;
+constexpr int kTrackingSchemaVersion = 10;
 
 class MonotonicVideoClock {
  public:
@@ -28,11 +28,19 @@ struct TrackingLogRow {
   std::uint64_t frame_id = 0;
   std::int64_t timestamp_ms = 0;
   TrackingMode mode = TrackingMode::kTracking;
+  TrackingPhase tracking_phase = TrackingPhase::kInvalid;
+  bool observation_valid = false;
+  ControlSource control_source = ControlSource::kNone;
+  AcceptedObservationPath accepted_observation_path =
+      AcceptedObservationPath::kDirect;
   QualityLevel quality = QualityLevel::kRejected;
   bool control_valid = false;
   bool accepted = false;
   bool reacquired = false;
   BBox bbox{};
+  BBox tracking_bbox{};
+  BBox display_bbox{};
+  BBox control_bbox{};
   TemplateKind selected_template = TemplateKind::kAnchor;
   TemplateAction template_action = TemplateAction::kNone;
   bool anchor_present = false;
@@ -93,6 +101,15 @@ struct TrackingLogRow {
   std::size_t occlusion_probe_confirmation_hits = 0;
   std::size_t occlusion_probe_confirmation_required = 0;
   bool motion_control_authorized = false;
+  std::int64_t motion_search_age_ms = -1;
+  bool motion_prediction_confident = false;
+  float motion_velocity_x = 0.0F;
+  float motion_velocity_y = 0.0F;
+  float motion_acceleration_x = 0.0F;
+  float motion_acceleration_y = 0.0F;
+  float motion_scale_velocity_width = 0.0F;
+  float motion_scale_velocity_height = 0.0F;
+  std::optional<SearchHint> search_hint;
   std::string occlusion_probe_rejection = "NONE";
   std::optional<BBox> occlusion_probe_motion_bbox;
   std::optional<BBox> occlusion_probe_bbox;
@@ -220,6 +237,13 @@ struct TrackingSessionMetadata {
   std::int64_t uncertain_ms = 0;
   std::int64_t local_recovery_ms = 0;
   std::int64_t assisted_recovery_ms = 0;
+  bool motion_search_enabled = false;
+  std::int64_t motion_search_confidence_ms = 0;
+  float motion_max_speed_diagonals_per_s = 0.0F;
+  float motion_max_acceleration_diagonals_per_s2 = 0.0F;
+  float motion_scale_rate_limit_per_s = 0.0F;
+  std::int64_t search_probe_interval_ms = 0;
+  std::string controller_config_identity;
   std::size_t tracked_frames = 0;
   LatencySummary latency{};
   DetectorSessionMetadata detector{};

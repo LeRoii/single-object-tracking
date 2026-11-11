@@ -42,6 +42,14 @@ struct SearchPlan {
   OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
   bool motion_control_authorized = false;
   std::optional<SearchHint> search_hint;
+  std::int64_t motion_search_age_ms = -1;
+  bool motion_prediction_confident = false;
+  float motion_velocity_x = 0.0F;
+  float motion_velocity_y = 0.0F;
+  float motion_acceleration_x = 0.0F;
+  float motion_acceleration_y = 0.0F;
+  float motion_scale_velocity_width = 0.0F;
+  float motion_scale_velocity_height = 0.0F;
 };
 
 enum class AcceptedObservationPath {
@@ -144,6 +152,14 @@ struct ControllerOutput {
   std::optional<bool> occlusion_probe_recent_aspect_gate;
   bool motion_control_authorized = false;
   std::optional<SearchHint> search_hint;
+  std::int64_t motion_search_age_ms = -1;
+  bool motion_prediction_confident = false;
+  float motion_velocity_x = 0.0F;
+  float motion_velocity_y = 0.0F;
+  float motion_acceleration_x = 0.0F;
+  float motion_acceleration_y = 0.0F;
+  float motion_scale_velocity_width = 0.0F;
+  float motion_scale_velocity_height = 0.0F;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};
 };

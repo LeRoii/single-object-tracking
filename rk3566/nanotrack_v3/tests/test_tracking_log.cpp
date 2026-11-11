@@ -188,8 +188,22 @@ int main() {
   row.frame_id = 7;
   row.timestamp_ms = 233;
   row.mode = TrackingMode::kAssistedRecovery;
+  row.tracking_phase = TrackingPhase::kSearching;
+  row.observation_valid = false;
+  row.control_source = ControlSource::kMotionSearch;
   row.quality = QualityLevel::kWeak;
+  row.control_valid = true;
+  row.motion_control_authorized = true;
   row.bbox = BBox{1, 2, 3, 4};
+  row.tracking_bbox = BBox{5, 6, 7, 8};
+  row.display_bbox = BBox{1, 2, 3, 4};
+  row.control_bbox = BBox{5, 6, 7, 8};
+  row.motion_search_age_ms = 120;
+  row.motion_prediction_confident = true;
+  row.motion_velocity_x = 12.5F;
+  row.motion_acceleration_y = -3.5F;
+  row.search_hint = SearchHint{9, 6, 200, BBox{10, 20, 30, 40}, 4, 7, 1,
+                               true, SearchHintRejection::kNone};
   row.search_scale = 4.0F;
   row.hypothesis_source = HypothesisSource::kDetector;
   row.motion_predicted_bbox = BBox{5, 6, 7, 8};
@@ -240,6 +254,14 @@ int main() {
   expect_true(csv_columns(header) == csv_columns(encoded),
               "CSV header and data rows have identical column counts");
   expect_true(contains(header, "schema_version") &&
+                  contains(header, "tracking_phase") &&
+                  contains(header, "observation_valid") &&
+                  contains(header, "control_source") &&
+                  contains(header, "tracking_x") &&
+                  contains(header, "control_x") &&
+                  contains(header, "motion_search_age_ms") &&
+                  contains(header, "motion_velocity_x") &&
+                  contains(header, "search_hint_candidate_id") &&
                   contains(header, "control_valid") &&
                   contains(header, "anchor_psr") &&
                   contains(header, "recent_apce") &&
@@ -273,8 +295,8 @@ int main() {
         "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("9,", 0) == 0,
-              "tracking rows carry schema version 9 exactly once");
+  expect_true(encoded.rfind("10,", 0) == 0 && kTrackingSchemaVersion == 10,
+              "tracking rows carry schema version 10 exactly once");
   expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
               "CSV writes established class and recovery gate");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
@@ -285,7 +307,10 @@ int main() {
 
   const TrackingLogRow initial = make_initial_log_row(0, 0, BBox{10, 20, 30, 40});
   expect_true(initial.control_valid && initial.accepted &&
-                  initial.mode == TrackingMode::kTracking,
+                  initial.mode == TrackingMode::kTracking &&
+                  initial.tracking_phase == TrackingPhase::kTracking &&
+                  initial.observation_valid &&
+                  initial.control_source == ControlSource::kObservation,
               "initialization row explicitly records valid tracking state");
   expect_true(csv_columns(tracking_csv_row(initial)) == csv_columns(header),
               "initialization and tracking rows share one schema");
@@ -552,7 +577,7 @@ int main() {
                   contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
                   contains(json, "\"detector_ms\": 15.000000"),
               "same-frame initialization history retains order, result diagnostics and null optionals");
-  expect_true(contains(json, "\"schema_version\": 9") &&
+  expect_true(contains(json, "\"schema_version\": 10") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&
@@ -579,7 +604,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v8 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
+              "schema-v10 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

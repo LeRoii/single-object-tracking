@@ -125,6 +125,9 @@ void DebugTelemetry::reset() {
   observed_frames_ = 0;
   has_previous_state_ = false;
   previous_mode_ = TrackingMode::kTracking;
+  previous_phase_ = TrackingPhase::kInvalid;
+  previous_control_source_ = ControlSource::kNone;
+  previous_motion_prediction_confident_ = false;
   previous_control_valid_ = false;
   loss_start_timestamp_ms_.reset();
 }
@@ -264,6 +267,50 @@ std::vector<std::string> DebugTelemetry::frame_events(
     events.push_back(stream.str());
   };
   const auto& o = result.output;
+  if ((!has_previous_state_ || previous_phase_ != TrackingPhase::kSearching) &&
+      o.tracking_phase == TrackingPhase::kSearching) {
+    std::ostringstream stream = event_stream("search_enter");
+    stream << " frame=" << o.frame_id
+           << " control_source=" << to_string(o.control_source)
+           << " search_age_ms=" << o.motion_search_age_ms
+           << " confident=" << (o.motion_prediction_confident ? 1 : 0);
+    events.push_back(stream.str());
+  }
+  if (has_previous_state_ &&
+      previous_phase_ == TrackingPhase::kSearching &&
+      previous_motion_prediction_confident_ &&
+      o.tracking_phase == TrackingPhase::kSearching &&
+      !o.motion_prediction_confident) {
+    std::ostringstream stream = event_stream("search_expired");
+    stream << " frame=" << o.frame_id
+           << " search_age_ms=" << o.motion_search_age_ms;
+    events.push_back(stream.str());
+  }
+  if (o.search_hint && o.search_hint->confirmation_count == 1 &&
+      o.search_hint->rejection == SearchHintRejection::kNone) {
+    std::ostringstream stream = event_stream("hint_first_hit");
+    stream << " frame=" << o.frame_id
+           << " candidate_id=" << o.search_hint->candidate_id
+           << " source_frame=" << o.search_hint->source_frame_id;
+    events.push_back(stream.str());
+  }
+  if (o.search_hint &&
+      o.search_hint->rejection != SearchHintRejection::kNone) {
+    std::ostringstream stream = event_stream("hint_reject");
+    stream << " frame=" << o.frame_id
+           << " candidate_id=" << o.search_hint->candidate_id
+           << " reason=" << to_string(o.search_hint->rejection);
+    events.push_back(stream.str());
+  }
+  if (o.reacquired && o.accepted_observation_path ==
+                          AcceptedObservationPath::kSearchReacquisition) {
+    std::ostringstream stream = event_stream("reacquired");
+    stream << " frame=" << o.frame_id
+           << " confirmation_count="
+           << (o.search_hint ? o.search_hint->confirmation_count : 0)
+           << " control_source=" << to_string(o.control_source);
+    events.push_back(stream.str());
+  }
   if (o.accepted && o.selected_observation_bbox) {
     std::ostringstream stream = event_stream("center_filter");
     stream << " frame=" << o.frame_id
@@ -318,6 +365,10 @@ std::vector<std::string> DebugTelemetry::frame_events(
   }
   has_previous_state_ = true;
   previous_mode_ = result.output.mode;
+  previous_phase_ = result.output.tracking_phase;
+  previous_control_source_ = result.output.control_source;
+  previous_motion_prediction_confident_ =
+      result.output.motion_prediction_confident;
   previous_control_valid_ = result.output.control_valid;
 
   const bool detector_suppressed = result.tracker_skipped &&

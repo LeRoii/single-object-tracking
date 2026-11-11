@@ -16,6 +16,8 @@ enum class DebugBoxKind {
   kNanoTrackAnchor,
   kNanoTrackRecent,
   kAcceptedControl,
+  kSearchControlPrediction,
+  kSearchHint,
   kCoastSearchProbe,
   kCoastConfirmProbe,
   kTargetClassInitializationSelected,

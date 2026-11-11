@@ -28,6 +28,9 @@ class DebugTelemetry {
   std::size_t observed_frames_ = 0;
   bool has_previous_state_ = false;
   TrackingMode previous_mode_ = TrackingMode::kTracking;
+  TrackingPhase previous_phase_ = TrackingPhase::kInvalid;
+  ControlSource previous_control_source_ = ControlSource::kNone;
+  bool previous_motion_prediction_confident_ = false;
   bool previous_control_valid_ = false;
   std::optional<std::int64_t> loss_start_timestamp_ms_;
 };
