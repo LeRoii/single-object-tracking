@@ -1,6 +1,9 @@
 #include "tracking_log.hpp"
 
+#include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -37,6 +40,75 @@ std::size_t csv_columns(const std::string& line) {
 
 bool contains(const std::string& value, const std::string& expected) {
   return value.find(expected) != std::string::npos;
+}
+
+void test_tracking_artifact_paths() {
+  using namespace nanotrack;
+  namespace fs = std::filesystem;
+  const auto unique_id = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto root = fs::temp_directory_path() / ("nanotrack-artifacts-" + std::to_string(unique_id));
+  fs::create_directories(root / "results");
+  fs::create_directories(root / "metadata");
+  fs::create_directory_symlink(root / "results", root / "alias");
+  const auto csv = root / "results" / "bboxes.csv";
+  const auto meta = root / "metadata" / "session.json";
+  const auto video = root / "results" / "output.avi";
+  const auto companion = root / "results" / "bboxes.csv.jsonl";
+  const auto rejects = [&](const fs::path& boxes, const fs::path& metadata, const fs::path& output) {
+    try {
+      resolve_tracking_artifact_paths(boxes, metadata, output);
+      return false;
+    } catch (const std::invalid_argument&) {
+      return true;
+    }
+  };
+  std::ofstream(csv) << "existing evidence";
+  const auto relative_alias = fs::relative(root / "alias", fs::current_path()) / "bboxes.csv";
+  expect_true(rejects(csv, relative_alias, video) &&
+                  rejects(csv, meta, root / "results" / ".." / "alias" / "bboxes.csv") &&
+                  rejects(csv, root / "alias" / "bboxes.csv.jsonl", video),
+              "relative, parent and symlink aliases cannot overwrite outputs");
+  fs::create_hard_link(csv, root / "metadata" / "hard-link");
+  expect_true(rejects(csv, root / "metadata" / "hard-link", video),
+              "existing hard links count as the same artifact");
+  fs::create_symlink(companion, root / "metadata" / "dangling-alias");
+  expect_true(rejects(csv, root / "metadata" / "dangling-alias", video),
+              "a dangling symlink aliases the output it would create");
+  std::ifstream original(csv);
+  std::string contents;
+  std::getline(original, contents);
+  expect_true(contents == "existing evidence", "collision detection precedes truncation");
+
+  const auto paths = resolve_tracking_artifact_paths(csv, meta, video);
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+    expect_true(writer.finish(false).empty() && !fs::exists(companion),
+                "incomplete primary output removes the companion and advertises nothing");
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    expect_true(writer.finish(true).empty() && !fs::exists(companion),
+                "empty companion is not advertised");
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+    const auto reference = writer.finish(true);
+    expect_true(!reference.empty() && fs::equivalent(meta.parent_path() / reference, companion),
+                "completed companion resolves from the metadata directory");
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+    expect_true(writer.finish(true).empty() && fs::exists(companion),
+                "an earlier companion is preserved and is not advertised by a new run");
+  }
+  fs::remove_all(root);
 }
 
 void test_recent_safe_serialization() {
@@ -253,6 +325,7 @@ int main() {
               "schema v11 exposes trusted and resolved transition semantics");
 
   using namespace nanotrack;
+  test_tracking_artifact_paths();
   test_recent_safe_serialization();
   test_adaptive_coast_serialization();
 

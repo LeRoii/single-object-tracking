@@ -69,7 +69,8 @@ class LongTermRuntime {
   }
 
  private:
-  void apply_template_transition(const ImageView& image, ControllerOutput& output);
+  TemplateTransitionResult apply_template_transition(
+      const ImageView& image, const TemplateTransitionRequest& request);
   void abandon_staged_recent() noexcept;
   static void validate_image(const ImageView& image);
 

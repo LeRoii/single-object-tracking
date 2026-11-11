@@ -23,6 +23,7 @@ class NanoTrackV3 final : public ShortTermTracker {
                                         const SearchPlan& plan,
                                         TemplateHeadExecution& heads) override;
   void commit_bbox(const BBox& bbox) override;
+  void restore_bbox(const BBox& bbox) noexcept override;
   void prepare_recent(const ImageView& image, const BBox& bbox,
                       std::uint64_t transaction_id) override;
   bool commit_recent(std::uint64_t transaction_id) noexcept override;

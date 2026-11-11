@@ -98,14 +98,26 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.target_class = last_initialization_.target_class;
   result.detector.configured = detector_configured_;
   bool completed = false;
+  std::optional<LongTermController> application_checkpoint;
+  std::optional<BBox> bbox_restore;
+  const auto rollback_application = [&]() noexcept {
+    abandon_staged_recent();
+    if (bbox_restore) {
+      tracker_.restore_bbox(*bbox_restore);
+      bbox_restore.reset();
+    }
+    if (application_checkpoint) {
+      controller_.rollback_frame_application(std::move(*application_checkpoint));
+      application_checkpoint.reset();
+    } else {
+      controller_.abort_frame();
+      controller_.discard_template_probation();
+    }
+  };
   frame_open_ = true;
   ScopedCleanup frame_cleanup(
-      [this, &completed]() noexcept {
-        if (!completed) {
-          abandon_staged_recent();
-          controller_.abort_frame();
-          controller_.discard_template_probation();
-        }
+      [&]() noexcept {
+        if (!completed) rollback_application();
         frame_open_ = false;
         return 0;
       },
@@ -155,18 +167,48 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   } else {
     result.tracker_skipped = true;
   }
+  // The finish call updates bounded tracking state in place. Keep its input
+  // state until every fallible tracker callback has completed. The controller
+  // already holds the pre-prediction checkpoint for the open frame.
+  application_checkpoint.emplace(controller_);
   result.output =
       controller_.finish_frame(result.plan, result.observations, detector_batch);
   const auto& transition = result.output.template_transition;
   const bool recovery_prepare = transition && transition->recovery &&
       transition->action == TemplateAction::kStageRecent;
-  if (result.output.accepted && !recovery_prepare) {
-    tracker_.commit_bbox(result.output.tracking_bbox);
+  if (result.output.accepted) {
+    bbox_restore = application_checkpoint->current_bbox();
+    if (!recovery_prepare) tracker_.commit_bbox(result.output.tracking_bbox);
   }
-  if (transition) apply_template_transition(image, result.output);
+  if (transition) {
+    const auto applied = apply_template_transition(image, *transition);
+    if (transition->recovery && transition->action == TemplateAction::kCommitRecent &&
+        applied == TemplateTransitionResult::kTrackerRejected) {
+      const auto rejected = *transition;
+      if (!controller_.resolve_template_transition(rejected.transaction_id, false)) {
+        throw std::logic_error("template transition acknowledgement did not match its request");
+      }
+      const char* reason = result.output.template_transition_reason;
+      rollback_application();
+      // Evaluate an observation-free frame from the last trusted motion state.
+      // This advances the timestamp once and rechecks search authorization.
+      const auto search = controller_.begin_frame(frame_id, timestamp_ms, false);
+      result.output = controller_.finish_frame(search, {}, std::nullopt);
+      result.output.template_action = rejected.action;
+      result.output.template_transition = rejected;
+      result.output.template_transition_result = TemplateTransitionResult::kTrackerRejected;
+      result.output.template_transition_reason = reason;
+      result.output.state_change_reason = "RECOVERY_COMMIT_REJECTED";
+      result.output.recovery_reason = "RECOVERY_COMMIT_REJECTED";
+    } else if (!controller_.publish_template_transition(result.output, applied)) {
+      throw std::logic_error("template transition acknowledgement did not match its request");
+    }
+  }
   result.runtime_ms = std::chrono::duration<float, std::milli>(
                           std::chrono::steady_clock::now() - total_start)
                           .count();
+  application_checkpoint.reset();
+  bbox_restore.reset();
   completed = true;
   return result;
 }
@@ -180,9 +222,8 @@ void LongTermRuntime::abandon_staged_recent() noexcept {
   }
 }
 
-void LongTermRuntime::apply_template_transition(
-    const ImageView& image, ControllerOutput& output) {
-  const auto& request = *output.template_transition;
+TemplateTransitionResult LongTermRuntime::apply_template_transition(
+    const ImageView& image, const TemplateTransitionRequest& request) {
   const auto slot = request.template_slot_id;
   auto result = TemplateTransitionResult::kTrackerRejected;
   switch (request.action) {
@@ -216,9 +257,7 @@ void LongTermRuntime::apply_template_transition(
       break;
     case TemplateAction::kNone: break;
   }
-  if (!controller_.publish_template_transition(output, result)) {
-    throw std::logic_error("template transition acknowledgement did not match its request");
-  }
+  return result;
 }
 
 }  // namespace nanotrack

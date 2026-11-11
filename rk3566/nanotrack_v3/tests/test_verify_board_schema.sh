@@ -504,7 +504,9 @@ fi
 
 for schema_case in valid no_decode missing_safe_raw no_decode_with_raw missing_trust tentative_trusted \
                    ambiguous_observation ambiguous_unauthorized applied_without_id wrong_slot \
-                   failed_commit_probation valid_commit json_mismatch json_missing_field; do
+                   failed_commit_probation rejected_claimed_committed recovery_without_identity \
+                   accepted_no_decode live_slot_replaced live_slot_disappeared valid_commit valid_rejected_recovery_commit \
+                   valid_rollback valid_failed_rollback companion_cross_directory companion_alias json_mismatch json_missing_field; do
   python3 - "$artifact_dir" "$schema_case" <<'PY'
 import csv
 import json
@@ -573,7 +575,22 @@ elif case == "ambiguous_unauthorized":
     rows[2]["motion_control_authorized"] = "0"
 elif case == "applied_without_id":
     rows[1]["template_transition_applied"] = "1"
-elif case in {"valid_commit", "wrong_slot", "failed_commit_probation"}:
+elif case in {"accepted_no_decode", "recovery_without_identity"}:
+    rows[1].update(state="TRACKING", tracking_phase="TRACKING", accepted="1",
+                   observation_valid="1", trusted_for_state_update="1",
+                   rect0_source="ACCEPTED_OBSERVATION")
+    if case == "accepted_no_decode":
+        rows[1].update(roles_and_raw, recent_decode_status="NO_DECODE", safe_decode_status="NO_DECODE")
+    else:
+        rows[1].update(reacquired="1", template_action="STAGE_RECENT",
+                       template_transaction_id="5", template_slot_id="5",
+                       template_transition_recovery="1", template_transition_applied="1",
+                       template_transition_result="APPLIED", template_probation_active="1",
+                       template_transition_reason="RECOVERY_CONFIRMED",
+                       recovery_reason="RECOVERY_STAGED", accepted_observation_path="search_reacquisition")
+elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected_claimed_committed",
+              "live_slot_replaced", "live_slot_disappeared", "valid_rollback", "valid_failed_rollback",
+              "valid_rejected_recovery_commit"}:
     rows[1].update(state="TRACKING", tracking_phase="TRACKING",
                    accepted="1", observation_valid="1", trusted_for_state_update="1",
                    rect0_source="ACCEPTED_OBSERVATION", template_action="STAGE_RECENT",
@@ -591,8 +608,34 @@ elif case in {"valid_commit", "wrong_slot", "failed_commit_probation"}:
                    recovery_conflict="0", detector_same_class_ambiguous="0",
                    recovery_reason="NONE", candidate_source="NONE", candidate_id="",
                    candidate_generation="")
+    rows[2].update(recent_head_executed="1", recent_decode_status="DECODED", tracker_skipped="0",
+                   detector_suppressed_by_hold="0", tracker_ms="1", detector_same_class_candidates="0")
+    rows[2].update({f"recent_raw_{key}": rows[1][f"recent_raw_{key}"] for key in raw})
     if case == "wrong_slot":
         rows[2]["template_slot_id"] = "4"
+    if case in {"valid_rollback", "valid_failed_rollback"}:
+        rows[2].update(template_action="ROLLBACK_RECENT", template_transition_reason="FRAME_INVALIDATED")
+        if case == "valid_failed_rollback":
+            rows[2].update(template_transition_result="TRACKER_REJECTED", template_transition_applied="0")
+    if case in {"rejected_claimed_committed", "valid_rejected_recovery_commit"}:
+        rows[1].update(template_transition_recovery="1", template_transition_reason="RECOVERY_CONFIRMED",
+                       candidate_source="RECENT", candidate_id="1", candidate_generation="2",
+                       recovery_confirmation_hits="2", recovery_reason="RECOVERY_STAGED",
+                       accepted_observation_path="search_reacquisition", reacquired="1")
+        rows[2].update(template_transition_result="TRACKER_REJECTED", template_transition_applied="0",
+                       template_transition_recovery="1", recovery_reason="RECOVERY_COMMIT_REJECTED",
+                       state="UNCERTAIN", tracking_phase="SEARCHING", accepted="0", observation_valid="0",
+                       observation_present="0", trusted_for_state_update="0", control_source="MOTION_SEARCH",
+                       motion_control_authorized="1", rect0_source="MOTION_PREDICTION")
+        if case == "rejected_claimed_committed":
+            rows[2]["recovery_reason"] = "RECOVERY_COMMITTED"
+    if case == "live_slot_replaced":
+        rows[2].update(template_action="STAGE_RECENT", template_slot_id="6",
+                       template_transition_reason="STABLE_TRACKING", template_probation_active="1")
+    if case == "live_slot_disappeared":
+        rows[2].update(template_action="NONE", template_slot_id="", template_transaction_id="",
+                       template_transition_reason="NONE", template_transition_result="NONE",
+                       template_transition_applied="0")
     if case == "failed_commit_probation":
         rows[2].update(template_transition_result="TRACKER_REJECTED",
                        template_transition_applied="0", template_probation_active="1")
@@ -612,11 +655,20 @@ with (root / "bboxes.csv").open("w", newline="") as stream:
     writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
     writer.writeheader()
     writer.writerows(rows)
-(root / "bboxes.csv.jsonl").write_text("".join(json.dumps(frame) + "\n" for frame in frames))
+json_path = root / "bboxes.csv.jsonl"
+if case == "companion_cross_directory":
+    json_path = root.parent / "companion-dir" / "frames.jsonl"
+    json_path.parent.mkdir()
+    metadata["frame_json_file"] = "../companion-dir/frames.jsonl"
+elif case == "companion_alias":
+    alias = root / "alias.jsonl"
+    alias.symlink_to(root / "bboxes.csv")
+    metadata["frame_json_file"] = alias.name
+json_path.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
 (root / "session-metadata.json").write_text(json.dumps(metadata))
 PY
   case "$schema_case" in
-    valid|no_decode|valid_commit)
+    valid|no_decode|valid_commit|valid_rollback|valid_failed_rollback|valid_rejected_recovery_commit|companion_cross_directory)
       bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 ;;
     *)
       if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then

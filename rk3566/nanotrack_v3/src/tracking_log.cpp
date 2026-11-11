@@ -3,11 +3,15 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <iterator>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace nanotrack {
 namespace {
@@ -314,6 +318,29 @@ std::string field_value(Value value) { return std::to_string(value); }
 std::string field_value(const std::optional<float>& value) { return optional_number(value); }
 std::string field_value(const std::optional<std::uint64_t>& value) { return optional_integer(value); }
 
+std::filesystem::path artifact_open_path(const std::filesystem::path& path) {
+  if (path.empty()) return {};
+  const auto absolute = std::filesystem::absolute(path);
+  // Resolve directory aliases while preserving the final extension used by
+  // the video encoder and the final directory entry checked by exclusive open.
+  return std::filesystem::weakly_canonical(absolute.parent_path()) / absolute.filename();
+}
+
+std::filesystem::path artifact_identity(std::filesystem::path path) {
+  if (path.empty()) return path;
+  // weakly_canonical also handles existing parent directories of new outputs.
+  // A dangling final symlink still aliases the path it would create on open.
+  for (int depth = 0; depth < 40; ++depth) {
+    std::error_code error;
+    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(path, error))) {
+      return std::filesystem::weakly_canonical(path);
+    }
+    const auto target = std::filesystem::read_symlink(path);
+    path = target.is_absolute() ? target : path.parent_path() / target;
+  }
+  throw std::invalid_argument("tracking artifact has a cyclic symlink");
+}
+
 }  // namespace
 
 MonotonicVideoClock::MonotonicVideoClock(double source_fps) {
@@ -612,6 +639,94 @@ std::string tracking_frame_event_fields(const TrackingLogRow& row) {
     stream << ' ' << name << '=' << (formatted.empty() ? "NA" : formatted);
   });
   return stream.str();
+}
+
+TrackingArtifactPaths resolve_tracking_artifact_paths(
+    const std::filesystem::path& boxes,
+    const std::filesystem::path& metadata,
+    const std::filesystem::path& video) {
+  TrackingArtifactPaths paths;
+  paths.boxes = artifact_open_path(boxes);
+  paths.metadata = artifact_open_path(metadata.empty() && !boxes.empty()
+      ? std::filesystem::path(boxes.string() + ".metadata.json") : metadata);
+  paths.video = artifact_open_path(video);
+  if (!boxes.empty()) {
+    paths.frame_json = artifact_open_path(boxes.string() + ".jsonl");
+  }
+  const std::filesystem::path identities[] = {
+      artifact_identity(paths.boxes), artifact_identity(paths.metadata),
+      artifact_identity(paths.video), artifact_identity(paths.frame_json),
+  };
+  const char* labels[] = {"CSV", "session metadata", "video", "frame JSON"};
+  for (std::size_t i = 0; i < std::size(identities); ++i) {
+    if (identities[i].empty()) continue;
+    for (std::size_t j = i + 1; j < std::size(identities); ++j) {
+      if (identities[j].empty()) continue;
+      std::error_code error;
+      if (identities[i] == identities[j] ||
+          std::filesystem::equivalent(identities[i], identities[j], error)) {
+        throw std::invalid_argument(std::string("tracking outputs share a destination: ") +
+                                    labels[i] + " and " + labels[j]);
+      }
+    }
+  }
+  if (!paths.frame_json.empty()) {
+    const auto reference = identities[3].lexically_relative(identities[1].parent_path());
+    paths.frame_json_reference = (reference.empty() ? identities[3] : reference).generic_string();
+  }
+  return paths;
+}
+
+TrackingFrameJsonWriter::TrackingFrameJsonWriter(const TrackingArtifactPaths& paths)
+    : path_(paths.frame_json), reference_(paths.frame_json_reference) {}
+
+TrackingFrameJsonWriter::~TrackingFrameJsonWriter() { discard(); }
+
+void TrackingFrameJsonWriter::open() noexcept {
+  if (path_.empty() || owns_path_) return;
+  const int file = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+  if (file < 0) return;
+  owns_path_ = true;
+  stream_ = ::fdopen(file, "w");
+  if (!stream_) {
+    ::close(file);
+    discard();
+  }
+}
+
+void TrackingFrameJsonWriter::append(const TrackingLogRow& row) {
+  if (!stream_) return;
+  const auto json = tracking_frame_json(row);
+  if (std::fwrite(json.data(), 1, json.size(), stream_) != json.size() ||
+      std::fputc('\n', stream_) == EOF) {
+    discard();
+    return;
+  }
+  wrote_frame_ = true;
+}
+
+std::string TrackingFrameJsonWriter::finish(bool primary_complete) {
+  if (!stream_) return {};
+  const bool closed = std::fclose(stream_) == 0;
+  stream_ = nullptr;
+  if (!primary_complete || !closed || !wrote_frame_) {
+    discard();
+    return {};
+  }
+  owns_path_ = false;
+  return reference_;
+}
+
+void TrackingFrameJsonWriter::discard() noexcept {
+  if (stream_) {
+    std::fclose(stream_);
+    stream_ = nullptr;
+  }
+  if (owns_path_) {
+    std::error_code error;
+    std::filesystem::remove(path_, error);
+    owns_path_ = false;
+  }
 }
 
 TrackingLogRow make_initial_log_row(std::uint64_t frame_id,

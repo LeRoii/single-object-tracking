@@ -247,7 +247,7 @@ def verify_recent_safe(row, index, last_transaction, staged_slot):
     if row["state"] == "SUSPECTED" and phase != "SUSPECTED":
         reject("suspected state outside suspected phase")
     if row["rect0_source"] == "INITIAL_ROI":
-        if not accepted or row["state_change_reason"] != "INITIALIZED":
+        if index != 0 or not accepted or row["state_change_reason"] != "INITIALIZED":
             reject("invalid initial rect0 source")
     else:
         expected_source = {"TRACKING": "ACCEPTED_OBSERVATION", "SUSPECTED": "RECENT_OBSERVATION",
@@ -258,7 +258,7 @@ def verify_recent_safe(row, index, last_transaction, staged_slot):
         "NONE", "INITIALIZED", "RESPONSE_DEGRADED", "SUSPICION_ENTERED",
         "SUSPICION_CONTINUES", "SUSPICION_CLEARED", "SUSPICION_ESCALATED",
         "OBSERVATION_CONFIRMED", "OBSERVATION_LOST", "SEARCH_MODE_CHANGED",
-        "RECOVERY_PREPARE_FAILED",
+        "RECOVERY_PREPARE_FAILED", "RECOVERY_COMMIT_REJECTED",
     }:
         reject("invalid state change reason")
     if row["recovery_reason"] not in {
@@ -297,6 +297,11 @@ def verify_recent_safe(row, index, last_transaction, staged_slot):
         elif any(values):
             reject(f"raw {role} fields without a decoded result")
 
+    if accepted and row["rect0_source"] != "INITIAL_ROI":
+        selected = row["selected_template"].lower()
+        if selected not in head_roles or row[f"{selected}_decode_status"] != "DECODED":
+            reject("accepted tracking lacks a decoded selected observation")
+
     reference = [row[key] for key in v11_baselines]
     deltas = [row[key] for key in v11_deltas]
     if any(reference) and not all(reference):
@@ -312,6 +317,13 @@ def verify_recent_safe(row, index, last_transaction, staged_slot):
     probation = row["template_probation_active"] == "1"
     transaction_id, slot_id = row["template_transaction_id"], row["template_slot_id"]
     transition_reason = row["template_transition_reason"]
+    recovery_reason = row["recovery_reason"]
+    if (recovery_reason == "RECOVERY_COMMITTED") != (
+            action == "COMMIT_RECENT" and recovery and applied):
+        reject("recovery commit claim disagrees with its acknowledgement")
+    if (recovery_reason == "RECOVERY_STAGED") != (
+            action == "STAGE_RECENT" and recovery and applied):
+        reject("recovery stage claim disagrees with its acknowledgement")
     if action == "NONE":
         if result != "NONE" or applied or recovery or transaction_id or slot_id or transition_reason != "NONE":
             reject("template acknowledgement without an action")
@@ -331,19 +343,27 @@ def verify_recent_safe(row, index, last_transaction, staged_slot):
         if transaction_id <= last_transaction or slot_id <= 0 or transition_reason not in valid_reasons[action]:
             reject("invalid template transaction identity or reason")
         if action == "STAGE_RECENT":
-            if slot_id != transaction_id or probation != applied or (applied and not accepted):
+            if (staged_slot is not None or slot_id != transaction_id or
+                    probation != applied or (applied and not accepted)):
                 reject("inconsistent stage acknowledgement")
             if recovery and (applied != (row["reacquired"] == "1") or
                              (not applied and phase != "SEARCHING")):
                 reject("invalid recovery stage semantics")
-            staged_slot = slot_id if applied else None
+            if recovery and applied and row["accepted_observation_path"] != "search_reacquisition":
+                reject("recovery stage lacks a confirmed search reacquisition")
+            staged_slot = (slot_id, recovery) if applied else None
         else:
-            if slot_id >= transaction_id or slot_id != staged_slot or probation or result == "PREPARE_FAILED":
+            if (slot_id >= transaction_id or (slot_id, recovery) != staged_slot or
+                    probation or result == "PREPARE_FAILED"):
                 reject("invalid template terminal acknowledgement")
+            if action == "COMMIT_RECENT" and recovery and not applied and (
+                    phase != "SEARCHING" or accepted or trusted or
+                    recovery_reason != "RECOVERY_COMMIT_REJECTED"):
+                reject("rejected recovery commit retained tracking authorization")
             staged_slot = None
         last_transaction = transaction_id
-    if probation and staged_slot is None:
-        reject("template probation without an applied stage")
+    if probation != (staged_slot is not None):
+        reject("template probation disagrees with the live stage slot")
 
     for source_key, id_key, generation_key in (
         ("candidate_source", "candidate_id", "candidate_generation"),
@@ -368,7 +388,8 @@ def verify_recent_safe(row, index, last_transaction, staged_slot):
                                              row["control_source"] == "OBSERVATION"):
         reject("conflicted candidate confirmed an observation")
     if row["accepted_observation_path"] == "search_reacquisition" and not (
-            hits == "2" and action == "STAGE_RECENT" and applied and recovery):
+            hits == "2" and row["candidate_source"] != "NONE" and row["recovery_conflict"] == "0" and
+            action == "STAGE_RECENT" and applied and recovery and row["reacquired"] == "1"):
         reject("reacquisition lacks confirmed applied stage")
     return last_transaction, staged_slot
 
@@ -380,6 +401,13 @@ if missing:
 first_frame_id = int(rows[0]["frame_id"])
 last_timestamp = None
 last_transaction, staged_slot = 0, None
+# Interactive reselection is recorded in session metadata even though the
+# paused ROI replacement does not write a second CSV row for that frame.
+reset_frames = {
+    entry["frame_id"] for entry in metadata.get("target_class_initializations", [])
+    if isinstance(entry, dict) and isinstance(entry.get("frame_id"), int)
+    and entry.get("initialization_index", 0) > 1
+} if EXPECTED_TRACKING_SCHEMA == 11 else set()
 for index, row in enumerate(rows):
     if row["schema_version"] != str(EXPECTED_TRACKING_SCHEMA):
         raise SystemExit(f"unexpected CSV schema version at row {index}")
@@ -432,6 +460,8 @@ for index, row in enumerate(rows):
     if row["control_source"] == "OBSERVATION" and row["tracking_phase"] not in {"TRACKING", "SUSPECTED"}:
         raise SystemExit(f"observation control outside tracking or suspicion at row {index}")
     if EXPECTED_TRACKING_SCHEMA == 11:
+        if int(row["frame_id"]) - 1 in reset_frames:
+            staged_slot = None
         last_transaction, staged_slot = verify_recent_safe(row, index, last_transaction, staged_slot)
     if row["control_source"] == "MOTION_SEARCH":
         if row["tracking_phase"] != "SEARCHING" or row["motion_control_authorized"] != "1" or row["motion_prediction_confident"] != "1":
@@ -629,9 +659,14 @@ if EXPECTED_TRACKING_SCHEMA == 11:
         raise SystemExit("missing observation_valid or rect0 schema semantics")
     companion = metadata.get("frame_json_file")
     if companion is not None:
-        if not isinstance(companion, str) or pathlib.Path(companion).name != companion or not companion.endswith(".jsonl"):
+        if not isinstance(companion, str) or not companion.endswith(".jsonl"):
             raise SystemExit("invalid frame JSON companion name")
-        with (artifact_dir / companion).open() as stream:
+        metadata_path = (artifact_dir / "session-metadata.json").resolve()
+        companion_path = (metadata_path.parent / companion).resolve(strict=True)
+        if any(companion_path.samefile(artifact_dir / artifact)
+               for artifact in ("bboxes.csv", "session-metadata.json", "output.avi")):
+            raise SystemExit("frame JSON companion aliases another artifact")
+        with companion_path.open() as stream:
             frame_json = [json.loads(line) for line in stream]
         if len(frame_json) != len(rows):
             raise SystemExit("frame JSON companion count differs from CSV")

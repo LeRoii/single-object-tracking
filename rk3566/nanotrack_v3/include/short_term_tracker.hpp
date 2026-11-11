@@ -21,6 +21,9 @@ class ShortTermTracker {
                                                 const SearchPlan& plan,
                                                 TemplateHeadExecution& heads) = 0;
   virtual void commit_bbox(const BBox& bbox) = 0;
+  // Restore an already-validated committed bbox after an interrupted frame.
+  // Must undo any geometry side effects of a failed or superseded commit_bbox.
+  virtual void restore_bbox(const BBox& bbox) noexcept = 0;
   virtual void prepare_recent(const ImageView& image, const BBox& bbox,
                               std::uint64_t transaction_id) = 0;
   virtual bool commit_recent(std::uint64_t transaction_id) noexcept = 0;

@@ -487,6 +487,16 @@ void LongTermController::abort_frame() noexcept {
   }
 }
 
+void LongTermController::rollback_frame_application(
+    LongTermController&& checkpoint) noexcept {
+  static_assert(std::is_nothrow_move_assignable_v<LongTermController>);
+  const auto transaction_high_water_mark = last_template_transaction_id_;
+  *this = std::move(checkpoint);
+  last_template_transaction_id_ = transaction_high_water_mark;
+  abort_frame();
+  discard_template_probation();
+}
+
 void LongTermController::publish_occlusion_evidence(ControllerOutput& output) {
   const auto& decision = occlusion_decision_;
   output.occlusion_reference_source = decision.reference_source;
@@ -1423,7 +1433,7 @@ BBox LongTermController::stabilize_accepted_center(
 void LongTermController::defer_recovery_acceptance(
     const SearchPlan& plan, const EvaluatedObservation& selected,
     ControllerOutput& output) {
-  auto recovery = std::make_unique<RecoveryAcceptance>(config_);
+  auto recovery = std::make_shared<RecoveryAcceptance>(config_);
   const BBox bbox = selected.observation.bbox;
   recovery->bbox = bbox;
   recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);

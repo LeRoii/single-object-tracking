@@ -79,6 +79,9 @@ add_library(nanotrack_controller_support
 )
 target_include_directories(nanotrack_controller_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(nanotrack_controller_support PUBLIC nanotrack_math)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+  target_link_libraries(nanotrack_controller_support PUBLIC stdc++fs)
+endif()
 target_compile_options(nanotrack_controller_support PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(nanotrack_debug_telemetry

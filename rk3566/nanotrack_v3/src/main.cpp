@@ -404,6 +404,8 @@ int main(int argc, char** argv) {
       return 0;
     }
     nanotrack::validate_input_paths(options);
+    const auto artifacts = nanotrack::resolve_tracking_artifact_paths(
+        options.output_boxes, options.session_metadata, options.output_video);
     nanotrack::ControllerConfig controller_config =
         options.controller_config.empty()
             ? nanotrack::default_controller_config(options.sensor)
@@ -457,8 +459,7 @@ int main(int argc, char** argv) {
     }
     cv::VideoWriter writer;
     std::ofstream boxes;
-    std::ofstream frame_json;
-    std::filesystem::path frame_json_path;
+    nanotrack::TrackingFrameJsonWriter frame_json(artifacts);
 
     nanotrack::NanoTrackV3 tracker(options.model_dir);
     std::unique_ptr<nanotrack::DetectorAdapter> detector;
@@ -539,18 +540,6 @@ int main(int argc, char** argv) {
       cv::resizeWindow(kInteractiveWindow, nanotrack::kInteractiveWindowWidth,
                        nanotrack::kInteractiveWindowHeight);
     }
-    const auto discard_frame_json = [&] {
-      if (frame_json.is_open()) frame_json.close();
-      std::error_code error;
-      std::filesystem::remove(frame_json_path, error);
-      session_metadata.frame_json_file.clear();
-    };
-    const auto write_frame_json = [&](const nanotrack::TrackingLogRow& row) {
-      if (!frame_json.is_open()) return;
-      frame_json << nanotrack::tracking_frame_json(row) << '\n';
-      if (!frame_json) discard_frame_json();
-    };
-
     const auto initialize_target = [&](const nanotrack::BBox& bbox) {
       const bool reinitializing = initialized;
       if (options.interactive) {
@@ -595,8 +584,8 @@ int main(int argc, char** argv) {
       initial_result.initialization = initialization;
       displayed_result = initial_result;
       if (!initialized) {
-        if (!options.output_video.empty()) {
-          writer.open(options.output_video,
+        if (!artifacts.video.empty()) {
+          writer.open(artifacts.video.string(),
                       cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), output_fps,
                       cv::Size(output_width, output_height));
           if (!writer.isOpened()) {
@@ -605,8 +594,8 @@ int main(int argc, char** argv) {
           writer.write(render_annotated(frame, bbox, initial_output, output_width,
                                         output_height));
         }
-        if (!options.output_boxes.empty()) {
-          boxes.open(options.output_boxes);
+        if (!artifacts.boxes.empty()) {
+          boxes.open(artifacts.boxes);
           if (!boxes) throw std::runtime_error("cannot open output CSV");
           const auto initial_row = nanotrack::make_initial_log_row(
               source_frame, timestamp_ms, bbox, detector->available(),
@@ -614,22 +603,8 @@ int main(int argc, char** argv) {
               controller_config.detector_target_mode, initialization.target_class);
           boxes << nanotrack::tracking_csv_header() << '\n';
           boxes << nanotrack::tracking_csv_row(initial_row) << '\n';
-          frame_json_path = options.output_boxes + ".jsonl";
-          const auto metadata_destination = options.session_metadata.empty()
-              ? std::filesystem::path(options.output_boxes + ".metadata.json")
-              : std::filesystem::path(options.session_metadata);
-          std::error_code companion_error;
-          const auto companion_status = std::filesystem::symlink_status(frame_json_path, companion_error);
-          if (companion_status.type() == std::filesystem::file_type::not_found &&
-              frame_json_path.lexically_normal() != metadata_destination.lexically_normal() &&
-              frame_json_path.lexically_normal() !=
-                  std::filesystem::path(options.output_video).lexically_normal()) {
-            frame_json.open(frame_json_path);
-            if (frame_json) {
-              session_metadata.frame_json_file = frame_json_path.filename().string();
-              write_frame_json(initial_row);
-            }
-          }
+          frame_json.open();
+          frame_json.append(initial_row);
         }
       }
       initialized = true;
@@ -775,7 +750,7 @@ int main(int argc, char** argv) {
       log_row.pipeline_ms = pipeline_ms;
       if (boxes.is_open()) {
         boxes << nanotrack::tracking_csv_row(log_row) << '\n';
-        write_frame_json(log_row);
+        frame_json.append(log_row);
       }
       if (options.interactive) {
         for (const std::string& event :
@@ -795,14 +770,8 @@ int main(int argc, char** argv) {
     if (writer.isOpened()) {
       writer.release();
     }
-    if (boxes.is_open()) {
-      boxes.close();
-      if (!boxes && frame_json.is_open()) discard_frame_json();
-    }
-    if (frame_json.is_open()) {
-      frame_json.close();
-      if (!frame_json) discard_frame_json();
-    }
+    if (boxes.is_open()) boxes.close();
+    session_metadata.frame_json_file = frame_json.finish(static_cast<bool>(boxes));
     if (!initialized) {
       std::cout << "SUMMARY tracked_frames=0 initialized=0\n";
       return 0;
@@ -846,13 +815,8 @@ int main(int argc, char** argv) {
       detector_metadata.rknn_api_version = yolo_engine->api_version();
       detector_metadata.rknn_driver_version = yolo_engine->driver_version();
     }
-    const std::string metadata_path = !options.session_metadata.empty()
-                                          ? options.session_metadata
-                                          : options.output_boxes.empty()
-                                                ? std::string()
-                                                : options.output_boxes + ".metadata.json";
-    if (!metadata_path.empty()) {
-      write_session_metadata(metadata_path, options, controller_config, tracker,
+    if (!artifacts.metadata.empty()) {
+      write_session_metadata(artifacts.metadata.string(), options, controller_config, tracker,
                              video_clock, source_fps, tracked_count, latency,
                              detector_metadata, session_metadata);
     }
@@ -870,7 +834,7 @@ int main(int argc, char** argv) {
               << " initializations=" << initialization_count
               << " calibrated=" << (controller_config.calibrated ? 1 : 0)
               << " metadata="
-              << (metadata_path.empty() ? "disabled" : metadata_path) << '\n';
+              << (artifacts.metadata.empty() ? "disabled" : artifacts.metadata.string()) << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "ERROR: " << error.what() << '\n';

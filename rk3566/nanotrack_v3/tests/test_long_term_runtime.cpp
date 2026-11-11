@@ -78,6 +78,10 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
     ++commit_calls;
     if (on_commit) on_commit();
     committed_bbox = bbox;
+    if (on_commit_after_write) on_commit_after_write();
+  }
+  void restore_bbox(const nanotrack::BBox& bbox) noexcept override {
+    committed_bbox = bbox;
   }
   void prepare_recent(const nanotrack::ImageView&, const nanotrack::BBox& bbox,
                       std::uint64_t id) override {
@@ -136,6 +140,7 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
   std::function<void()> on_initialize;
   std::function<void()> on_infer;
   std::function<void()> on_commit;
+  std::function<void()> on_commit_after_write;
   std::function<void()> on_stage;
   std::function<void()> on_recent_commit;
   std::function<void()> on_rollback;
@@ -579,6 +584,86 @@ void test_runtime_transition_failures(const nanotrack::ImageView& image) {
 
 }
 
+void test_runtime_rolls_back_finished_frames(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const BBox roi{40, 30, 20, 20};
+  const BBox moved{45, 30, 20, 20};
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 1000;
+  config.recent_probation_frames = 1;
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  NullDetectorAdapter detector;
+  LongTermRuntime runtime(config, tracker, detector);
+  runtime.initialize(image, roi, 0, 0);
+  tracker.reliable_bbox = moved;
+  tracker.on_commit = [] { throw std::runtime_error("bbox write failed"); };
+  bool thrown = false;
+  try { runtime.process_frame(image, 1, 40); }
+  catch (const std::runtime_error&) { thrown = true; }
+  expect_true(thrown && same_bbox(runtime.controller().current_bbox(), roi) &&
+                  same_bbox(tracker.committed_bbox, roi),
+              "ordinary bbox failure restores completed controller geometry");
+  tracker.on_commit = {};
+  tracker.on_commit_after_write = [] { throw std::runtime_error("bbox write failed after mutation"); };
+  thrown = false;
+  try { runtime.process_frame(image, 1, 40); }
+  catch (const std::runtime_error&) { thrown = true; }
+  expect_true(thrown && same_bbox(runtime.controller().current_bbox(), roi) &&
+                  same_bbox(tracker.committed_bbox, roi),
+              "post-mutation bbox failure restores both controller and tracker geometry");
+  tracker.on_commit_after_write = {};
+  bool retried = false;
+  try { retried = runtime.process_frame(image, 1, 40).output.accepted; }
+  catch (const std::exception&) {}
+  expect_true(retried, "ordinary bbox failure leaves the same timestamp retryable");
+
+  runtime.initialize(image, roi, 1, 40);
+  tracker.emit_reliable = false;
+  runtime.process_frame(image, 2, 80);
+  tracker.emit_reliable = true;
+  runtime.process_frame(image, 3, 120);
+  const auto stage = runtime.process_frame(image, 4, 160);
+  expect_true(stage.output.reacquired && stage.output.template_transition_applied,
+              "recovery-commit fixture reaches acknowledged probation");
+  const auto previous_bbox = tracker.committed_bbox;
+  tracker.reliable_bbox = BBox{47, 30, 20, 20};
+  tracker.reject_commit = true;
+  const auto rejected = runtime.process_frame(image, 5, 200);
+  expect_true(rejected.output.template_transition_result == TemplateTransitionResult::kTrackerRejected &&
+                  !rejected.output.template_transition_applied && !rejected.output.accepted &&
+                  !rejected.output.trusted_for_state_update &&
+                  rejected.output.tracking_phase == TrackingPhase::kSearching &&
+                  rejected.output.control_source == ControlSource::kMotionSearch &&
+                  !tracker.pending_template_id &&
+                  same_bbox(tracker.committed_bbox, previous_bbox) &&
+                  same_bbox(runtime.controller().current_bbox(), previous_bbox),
+              "rejected recovery commit publishes motion search and restores both bboxes on the failure frame");
+  const auto next = runtime.process_frame(image, 6, 240);
+  expect_true(next.plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                  !next.output.accepted && next.output.recovery_confirmation_hits == 1,
+              "rejected recovery commit starts a fresh confirmation on the next frame");
+
+  config.motion_search_confidence_ms = 35;
+  FakeTracker expired_tracker;
+  expired_tracker.emit_recent_safe_roles = true;
+  LongTermRuntime expired_runtime(config, expired_tracker, detector);
+  expired_runtime.initialize(image, roi, 0, 0);
+  expired_tracker.emit_reliable = false;
+  expired_runtime.process_frame(image, 1, 40);
+  expired_tracker.emit_reliable = true;
+  expired_runtime.process_frame(image, 2, 80);
+  const auto expired_stage = expired_runtime.process_frame(image, 3, 120);
+  expired_tracker.reject_commit = true;
+  const auto expired_commit = expired_runtime.process_frame(image, 4, 160);
+  expect_true(expired_stage.output.reacquired && !expired_commit.output.accepted &&
+                  !expired_commit.output.control_valid &&
+                  expired_commit.output.control_source == ControlSource::kNone &&
+                  expired_commit.output.template_transition_result == TemplateTransitionResult::kTrackerRejected,
+              "failed recovery commit cannot create a fresh motion authorization window");
+}
+
 void test_runtime_target_class_recovery_requests(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   const BBox roi{40, 30, 20, 20};
@@ -863,8 +948,9 @@ void test_frame_lifetime(const nanotrack::ImageView& image) {
       }
     } catch (const TrackerFailure& error) { original_action_error = error.id == 93; }
     expect_true(original_action_error != template_failure &&
-                    same_bbox(action_runtime.controller().current_bbox(), BBox{41, 30, 20, 20}),
-                "bbox callback propagates its error and prepare failure retains accepted tracking");
+                    same_bbox(action_runtime.controller().current_bbox(),
+                              template_failure ? BBox{41, 30, 20, 20} : roi),
+                "bbox callback rolls back its frame and prepare failure retains accepted tracking");
     action_tracker.on_commit = {};
     action_tracker.on_stage = {};
     bool action_reinitialized = false;
@@ -1291,6 +1377,7 @@ int main() {
   test_runtime_atomic_search_commit(image);
   test_controller_rejects_stale_transition_acknowledgements();
   test_runtime_transition_failures(image);
+  test_runtime_rolls_back_finished_frames(image);
   test_runtime_target_class_recovery_requests(image);
   test_late_precoast_batches(image);
   test_probe_failure_and_same_frame_reselect(image);

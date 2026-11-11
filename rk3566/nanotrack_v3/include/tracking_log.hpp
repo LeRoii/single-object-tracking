@@ -3,6 +3,8 @@
 #include "long_term_runtime.hpp"
 
 #include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -167,6 +169,40 @@ struct TrackingLogRow {
   float runtime_ms = 0.0F;
   float pipeline_ms = 0.0F;
   std::string note;
+};
+
+struct TrackingArtifactPaths {
+  std::filesystem::path boxes;
+  std::filesystem::path metadata;
+  std::filesystem::path video;
+  std::filesystem::path frame_json;
+  std::string frame_json_reference;
+};
+
+TrackingArtifactPaths resolve_tracking_artifact_paths(
+    const std::filesystem::path& boxes,
+    const std::filesystem::path& metadata,
+    const std::filesystem::path& video);
+
+class TrackingFrameJsonWriter {
+ public:
+  explicit TrackingFrameJsonWriter(const TrackingArtifactPaths& paths);
+  ~TrackingFrameJsonWriter();
+  TrackingFrameJsonWriter(const TrackingFrameJsonWriter&) = delete;
+  TrackingFrameJsonWriter& operator=(const TrackingFrameJsonWriter&) = delete;
+
+  void open() noexcept;
+  void append(const TrackingLogRow& row);
+  std::string finish(bool primary_complete);
+
+ private:
+  void discard() noexcept;
+
+  std::filesystem::path path_;
+  std::string reference_;
+  std::FILE* stream_ = nullptr;
+  bool owns_path_ = false;
+  bool wrote_frame_ = false;
 };
 
 struct LatencySummary {

@@ -232,6 +232,9 @@ class LongTermController {
   const ControllerConfig& config() const { return config_; }
 
  private:
+  friend class LongTermRuntime;
+  void rollback_frame_application(LongTermController&& checkpoint) noexcept;
+
   struct EvaluatedObservation {
     TrackerObservation observation{};
     QualityLevel quality = QualityLevel::kRejected;
@@ -428,7 +431,7 @@ class LongTermController {
   std::uint64_t last_template_transaction_id_ = 0;
   std::optional<std::uint64_t> staged_template_slot_id_;
   std::optional<TemplateTransitionRequest> pending_template_transition_;
-  std::unique_ptr<RecoveryAcceptance> pending_recovery_acceptance_;
+  std::shared_ptr<RecoveryAcceptance> pending_recovery_acceptance_;
   bool recent_probation_ = false;
   bool recovery_probation_ = false;
   bool rollback_pending_ = false;

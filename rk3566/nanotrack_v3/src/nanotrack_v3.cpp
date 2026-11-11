@@ -250,6 +250,10 @@ void NanoTrackV3::commit_bbox(const BBox& bbox) {
   committed_bbox_ = bbox;
 }
 
+void NanoTrackV3::restore_bbox(const BBox& bbox) noexcept {
+  committed_bbox_ = bbox;
+}
+
 void NanoTrackV3::prepare_recent(const ImageView& image, const BBox& bbox,
                                 std::uint64_t transaction_id) {
   if (!initialized_) throw std::logic_error("tracker has not been initialized");
