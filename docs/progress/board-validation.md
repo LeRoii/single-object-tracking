@@ -1910,8 +1910,9 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 - 分支 `codex/occ-video-1-tracking`，本任务执行基线
   `8545f97ac9539231e936dfcc2a322d8916e5f143`，候选工具提交 `1ccff5d`，分层草案打包器
   提交 `8545f97`，review contact-sheet 纳入包与哈希的修复提交
-  `5d186f8705b5f8a1bababe51a11ffdd43a080935`。这是主机侧标注草案生成，不是 RK3588
-  新运行或板端验收。
+  `5d186f8705b5f8a1bababe51a11ffdd43a080935`，独立审查后的 provenance/validator/
+  atomic-replace 加固提交 `b1d9dc2`。这是主机侧标注草案生成，不是 RK3588 新运行或
+  板端验收。
 - 原视频 `/home/u20/single-object-tracking/data/occ_video_1/1.mp4` SHA-256
   `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，严格解码为
   1920x1080、30/1 fps、271 帧。用于辅助定位运行行为的保留证据 CSV/log/JSON/AVI
@@ -1927,6 +1928,8 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   `9a618cb492bf5d47b6d6688feb8cf2af7780b6c030438c78c1d027da377cf994`、
   `39c23fa800287843d5e20f3e528c796b7d44bb6315c6c10652c4c82465ca3821`、
   `e9bfa7ab37394b299ce5dc9c482878dc759b5936f84dd6ff78f1f847e6c4f3ac`。
+  `distractors.json` SHA-256 为
+  `dfcde77592f879ca85924c6155f2f0ffc49c5f1a1925ea6d77c50ac677723f23`。
   候选 review AVI SHA-256
   `ca40b981acb8dd8c4fae41cd75b157dcd77041105eb4e64baa63d81eb5233a67`，解码为
   1920x1080、30/1 fps、271 帧；三张 contact sheet 已逐张查看，SHA-256 为
@@ -1935,9 +1938,9 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   `4968b176b57957a2a8e212b06fa004a0421ba535e79ec6b0cf63439f2b982b94`。
 - 草案位于 `artifacts/ground_truth/occ_video_1_car_002_draft/`，
   `checksums.sha256` SHA-256
-  `37198f2b8ef1979fcd78fe8190155c7f2bae750d5044eb49411662d19f3f9114`，
+  `2fe9b50cefdaeee63082a9edb6a6ac1f0aa79232a428d307aff615b868b420ee`，
   `annotation_metadata.json` SHA-256
-  `87d1be38a9846822e9ee3daa31298bc5828b465e528d830c9eee3a12300920fc`。
+  `e0c559fb98f6f281b2cbe207c210c9c538534d074e5d7f14b726a8fc3af0b859`。
   三层均恰有 271 个连续文件：正式 `labels/` 非空 0，未确认候选
   `candidate_labels/` 非空 252，非可观测估计 `estimated_labels/` 非空 4；
   `frames.jsonl`、`annotation_status.csv` 均为 271 帧，`review_manifest.csv` 有 267 条
@@ -1946,14 +1949,19 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 - 身份复核结论：目标是桥前初始化白车，桥后为绿色车左侧白车；双向候选在 0--210、
   230--270 连续跟随该车。211--212 与 217--229 为高优先级人工复核区间；213--216
   标为 full occlusion，仅保存低置信度运动估计。运行在 259 帧取得的 detector 候选及
-  262 帧恢复对应另一辆同类白车，已以 `car_002_distractor_001` 记录，不能作为目标真值。
+  262 帧恢复对应另一辆同类白车，已以 `car_002_distractor_001` 连续记录 259--264 帧
+  （并保留 270 帧参照），不能作为目标真值。
 - 实际生成命令为
   `/tmp/nanotrack-car002-tools/generate_bidirectional_candidates --video ... --anchors ...`
   与 `python3 rk3566/nanotrack_v3/tools/build_occ_car002_draft.py build ... --review-dir ...`；
   `validate --require-confirmed false` PASS，`validate --require-confirmed true` 按预期以
   `unresolved review rows: 267` FAIL。三个 layer manifest 与总 `checksums.sha256` 均经
-  `sha256sum -c --quiet` PASS；Python 聚焦测试 4/4、annotation-tools CTest 20/20、
+  `sha256sum -c --quiet` PASS；Python 聚焦测试 5/5、annotation-tools CTest 20/20、
   既有主机 CTest 19/19 PASS，`git diff --check` PASS。
+- 独立终审指出的四项问题已处理：人工确认必须通过独立 `confirmed_*` 框且保留原候选；
+  validator 重新检查几何、枚举、逐层 YOLO 一致性、状态计数及 checksum 完整覆盖；
+  `--replace-draft` 先在同级 staging 完整构建、成功后再交换；错误同类车补齐 259--264
+  逐帧记录。测试覆盖语义篡改后重算哈希仍必须失败，以及非法替换不得破坏旧草案。
 - 证据边界：这是完整覆盖 0--270 的 assistant draft，不是人工确认真值。正式层为空，
   在用户逐帧确认并生成新版本/新哈希前，不授权 IoU、阈值标定、算法准确率、canonical
   dataset 晋级、板端验收或云台 pod 验收；没有修改 `car_001`、`STATUS.md` 或
