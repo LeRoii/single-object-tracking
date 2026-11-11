@@ -17,6 +17,7 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 
 SCHEMA_VERSION = "1.0-draft"
+EXPECTED_OCC_VIDEO_1_SHA256 = "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d"
 TARGET_STATES = {"visible", "partial_occlusion", "full_occlusion", "ambiguous", "out_of_view"}
 REVIEW_STATUSES = {
     "manual_confirmed_visible",
@@ -494,7 +495,10 @@ def build_draft(config: BuildConfig) -> dict:
         staging = temporary_root / "package"
         staged_config = replace(config, output_root=staging, replace_draft=False)
         result = _build_draft_at_root(staged_config)
-        validate_draft(staging, require_confirmed=False)
+        validate_draft(
+            staging, require_confirmed=False,
+            expected_video_sha256=config.video_sha256,
+        )
         backup = temporary_root / "previous"
         moved_previous = False
         try:
@@ -531,7 +535,11 @@ def _verify_manifest(root: Path, manifest_name: str, expected_layer: str, frame_
         raise ValueError(f"manifest mismatch: {manifest_name} frame mapping")
 
 
-def validate_draft(root: Path, require_confirmed: bool) -> dict:
+def validate_draft(
+    root: Path,
+    require_confirmed: bool,
+    expected_video_sha256: str = EXPECTED_OCC_VIDEO_1_SHA256,
+) -> dict:
     metadata = json.loads((root / "annotation_metadata.json").read_text(encoding="utf-8"))
     if (metadata.get("ground_truth_schema_version") != SCHEMA_VERSION or
             metadata.get("draft") is not True):
@@ -548,9 +556,12 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
         raise ValueError("invalid package video geometry")
     video_path = Path(video.get("path", ""))
     video_sha256 = video.get("sha256")
-    if (video.get("frame_id_origin") != 0 or
+    if (not isinstance(expected_video_sha256, str) or
+            re.fullmatch(r"[0-9a-f]{64}", expected_video_sha256) is None or
+            video.get("frame_id_origin") != 0 or
             not isinstance(video_sha256, str) or
             re.fullmatch(r"[0-9a-f]{64}", video_sha256) is None or
+            video_sha256 != expected_video_sha256 or
             not video_path.is_file() or _sha256(video_path) != video_sha256):
         raise ValueError("video identity mismatch")
     episode = metadata.get("episode", {})

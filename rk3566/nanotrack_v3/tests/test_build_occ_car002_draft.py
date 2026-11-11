@@ -231,15 +231,24 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             fixture = DraftFixture(Path(directory))
             draft.build_draft(fixture.config())
             self.assertEqual(
-                draft.validate_draft(fixture.output, require_confirmed=False)["frame_count"],
+                draft.validate_draft(
+                    fixture.output, require_confirmed=False,
+                    expected_video_sha256=fixture.video_sha256,
+                )["frame_count"],
                 5,
             )
             with self.assertRaisesRegex(ValueError, "unresolved review rows"):
-                draft.validate_draft(fixture.output, require_confirmed=True)
+                draft.validate_draft(
+                    fixture.output, require_confirmed=True,
+                    expected_video_sha256=fixture.video_sha256,
+                )
             label = fixture.output / "candidate_labels/frame_000001.txt"
             label.write_text("0 0.1 0.1 0.1 0.1\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "manifest mismatch"):
-                draft.validate_draft(fixture.output, require_confirmed=False)
+                draft.validate_draft(
+                    fixture.output, require_confirmed=False,
+                    expected_video_sha256=fixture.video_sha256,
+                )
 
         with tempfile.TemporaryDirectory() as directory:
             fixture = DraftFixture(Path(directory))
@@ -252,7 +261,10 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             )
             draft._write_checksums(fixture.output)
             with self.assertRaisesRegex(ValueError, "candidate bbox"):
-                draft.validate_draft(fixture.output, require_confirmed=False)
+                draft.validate_draft(
+                    fixture.output, require_confirmed=False,
+                    expected_video_sha256=fixture.video_sha256,
+                )
 
     def test_failed_replacement_preserves_previous_draft(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -269,7 +281,10 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "target_state"):
                 draft.build_draft(replace(fixture.config(), replace_draft=True))
             self.assertEqual((fixture.output / "checksums.sha256").read_bytes(), before)
-            draft.validate_draft(fixture.output, require_confirmed=False)
+            draft.validate_draft(
+                fixture.output, require_confirmed=False,
+                expected_video_sha256=fixture.video_sha256,
+            )
 
     def test_rebuild_is_deterministic(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -309,7 +324,10 @@ class BuildOccCar002DraftTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "bbox_valid"):
                     draft.build_draft(replace(fixture.config(), replace_draft=True))
             self.assertEqual((fixture.output / "checksums.sha256").read_bytes(), before)
-            draft.validate_draft(fixture.output, require_confirmed=False)
+            draft.validate_draft(
+                fixture.output, require_confirmed=False,
+                expected_video_sha256=fixture.video_sha256,
+            )
 
     def test_validate_rejects_rehashed_semantic_corruption(self):
         def corrupt_derived(fixture):
@@ -344,6 +362,15 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             value["video"]["path"] = str(fixture.root / "missing.mp4")
             value["video"]["sha256"] = "bad"
             value["video"]["frame_id_origin"] = 99
+            path.write_text(json.dumps(value))
+
+        def corrupt_video_rebind(fixture):
+            alternate = fixture.root / "alternate.mp4"
+            alternate.write_bytes(b"different-but-existing-content")
+            path = fixture.output / "annotation_metadata.json"
+            value = json.loads(path.read_text())
+            value["video"]["path"] = str(alternate)
+            value["video"]["sha256"] = hashlib.sha256(alternate.read_bytes()).hexdigest()
             path.write_text(json.dumps(value))
 
         def corrupt_episode(fixture):
@@ -385,6 +412,7 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             (corrupt_metadata, "formal_evaluation_authorized"),
             (corrupt_metadata_identity, "draft package"),
             (corrupt_video_identity, "video"),
+            (corrupt_video_rebind, "video identity"),
             (corrupt_episode, "episode"),
             (corrupt_visibility, "visibility_ratio"),
             (corrupt_estimated_state, "estimated_non_observable"),
@@ -398,7 +426,10 @@ class BuildOccCar002DraftTests(unittest.TestCase):
                 mutate(fixture)
                 draft._write_checksums(fixture.output)
                 with self.assertRaisesRegex(ValueError, message):
-                    draft.validate_draft(fixture.output, require_confirmed=False)
+                    draft.validate_draft(
+                        fixture.output, require_confirmed=False,
+                        expected_video_sha256=fixture.video_sha256,
+                    )
 
     def test_build_rejects_invalid_enums_and_duplicate_distractor_ids(self):
         with tempfile.TemporaryDirectory() as directory:
