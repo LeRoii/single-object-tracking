@@ -2104,3 +2104,27 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   `cat runs/car_001/commands.txt runs/car_002/commands.txt` 查阅准确诊断命令，
   新诊断使用新的输出路径。证据限 RK3588 原生 Debug 的两目标算法结果。
   请求协调对话继续保留正式 handoff 门槛，生产交叉编译与人工吊舱验收未启动。
+
+## 2026-11-12T02:53:15+08:00 RS001 v11 evaluator 复核与重新评分
+
+- 在 `codex/occ-video-1-tracking` 的既有证据提交
+  `fcab231098371b4e659282b1472b7faf243934e5` 上修复 evaluator。板端运行源码仍为
+  `e027006339f0cdafb0b8d38c4dfa5e14abe66593`，重新评分脚本提交为
+  `eb344708429949356c9f0161253bb326e0c16502`，脚本 SHA-256
+  `57bdd5d6824c5517adaeeac1910152b52dbc1721589983cea548c6c4f5f1b7f4`。
+  v11 重捕获必须来自可信跟踪观测和已应用的恢复阶段；`LOST` 禁止控制和观测声明；
+  完全遮挡门直接核对观测缺失、可信标记和已获授权的运动预测。新增负例先失败，修复后
+  evaluator Python 23/23、完整主机 CTest 22/22、Python 语法与 Git diff 检查通过。
+- 用该提交的脚本在 RS001 分别重新评估保留的 `runs/car_001/bboxes.csv` 和
+  `runs/car_002/bboxes.csv`，沿用各自正式真值及 session metadata。两次仍为 **FAIL**，
+  每项 gate 的布尔结果和失败帧与原报告一致，均无重捕获或无效重捕获声明。
+  更新后的 JSON SHA-256 分别为
+  `b338b8b8ce5967d377bbdf15751a8ab36b63023151758e162937a34a88ddee19` 和
+  `3e37c58e1387769203353dd81dcebbacf441ec55a269522b13deb1426fbd1846`，
+  Markdown SHA-256 分别为
+  `0de2acb648f2aa4fd42e2ffdcc583392bf28031b7a882b29402edfa4ebb011ae` 和
+  `b2673e732693c3f43e15caf4abe9723ae638d0440e5808dc4c3d53aced6c21b0`。
+  新 `SHA256SUMS` 均通过复核，非 evaluator 文件逐项哈希与旧清单一致；原报告及清单保留于
+  两个 run 的 `evaluator-original-e027006/`。准确命令、原始及更新后的哈希见
+  [RS001 评估记录](../evaluation/occ-video-1/recent-safe-candidate.json)。
+- **Handoff**：保持 RS001 **HOLD**。本次仅对保留 CSV 重新评分，新增推理运行 0 次。

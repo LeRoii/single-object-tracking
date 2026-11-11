@@ -9,7 +9,10 @@
     "runtime_source": "e027006339f0cdafb0b8d38c4dfa5e14abe66593",
     "runtime_source_subject": "test: prepare recent-safe RK3588 candidate",
     "evidence_commit_subject": "test: validate recent-safe recovery on RK3588",
-    "evidence_commit_lookup": "git log -1 --format=%H -- docs/evaluation/occ-video-1/recent-safe-candidate.json"
+    "evidence_commit_lookup": "git log -1 --format=%H -- docs/evaluation/occ-video-1/recent-safe-candidate.json",
+    "original_evidence": "fcab231098371b4e659282b1472b7faf243934e5",
+    "refreshed_evaluator": "eb344708429949356c9f0161253bb326e0c16502",
+    "refresh_evidence_commit_subject": "test: refresh RS001 evidence with trusted recovery evaluator"
   },
   "branch": "codex/occ-video-1-tracking",
   "worktree": "/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking",
@@ -321,9 +324,10 @@
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv": "0fa1e7ec2ad2d927d3340274703549ce50a2bdc070c5ac0682b604fb44f273eb",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv.jsonl": "57c3a3508a3e89676ea10c6de9282c35733b41dad36e252dc9de02cca303dbdd",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/commands.txt": "1bf06aa09cd2a4fcf7596d045fc63b791f0b1cc84f8fae1bb7f51099da968861",
-        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.json": "76e164a66b706535bfd408abd1c3d6b02cbbe5e4ad9f45451c720f765def04f0",
-        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.log": "b8c9b4c6b07be68606ea81d0beab7f74e576e9b80946a45456593b08ad0e8871",
-        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.md": "9ccaf9746f3d958854120b69820ef7b4847f2d1feca8f6897af645dfd2e1d818",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-command-eb34470.txt": "2fd3f6203922fe92a1918b12429b5b92716852890b47bd409cf535af2b2fb700",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.json": "b338b8b8ce5967d377bbdf15751a8ab36b63023151758e162937a34a88ddee19",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.log": "77444698d2d91464b662b62d4995915ef78c2a9e3a92e216c8f9e6139e3ec20c",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.md": "0de2acb648f2aa4fd42e2ffdcc583392bf28031b7a882b29402edfa4ebb011ae",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/ffprobe.json": "0a961e7873866eb4c1a1b3415f5c1cba0e81ce06ade297f6ab43999810b636a1",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/manifest.json": "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261",
@@ -409,7 +413,7 @@
         },
         "reacquisition": {
           "applicable": true,
-          "detail": "exactly one reacquisition in [182, 190) observed []",
+          "detail": "exactly one reacquisition in [182, 190) observed []. Invalid v11 claims []",
           "frames": [],
           "passed": false
         },
@@ -465,7 +469,8 @@
         "deadline_exclusive": 190,
         "first_frame": null,
         "first_reliable_reappearance_frame": 182,
-        "frames": []
+        "frames": [],
+        "invalid_claim_frames": []
       },
       "latency_ms": {
         "tracker": {
@@ -788,7 +793,18 @@
           "last_trusted_timestamp_ms": 5733,
           "elapsed_since_trusted_ms": 2534
         }
-      ]
+      ],
+      "artifact_manifest_sha256": "7fef754341a9c1d1b8fc70a32dda7cb865476552189a7cdee37f7ebd5aab8cee",
+      "archived_original_manifest": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/SHA256SUMS",
+      "archived_original_manifest_sha256": "ed898ad8df126e4bf4cb21543cbec3b651512b849db05277b1a0f88624dbad43",
+      "evaluator_original_archive": {
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/evaluator-full.json": "76e164a66b706535bfd408abd1c3d6b02cbbe5e4ad9f45451c720f765def04f0",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/evaluator-full.log": "b8c9b4c6b07be68606ea81d0beab7f74e576e9b80946a45456593b08ad0e8871",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/evaluator-full.md": "9ccaf9746f3d958854120b69820ef7b4847f2d1feca8f6897af645dfd2e1d818",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/evaluator.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+      },
+      "evaluator_refresh_command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/evaluator-eb34470.py --dataset-root /home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1 --target-id car_001 --boxes /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv --session-metadata /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/session-metadata.json --scope full --source-commit e027006339f0cdafb0b8d38c4dfa5e14abe66593 --config-sha256 7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34 --model-sha256 3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261 --output-json /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/.evaluator-refresh-eb34470/evaluator-full.json --output-markdown /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/.evaluator-refresh-eb34470/evaluator-full.md",
+      "gate_outcomes_match_original": true
     },
     "car_002": {
       "run_root": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002",
@@ -807,9 +823,10 @@
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv": "f2ccaaedfa8db7ea3195861b796ac176857ea6ea4ed68a1880d4950c38801f46",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv.jsonl": "08e31d90292316fe11087c409af210115bb821351943de81fe47556c968e5593",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/commands.txt": "03e0bf5e86d62083bbc34f9f43b03bcf738c00f127c1fede3afc8b30ed43fba1",
-        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.json": "26a1212c49e0c3e94d254be4a8a873a224ea5c99737879cf4cb29a889f513c3b",
-        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.log": "7143ff1b842d0f4862ef5b0682340701762beff57e4db554636b2246180c5236",
-        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.md": "e041eb6b73856e281fd2345a1d08b58e9d67417517cce851a10952b0f13da754",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-command-eb34470.txt": "85b009d139f289d6aa8a49e681c7a004625295039bd670a91c70f78895e65b1a",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.json": "3e37c58e1387769203353dd81dcebbacf441ec55a269522b13deb1426fbd1846",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.log": "94f36dbeb52624a695e4a4a0300c4394b2dde218d0fadbb58a7a03263fef1eff",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.md": "b2673e732693c3f43e15caf4abe9723ae638d0440e5808dc4c3d53aced6c21b0",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/ffprobe.json": "0a961e7873866eb4c1a1b3415f5c1cba0e81ce06ade297f6ab43999810b636a1",
         "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/manifest.json": "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261",
@@ -1005,7 +1022,7 @@
         },
         "reacquisition": {
           "applicable": true,
-          "detail": "exactly one reacquisition in [230, 271) observed []",
+          "detail": "exactly one reacquisition in [230, 271) observed []. Invalid v11 claims []",
           "frames": [],
           "passed": false
         },
@@ -1063,7 +1080,8 @@
         "deadline_exclusive": 271,
         "first_frame": null,
         "first_reliable_reappearance_frame": 230,
-        "frames": []
+        "frames": [],
+        "invalid_claim_frames": []
       },
       "latency_ms": {
         "tracker": {
@@ -1629,7 +1647,18 @@
           "last_trusted_timestamp_ms": 2300,
           "elapsed_since_trusted_ms": 2533
         }
-      ]
+      ],
+      "artifact_manifest_sha256": "277ce03fc64659fc15167e61af00cb77151063451fd2eb6a7dfd2e701411c892",
+      "archived_original_manifest": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/SHA256SUMS",
+      "archived_original_manifest_sha256": "859ef2ae96b931642d63782676cea0667b64889cabff79c25b7f8e55e05eaf21",
+      "evaluator_original_archive": {
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/evaluator-full.json": "26a1212c49e0c3e94d254be4a8a873a224ea5c99737879cf4cb29a889f513c3b",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/evaluator-full.log": "7143ff1b842d0f4862ef5b0682340701762beff57e4db554636b2246180c5236",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/evaluator-full.md": "e041eb6b73856e281fd2345a1d08b58e9d67417517cce851a10952b0f13da754",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/evaluator.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+      },
+      "evaluator_refresh_command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/evaluator-eb34470.py --dataset-root /home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1 --target-id car_002 --boxes /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv --session-metadata /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/session-metadata.json --scope full --source-commit e027006339f0cdafb0b8d38c4dfa5e14abe66593 --config-sha256 7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34 --model-sha256 3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261 --output-json /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/.evaluator-refresh-eb34470/evaluator-full.json --output-markdown /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/.evaluator-refresh-eb34470/evaluator-full.md",
+      "gate_outcomes_match_original": true
     }
   },
   "acceptance": {
@@ -1650,5 +1679,29 @@
       "./build/nanotrack_v3 --interactive --video data/occ_video_1/1.mp4 --model-dir models --sensor visible --controller-config source/rk3566/nanotrack_v3/config/visible-recent-safe-v1.conf --detector-model detector/yolov8n-visdrone9-rk3588-fp16.rknn --detector-manifest detector/detector-manifest.json --detector-labels detector/visdrone9.txt --detector-class-id 2 --detector-conf 0.25 --detector-nms 0.45 --max-frames 270 --output-size 1920x1080"
     ],
     "interactive_example_executed": false
+  },
+  "evaluator_refresh": {
+    "observed_at": "2026-11-12T02:53:15+08:00",
+    "evaluator_commit": "eb344708429949356c9f0161253bb326e0c16502",
+    "runtime_source_commit": "e027006339f0cdafb0b8d38c4dfa5e14abe66593",
+    "board_evaluator": {
+      "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/evaluator-eb34470.py",
+      "sha256": "57bdd5d6824c5517adaeeac1910152b52dbc1721589983cea548c6c4f5f1b7f4"
+    },
+    "board_refresh_script": {
+      "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/complete-evaluator-refresh-eb34470.sh",
+      "sha256": "d30e8fde16eb77cdfbb7bf2528f9a47b8048a5f75341879a246509c305514ec1"
+    },
+    "source": "Previously retained v11 CSVs and matching metadata. Both original evaluator reports remain in the per-run archive.",
+    "tracked_outputs_reevaluated": 2,
+    "tracker_runs_added": 0,
+    "host_tests": {
+      "python_command": "python3 -m unittest discover -s tests -p test_evaluate_occ_video_1.py",
+      "python": "23/23 PASS",
+      "python_log_sha256": "f22730652b32d926fc08de44dbd6e2bddd9e4d4b49551541d955775fed9913cb",
+      "ctest_command": "ctest --test-dir /tmp/nanotrack-occ-c010-host --output-on-failure",
+      "ctest": "22/22 PASS in 6.79 s",
+      "ctest_log_sha256": "c079474ccca035766b20d8d2629a3303be534c75e272d9c34275defda09ecd4b"
+    }
   }
 }
