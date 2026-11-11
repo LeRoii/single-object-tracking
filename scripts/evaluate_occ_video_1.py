@@ -15,7 +15,7 @@ REQUIRED_TRACKING_SCHEMA = 10
 MIN_OBSERVATION_VISIBLE_MEAN_IOU = 0.70
 MIN_OBSERVATION_VISIBLE_FRAME_IOU = 0.45
 CANONICAL_IDENTITY = {
-    "name": "occ_video_1",
+    "name": "occ_video_1_car_001",
     "frame_count": 271,
     "width": 1920,
     "height": 1080,
@@ -26,6 +26,37 @@ CANONICAL_IDENTITY = {
         "occlusion_events": "a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256",
         "annotation_status": "e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036",
         "labels_manifest": "9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648",
+    },
+}
+CANONICAL_IDENTITIES = {
+    "car_001": CANONICAL_IDENTITY,
+    "car_002": {
+        "name": "occ_video_1_car_002",
+        "target_id": "car_002",
+        "annotation_root": "ground_truth/car_002",
+        "frame_count": 271,
+        "width": 1920,
+        "height": 1080,
+        "class_id": 0,
+        "files": {
+            "video": "1.mp4",
+            "annotation_metadata": "annotation_metadata.json",
+            "occlusion_events": "events.json",
+            "annotation_status": "annotation_status.csv",
+            "labels_manifest": "labels.sha256",
+            "estimated_labels_manifest": "estimated_labels.sha256",
+            "package_checksums": "checksums.sha256",
+        },
+        "hashes": {
+            "video": "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d",
+            "annotation_metadata": "ddbd8846cd12466d82a833f2f335160a6e6dd1f6189963d268db1b1c54d03a63",
+            "occlusion_events": "efc0652335fcf19c766def88bf50bb8defab1441fdc8fbb412b85d02135c31db",
+            "annotation_status": "212525642591c124320e93369f8748d82cc53092628beff051507f930946dec1",
+            "labels_manifest": "2f0e78ab1123cb035c87efa06171f1057c108f38b06fcc5c1ed3a3ec63fdbe98",
+            "estimated_labels_manifest": "62a2877bfc38bf4482e3e1cca1e81551272a677f81d932918723e557db3d24e4",
+            "package_checksums": "4540ff280903a3e32d8b439f54ddca4497e855095da68ebdbe8fbea044371811",
+        },
+        "confirmed_package": True,
     },
 }
 
@@ -66,11 +97,19 @@ def _load_json(path, description):
     return value
 
 
-def _event_frames(events):
-    event = events.get("events", [events])
-    if not isinstance(event, list) or len(event) != 1 or not isinstance(event[0], dict):
-        raise ValueError("occlusion events must contain exactly one event")
-    event = event[0]
+def _event_frames(events, frame_count):
+    event_list = events.get("events", [events])
+    if not isinstance(event_list, list):
+        raise ValueError("occlusion events must be a list")
+    candidates = [
+        item for item in event_list
+        if isinstance(item, dict) and item.get("type") in {"full_occlusion", "occlusion"}
+    ]
+    if not candidates and len(event_list) == 1 and isinstance(event_list[0], dict):
+        candidates = event_list
+    if len(candidates) != 1:
+        raise ValueError("occlusion events must contain exactly one annotation event")
+    event = candidates[0]
 
     def pair(primary, start_key, end_key):
         if primary in event:
@@ -80,20 +119,34 @@ def _event_frames(events):
             return int(value[0]), int(value[1])
         return int(event[start_key]), int(event[end_key])
 
-    estimated_start, estimated_end = pair(
-        "estimated_bbox_frames", "estimated_bbox_start_frame", "estimated_bbox_end_frame"
-    )
+    if "estimated_bbox_frames" in event or "estimated_bbox_start_frame" in event:
+        estimated_start, estimated_end = pair(
+            "estimated_bbox_frames", "estimated_bbox_start_frame", "estimated_bbox_end_frame"
+        )
+    else:
+        estimated_start, estimated_end = pair(
+            "full_occlusion_frames", "first_full_frame", "last_full_frame"
+        )
     full_start, full_end = pair(
         "full_occlusion_frames", "first_full_frame", "last_full_frame"
+    )
+    first_reliable = int(
+        event.get("first_reliable_reappearance_frame",
+                  event.get("first_full_object_candidate_frame"))
     )
     result = {
         "estimated_start": estimated_start,
         "estimated_end": estimated_end,
         "full_start": full_start,
         "full_end": full_end,
-        "first_reliable_reappearance": int(event["first_reliable_reappearance_frame"]),
-        "stable_reappearance": int(event["stable_reappearance_frame"]),
-        "reacquisition_deadline_exclusive": 190,
+        "first_reliable_reappearance": first_reliable,
+        "stable_reappearance": int(event.get("stable_reappearance_frame", first_reliable)),
+        "reacquisition_deadline_exclusive": int(
+            event.get(
+                "reacquisition_deadline_exclusive",
+                frame_count if "first_full_object_candidate_frame" in event else 190,
+            )
+        ),
     }
     if not (
         0 <= estimated_start <= full_start <= full_end <= estimated_end
@@ -104,34 +157,94 @@ def _event_frames(events):
     return result
 
 
-def load_contract(root):
+def _manifest_paths(root, manifest, frame_count, layer):
+    entries = []
+    for line_number, line in enumerate(manifest.read_text(encoding="utf-8").splitlines(), 1):
+        pieces = line.split()
+        if len(pieces) != 2 or len(pieces[0]) != 64:
+            raise ValueError("invalid {} manifest line {}".format(layer, line_number))
+        relative = Path(pieces[1])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("unsafe {} manifest path at line {}".format(layer, line_number))
+        label_path = root / relative
+        _require_hash(label_path, pieces[0], "{} {}".format(layer, relative))
+        entries.append(label_path)
+    expected_names = ["frame_{:06d}.txt".format(index) for index in range(frame_count)]
+    if [path.name for path in entries] != expected_names:
+        raise ValueError("{} manifest frame IDs are not continuous".format(layer))
+    return entries
+
+
+def _verify_package_checksums(root, manifest):
+    expected_paths = []
+    for line_number, line in enumerate(manifest.read_text(encoding="utf-8").splitlines(), 1):
+        pieces = line.split("  ", 1)
+        if len(pieces) != 2 or len(pieces[0]) != 64:
+            raise ValueError("invalid package checksum line {}".format(line_number))
+        relative = Path(pieces[1])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("unsafe package checksum path at line {}".format(line_number))
+        _require_hash(root / relative, pieces[0], "package file {}".format(relative))
+        expected_paths.append(relative.as_posix())
+    actual_paths = sorted(
+        path.relative_to(root).as_posix() for path in root.rglob("*")
+        if path.is_file() and path != manifest
+    )
+    if expected_paths != actual_paths:
+        raise ValueError("package checksum coverage mismatch")
+
+
+def load_contract(root, target_id="car_001"):
     """Load and strictly verify the frozen dataset identity and annotations."""
     root = Path(root)
     if not root.is_dir():
         raise ValueError("dataset root is not a directory: {}".format(root))
+    if target_id not in CANONICAL_IDENTITIES:
+        raise ValueError("unknown target_id: {}".format(target_id))
+    expected_identity = (
+        CANONICAL_IDENTITY if target_id == "car_001" else CANONICAL_IDENTITIES[target_id]
+    )
+    annotation_root = root / expected_identity.get("annotation_root", ".")
+    files = expected_identity.get("files", {})
     paths = {
-        "video": root / "1.mp4",
-        "annotation_metadata": root / "annotation_metadata.json",
-        "occlusion_events": root / "occlusion_events.json",
-        "annotation_status": root / "annotation_status.csv",
-        "labels_manifest": root / "labels.sha256",
+        "video": root / files.get("video", "1.mp4"),
+        "annotation_metadata": annotation_root / files.get(
+            "annotation_metadata", "annotation_metadata.json"
+        ),
+        "occlusion_events": annotation_root / files.get(
+            "occlusion_events", "occlusion_events.json"
+        ),
+        "annotation_status": annotation_root / files.get(
+            "annotation_status", "annotation_status.csv"
+        ),
+        "labels_manifest": annotation_root / files.get("labels_manifest", "labels.sha256"),
     }
+    for optional in ("estimated_labels_manifest", "package_checksums"):
+        if optional in files:
+            paths[optional] = annotation_root / files[optional]
     observed = {
-        key: _require_hash(paths[key], CANONICAL_IDENTITY["hashes"][key], key.replace("_", " "))
+        key: _require_hash(
+            paths[key], expected_identity["hashes"][key], key.replace("_", " ")
+        )
         for key in paths
     }
     metadata = _load_json(paths["annotation_metadata"], "annotation metadata")
     events = _load_json(paths["occlusion_events"], "occlusion events")
     video = metadata.get("video", {})
-    width = int(video.get("width", CANONICAL_IDENTITY["width"]))
-    height = int(video.get("height", CANONICAL_IDENTITY["height"]))
-    frame_count = int(video.get("frame_count", CANONICAL_IDENTITY["frame_count"]))
+    width = int(video.get("width", expected_identity["width"]))
+    height = int(video.get("height", expected_identity["height"]))
+    frame_count = int(video.get("frame_count", expected_identity["frame_count"]))
     if (width, height, frame_count) != (
-        int(CANONICAL_IDENTITY["width"]),
-        int(CANONICAL_IDENTITY["height"]),
-        int(CANONICAL_IDENTITY["frame_count"]),
+        int(expected_identity["width"]),
+        int(expected_identity["height"]),
+        int(expected_identity["frame_count"]),
     ):
         raise ValueError("metadata dimensions/frame count do not match canonical identity")
+    if expected_identity.get("confirmed_package") and (
+            metadata.get("draft") is not False or
+            metadata.get("formal_evaluation_authorized") is not True or
+            metadata.get("unresolved_review_count") != 0):
+        raise ValueError("target package is not confirmed for formal evaluation")
 
     status_rows = []
     with paths["annotation_status"].open(newline="", encoding="utf-8") as handle:
@@ -143,41 +256,41 @@ def load_contract(root):
             status_rows.append(
                 {
                     "frame_id": frame_id,
-                    "status": raw.get("state", raw.get("status", "")).strip(),
-                    "source": raw.get("source", "").strip(),
+                    "status": raw.get(
+                        "target_state", raw.get("state", raw.get("status", ""))
+                    ).strip(),
+                    "source": raw.get("source", raw.get("review_status", "")).strip(),
                 }
             )
     expected_frames = list(range(frame_count))
     if [row["frame_id"] for row in status_rows] != expected_frames:
         raise ValueError("annotation status frame IDs are not continuous")
 
-    manifest_entries = []
-    for line_number, line in enumerate(
-        paths["labels_manifest"].read_text(encoding="utf-8").splitlines(), 1
-    ):
-        pieces = line.split()
-        if len(pieces) != 2 or len(pieces[0]) != 64:
-            raise ValueError("invalid labels manifest line {}".format(line_number))
-        relative = Path(pieces[1])
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("unsafe labels manifest path at line {}".format(line_number))
-        label_path = root / relative
-        _require_hash(label_path, pieces[0], "label {}".format(relative))
-        manifest_entries.append(label_path)
-    expected_names = ["frame_{:06d}.txt".format(index) for index in expected_frames]
-    if [path.name for path in manifest_entries] != expected_names:
-        raise ValueError("label manifest frame IDs are not continuous")
+    manifest_entries = _manifest_paths(
+        annotation_root, paths["labels_manifest"], frame_count, "labels"
+    )
+    estimated_entries = None
+    if "estimated_labels_manifest" in paths:
+        estimated_entries = _manifest_paths(
+            annotation_root, paths["estimated_labels_manifest"], frame_count,
+            "estimated labels",
+        )
+    if "package_checksums" in paths:
+        _verify_package_checksums(annotation_root, paths["package_checksums"])
 
-    identity = dict(CANONICAL_IDENTITY)
+    identity = dict(expected_identity)
     identity["hashes"] = observed
+    identity["target_id"] = target_id
     return {
         "root": root,
+        "annotation_root": annotation_root,
         "identity": identity,
         "metadata": metadata,
         "events": events,
-        "event_frames": _event_frames(events),
+        "event_frames": _event_frames(events, frame_count),
         "status": status_rows,
         "label_paths": manifest_entries,
+        "estimated_label_paths": estimated_entries,
         "required_tracking_schema": REQUIRED_TRACKING_SCHEMA,
     }
 
@@ -190,9 +303,10 @@ def load_truth(contract):
     width = float(identity["width"])
     height = float(identity["height"])
     class_id = int(identity["class_id"])
-    truth = []
-    for status, path in zip(contract["status"], contract["label_paths"]):
+    def read_box(path, allow_empty):
         pieces = path.read_text(encoding="utf-8").strip().split()
+        if not pieces and allow_empty:
+            return None
         if len(pieces) != 5:
             raise ValueError("label {} must contain exactly five fields".format(path))
         try:
@@ -214,13 +328,43 @@ def load_truth(contract):
             pixel_width,
             pixel_height,
         ]
+        return bbox
+
+    truth = []
+    estimated_paths = contract.get("estimated_label_paths")
+    if estimated_paths is None:
+        estimated_paths = [None] * len(contract["label_paths"])
+    for status, path, estimated_path in zip(
+            contract["status"], contract["label_paths"], estimated_paths):
+        source = status["source"]
+        formal_box = read_box(
+            path,
+            allow_empty=source in {"manual_confirmed_no_bbox", "estimated_non_observable"},
+        )
+        estimated_box = read_box(estimated_path, allow_empty=True) if estimated_path else None
+        if formal_box is not None and estimated_box is not None:
+            raise ValueError("formal and estimated labels overlap at frame {}".format(
+                status["frame_id"]
+            ))
+        if source == "manual_confirmed_visible" and formal_box is None:
+            raise ValueError("confirmed visible frame lacks a formal label")
+        if source == "manual_confirmed_no_bbox" and (
+                formal_box is not None or estimated_box is not None):
+            raise ValueError("confirmed no-bbox frame contains geometry")
+        if source == "estimated_non_observable" and estimated_box is None:
+            raise ValueError("estimated frame lacks an estimated label")
+        bbox = formal_box if formal_box is not None else estimated_box
         state = status["status"]
         truth.append(
             {
                 "frame_id": status["frame_id"],
                 "bbox": bbox,
                 "status": state,
-                "observable": status["source"] != "bidirectional_interpolation",
+                "observable": (
+                    formal_box is not None and
+                    source not in {"bidirectional_interpolation", "estimated_non_observable"}
+                ),
+                "estimated": estimated_box is not None,
             }
         )
     return truth
@@ -456,9 +600,12 @@ def evaluate(contract, rows, scope):
         frame_id = row["frame_id"]
         target = truth_by_frame[frame_id]
         prediction = row["tracking_bbox"]
-        diagonal = max(math.hypot(target["bbox"][2], target["bbox"][3]), 1e-12)
-        center_error_px = _center_distance(prediction, target["bbox"])
-        center_error = center_error_px / diagonal
+        if target["bbox"] is None:
+            center_error = None
+        else:
+            diagonal = max(math.hypot(target["bbox"][2], target["bbox"][3]), 1e-12)
+            center_error_px = _center_distance(prediction, target["bbox"])
+            center_error = center_error_px / diagonal
         ordinary = target["observable"] and frame_id not in estimated_frames
         overlap = _iou(prediction, target["bbox"]) if ordinary else None
         if ordinary:
@@ -471,7 +618,7 @@ def evaluate(contract, rows, scope):
                 pre_occlusion_ious.append(overlap)
             if frame_id >= events["first_reliable_reappearance"]:
                 post_reappearance_ious.append(overlap)
-        if frame_id in estimated_frames:
+        if frame_id in estimated_frames and center_error is not None:
             estimated_center_errors.append(center_error)
         frame_reports.append(
             {
@@ -562,7 +709,8 @@ def evaluate(contract, rows, scope):
     for frame_id in required_frames:
         row = rows_by_frame[frame_id]
         target = truth_by_frame[frame_id]
-        if target["observable"] and frame_id not in estimated_frames:
+        if (target["observable"] and target["bbox"] is not None and
+                frame_id not in estimated_frames):
             truth_motion_items.append(
                 {"timestamp_ms": row["timestamp_ms"], "bbox": target["bbox"]}
             )
@@ -591,7 +739,8 @@ def evaluate(contract, rows, scope):
 
     reference_steps = []
     for previous, current in zip(truth, truth[1:]):
-        if previous["observable"] and current["observable"]:
+        if (previous["observable"] and current["observable"] and
+                previous["bbox"] is not None and current["bbox"] is not None):
             reference_steps.append(_center_distance(previous["bbox"], current["bbox"]))
     jump_limit = max(5.0, 3.0 * _percentile(reference_steps, 0.99))
     identity_failures = []
@@ -599,6 +748,7 @@ def evaluate(contract, rows, scope):
         current_truth = truth_by_frame[current["frame_id"]]
         if (
             current_truth["observable"]
+            and current_truth["bbox"] is not None
             and current["frame_id"] not in estimated_frames
             and current.get("observation_valid") is True
         ):
@@ -638,6 +788,7 @@ def evaluate(contract, rows, scope):
             [
                 report["frame_id"] for report in frame_reports
                 if report["frame_id"] in estimated_frames
+                and report["normalized_center_error"] is not None
                 and report["normalized_center_error"] > 1.0
             ],
         ),
@@ -808,6 +959,9 @@ def _write_report(path, content):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, required=True)
+    parser.add_argument(
+        "--target-id", choices=tuple(sorted(CANONICAL_IDENTITIES)), default="car_001"
+    )
     parser.add_argument("--boxes", type=Path, required=True)
     parser.add_argument("--session-metadata", type=Path)
     parser.add_argument("--scope", choices=("development", "holdout", "full"), required=True)
@@ -818,7 +972,7 @@ def main(argv=None):
     parser.add_argument("--model-sha256")
     args = parser.parse_args(argv)
     try:
-        contract = load_contract(args.dataset_root)
+        contract = load_contract(args.dataset_root, args.target_id)
         rows = load_tracking_csv(args.boxes)
         if args.session_metadata:
             metadata = _load_json(args.session_metadata, "session metadata")

@@ -2014,3 +2014,43 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   估计框也必须排除。该确认不自动完成阈值标定、canonical dataset 晋级、RK3588 新运行、
   板端验收或真实云台 pod 验收；未修改协调者所有的 `STATUS.md` 与
   `integration-contract.yaml`。
+
+## 2026-11-11T23:44:37+08:00 dual ground-truth sequences installed
+
+- 分支 `codex/occ-video-1-tracking`，任务基线
+  `4d38c28f31f125479bcc24c92231584a9cdde3e1`。按用户要求，将第二目标 confirmed 包从
+  `artifacts/ground_truth/occ_video_1_car_002_confirmed/` 移至真实 canonical 数据目录
+  `/home/u20/single-object-tracking/data/occ_video_1/ground_truth/car_002/`；原 artifacts
+  confirmed 路径现已不存在。共享视频仍只有根目录 `1.mp4` 一份，不复制视频。
+- 新增 `ground_truth/index.json` 与 `ground_truth/README.md`，SHA-256 分别为
+  `42d08ea98642f81640842dd166ff8ba3518668441d430ce9931f99d1dc544177`、
+  `2b2b9e10e7d70cecffc693f7044cde6a61128e8517188bf897bdcae6578dc6b9`；既有第一目标
+  标注以逐文件相同的镜像放入 `ground_truth/car_001/`，根目录旧路径继续保留以兼容现有
+  公共契约和旧命令。镜像 metadata/status/events/labels manifest 哈希仍分别为
+  `5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076`、
+  `e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036`、
+  `a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256`、
+  `9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648`，271 项标签
+  `sha256sum -c` 全部通过。
+- 第二目标迁移后 `checksums.sha256` 仍为
+  `4540ff280903a3e32d8b439f54ddca4497e855095da68ebdbe8fbea044371811`，严格 confirmed
+  validator PASS；metadata/status/events/formal manifest/estimate manifest 哈希分别为
+  `ddbd8846cd12466d82a833f2f335160a6e6dd1f6189963d268db1b1c54d03a63`、
+  `212525642591c124320e93369f8748d82cc53092628beff051507f930946dec1`、
+  `efc0652335fcf19c766def88bf50bb8defab1441fdc8fbb412b85d02135c31db`、
+  `2f0e78ab1123cb035c87efa06171f1057c108f38b06fcc5c1ed3a3ec63fdbe98`、
+  `62a2877bfc38bf4482e3e1cca1e81551272a677f81d932918723e557db3d24e4`。
+- `scripts/evaluate_occ_video_1.py` 新增
+  `--target-id {car_001,car_002}`，默认仍为 `car_001`。第二序列读取空正式标签、独立估计层
+  与新遮挡事件：252 帧允许 ordinary IoU、4 帧仅作估计轨迹参考、15 帧无 bbox 且不参与
+  几何评分。第一序列继续按 `source` 排除 169--181 共 13 个插值帧，避免被同一 CSV 的
+  `review_status` 覆盖。双序列身份加载分别得到 271 帧；合成完美运行对两序列 full evaluator
+  均为全部 gate PASS。Python evaluator 单元测试 16/16 通过。
+- 后续同一运行 CSV 可分别执行：
+  `python3 scripts/evaluate_occ_video_1.py --dataset-root /home/u20/single-object-tracking/data/occ_video_1 --target-id car_001 ...`
+  与将 target 改为 `car_002` 的第二次评估。一次运行的初始化目标必须与所选真值目标一致，
+  不能用初始化 `car_001` 的 CSV 对 `car_002` 结论作有效性声明。
+- Handoff：请求协调对话把双序列目录、索引和上述新哈希纳入
+  `integration-contract.yaml`，并决定板端数据复制路径；本任务按所有权规则未直接修改
+  `STATUS.md` 或公共契约。此次仅完成主机数据安装和 evaluator 消费能力，不是新的 RK3588
+  算法运行、阈值标定、板端验收或吊舱验收。

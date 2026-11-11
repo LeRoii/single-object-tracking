@@ -175,6 +175,164 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "continuous"):
                     evaluator.load_contract(Path(directory))
 
+    def test_car001_source_precedes_review_status_for_estimated_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            expected = self.make_dataset(directory)
+            status_path = Path(directory, "annotation_status.csv")
+            with status_path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            with status_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=["frame_id", "status", "source", "review_status"],
+                )
+                writer.writeheader()
+                for row in rows:
+                    row["review_status"] = "confirmed"
+                    writer.writerow(row)
+            expected["hashes"]["annotation_status"] = sha256(status_path)
+            with mock.patch.object(evaluator, "CANONICAL_IDENTITY", expected):
+                truth = evaluator.load_truth(evaluator.load_contract(Path(directory)))
+            self.assertFalse(truth[1]["observable"])
+
+    def test_load_contract_selects_car002_and_preserves_sparse_truth_semantics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "ground_truth" / "car_002"
+            labels = package / "labels"
+            estimated = package / "estimated_labels"
+            labels.mkdir(parents=True)
+            estimated.mkdir()
+            (root / "1.mp4").write_bytes(b"shared-video")
+            write_json(
+                package / "annotation_metadata.json",
+                {
+                    "draft": False,
+                    "formal_evaluation_authorized": True,
+                    "unresolved_review_count": 0,
+                    "video": {"width": 100, "height": 50, "frame_count": 4},
+                },
+            )
+            write_json(
+                package / "events.json",
+                {
+                    "events": [
+                        {
+                            "type": "occlusion",
+                            "full_occlusion_frames": [1, 1],
+                            "re_emergence_frames": [2, 2],
+                            "first_full_object_candidate_frame": 3,
+                        },
+                        {"type": "runtime_observation"},
+                    ]
+                },
+            )
+            with (package / "annotation_status.csv").open(
+                    "w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=["frame_id", "target_state", "review_status"],
+                )
+                writer.writeheader()
+                writer.writerows(
+                    [
+                        {"frame_id": 0, "target_state": "visible",
+                         "review_status": "manual_confirmed_visible"},
+                        {"frame_id": 1, "target_state": "full_occlusion",
+                         "review_status": "estimated_non_observable"},
+                        {"frame_id": 2, "target_state": "partial_occlusion",
+                         "review_status": "manual_confirmed_no_bbox"},
+                        {"frame_id": 3, "target_state": "visible",
+                         "review_status": "manual_confirmed_visible"},
+                    ]
+                )
+            label_manifest = []
+            estimate_manifest = []
+            for frame_id in range(4):
+                label = labels / "frame_{:06d}.txt".format(frame_id)
+                estimate = estimated / "frame_{:06d}.txt".format(frame_id)
+                label.write_text(
+                    "0 0.5 0.5 0.2 0.4\n" if frame_id in {0, 3} else "",
+                    encoding="utf-8",
+                )
+                estimate.write_text(
+                    "0 0.5 0.5 0.2 0.4\n" if frame_id == 1 else "",
+                    encoding="utf-8",
+                )
+                label_manifest.append(
+                    "{}  labels/{}\n".format(sha256(label), label.name)
+                )
+                estimate_manifest.append(
+                    "{}  estimated_labels/{}\n".format(sha256(estimate), estimate.name)
+                )
+            (package / "labels.sha256").write_text(
+                "".join(label_manifest), encoding="utf-8"
+            )
+            (package / "estimated_labels.sha256").write_text(
+                "".join(estimate_manifest), encoding="utf-8"
+            )
+            expected = {
+                "name": "fixture_car_002",
+                "target_id": "car_002",
+                "annotation_root": "ground_truth/car_002",
+                "frame_count": 4,
+                "width": 100,
+                "height": 50,
+                "class_id": 0,
+                "confirmed_package": True,
+                "files": {
+                    "video": "1.mp4",
+                    "annotation_metadata": "annotation_metadata.json",
+                    "occlusion_events": "events.json",
+                    "annotation_status": "annotation_status.csv",
+                    "labels_manifest": "labels.sha256",
+                    "estimated_labels_manifest": "estimated_labels.sha256",
+                },
+                "hashes": {
+                    "video": sha256(root / "1.mp4"),
+                    "annotation_metadata": sha256(package / "annotation_metadata.json"),
+                    "occlusion_events": sha256(package / "events.json"),
+                    "annotation_status": sha256(package / "annotation_status.csv"),
+                    "labels_manifest": sha256(package / "labels.sha256"),
+                    "estimated_labels_manifest": sha256(
+                        package / "estimated_labels.sha256"
+                    ),
+                },
+            }
+            with mock.patch.dict(
+                    evaluator.CANONICAL_IDENTITIES, {"car_002": expected}):
+                contract = evaluator.load_contract(root, "car_002")
+                truth = evaluator.load_truth(contract)
+            self.assertEqual(contract["event_frames"]["first_reliable_reappearance"], 3)
+            self.assertEqual(contract["event_frames"]["reacquisition_deadline_exclusive"], 4)
+            self.assertTrue(truth[0]["observable"])
+            self.assertTrue(truth[1]["estimated"])
+            self.assertFalse(truth[1]["observable"])
+            self.assertIsNone(truth[2]["bbox"])
+            self.assertTrue(truth[3]["observable"])
+            rows = []
+            last_box = truth[0]["bbox"]
+            for item in truth:
+                box = item["bbox"] or last_box
+                last_box = box
+                searching = item["frame_id"] in {1, 2}
+                rows.append(
+                    {
+                        "schema_version": 10,
+                        "frame_id": item["frame_id"],
+                        "timestamp_ms": item["frame_id"] * 33,
+                        "state": "OCCLUSION_HOLD" if searching else "TRACKING",
+                        "tracking_phase": "SEARCHING" if searching else "TRACKING",
+                        "observation_valid": not searching,
+                        "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
+                        "control_valid": True,
+                        "accepted": not searching,
+                        "reacquired": item["frame_id"] == 3,
+                        "tracking_bbox": box,
+                    }
+                )
+            self.assertEqual(evaluator.evaluate(contract, rows, "full")["verdict"], "PASS")
+
     def write_tracking_csv(self, path, rows):
         fields = [
             "schema_version",
