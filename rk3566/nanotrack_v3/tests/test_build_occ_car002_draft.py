@@ -3,6 +3,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from rk3566.nanotrack_v3.tools import build_occ_car002_draft as draft
@@ -88,6 +89,10 @@ class DraftFixture:
             "visibility_ratio",
             "identity_status",
             "annotation_quality",
+            "confirmed_x",
+            "confirmed_y",
+            "confirmed_width",
+            "confirmed_height",
             "estimate_x",
             "estimate_y",
             "estimate_width",
@@ -113,7 +118,9 @@ class DraftFixture:
                 }
                 if frame_id == 0:
                     row.update(review_status="manual_confirmed_visible",
-                               annotation_quality="reliable")
+                               annotation_quality="reliable",
+                               confirmed_x="10", confirmed_y="20",
+                               confirmed_width="30", confirmed_height="40")
                 elif frame_id == 2 and self.frame_count >= 5:
                     row.update(
                         target_state="full_occlusion",
@@ -175,6 +182,10 @@ class BuildOccCar002DraftTests(unittest.TestCase):
                 "0 0.250000 0.200000 0.300000 0.200000\n",
             )
             self.assertEqual(
+                (fixture.output / "candidate_labels/frame_000000.txt").read_text(),
+                "0 0.250000 0.200000 0.300000 0.200000\n",
+            )
+            self.assertEqual(
                 (fixture.output / "candidate_labels/frame_000001.txt").read_text(),
                 "0 0.260000 0.200000 0.300000 0.200000\n",
             )
@@ -226,6 +237,36 @@ class BuildOccCar002DraftTests(unittest.TestCase):
             label.write_text("0 0.1 0.1 0.1 0.1\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "manifest mismatch"):
                 draft.validate_draft(fixture.output, require_confirmed=False)
+
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DraftFixture(Path(directory))
+            draft.build_draft(fixture.config())
+            frames_path = fixture.output / "frames.jsonl"
+            frames = [json.loads(line) for line in frames_path.read_text().splitlines()]
+            frames[0]["candidate_bbox_xywh"] = [999999, -50, 0, float("nan")]
+            frames_path.write_text(
+                "".join(json.dumps(row) + "\n" for row in frames), encoding="utf-8"
+            )
+            draft._write_checksums(fixture.output)
+            with self.assertRaisesRegex(ValueError, "candidate bbox"):
+                draft.validate_draft(fixture.output, require_confirmed=False)
+
+    def test_failed_replacement_preserves_previous_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DraftFixture(Path(directory))
+            draft.build_draft(fixture.config())
+            before = (fixture.output / "checksums.sha256").read_bytes()
+            with fixture.policy.open(encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            rows[1]["target_state"] = "invented_state"
+            with fixture.policy.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+                writer.writeheader()
+                writer.writerows(rows)
+            with self.assertRaisesRegex(ValueError, "target_state"):
+                draft.build_draft(replace(fixture.config(), replace_draft=True))
+            self.assertEqual((fixture.output / "checksums.sha256").read_bytes(), before)
+            draft.validate_draft(fixture.output, require_confirmed=False)
 
     def test_build_rejects_invalid_enums_and_duplicate_distractor_ids(self):
         with tempfile.TemporaryDirectory() as directory:

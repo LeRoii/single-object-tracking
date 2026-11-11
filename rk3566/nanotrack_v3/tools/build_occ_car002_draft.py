@@ -9,7 +9,8 @@ import hashlib
 import json
 import math
 import shutil
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 
@@ -195,8 +196,9 @@ def _write_manifest(root: Path, layer: str, manifest_name: str) -> None:
 def _write_checksums(root: Path) -> None:
     ignored = {"checksums.sha256"}
     paths = sorted(
-        path for path in root.rglob("*")
-        if path.is_file() and path.name not in ignored
+        (path for path in root.rglob("*")
+         if path.is_file() and path.name not in ignored),
+        key=lambda path: path.relative_to(root).as_posix(),
     )
     lines = [f"{_sha256(path)}  {path.relative_to(root).as_posix()}\n" for path in paths]
     (root / "checksums.sha256").write_text("".join(lines), encoding="utf-8")
@@ -204,6 +206,17 @@ def _write_checksums(root: Path) -> None:
 
 def _prepare_output(config: BuildConfig) -> None:
     root = config.output_root
+    if root.exists() and (not root.is_dir() or any(root.iterdir())):
+        raise ValueError("staging output is not empty")
+    root.mkdir(parents=True, exist_ok=True)
+    for layer in ("labels", "candidate_labels", "estimated_labels"):
+        (root / layer).mkdir()
+
+
+def _check_output_target(config: BuildConfig) -> None:
+    root = config.output_root
+    if root.exists() and not root.is_dir():
+        raise ValueError("output draft is not a directory")
     if root.exists() and any(root.iterdir()):
         if not config.replace_draft:
             raise ValueError("output draft is nonempty; pass --replace-draft")
@@ -215,17 +228,9 @@ def _prepare_output(config: BuildConfig) -> None:
         if (metadata.get("episode", {}).get("episode_id") != config.episode_id or
                 metadata.get("video", {}).get("sha256") != config.video_sha256):
             raise ValueError("cannot replace a different draft")
-        for child in root.iterdir():
-            if child.is_dir():
-                shutil.rmtree(child)
-            else:
-                child.unlink()
-    root.mkdir(parents=True, exist_ok=True)
-    for layer in ("labels", "candidate_labels", "estimated_labels"):
-        (root / layer).mkdir()
 
 
-def build_draft(config: BuildConfig) -> dict:
+def _build_draft_at_root(config: BuildConfig) -> dict:
     if config.width <= 0 or config.height <= 0 or config.frame_count <= 0:
         raise ValueError("invalid video geometry or frame_count")
     if config.fps_num <= 0 or config.fps_den <= 0:
@@ -286,6 +291,11 @@ def build_draft(config: BuildConfig) -> dict:
             candidate_box = _validate_bbox(
                 candidate_box, config.width, config.height, f"candidate frame {frame_id}"
             )
+        confirmed_box = _bbox_from_row(policy, "confirmed")
+        if confirmed_box is not None:
+            confirmed_box = _validate_bbox(
+                confirmed_box, config.width, config.height, f"confirmed frame {frame_id}"
+            )
         estimate_box = _bbox_from_row(policy, "estimate")
         if estimate_box is not None:
             estimate_box = _validate_bbox(
@@ -296,9 +306,11 @@ def build_draft(config: BuildConfig) -> dict:
         target_box = None
         visible_candidate = None
         if review_status == "manual_confirmed_visible":
-            if not observable or candidate_box is None or identity_status != "certain":
+            if (not observable or candidate_box is None or confirmed_box is None or
+                    identity_status != "certain"):
                 raise ValueError(f"manual confirmation is not observable at frame {frame_id}")
-            target_box = candidate_box
+            target_box = confirmed_box
+            visible_candidate = candidate_box
         elif review_status in UNRESOLVED_REVIEW_STATUSES and observable:
             visible_candidate = candidate_box
         elif review_status == "estimated_non_observable" and observable:
@@ -306,6 +318,8 @@ def build_draft(config: BuildConfig) -> dict:
         if not observable:
             target_box = None
             visible_candidate = None
+        if confirmed_box is not None and review_status != "manual_confirmed_visible":
+            raise ValueError(f"confirmed bbox without manual confirmation at frame {frame_id}")
         if estimate_box is not None:
             method = policy.get("estimate_method", "")
             if method not in ESTIMATE_METHODS - {"not_estimated"}:
@@ -332,7 +346,7 @@ def build_draft(config: BuildConfig) -> dict:
             "candidate_source_status": candidate_row.get("status"),
             "estimated_bbox_xywh": estimate_box,
             "bbox_valid": target_box is not None,
-            "bbox_source": "manual" if target_box is not None else "not_available",
+            "bbox_source": "human_confirmed" if target_box is not None else "not_available",
             "visibility_ratio": visibility_ratio,
             "truncation_ratio": 1.0 if target_state == "out_of_view" else 0.0,
             "identity_status": identity_status,
@@ -454,6 +468,34 @@ def build_draft(config: BuildConfig) -> dict:
     }
 
 
+def build_draft(config: BuildConfig) -> dict:
+    """Build in a sibling staging directory, then replace the destination safely."""
+    _check_output_target(config)
+    destination = config.output_root
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        dir=destination.parent, prefix=f".{destination.name}.staging-"
+    ) as temporary:
+        temporary_root = Path(temporary)
+        staging = temporary_root / "package"
+        staged_config = replace(config, output_root=staging, replace_draft=False)
+        result = _build_draft_at_root(staged_config)
+        backup = temporary_root / "previous"
+        moved_previous = False
+        try:
+            if destination.exists():
+                destination.rename(backup)
+                moved_previous = True
+            staging.rename(destination)
+        except Exception:
+            if moved_previous and not destination.exists() and backup.exists():
+                backup.rename(destination)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup)
+        return result
+
+
 def _verify_manifest(root: Path, manifest_name: str, expected_layer: str, frame_count: int) -> None:
     manifest = root / manifest_name
     lines = manifest.read_text(encoding="utf-8").splitlines()
@@ -479,14 +521,26 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
     if metadata.get("ground_truth_schema_version") != SCHEMA_VERSION or not metadata.get("draft"):
         raise ValueError("not a car_002 draft package")
     frame_count = int(metadata["video"]["frame_count"])
+    width = int(metadata["video"]["width"])
+    height = int(metadata["video"]["height"])
+    if frame_count <= 0 or width <= 0 or height <= 0:
+        raise ValueError("invalid package video geometry")
     _verify_manifest(root, "labels.sha256", "labels", frame_count)
     _verify_manifest(root, "candidate_labels.sha256", "candidate_labels", frame_count)
     _verify_manifest(root, "estimated_labels.sha256", "estimated_labels", frame_count)
     checksum_lines = (root / "checksums.sha256").read_text(encoding="utf-8").splitlines()
+    checksum_paths = []
     for line in checksum_lines:
         parts = line.split("  ", 1)
         if len(parts) != 2 or not (root / parts[1]).is_file() or _sha256(root / parts[1]) != parts[0]:
             raise ValueError(f"manifest mismatch: checksums {line}")
+        checksum_paths.append(parts[1])
+    actual_paths = sorted(
+        path.relative_to(root).as_posix() for path in root.rglob("*")
+        if path.is_file() and path.name != "checksums.sha256"
+    )
+    if checksum_paths != actual_paths or len(checksum_paths) != len(set(checksum_paths)):
+        raise ValueError("manifest mismatch: checksums file coverage")
     frames = [json.loads(line) for line in (root / "frames.jsonl").read_text(encoding="utf-8").splitlines()]
     if len(frames) != frame_count or [record.get("frame_id") for record in frames] != list(range(frame_count)):
         raise ValueError("frames.jsonl is not continuous")
@@ -499,17 +553,87 @@ def validate_draft(root: Path, require_confirmed: bool) -> dict:
         raise ValueError("review contact sheet manifest mismatch")
     if require_confirmed and unresolved:
         raise ValueError(f"unresolved review rows: {len(unresolved)}")
+    status_counts = {status: 0 for status in REVIEW_STATUSES}
+    distractor_payload = json.loads((root / "distractors.json").read_text(encoding="utf-8"))
+    if distractor_payload.get("ground_truth_schema_version") != SCHEMA_VERSION:
+        raise ValueError("invalid packaged distractor schema")
+    distractors_by_frame = _validate_distractors(
+        distractor_payload, frame_count, width, height
+    )
     for record in frames:
         frame_id = record["frame_id"]
-        if record["target_state"] not in OBSERVABLE_STATES and record["target_bbox_xywh"] is not None:
+        if record.get("ground_truth_schema_version") != SCHEMA_VERSION:
+            raise ValueError(f"invalid frame schema at frame {frame_id}")
+        target_state = record.get("target_state")
+        review_status = record.get("review_status")
+        if target_state not in TARGET_STATES:
+            raise ValueError(f"invalid target_state at frame {frame_id}")
+        if review_status not in REVIEW_STATUSES:
+            raise ValueError(f"invalid review_status at frame {frame_id}")
+        if record.get("identity_status") not in IDENTITY_STATUSES:
+            raise ValueError(f"invalid identity_status at frame {frame_id}")
+        if record.get("annotation_quality") not in ANNOTATION_QUALITIES:
+            raise ValueError(f"invalid annotation_quality at frame {frame_id}")
+        visibility = record.get("visibility_ratio")
+        if not isinstance(visibility, (int, float)) or not math.isfinite(visibility) or not 0 <= visibility <= 1:
+            raise ValueError(f"invalid visibility_ratio at frame {frame_id}")
+        target_box = record.get("target_bbox_xywh")
+        candidate_box = record.get("candidate_bbox_xywh")
+        estimate_box = record.get("estimated_bbox_xywh")
+        if target_box is not None:
+            target_box = _validate_bbox(target_box, width, height, f"target bbox frame {frame_id}")
+        if candidate_box is not None:
+            candidate_box = _validate_bbox(
+                candidate_box, width, height, f"candidate bbox frame {frame_id}"
+            )
+        if estimate_box is not None:
+            estimate_box = _validate_bbox(
+                estimate_box, width, height, f"estimated bbox frame {frame_id}"
+            )
+        observable = target_state in OBSERVABLE_STATES
+        if not observable and target_box is not None:
             raise ValueError(f"non-observable formal bbox at frame {frame_id}")
+        if target_box is not None and review_status != "manual_confirmed_visible":
+            raise ValueError(f"unconfirmed formal bbox at frame {frame_id}")
+        if review_status == "manual_confirmed_visible" and (
+                not observable or target_box is None or candidate_box is None):
+            raise ValueError(f"incomplete manual confirmation at frame {frame_id}")
+        if not observable and candidate_box is not None:
+            raise ValueError(f"non-observable candidate bbox at frame {frame_id}")
+        if review_status == "estimated_non_observable" and estimate_box is None:
+            raise ValueError(f"missing non-observable estimate at frame {frame_id}")
+        if record.get("distractors") != distractors_by_frame[frame_id]:
+            raise ValueError(f"distractor mapping mismatch at frame {frame_id}")
+        status_counts[review_status] += 1
         filename = f"frame_{frame_id:06d}.txt"
-        if record["target_bbox_xywh"] is None and (root / "labels" / filename).read_text():
-            raise ValueError(f"formal layer leak at frame {frame_id}")
-        if record["candidate_bbox_xywh"] is None and (root / "candidate_labels" / filename).read_text():
-            raise ValueError(f"candidate layer leak at frame {frame_id}")
-        if record["estimated_bbox_xywh"] is None and (root / "estimated_labels" / filename).read_text():
-            raise ValueError(f"estimated layer leak at frame {frame_id}")
+        layer_expectations = (
+            ("labels", target_box, "formal"),
+            ("candidate_labels", candidate_box, "candidate"),
+            ("estimated_labels", estimate_box, "estimated"),
+        )
+        for layer, box, description in layer_expectations:
+            actual = (root / layer / filename).read_text(encoding="utf-8")
+            expected = _yolo_line(box, width, height)
+            if actual != expected:
+                raise ValueError(f"{description} layer mismatch at frame {frame_id}")
+    if metadata.get("review_status_counts") != status_counts:
+        raise ValueError("review status count mismatch")
+    if metadata.get("unresolved_review_count") != len(unresolved):
+        raise ValueError("unresolved review count mismatch")
+    with (root / "annotation_status.csv").open(newline="", encoding="utf-8") as handle:
+        status_rows = list(csv.DictReader(handle))
+    if len(status_rows) != frame_count:
+        raise ValueError("annotation status is not continuous")
+    for frame_id, (record, row) in enumerate(zip(frames, status_rows)):
+        expected = {
+            "frame_id": str(frame_id),
+            "target_state": record["target_state"],
+            "review_status": record["review_status"],
+            "identity_status": record["identity_status"],
+            "annotation_quality": record["annotation_quality"],
+        }
+        if row != expected:
+            raise ValueError(f"annotation status mismatch at frame {frame_id}")
     return {
         "frame_count": frame_count,
         "unresolved_review_count": len(unresolved),
