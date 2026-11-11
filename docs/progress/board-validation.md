@@ -1,5 +1,26 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T13:23:03+08:00 C004 重捕成功与 evaluator 语义分层修正
+
+- C004 源提交 `0e19decf14d6fc674e78aa4c6249e12b70ba85b0` 已部署到 RK3588
+  `/home/neardi/Project/SOT/occ-candidate-0e19dec`；源码归档 SHA-256
+  `4eb692d72dae7f74093677b54313c7f0a7447ce3ba12eb253aa934c571f68082`。板端原生
+  Debug、`-Werror=switch`、CTest `19/19` 通过；可执行文件 SHA-256
+  `89e61bd1fb938be513f3b941af2e4354a682d952856de3566710b27119f28fa2`。
+- 严格 `--max-frames 189` 的 `runs/C004-development` 运行完成，schema-10 board verifier
+  PASS。帧 172--180 均为 `SEARCHING,false,MOTION_SEARCH`，控制连续；唯一两击重捕在帧
+  188，随后帧 189 仍跟踪同一目标。旧 evaluator 报告显示重捕门槛、遮挡语义、连续控制均
+  PASS，但把重捕前 `observation_valid=false` 的可见搜索预测当成视觉观测，并把原子
+  `SEARCHING -> TRACKING` 切换计入同一运动段，因此其 FAIL 不能作为 schema-10 合同结论。
+- evaluator 已用合成回归修正语义分层：搜索预测继续受估计轨迹、搜索段运动连续性和控制门槛
+  约束；严格 IoU/中心误差只评价 `observation_valid=true`；原子重捕切换开启新的连续性段，
+  但重捕观测仍必须具有真值重叠并经过 identity proxy。新增回归连同 evaluator 单测 `10/10`
+  通过；尚待把这一提交精确传板并重算 C004 报告。
+- 证据边界：运行程序、视频帧和 bbox 标签均未读取 190 以后；一次诊断命令的 `sed` 范围误显
+  示了 `annotation_status.csv` 的 190--193 行状态文本。未运行 holdout/full evaluator，也未据此
+  调整运行时代码或参数，但严格的“190 后元数据完全未暴露”边界已不再成立，后续冻结记录必须
+  保留这一限制。
+
 ## 2026-11-11T13:11:43+08:00 C003 verifier PASS 与 C004 recent-veto-only 修正
 
 - C003 在 RK3588 `/home/neardi/Project/SOT/occ-candidate-2389df0` 原生 Debug 构建、

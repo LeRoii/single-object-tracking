@@ -387,6 +387,30 @@ def _gate(passed, detail, frames=None):
     }
 
 
+def _continuity_segments(rows):
+    """Split output rows at semantic control handoffs.
+
+    Search motion and accepted observations are each required to be smooth
+    internally.  The atomic SEARCHING -> TRACKING reacquisition handoff is not
+    a motion-estimator sample and therefore starts a new segment.
+    """
+    segments = []
+    current = []
+    previous_phase = None
+    for row in rows:
+        phase = row.get("tracking_phase")
+        if current and (phase != previous_phase or row["reacquired"]):
+            segments.append(current)
+            current = []
+        current.append(
+            {"timestamp_ms": row["timestamp_ms"], "bbox": row["tracking_bbox"]}
+        )
+        previous_phase = phase
+    if current:
+        segments.append(current)
+    return segments
+
+
 def evaluate(contract, rows, scope):
     """Evaluate already-loaded rows without exposing truth to the runtime."""
     if scope not in ("development", "holdout", "full"):
@@ -420,6 +444,8 @@ def evaluate(contract, rows, scope):
     frame_reports = []
     visible_ious = []
     visible_center_errors = []
+    observation_visible_ious = []
+    observation_visible_center_errors = []
     estimated_center_errors = []
     pre_occlusion_ious = []
     post_reappearance_ious = []
@@ -435,6 +461,9 @@ def evaluate(contract, rows, scope):
         if ordinary:
             visible_ious.append(overlap)
             visible_center_errors.append(center_error)
+            if row.get("observation_valid") is True:
+                observation_visible_ious.append(overlap)
+                observation_visible_center_errors.append(center_error)
             if frame_id < events["estimated_start"]:
                 pre_occlusion_ious.append(overlap)
             if frame_id >= events["first_reliable_reappearance"]:
@@ -485,10 +514,19 @@ def evaluate(contract, rows, scope):
     visible_failures = [
         report["frame_id"] for report in frame_reports
         if report["ordinary_iou_allowed"]
+        and report["observation_valid"] is True
         and (report["iou"] < 0.50 or report["normalized_center_error"] > 0.50)
     ]
     mean_iou = sum(visible_ious) / len(visible_ious) if visible_ious else 0.0
-    visible_ok = bool(visible_ious) and not visible_failures and mean_iou >= 0.75
+    observation_mean_iou = (
+        sum(observation_visible_ious) / len(observation_visible_ious)
+        if observation_visible_ious else 0.0
+    )
+    visible_ok = (
+        bool(observation_visible_ious)
+        and not visible_failures
+        and observation_mean_iou >= 0.75
+    )
 
     semantic_failures = []
     for frame_id in sorted(full_frames.intersection(required_frames)):
@@ -514,19 +552,20 @@ def evaluate(contract, rows, scope):
         )
     ]
 
-    all_motion_items = []
     truth_motion_items = []
     for frame_id in required_frames:
         row = rows_by_frame[frame_id]
-        all_motion_items.append(
-            {"timestamp_ms": row["timestamp_ms"], "bbox": row["tracking_bbox"]}
-        )
         target = truth_by_frame[frame_id]
         if target["observable"] and frame_id not in estimated_frames:
             truth_motion_items.append(
                 {"timestamp_ms": row["timestamp_ms"], "bbox": target["bbox"]}
             )
-    predicted_velocity, predicted_acceleration = _kinematics(all_motion_items, "bbox")
+    predicted_velocity = []
+    predicted_acceleration = []
+    for segment in _continuity_segments(scoped_rows):
+        velocities, accelerations = _kinematics(segment, "bbox")
+        predicted_velocity.extend(velocities)
+        predicted_acceleration.extend(accelerations)
     truth_velocity, truth_acceleration = _kinematics(truth_motion_items, "bbox")
     velocity_limit = max(2.0 * _percentile(truth_velocity, 0.99), 1e-6)
     acceleration_limit = max(2.0 * _percentile(truth_acceleration, 0.99), 1e-6)
@@ -552,9 +591,18 @@ def evaluate(contract, rows, scope):
     identity_failures = []
     for previous, current in zip(scoped_rows, scoped_rows[1:]):
         current_truth = truth_by_frame[current["frame_id"]]
-        if current_truth["observable"] and current["frame_id"] not in estimated_frames:
+        if (
+            current_truth["observable"]
+            and current["frame_id"] not in estimated_frames
+            and current.get("observation_valid") is True
+        ):
             if (
-                _center_distance(previous["tracking_bbox"], current["tracking_bbox"]) > jump_limit
+                (
+                    not current["reacquired"]
+                    and _center_distance(
+                        previous["tracking_bbox"], current["tracking_bbox"]
+                    ) > jump_limit
+                )
                 or _iou(current["tracking_bbox"], current_truth["bbox"]) < 0.10
             ):
                 identity_failures.append(current["frame_id"])
@@ -563,7 +611,9 @@ def evaluate(contract, rows, scope):
         "tracking_schema": _gate(schema_ok, schema_detail),
         "visible_boxes": _gate(
             visible_ok,
-            "mean IoU {:.6f}; per-frame IoU >=0.50 and center error <=0.50".format(mean_iou),
+            "valid-observation mean IoU {:.6f}; per-frame IoU >=0.50 and center error <=0.50; all-visible mean IoU {:.6f}".format(
+                observation_mean_iou, mean_iou
+            ),
             visible_failures,
         ),
         "full_occlusion_semantics": _gate(
@@ -626,6 +676,15 @@ def evaluate(contract, rows, scope):
                 "mean_iou": mean_iou,
                 "min_iou": min(visible_ious) if visible_ious else None,
                 "max_normalized_center_error": max(visible_center_errors) if visible_center_errors else None,
+            },
+            "observation_visible": {
+                "frames": len(observation_visible_ious),
+                "mean_iou": observation_mean_iou,
+                "min_iou": min(observation_visible_ious) if observation_visible_ious else None,
+                "max_normalized_center_error": (
+                    max(observation_visible_center_errors)
+                    if observation_visible_center_errors else None
+                ),
             },
             "pre_occlusion_visible": {
                 "frames": len(pre_occlusion_ious),

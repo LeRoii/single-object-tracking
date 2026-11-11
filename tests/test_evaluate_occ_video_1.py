@@ -282,6 +282,32 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertEqual(report["reacquisition"]["frames"], [9])
         self.assertIn(2, report["worst_frames"])
 
+    def test_search_prediction_is_not_scored_as_observation_or_identity_claim(self):
+        contract = synthetic_contract()
+        for item in contract["truth"]:
+            if item["frame_id"] >= 6:
+                item["bbox"] = [30.0 + item["frame_id"] - 6, 20.0, 10.0, 10.0]
+        rows = passing_rows()
+        # Frame 6 is visible again, but remains an explicitly invalid search
+        # prediction.  The two-hit commit at frame 7 is the first identity
+        # claim and is allowed to atomically switch back to the truth box.
+        rows[6]["tracking_bbox"] = [16.0, 20.0, 10.0, 10.0]
+        for frame_id in range(7, 11):
+            rows[frame_id]["tracking_bbox"] = [
+                30.0 + frame_id - 6, 20.0, 10.0, 10.0
+            ]
+
+        report = evaluator.evaluate(contract, rows, "full")
+
+        self.assertEqual(report["verdict"], "PASS")
+        self.assertTrue(report["gates"]["visible_boxes"]["passed"])
+        self.assertTrue(report["gates"]["prediction_continuity"]["passed"])
+        self.assertTrue(report["gates"]["identity_proxy"]["passed"])
+        frame6 = next(item for item in report["frames"] if item["frame_id"] == 6)
+        self.assertTrue(frame6["ordinary_iou_allowed"])
+        self.assertFalse(frame6["observation_valid"])
+        self.assertLess(frame6["iou"], 0.10)
+
     def test_schema9_is_diagnostic_only_and_missing_new_semantics_cannot_pass(self):
         rows = passing_rows(schema=9)
         for row in rows:
