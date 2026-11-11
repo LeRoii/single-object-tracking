@@ -1972,3 +1972,45 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   在用户逐帧确认并生成新版本/新哈希前，不授权 IoU、阈值标定、算法准确率、canonical
   dataset 晋级、板端验收或云台 pod 验收；没有修改 `car_001`、`STATUS.md` 或
   `integration-contract.yaml`。
+
+## 2026-11-11T23:33:23+08:00 occ_video_1 car_002 confirmed package generated
+
+- 分支 `codex/occ-video-1-tracking`，任务基线
+  `100afb18d371707d9700b40a8f3931d5c22a931c`，结果代码与本记录位于同一 Git 提交。
+  用户明确“整体接受”：接受 0--210、230--270 的候选框；确认遮挡区间；确认
+  259--264 的候选框仍是正确目标，并与既有运行在 264 帧跳到错误车辆的负面证据严格
+  区分。原 assistant draft 未作为本轮生成目的地，也未被重建或覆盖。
+- 确认策略输入为
+  `artifacts/ground_truth/occ_video_1_car_002_work/review-policy-confirmed.csv`，SHA-256
+  `2fd9a8959ddb141292680fc4c5c30f7a0c3a682358788a0def55880eacde75a5`。0--210、
+  230--270 共 252 帧使用 `manual_confirmed_visible`，候选框晋级到正式 `labels/`，同时
+  保留同框的 candidate 层和候选来源；211--212、217--229 共 15 帧使用
+  `manual_confirmed_no_bbox`，只确认遮挡状态与目标身份，正式层和候选层都明确为空；
+  213--216 共 4 帧保留 `estimated_non_observable`，估计层不晋级为正式真值。
+- 独立确认包位于
+  `artifacts/ground_truth/occ_video_1_car_002_confirmed/`。`checksums.sha256` 与
+  `annotation_metadata.json` SHA-256 分别为
+  `4540ff280903a3e32d8b439f54ddca4497e855095da68ebdbe8fbea044371811`、
+  `ddbd8846cd12466d82a833f2f335160a6e6dd1f6189963d268db1b1c54d03a63`；正式、候选、
+  估计 manifest SHA-256 分别为
+  `2f0e78ab1123cb035c87efa06171f1057c108f38b06fcc5c1ed3a3ec63fdbe98`、
+  `c6d1093c16fd17c02c9b8ce1743a85bbc5316dacef76d08e368093a976a6c11e`、
+  `62a2877bfc38bf4482e3e1cca1e81551272a677f81d932918723e557db3d24e4`。
+  三层仍各有 271 个连续文件，非空计数依次为 252、252、4；
+  `review_manifest.csv` 只有表头，未决计数为 0。连续两次生成得到相同 metadata 与总清单
+  哈希，`validate --require-confirmed true` 及确认包 `sha256sum -c` 均 PASS。
+- 打包器新增 confirmed-package 模式及严格语义：只有零未决项才可写入
+  `draft=false`、`formal_evaluation_authorized=true`；`manual_confirmed_no_bbox` 必须身份
+  certain、质量 unusable，且 formal/candidate/estimate 三种框都为空。实际执行 Python
+  单元测试 10/10、含 annotation tool 的 CTest 20/20、既有主机 CTest 19/19，全部通过；
+  `git diff --check` 通过。
+- 复核旧 draft 时发现其
+  `review_contact_sheets/contact-sheet-000.jpg` 当前缺失，旧总清单仍期望其 SHA-256
+  `dc3976f3da8d7be84740227b450e52d24e43acf4ce70736a737640e6c5ed2762`，因此旧 draft
+  当前独立校验失败。工作输入和新 confirmed 包都含有该文件且哈希匹配；为遵守“保留原
+  draft、不覆盖”的边界，本轮未修改或修复旧 draft，并把此漂移作为外部证据异常记录。
+- 证据边界：`formal_evaluation_authorized=true` 只授权新 confirmed 包中 252 个非空正式
+  框参与 ordinary IoU；211--229 中无正式框的帧不能被当成零框误计 IoU，213--216 的
+  估计框也必须排除。该确认不自动完成阈值标定、canonical dataset 晋级、RK3588 新运行、
+  板端验收或真实云台 pod 验收；未修改协调者所有的 `STATUS.md` 与
+  `integration-contract.yaml`。

@@ -21,6 +21,7 @@ EXPECTED_OCC_VIDEO_1_SHA256 = "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad
 TARGET_STATES = {"visible", "partial_occlusion", "full_occlusion", "ambiguous", "out_of_view"}
 REVIEW_STATUSES = {
     "manual_confirmed_visible",
+    "manual_confirmed_no_bbox",
     "assistant_visual_candidate",
     "needs_human_review",
     "estimated_non_observable",
@@ -59,6 +60,7 @@ class BuildConfig:
     target_id: str
     review_dir: Optional[Path] = None
     replace_draft: bool = False
+    confirmed_package: bool = False
 
 
 def _sha256(path: Path) -> str:
@@ -324,6 +326,10 @@ def _build_draft_at_root(config: BuildConfig) -> dict:
                 raise ValueError(f"manual confirmation is not observable at frame {frame_id}")
             target_box = confirmed_box
             visible_candidate = candidate_box
+        elif review_status == "manual_confirmed_no_bbox":
+            if (confirmed_box is not None or estimate_box is not None or
+                    identity_status != "certain" or annotation_quality != "unusable"):
+                raise ValueError(f"invalid confirmed no-bbox frame {frame_id}")
         elif review_status in UNRESOLVED_REVIEW_STATUSES and observable:
             visible_candidate = candidate_box
         elif review_status == "estimated_non_observable" and observable:
@@ -416,8 +422,8 @@ def _build_draft_at_root(config: BuildConfig) -> dict:
 
     metadata = {
         "ground_truth_schema_version": SCHEMA_VERSION,
-        "draft": True,
-        "formal_evaluation_authorized": False,
+        "draft": not config.confirmed_package,
+        "formal_evaluation_authorized": config.confirmed_package and not review_rows,
         "video": {
             "path": str(config.video),
             "sha256": config.video_sha256,
@@ -466,12 +472,21 @@ def _build_draft_at_root(config: BuildConfig) -> dict:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(review_rows)
-    (config.output_root / "README.md").write_text(
-        "# occ_video_1 car_002 draft\n\n"
-        "This package is a preannotation draft. Only `labels/` contains user-confirmed "
-        "observable truth; candidate and estimated layers are not formal ground truth.\n",
-        encoding="utf-8",
-    )
+    if config.confirmed_package:
+        readme = (
+            "# occ_video_1 car_002 confirmed annotations\n\n"
+            "The user confirmed the review decisions in this package. `labels/` contains "
+            "formal observable full-object boxes. Frames marked `manual_confirmed_no_bbox` "
+            "have confirmed state and identity but intentionally have no formal box. "
+            "`estimated_labels/` remains a non-formal estimate layer.\n"
+        )
+    else:
+        readme = (
+            "# occ_video_1 car_002 draft\n\n"
+            "This package is a preannotation draft. Only `labels/` contains user-confirmed "
+            "observable truth; candidate and estimated layers are not formal ground truth.\n"
+        )
+    (config.output_root / "README.md").write_text(readme, encoding="utf-8")
     _write_manifest(config.output_root, "labels", "labels.sha256")
     _write_manifest(config.output_root, "candidate_labels", "candidate_labels.sha256")
     _write_manifest(config.output_root, "estimated_labels", "estimated_labels.sha256")
@@ -496,7 +511,7 @@ def build_draft(config: BuildConfig) -> dict:
         staged_config = replace(config, output_root=staging, replace_draft=False)
         result = _build_draft_at_root(staged_config)
         validate_draft(
-            staging, require_confirmed=False,
+            staging, require_confirmed=config.confirmed_package,
             expected_video_sha256=config.video_sha256,
         )
         backup = temporary_root / "previous"
@@ -541,11 +556,15 @@ def validate_draft(
     expected_video_sha256: str = EXPECTED_OCC_VIDEO_1_SHA256,
 ) -> dict:
     metadata = json.loads((root / "annotation_metadata.json").read_text(encoding="utf-8"))
+    draft_package = metadata.get("draft")
+    formal_authorized = metadata.get("formal_evaluation_authorized")
     if (metadata.get("ground_truth_schema_version") != SCHEMA_VERSION or
-            metadata.get("draft") is not True):
-        raise ValueError("not a car_002 draft package")
-    if metadata.get("formal_evaluation_authorized") is not False:
+            not isinstance(draft_package, bool)):
+        raise ValueError("not a car_002 draft package or confirmed package")
+    if draft_package and formal_authorized is not False:
         raise ValueError("formal_evaluation_authorized must be false for a draft")
+    if not draft_package and formal_authorized is not True:
+        raise ValueError("confirmed package must authorize formal evaluation")
     video = metadata.get("video", {})
     frame_count = int(video["frame_count"])
     width = int(video["width"])
@@ -604,8 +623,10 @@ def validate_draft(
         not (root / "review_contact_sheets" / name).is_file() for name in expected_sheets
     ):
         raise ValueError("review contact sheet manifest mismatch")
-    if require_confirmed and unresolved:
+    if unresolved and (require_confirmed or not draft_package):
         raise ValueError(f"unresolved review rows: {len(unresolved)}")
+    if require_confirmed and draft_package:
+        raise ValueError("confirmed package required")
     status_counts = {status: 0 for status in sorted(REVIEW_STATUSES)}
     distractor_payload = json.loads((root / "distractors.json").read_text(encoding="utf-8"))
     if distractor_payload.get("ground_truth_schema_version") != SCHEMA_VERSION:
@@ -656,8 +677,14 @@ def validate_draft(
         if target_box is not None and review_status != "manual_confirmed_visible":
             raise ValueError(f"unconfirmed formal bbox at frame {frame_id}")
         if review_status == "manual_confirmed_visible" and (
-                not observable or target_box is None or candidate_box is None):
+                not observable or target_box is None or candidate_box is None or
+                record.get("identity_status") != "certain"):
             raise ValueError(f"incomplete manual confirmation at frame {frame_id}")
+        if review_status == "manual_confirmed_no_bbox" and (
+                target_box is not None or candidate_box is not None or
+                estimate_box is not None or record.get("identity_status") != "certain" or
+                record.get("annotation_quality") != "unusable"):
+            raise ValueError(f"invalid confirmed no-bbox frame {frame_id}")
         if not observable and candidate_box is not None:
             raise ValueError(f"non-observable candidate bbox at frame {frame_id}")
         if review_status == "estimated_non_observable" and estimate_box is None:
@@ -723,6 +750,8 @@ def validate_draft(
         raise ValueError("review status count mismatch")
     if metadata.get("unresolved_review_count") != len(unresolved):
         raise ValueError("unresolved review count mismatch")
+    if not draft_package and unresolved:
+        raise ValueError("confirmed package has unresolved review rows")
     with (root / "annotation_status.csv").open(newline="", encoding="utf-8") as handle:
         status_rows = list(csv.DictReader(handle))
     if len(status_rows) != frame_count:
@@ -773,6 +802,7 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--episode-id", default="occ_video_1_car_002_full_object")
     build.add_argument("--target-id", default="car_002")
     build.add_argument("--replace-draft", action="store_true")
+    build.add_argument("--confirmed-package", action="store_true")
     validate = subparsers.add_parser("validate")
     validate.add_argument("--root", type=Path, required=True)
     validate.add_argument("--require-confirmed", type=_bool, required=True)
@@ -800,6 +830,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 target_id=args.target_id,
                 review_dir=args.review_dir,
                 replace_draft=args.replace_draft,
+                confirmed_package=args.confirmed_package,
             )
         )
     else:

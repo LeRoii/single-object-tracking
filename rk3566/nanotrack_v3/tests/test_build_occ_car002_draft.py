@@ -300,6 +300,70 @@ class BuildOccCar002DraftTests(unittest.TestCase):
                 (fixture.output / "annotation_metadata.json").read_bytes(), before_metadata
             )
 
+    def test_confirmed_package_accepts_resolved_no_bbox_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DraftFixture(Path(directory))
+            with fixture.policy.open(encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            for frame_id in (1, 4):
+                rows[frame_id].update(
+                    review_status="manual_confirmed_visible",
+                    identity_status="certain",
+                    annotation_quality="reliable",
+                    confirmed_x=rows[frame_id].get("confirmed_x") or str(10 + frame_id),
+                    confirmed_y="20",
+                    confirmed_width="30",
+                    confirmed_height="40",
+                )
+            rows[3].update(
+                review_status="manual_confirmed_no_bbox",
+                identity_status="certain",
+                annotation_quality="unusable",
+            )
+            with fixture.policy.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+                writer.writeheader()
+                writer.writerows(rows)
+            confirmed_output = fixture.root / "confirmed"
+            config = replace(
+                fixture.config(), output_root=confirmed_output, confirmed_package=True
+            )
+            summary = draft.build_draft(config)
+            self.assertEqual(summary["unresolved_review_count"], 0)
+            metadata = json.loads(
+                (confirmed_output / "annotation_metadata.json").read_text()
+            )
+            self.assertIs(metadata["draft"], False)
+            self.assertIs(metadata["formal_evaluation_authorized"], True)
+            self.assertEqual(
+                (confirmed_output / "labels/frame_000003.txt").read_text(), ""
+            )
+            self.assertEqual(
+                (confirmed_output / "candidate_labels/frame_000003.txt").read_text(), ""
+            )
+            self.assertEqual(
+                draft.validate_draft(
+                    confirmed_output,
+                    require_confirmed=True,
+                    expected_video_sha256=fixture.video_sha256,
+                )["unresolved_review_count"],
+                0,
+            )
+
+    def test_confirmed_package_rejects_unresolved_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DraftFixture(Path(directory))
+            confirmed_output = fixture.root / "confirmed"
+            with self.assertRaisesRegex(ValueError, "authorize formal evaluation"):
+                draft.build_draft(
+                    replace(
+                        fixture.config(),
+                        output_root=confirmed_output,
+                        confirmed_package=True,
+                    )
+                )
+            self.assertFalse(confirmed_output.exists())
+
     def test_invalid_completed_staging_preserves_previous_draft(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = DraftFixture(Path(directory))
