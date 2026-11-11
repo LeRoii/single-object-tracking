@@ -1904,3 +1904,57 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   canonical acceptance 及其源码/可执行身份不因本次运行配置部署而改变。SSH 登录环境
   的 `DISPLAY` 为空，本次冒烟因此显式使用 `DISPLAY=:0`；用户给出的原样两行命令应在
   RK3588 图形桌面终端（已继承 `DISPLAY`）执行，不能把 SSH 冒烟误记为字面命令验收。
+
+## 2026-11-11T22:21:04+08:00 occ_video_1 car_002 271-frame draft generated
+
+- 分支 `codex/occ-video-1-tracking`，本任务执行基线
+  `8545f97ac9539231e936dfcc2a322d8916e5f143`，候选工具提交 `1ccff5d`，分层草案打包器
+  提交 `8545f97`，review contact-sheet 纳入包与哈希的修复提交
+  `5d186f8705b5f8a1bababe51a11ffdd43a080935`。这是主机侧标注草案生成，不是 RK3588
+  新运行或板端验收。
+- 原视频 `/home/u20/single-object-tracking/data/occ_video_1/1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，严格解码为
+  1920x1080、30/1 fps、271 帧。用于辅助定位运行行为的保留证据 CSV/log/JSON/AVI
+  SHA-256 依次为
+  `ab5f05f2b278ae0216f404f8fee8130b53a396a582a361f0cd00e07fc13ae79f`、
+  `269b80673b436db70e2f1d16be56898e69f64b78b114068a128fed7cba6d78b0`、
+  `c588f6867043256266a838e2c95517f31bd334355dfbf402e6d53028ae6a8088`、
+  `7146e5719363ff4a5611d15b758f67b6e3abc09a5997fd30c6c3358c8d2cce61`；运行证据只作
+  诊断参考，不充当真值。
+- 工作输入位于
+  `artifacts/ground_truth/occ_video_1_car_002_work/`：`anchors.csv`、`candidates.csv`、
+  `review-policy.csv` SHA-256 分别为
+  `9a618cb492bf5d47b6d6688feb8cf2af7780b6c030438c78c1d027da377cf994`、
+  `39c23fa800287843d5e20f3e528c796b7d44bb6315c6c10652c4c82465ca3821`、
+  `e9bfa7ab37394b299ce5dc9c482878dc759b5936f84dd6ff78f1f847e6c4f3ac`。
+  候选 review AVI SHA-256
+  `ca40b981acb8dd8c4fae41cd75b157dcd77041105eb4e64baa63d81eb5233a67`，解码为
+  1920x1080、30/1 fps、271 帧；三张 contact sheet 已逐张查看，SHA-256 为
+  `dc3976f3da8d7be84740227b450e52d24e43acf4ce70736a737640e6c5ed2762`、
+  `607796268c2b5031c857c6d34d264dd11aa52eaac1e3984541a57c0c79170116`、
+  `4968b176b57957a2a8e212b06fa004a0421ba535e79ec6b0cf63439f2b982b94`。
+- 草案位于 `artifacts/ground_truth/occ_video_1_car_002_draft/`，
+  `checksums.sha256` SHA-256
+  `37198f2b8ef1979fcd78fe8190155c7f2bae750d5044eb49411662d19f3f9114`，
+  `annotation_metadata.json` SHA-256
+  `87d1be38a9846822e9ee3daa31298bc5828b465e528d830c9eee3a12300920fc`。
+  三层均恰有 271 个连续文件：正式 `labels/` 非空 0，未确认候选
+  `candidate_labels/` 非空 252，非可观测估计 `estimated_labels/` 非空 4；
+  `frames.jsonl`、`annotation_status.csv` 均为 271 帧，`review_manifest.csv` 有 267 条
+  待确认记录。状态计数为 assistant candidate 252、needs human review 15、estimated
+  non-observable 4、manual confirmed 0。
+- 身份复核结论：目标是桥前初始化白车，桥后为绿色车左侧白车；双向候选在 0--210、
+  230--270 连续跟随该车。211--212 与 217--229 为高优先级人工复核区间；213--216
+  标为 full occlusion，仅保存低置信度运动估计。运行在 259 帧取得的 detector 候选及
+  262 帧恢复对应另一辆同类白车，已以 `car_002_distractor_001` 记录，不能作为目标真值。
+- 实际生成命令为
+  `/tmp/nanotrack-car002-tools/generate_bidirectional_candidates --video ... --anchors ...`
+  与 `python3 rk3566/nanotrack_v3/tools/build_occ_car002_draft.py build ... --review-dir ...`；
+  `validate --require-confirmed false` PASS，`validate --require-confirmed true` 按预期以
+  `unresolved review rows: 267` FAIL。三个 layer manifest 与总 `checksums.sha256` 均经
+  `sha256sum -c --quiet` PASS；Python 聚焦测试 4/4、annotation-tools CTest 20/20、
+  既有主机 CTest 19/19 PASS，`git diff --check` PASS。
+- 证据边界：这是完整覆盖 0--270 的 assistant draft，不是人工确认真值。正式层为空，
+  在用户逐帧确认并生成新版本/新哈希前，不授权 IoU、阈值标定、算法准确率、canonical
+  dataset 晋级、板端验收或云台 pod 验收；没有修改 `car_001`、`STATUS.md` 或
+  `integration-contract.yaml`。
