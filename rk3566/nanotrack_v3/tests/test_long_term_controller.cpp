@@ -1895,10 +1895,36 @@ void test_atomic_search_reacquisition_and_template_probation() {
   config.max_center_distance = 10.0F;
   config.max_area_log_change = 10.0F;
   config.max_aspect_log_change = 10.0F;
+  ControllerConfig delayed_recovery = config;
+  delayed_recovery.search_reacquisition_min_age_ms = 100;
+  LongTermController minimum_age(delayed_recovery);
+  const BBox initial{40, 30, 20, 20};
+  minimum_age.initialize(initial, 0, 0, {240, 160});
+  reject_frame(minimum_age, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    auto early_plan = minimum_age.begin_frame(frame, frame * 40, false);
+    const auto early = minimum_age.finish_frame(
+        early_plan,
+        {reliable_observation(early_plan, TemplateKind::kAnchor,
+                              early_plan.predicted_bbox, frame)},
+        std::nullopt);
+    expect_true(!early.accepted && !early.search_hint,
+                "visual confirmations before minimum search age cannot seed recovery");
+  }
+  for (std::uint64_t frame : {4U, 5U}) {
+    auto mature_plan = minimum_age.begin_frame(frame, frame * 40, false);
+    const auto mature = minimum_age.finish_frame(
+        mature_plan,
+        {reliable_observation(mature_plan, TemplateKind::kAnchor,
+                              mature_plan.predicted_bbox, frame)},
+        std::nullopt);
+    expect_true((frame == 4 && !mature.accepted && mature.search_hint) ||
+                    (frame == 5 && mature.accepted && mature.reacquired),
+                "mature search still requires two consistent visual confirmations");
+  }
   ControllerConfig detector_required = config;
   detector_required.search_reacquisition_requires_detector = true;
   LongTermController tracker_only_rejected(detector_required);
-  const BBox initial{40, 30, 20, 20};
   tracker_only_rejected.initialize(initial, 0, 0, {240, 160});
   reject_frame(tracker_only_rejected, 1, 40);
   for (std::uint64_t frame : {2U, 3U}) {

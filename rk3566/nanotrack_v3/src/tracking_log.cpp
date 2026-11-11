@@ -741,6 +741,8 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.motion_search_enabled = config.motion_search_enabled;
   metadata.search_reacquisition_requires_detector =
       config.search_reacquisition_requires_detector;
+  metadata.search_reacquisition_min_age_ms =
+      config.search_reacquisition_min_age_ms;
   metadata.motion_search_confidence_ms = config.motion_search_confidence_ms;
   metadata.motion_max_speed_diagonals_per_s =
       config.motion_max_speed_diagonals_per_s;
@@ -918,6 +920,8 @@ std::string tracking_session_metadata_json(
          << "  \"search_reacquisition_requires_detector\": "
          << (metadata.search_reacquisition_requires_detector ? "true" : "false")
          << ",\n"
+         << "  \"search_reacquisition_min_age_ms\": "
+         << metadata.search_reacquisition_min_age_ms << ",\n"
          << "  \"motion_search_confidence_ms\": "
          << metadata.motion_search_confidence_ms << ",\n"
          << "  \"motion_max_speed_diagonals_per_s\": "

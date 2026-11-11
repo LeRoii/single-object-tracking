@@ -1344,6 +1344,8 @@ ControllerOutput LongTermController::finish_frame(
   }
   const bool candidate_search_path =
       config_.motion_search_enabled && motion_search_active_;
+  const bool search_age_allows_reacquisition =
+      plan.motion_search_age_ms >= config_.search_reacquisition_min_age_ms;
   if (selected) {
     output.quality = selected->quality;
     output.selected_template = selected->observation.template_kind;
@@ -1358,7 +1360,8 @@ ControllerOutput LongTermController::finish_frame(
         plan.hypothesis_source != HypothesisSource::kDetector) {
       if (!config_.search_reacquisition_requires_detector && anchor &&
           anchor->quality == QualityLevel::kReliable &&
-          recent_allows_search_hit && !occlusion_decision_.triggered) {
+          recent_allows_search_hit && !occlusion_decision_.triggered &&
+          search_age_allows_reacquisition) {
         selected = anchor;
         accepted = update_search_confirmation(
             plan.frame_id, anchor->observation.bbox, std::nullopt);
@@ -1445,6 +1448,7 @@ ControllerOutput LongTermController::finish_frame(
       const bool valid_detector_hit =
           active.locked && anchor && templates_agree &&
           anchor->quality == QualityLevel::kReliable &&
+          search_age_allows_reacquisition &&
           (!was_locked || active.confirmation_boxes.size() >= 2);
       if (valid_detector_hit) {
         accepted = update_search_confirmation(

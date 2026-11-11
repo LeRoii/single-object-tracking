@@ -102,6 +102,7 @@ void test_adaptive_coast_serialization() {
   config.max_reacquisition_center_distance = 0.75F;
   config.motion_search_enabled = true;
   config.search_reacquisition_requires_detector = true;
+  config.search_reacquisition_min_age_ms = 400;
   apply_controller_config_metadata(metadata, config);
   auto json = tracking_session_metadata_json(metadata);
   expect_true(contains(json, "\"occlusion_probe_interval_frames\": 7") &&
@@ -117,6 +118,7 @@ void test_adaptive_coast_serialization() {
                   metadata.accepted_center_max_correction_ratio == 0.25F &&
                   metadata.max_reacquisition_center_distance == 0.75F &&
                   metadata.search_reacquisition_requires_detector &&
+                  metadata.search_reacquisition_min_age_ms == 400 &&
                   contains(json, "\"max_accepted_scale_step_ratio\": 0.050000") &&
                   contains(json, "\"accepted_scale_deadband_ratio\": 0.020000") &&
                   contains(json, "\"accepted_scale_smoothing_alpha\": 0.100000") &&
@@ -126,7 +128,8 @@ void test_adaptive_coast_serialization() {
                   contains(json, "\"accepted_center_smoothing_alpha\": 0.350000") &&
                   contains(json, "\"accepted_center_max_correction_ratio\": 0.250000") &&
                   contains(json, "\"max_reacquisition_center_distance\": 0.750000") &&
-                  contains(json, "\"search_reacquisition_requires_detector\": true"),
+                  contains(json, "\"search_reacquisition_requires_detector\": true") &&
+                  contains(json, "\"search_reacquisition_min_age_ms\": 400"),
               "metadata uses effective configuration instead of schema defaults");
   struct NonfiniteSetting {
     float TrackingSessionMetadata::*field;

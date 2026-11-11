@@ -130,3 +130,48 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   fault gates remain mandatory.
 - Planned command and development scope: identical to C001 with run directory
   `runs/C002-development`; board paths, executable/report hashes, and decision `PENDING`.
+
+## C002 result — safe search without reachable unique candidate
+
+- Timestamp: `2026-11-11T13:06:00+08:00`
+- Source commit: `141a2d5`
+- Board/evidence root: `/home/neardi/Project/SOT/occ-candidate-141a2d5` and
+  `runs/C002-development`
+- Executable/config SHA-256:
+  `980545c9baeeceba21a9d0c10e7036c5eb3c73505c46b5c5adce694d1585cfd1`,
+  `bb3513919fd4cc78ae3ae78b38057882ffa96d14bf22429a7f3120fd54e51901`
+- Run artifact SHA-256: bboxes
+  `b1b822d593c26908ee317db763f78c38ef82c373ca945d1db2e6c371a9a89db1`, video
+  `04d54cb90bddb30a37a6fb995f19c75461aaf1559a8f6ad5872478887c35176b`, log
+  `8cd1951eba0c7f9952f6e52563b1779eb4d83c1721ce46c9cb93d3ef43c561d0`, metadata
+  `3ad9fa0ad380da36d3b98a8565e2c6edbf4e6a5cee087f24140677988ac693f6`.
+- Evaluator JSON/Markdown SHA-256:
+  `f6585be2c7faf8b21000f0a99220771773020b08752abba0dcc41d236d8760cc`,
+  `dd6a92985d209fab27f9d7540b2e635c5a30ed08d1e5372614c9741677330ce5`.
+- Result: `FAIL`. Full-occlusion semantics, continuous control, and prediction
+  continuity passed. No reacquisition occurred before 190 because both detector batches
+  retained three same-class candidates and the ambiguity gate correctly blocked them.
+  Visible mean IoU was `0.732761`; identity/visible failures remained after reappearance.
+- Verifier observation: the first verifier revision still tied motion control to tracker
+  `hypothesis_source=MOTION`; detector probes correctly retained `control_source=MOTION_SEARCH`,
+  so this condition was removed and regression-tested with a DETECTOR hypothesis.
+- Decision: `REJECT`; preserve its stronger safety behavior as the parent for C003.
+
+## C003 — mature-search narrow motion corridor
+
+- Timestamp: `2026-11-11T13:07:57+08:00`
+- Parent: `C002`
+- Rationale: the position gate is normalized by the full 1920x1080 frame diagonal;
+  `0.15` admits roughly 330 px, while the target is about 44 px wide. Use `0.02`
+  (about one target width) so the motion corridor rejects neighboring cars, and require
+  `400 ms` search age so a short occluder transition cannot seed recovery.
+- Runtime parent commit: `141a2d5`
+- Candidate config SHA-256: `89fbc1d23b2be17c8d6938f5f53383ec4b26a59383f4343dce80603335715706`
+- Changed parameters: `detector_candidate_max_center_ratio 0.15 -> 0.02`;
+  `search_reacquisition_min_age_ms 0 -> 400`.
+- Safety: both parameters only reduce authorization reachability; two-hit, class,
+  ambiguity, template, generation/stale, and detector-shadow rules are unchanged.
+- Required future robustness neighbors: both real-valued gates must be tested at
+  `-10%/nominal/+10%`; nominal success alone cannot freeze C003.
+- Planned command: same development-only command with `runs/C003-development`;
+  exact source/executable/report hashes and decision `PENDING`.

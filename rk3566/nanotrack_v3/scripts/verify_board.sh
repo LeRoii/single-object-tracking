@@ -90,6 +90,12 @@ for key, low, high in [
         raise SystemExit(f"invalid metadata {key}")
 if metadata["accepted_scale_median_window_frames"] % 2 == 0:
     raise SystemExit("invalid metadata accepted_scale_median_window_frames")
+minimum_search_age = metadata.get("search_reacquisition_min_age_ms")
+if (isinstance(minimum_search_age, bool) or
+        not isinstance(minimum_search_age, int) or
+        minimum_search_age < 0 or
+        minimum_search_age > metadata["motion_search_confidence_ms"]):
+    raise SystemExit("invalid metadata search_reacquisition_min_age_ms")
 for key in ("occlusion_trigger_min_dimension_ratio", "occlusion_gradual_dimension_ratio",
             "occlusion_shrink_step_ratio", "occlusion_confirmation_iou",
             "max_accepted_scale_step_ratio",
@@ -329,8 +335,7 @@ for index, row in enumerate(rows):
         row["tracking_phase"] == "SEARCHING" and
         row["control_source"] == "MOTION_SEARCH" and
         row["motion_prediction_confident"] == "1" and
-        row["control_valid"] == "1" and
-        row["hypothesis_source"] == "MOTION"
+        row["control_valid"] == "1"
     )
     if (age > coast_budget or (hold and (age == 0 or not auth)) or
             (auth and not semantic_motion_search)):
@@ -452,7 +457,7 @@ for key in {
     "mean_pipeline_ms", "p50_pipeline_ms", "p95_pipeline_ms",
     "end_to_end_fps",
     "motion_search_enabled", "search_reacquisition_requires_detector",
-    "motion_search_confidence_ms",
+    "search_reacquisition_min_age_ms", "motion_search_confidence_ms",
     "motion_max_speed_diagonals_per_s",
     "motion_max_acceleration_diagonals_per_s2",
     "motion_scale_rate_limit_per_s", "search_probe_interval_ms",

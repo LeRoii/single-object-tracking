@@ -193,7 +193,8 @@ int main() {
                   occlusion_candidate.search_reacquisition_requires_detector,
               "generic visible occlusion candidate explicitly enables calibrated motion search");
   expect_true(occlusion_candidate.confirmation_required == 2 &&
-                  occlusion_candidate.confirmation_window >= 2,
+                  occlusion_candidate.confirmation_window >= 2 &&
+                  occlusion_candidate.search_reacquisition_min_age_ms == 400,
               "generic visible candidate retains two-hit reacquisition safety");
   expect_true(occlusion_candidate.motion_search_confidence_ms > 0 &&
                   std::isfinite(occlusion_candidate.motion_max_speed_diagonals_per_s) &&
@@ -254,6 +255,7 @@ int main() {
              "motion_max_dt_ms=200\n"
              "motion_search_enabled=true\n"
              "search_reacquisition_requires_detector=true\n"
+             "search_reacquisition_min_age_ms=300\n"
              "motion_search_confidence_ms=900\n"
              "motion_max_speed_diagonals_per_s=0.75\n"
              "motion_max_acceleration_diagonals_per_s2=2.5\n"
@@ -297,6 +299,7 @@ int main() {
               "state timing overrides");
   expect_true(visible.motion_search_enabled &&
                   visible.search_reacquisition_requires_detector &&
+                  visible.search_reacquisition_min_age_ms == 300 &&
                   visible.motion_search_confidence_ms == 900 &&
                   visible.search_probe_interval_ms == 120,
               "time-based motion search settings parse explicitly");
@@ -359,6 +362,10 @@ int main() {
   identity_variant.search_reacquisition_requires_detector = true;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes detector-required search recovery");
+  identity_variant = default_visible;
+  identity_variant.search_reacquisition_min_age_ms = 100;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes minimum search recovery age");
   identity_variant = default_visible;
   identity_variant.motion_search_confidence_ms += 1;
   expect_true(controller_config_identity(identity_variant) != default_identity,

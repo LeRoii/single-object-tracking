@@ -156,6 +156,7 @@ metadata = {
     "max_reacquisition_center_distance": 0.75,
     "motion_search_enabled": True,
     "search_reacquisition_requires_detector": True,
+    "search_reacquisition_min_age_ms": 400,
     "motion_search_confidence_ms": 1000,
     "motion_max_speed_diagonals_per_s": 1.0,
     "motion_max_acceleration_diagonals_per_s2": 2.0,
@@ -245,7 +246,8 @@ elif case == "motion_search_valid":
         "state": "UNCERTAIN", "quality": "REJECTED", "accepted": "0",
         "tracking_phase": "SEARCHING", "observation_valid": "0",
         "control_source": "MOTION_SEARCH", "motion_control_authorized": "1",
-        "motion_prediction_confident": "1", "motion_search_age_ms": "33"})
+        "motion_prediction_confident": "1", "motion_search_age_ms": "33",
+        "hypothesis_source": "DETECTOR"})
 else:
     row = rows[2]
     row.update({"state": "TRACKING", "quality": "RELIABLE", "accepted": "1",

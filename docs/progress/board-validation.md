@@ -1,5 +1,30 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T13:07:57+08:00 C002 安全搜索结果与 C003 成熟窄走廊候选
+
+- C002 在 RK3588 继续严格 `--max-frames 189`；二进制/config SHA-256 分别为
+  `980545c9baeeceba21a9d0c10e7036c5eb3c73505c46b5c5adce694d1585cfd1`、
+  `bb3513919fd4cc78ae3ae78b38057882ffa96d14bf22429a7f3120fd54e51901`。板端原生
+  `-Werror=switch` 构建及 CTest `19/19` 通过，运行 SUMMARY mean runtime `9.338 ms`、
+  mean pipeline `112.215 ms`、end-to-end `8.911 FPS`。
+- evaluator development 仍 FAIL，但安全失败形态符合预期：full-occlusion semantics、
+  continuous control、prediction continuity 全部 PASS，错误的 tracker-only 重捕已消失；两个
+  detector batch 都保留三个同类候选，ambiguity gate 全部拒绝，因此 190 前无重捕。visible mean
+  IoU `0.732761`；JSON SHA-256
+  `f6585be2c7faf8b21000f0a99220771773020b08752abba0dcc41d236d8760cc`。
+- C002 还暴露 verifier 不应要求 `hypothesis_source=MOTION`：搜索帧可以正在探测 detector ROI，
+  但对外控制仍明确来自 `MOTION_SEARCH`。新增 DETECTOR-hypothesis 的合法 fixture 先 RED，再移除
+  该错误耦合；phase/source/confidence/control_valid 仍全部必需。
+- C003 将按整帧对角线归一化的 detector center gate 从 `0.15` 收紧为 `0.02`。前者在
+  1920x1080 上约等于 330 px，而目标宽约 44 px；后者形成约一目标宽的通用 motion corridor。
+  同时新增默认 0、候选 400 ms 的 `search_reacquisition_min_age_ms`，阻止短暂遮挡过渡立即种下
+  重捕候选，且必须小于等于 motion confidence 期。
+- parser、identity、metadata、verifier 与合成 controller 测试覆盖该最小搜索龄：龄前可靠观测
+  不能产生 hint，龄后仍需两击才提交。C003 配置 SHA-256
+  `89fbc1d23b2be17c8d6938f5f53383ec4b26a59383f4343dce80603335715706`；聚焦 4/4
+  CTest 通过。后续即使 nominal 成功，也必须对两个实数门做 ±10% 邻域，不能直接冻结。
+- C003 尚未提交、部署或运行；仍无 holdout 证据。
+
 ## 2026-11-11T13:01:15+08:00 C001 development 失败与 C002 detector-required 候选
 
 - C001 在 RK3588 `/home/neardi/Project/SOT/occ-candidate-cbd38a5/runs/C001-development`

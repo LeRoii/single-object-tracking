@@ -131,6 +131,7 @@ void set_value(ControllerConfig& config,
   else if (key == "motion_max_dt_ms") config.motion_max_dt_ms = parse_integer(key, value);
   else if (key == "motion_search_enabled") config.motion_search_enabled = parse_bool(key, value);
   else if (key == "search_reacquisition_requires_detector") config.search_reacquisition_requires_detector = parse_bool(key, value);
+  else if (key == "search_reacquisition_min_age_ms") config.search_reacquisition_min_age_ms = parse_integer(key, value);
   else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
   else if (key == "motion_max_speed_diagonals_per_s") config.motion_max_speed_diagonals_per_s = parse_float(key, value);
   else if (key == "motion_max_acceleration_diagonals_per_s2") config.motion_max_acceleration_diagonals_per_s2 = parse_float(key, value);
@@ -339,6 +340,9 @@ void validate_controller_config(const ControllerConfig& config) {
     }
   }
   if (config.motion_search_confidence_ms <= 0 ||
+      config.search_reacquisition_min_age_ms < 0 ||
+      config.search_reacquisition_min_age_ms >
+          config.motion_search_confidence_ms ||
       config.search_probe_interval_ms <= 0) {
     throw std::invalid_argument("motion search timing must be positive");
   }
@@ -422,6 +426,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.motion_max_dt_ms << '|'
          << config.motion_search_enabled << '|'
          << config.search_reacquisition_requires_detector << '|'
+         << config.search_reacquisition_min_age_ms << '|'
          << config.motion_search_confidence_ms << '|'
          << config.motion_max_speed_diagonals_per_s << '|'
          << config.motion_max_acceleration_diagonals_per_s2 << '|'
