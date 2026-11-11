@@ -1,5 +1,30 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T12:09:22+08:00 `occ_video_1` evaluator 与失败基线冻结
+
+- 在分支 `codex/occ-video-1-tracking`、实现起点
+  `e51a1d2d63c34077b4489e74675dcef03aba5681` 完成实施计划 Task 1；结果提交以
+  `git log -1 --format=%H -- scripts/evaluate_occ_video_1.py` 查询。本里程碑新增独立
+  `scripts/evaluate_occ_video_1.py`，runtime 不读取它或真值。evaluator 严格核对 canonical
+  video/metadata/events/status/label-manifest 哈希，将 169--181 排除普通 IoU，分层报告可见框、
+  估计轨迹、完全遮挡语义、控制连续性、重捕和身份代理；合法输入但硬门失败 exit 1，输入或
+  身份错误 exit 2。schema 9 仅允许复现失败基线，候选 PASS 必须使用带明确
+  `tracking_phase`、`observation_valid`、`control_source` 和 tracking box 的 schema 10。
+- TDD 首轮在生产脚本不存在时 8/8 预期失败；实现后聚焦套件最终 9/9 通过。真实 RK3588
+  baseline CSV 只读复制到 `/tmp/occ-baseline-full-20261111-bboxes.csv`，SHA-256
+  `b2ba9d7328f0554d1806a36f817ece8a42a5cdd0e4275b9cae44f1b87271eb6f`，与板端记录一致；
+  evaluator exit 1 并精确复现普通可见 mean IoU `0.5785649329`、0--168
+  `0.6311449519`、182--270 `0.4787219754`，无合法重捕且遮挡/控制/schema/可见框/身份代理门
+  失败。紧凑证据在 `docs/evaluation/occ-video-1/baseline-201991a.{json,md}`；完整可再生报告
+  SHA-256 `6ed8b993bd825b38dc033515a286e51e6283906f7e1449689d6fc9128ee8ce6a`。
+- 系统 `python3` 全量 discover 因缺 `cv2` 等既有环境依赖只运行 79 项并产生 16 个导入错误；
+  改用项目 NanoTrack venv 后实际运行 286 项，除本工作树已知绝对主工作树路径/缺本地 venv/
+  缺历史 smoke report 的 `test_nanotrack_three_stage_configs` 5 failures + 1 error 外，其余通过。
+  本任务新增套件独立全绿；这些既有 linked-worktree 测试边界未被改写或冒充全套通过。
+- 本里程碑没有修改 C++ runtime、配置阈值、模型、协调方 `STATUS.md`/契约或板端部署；原基线
+  目录仍缺 `manifest.json`，因此继续是诊断 FAIL，不是 board verifier PASS。下一步按计划 Task 2
+  先以失败测试引入 observation/control 来源的外部语义契约。
+
 ## 2026-11-11T11:18:21+08:00 `occ_video_1` 方案 2 获批并形成实施计划
 
 - 用户已批准

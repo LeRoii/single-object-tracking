@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "kind": "diagnostic_baseline",
+  "verdict": "FAIL",
+  "source_commit": "201991a92bba95b542c97505c37053d1c4fe1da8",
+  "dataset": {
+    "name": "occ_video_1",
+    "video_sha256": "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d",
+    "frame_count": 271,
+    "width": 1920,
+    "height": 1080
+  },
+  "evaluator": {
+    "script": "scripts/evaluate_occ_video_1.py",
+    "script_sha256": "7338a2b8a114df5f50d73c9f43e3c60fedfb7700e902bca8cf4dbfc054684d4d",
+    "scope": "full",
+    "exit_code": 1,
+    "full_report_sha256": "6ed8b993bd825b38dc033515a286e51e6283906f7e1449689d6fc9128ee8ce6a"
+  },
+  "metrics": {
+    "ordinary_visible_frames": 258,
+    "ordinary_visible_mean_iou": 0.5785649328917276,
+    "ordinary_visible_min_iou": 0.0017962945758988366,
+    "pre_occlusion_visible_frames": 169,
+    "pre_occlusion_visible_mean_iou": 0.6311449519139292,
+    "post_reappearance_visible_frames": 89,
+    "post_reappearance_visible_mean_iou": 0.4787219754226024,
+    "estimated_trajectory_frames": 13,
+    "estimated_max_normalized_center_error": 0.30467501314698386
+  },
+  "failed_gates": {
+    "tracking_schema": "legacy schema 9 is diagnostic-only",
+    "visible_boxes": 78,
+    "full_occlusion_semantics": [172, 173, 174, 175, 176, 177, 178, 179, 180],
+    "continuous_control": [168, 174, 175, 176, 177, 178, 180, 181, 182, 183, 184, 243, 248, 265, 268],
+    "reacquisition": "no legal reacquired event",
+    "identity_proxy": [53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+  },
+  "passed_gates": [
+    "prediction_continuity"
+  ],
+  "retained_board_evidence": {
+    "directory": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/runs/occ-baseline-full-20261111",
+    "bboxes_csv_sha256": "b2ba9d7328f0554d1806a36f817ece8a42a5cdd0e4275b9cae44f1b87271eb6f",
+    "output_avi_sha256": "0002caa118473ee41e2c015e29728445f157ac2b2f70996d179670fe8c2906e4",
+    "run_log_sha256": "511e02d7e6aca3eac432ceb472bd54fb7c964ea1ef31d362b3fe632260c138cf",
+    "session_metadata_sha256": "08f34c2452ad379eed26cd2e14e7c8cfd58960bc2ad450ff2b74e65005c8f9a8"
+  },
+  "evidence_boundary": "The retained directory has no manifest.json, so verify_board.sh fails by design. This report is a reproducible failed algorithm baseline, not board acceptance."
+}
