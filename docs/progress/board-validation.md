@@ -1,5 +1,17 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-11T13:25:34+08:00 C004 nominal PASS 与 provenance 接口补齐
+
+- 同一 C004 产物经提交 `007f201ff998ec8b3d5f21ee134d406cc81d6870` 的 evaluator
+  重算后 development 全门槛 PASS：帧 188 唯一重捕，有效观测 mean IoU `0.762083`，
+  all-visible 诊断 mean IoU `0.741046`，搜索段 max speed/acceleration
+  `370.984454/9331.818646`，均低于真值派生上限。报告 JSON/Markdown SHA-256 分别为
+  `daad50c1a5be7361ba7d1f2b695d9a10a7ca0cf6ba66fc493159cdbf89a096d9`、
+  `0336d518f7946a825a413820adc7e98ba87787e30d97223a8e2f218b54075f2c`。
+- Task 8 聚合器要求报告内含源码、配置、模型身份；evaluator 新增成组 provenance 参数，拒绝
+  缺项、非 40 位 commit 或非 64 位 SHA-256。evaluator/robustness 单测合计 `15/15` 与
+  Python 语法检查通过。下一步重签 nominal 报告并执行真实扰动矩阵；当前仍未冻结。
+
 ## 2026-11-11T13:23:03+08:00 C004 重捕成功与 evaluator 语义分层修正
 
 - C004 源提交 `0e19decf14d6fc674e78aa4c6249e12b70ba85b0` 已部署到 RK3588

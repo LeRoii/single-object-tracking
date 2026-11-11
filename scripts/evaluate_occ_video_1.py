@@ -760,6 +760,31 @@ def render_markdown(report):
     return "\n".join(lines)
 
 
+def attach_provenance(report, source_commit=None, config_sha256=None,
+                      model_sha256=None):
+    values = (source_commit, config_sha256, model_sha256)
+    if all(value is None for value in values):
+        return dict(report)
+    if any(value is None for value in values):
+        raise ValueError("provenance identities must be provided together")
+    normalized = {}
+    for name, value, length in (
+        ("source_commit", source_commit, 40),
+        ("config_sha256", config_sha256, 64),
+        ("model_sha256", model_sha256, 64),
+    ):
+        if not isinstance(value, str) or len(value) != length:
+            raise ValueError("{} must be a {}-character hexadecimal identity".format(name, length))
+        try:
+            int(value, 16)
+        except ValueError as error:
+            raise ValueError("{} must be hexadecimal".format(name)) from error
+        normalized[name] = value.lower()
+    enriched = dict(report)
+    enriched["provenance"] = normalized
+    return enriched
+
+
 def _write_report(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -774,6 +799,9 @@ def main(argv=None):
     parser.add_argument("--scope", choices=("development", "holdout", "full"), required=True)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--output-markdown", type=Path, required=True)
+    parser.add_argument("--source-commit")
+    parser.add_argument("--config-sha256")
+    parser.add_argument("--model-sha256")
     args = parser.parse_args(argv)
     try:
         contract = load_contract(args.dataset_root)
@@ -782,7 +810,12 @@ def main(argv=None):
             metadata = _load_json(args.session_metadata, "session metadata")
             contract["tracking_session_metadata"] = metadata
             contract["tracking_session_metadata_sha256"] = _sha256(args.session_metadata)
-        report = evaluate(contract, rows, args.scope)
+        report = attach_provenance(
+            evaluate(contract, rows, args.scope),
+            args.source_commit,
+            args.config_sha256,
+            args.model_sha256,
+        )
         _write_report(
             args.output_json,
             json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",

@@ -330,6 +330,25 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertIn("FAIL", rendered)
         self.assertIn("frame 2", rendered)
 
+    def test_attach_provenance_requires_complete_hex_identities(self):
+        report = {"schema_version": 1}
+        enriched = evaluator.attach_provenance(
+            report, "a" * 40, "b" * 64, "c" * 64
+        )
+        self.assertEqual(
+            enriched["provenance"],
+            {
+                "source_commit": "a" * 40,
+                "config_sha256": "b" * 64,
+                "model_sha256": "c" * 64,
+            },
+        )
+        self.assertNotIn("provenance", report)
+        with self.assertRaisesRegex(ValueError, "provided together"):
+            evaluator.attach_provenance(report, "a" * 40, None, "c" * 64)
+        with self.assertRaisesRegex(ValueError, "source_commit"):
+            evaluator.attach_provenance(report, "not-a-commit", "b" * 64, "c" * 64)
+
 
 class OccVideoEvaluatorCliTest(unittest.TestCase):
     def setUp(self):

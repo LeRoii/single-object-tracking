@@ -216,3 +216,36 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
   minimum age, corridor, generation/stale isolation, and shadow-only first hit remain.
 - Planned run: `runs/C004-development`; exact source/executable/report hashes and
   decision `PENDING`.
+
+## C004 result — nominal development PASS
+
+- Timestamp: `2026-11-11T13:25:34+08:00`
+- Runtime source commit: `0e19decf14d6fc674e78aa4c6249e12b70ba85b0`
+- Evaluator source commit: `007f201ff998ec8b3d5f21ee134d406cc81d6870`
+- Board/evidence root: `/home/neardi/Project/SOT/occ-candidate-0e19dec` and
+  `runs/C004-development`
+- Source archive/executable/config/evaluator SHA-256:
+  `4eb692d72dae7f74093677b54313c7f0a7447ce3ba12eb253aa934c571f68082`,
+  `89e61bd1fb938be513f3b941af2e4354a682d952856de3566710b27119f28fa2`,
+  `89fbc1d23b2be17c8d6938f5f53383ec4b26a59383f4343dce80603335715706`,
+  `7dcdd98386d0295ff319135c3d46201a08dc3bc07ce6cee410841cc66685b2b7`.
+- Board build/test: native Debug, `-Werror=switch`, CTest `19/19`; board verifier
+  PASS with verify-log SHA-256
+  `f6564fb4dcfed79e3726f98d87cb3fb20a5bdbfa551023f269537cc304c585bd`.
+- Run artifact SHA-256: bboxes
+  `d577738b82c4478ac4661f855f923f12bd5571f750dcfdc29a50a2e0d207ac83`, video
+  `909bfc60aa10c7ccbee02ea6863d85a07a78965bae178251ed90743498347070`, log
+  `e2deb72b069a50222af81c13fb14b4f820a5959a4d235cc75858c0ac5abcb5d8`, metadata
+  `75d48c976ece98fcb351f4d27dece76dd6c361dd8097f313c916b9b00f3f1c2b`.
+- Evaluator JSON/Markdown SHA-256:
+  `daad50c1a5be7361ba7d1f2b695d9a10a7ca0cf6ba66fc493159cdbf89a096d9`,
+  `0336d518f7946a825a413820adc7e98ba87787e30d97223a8e2f218b54075f2c`.
+- Result: `PASS`; unique reacquisition frame `188`; valid-observation mean IoU
+  `0.762083`; all-visible diagnostic mean IoU `0.741046`; full-occlusion semantics,
+  search prediction continuity, continuous control, and identity proxy all PASS.
+- Media check: `1920x1080`, `190` output frames (initial frame plus 189 tracked frames).
+- Decision: nominal candidate accepted for robustness testing only. It is not frozen;
+  no holdout/full run is authorized until the generic perturbation plateau passes.
+- Evidence boundary: a diagnostic status-file command unintentionally displayed status
+  text for frames 190--193, but no post-189 video frame, bbox label, runtime output, or
+  evaluator result was read. This partial metadata exposure must remain declared.
