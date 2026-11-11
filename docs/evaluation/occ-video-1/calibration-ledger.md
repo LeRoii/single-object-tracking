@@ -298,3 +298,32 @@ written as `NOT_RECORDED` or `PENDING`, never inferred.
 - Required run: nominal plus all valid real/count/center-preserving initialization
   neighbors on frames 0--189, followed by synthetic variable-time/delay/drop/generation
   fault evidence. Decision `PENDING`; no holdout/full run is permitted.
+
+## C005 result — corridor rejected real reappearance
+
+- Timestamp: `2026-11-11T13:50:36+08:00`
+- Source commit: `89215abb7c4d28911b360d011545ba96c87412c8`
+- Board root: `/home/neardi/Project/SOT/occ-candidate-89215ab`
+- Source archive/config/executable SHA-256:
+  `2612a3b271f858c99a9e3bc6f90e849269882df06c105dd2f9c2415b27971341`,
+  `f6dfe4cd86650bedccbba61162b75d2947a2e5fd3137aa8860db631644012ad9`,
+  `6e59520ac475fda3352b41f9c56e37b7911b77715f68cae642aec7731e32d81a`.
+- Native Debug build, `-Werror=switch`, and CTest `19/19` passed.
+- Nominal development run: detector request at frame 182 completed at 183, but
+  `0.015` rejected every same-class candidate by position (`0` valid, `121` rejected).
+  No reacquisition occurred; all other evaluator gates passed. The remaining matrix
+  was immediately stopped after nominal failure.
+- Decision: `REJECT`. The 400 ms cadence is retained; the corridor returns to `0.020`
+  for C006 because faster source-frame sampling, not an over-tight gate, addresses the
+  deadline/ambiguity failure. No holdout/full run occurred.
+
+## C006 — cadence-only interior candidate
+
+- Timestamp: `2026-11-11T13:50:36+08:00`
+- Parent: `C005`; algorithm unchanged.
+- Changed from C004: only `detector_interval_ms 500 -> 400`; restore
+  `detector_candidate_max_center_ratio=0.020`.
+- Rationale: request a fresh visible detector frame earlier while retaining the proven
+  normalized one-target-width corridor. Required cadence neighbors remain `360/440 ms`;
+  corridor neighbors return to the already observed passing `0.018/0.022` range.
+- Decision: `PENDING`; run nominal before any matrix continuation.
