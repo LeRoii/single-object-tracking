@@ -59,8 +59,9 @@ probation 后受控 commit/rollback。异常、重置和帧中止必须丢弃未
 一份已提交 recent 与 safe。
 
 模板操作使用显式事务：stage 特征提取和所有验证在任何 controller 状态写入之前完成；
-成功后 tracker 先以强异常保证应用不抛交换，controller 再提交同一 transaction id 的
-状态。失败时两侧都 abort 同一 transaction，下一帧不得看见半提交 probation、模板或
+成功后 tracker 先以强异常保证执行返回 `bool` 的 `noexcept` 交换，只有 transaction id
+匹配时返回 true；controller 再提交同一 transaction id 的状态。失败时两侧都以返回值
+可检查的 `noexcept` abort 处理同一 transaction，下一帧不得看见半提交 probation、模板或
 候选。需要抽出可注入的 template/head 后端，使主机单测能验证 head 调用次数和每个异常点。
 
 ## 状态和数据流

@@ -88,9 +88,9 @@ git commit -m "feat: require recent-safe controller profile"
 
 **Interfaces:**
 - Produces: `TemplateKind::{kRecent,kSafe,kStaged}` and `TemplateRunMode::{kRecentOnly,kStagedAndRecent,kRecentAndSafe}`.
-- Produces: `RecentSafeTemplates::initialize(Feature)`, `prepare(Feature,uint64_t)`, `commit(uint64_t) noexcept`, `abort(uint64_t) noexcept`, and const feature accessors.
-- Produces: `ShortTermTracker::prepare_recent(image,bbox,transaction_id)`, `commit_recent(transaction_id) noexcept`, and `abort_recent(transaction_id) noexcept`.
-- Consumes later: `SearchPlan::template_run_mode` from Task 3; until then tests exercise the standalone state.
+- Produces: `SearchPlan::template_run_mode`, defaulting to `kRecentOnly`; Task 3 later selects non-default modes by controller state.
+- Produces: `RecentSafeTemplates::initialize(Feature)`, `prepare(Feature,uint64_t)`, `bool commit(uint64_t) noexcept`, `bool abort(uint64_t) noexcept`, and const feature accessors.
+- Produces: `ShortTermTracker::prepare_recent(image,bbox,transaction_id)`, `bool commit_recent(transaction_id) noexcept`, and `bool abort_recent(transaction_id) noexcept`.
 
 - [ ] **Step 1: Write failing standalone state tests**
 
@@ -231,6 +231,7 @@ git commit -m "feat: unify tracker and detector recovery candidates"
 - Modify: `rk3566/nanotrack_v3/src/tracking_log.cpp`
 - Modify: `rk3566/nanotrack_v3/src/debug_telemetry.cpp`
 - Modify: `rk3566/nanotrack_v3/src/interactive_debug_overlay.cpp`
+- Modify: `rk3566/nanotrack_v3/tests/test_verify_board_schema.sh`
 - Test: `rk3566/nanotrack_v3/tests/test_long_term_runtime.cpp`
 - Test: `rk3566/nanotrack_v3/tests/test_tracking_log.cpp`
 - Test: `rk3566/nanotrack_v3/tests/test_debug_telemetry.cpp`
