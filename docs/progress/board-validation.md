@@ -1877,3 +1877,32 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 - 证据边界：`PASS_CANONICAL_BOARD_ACCEPTANCE` 仅表示 RK3588 上 canonical
   `occ_video_1` 后揭盲三次验收通过；人工复核视频状态仍为 PENDING，未声称真实云台
   pod 验收。
+
+## 2026-11-12T10:48:45+08:00 C012 main 基线集成门禁
+
+- 用户明确批准 C012 作为不可退化的效果基线。`main@1bf657ff730891ae0bea48340a046cbcbeaa87d4`
+  是 C012 最终修复提交 `e865c78679247cb45ddbdbf2fb466e49930d5d12` 的直接祖先，且没有
+  main-only 提交；集成分支 `codex/c012-main-integration` 从该 C012 提交创建，不包含其后的
+  recent-safe/unified-candidates 实验提交。运行时基线仍由既有 C012 RK3588 证据约束，不把
+  主机构建或 Git 快进改写成新的板端验收。
+- 新增 `docs/evaluation/occ-video-1/c012-effect-baseline.json` 和
+  `scripts/check_c012_effect_baseline.py`。门禁直接读取两个候选运行 CSV：car001 必须使用
+  `992,582,37,39`、覆盖 0--270、首次重捕获不晚于 185、190 后无 SEARCHING 且 0--270
+  `control_valid=1`；car002 必须使用 `970,517,38,38`，60--80 路牌区间逐帧保持
+  TRACKING、accepted 和 control_valid。任一条件失败均禁止替换 C012。
+- 实际保留的 C012 car001/car002 CSV SHA-256 分别为
+  `e94d3afc3eaff438900f488b0eb9901d9ef97e6d4a1a94330831acde3918936a`、
+  `ff46e033c1e900832970fa4558164842004ea9adbc02073e5a2e64717b281f20`；新门禁对两者输出
+  PASS，结果 JSON SHA-256
+  `b042f585b54775ae1429e1afeff835216c591a24c1b3564784587ea29085126c`。car001 为完整 271
+  帧正式 C012 运行；car002 为用户交互运行保留的 242 帧 CSV，本次只冻结已有证据覆盖的
+  60--80 路牌区间，不外推为完整 car002 验收。
+- 新门禁单元测试 5/5 通过，覆盖晚重捕、190 后再次搜索、控制失效、car002 第 70 帧丢失、
+  ROI 不一致、帧缺口与短运行负例。独立 RKNN-off Debug 构建完成、CTest 19/19 通过；
+  C012 门禁、occ evaluator 与 robustness checker Python 回归合计 24/24 通过，
+  `git diff --check` 通过。
+- **Handoff**：请求协调者将 C012 精确历史快进到 main，并以
+  `rk3588-c012-baseline` 固定 `e865c78679247cb45ddbdbf2fb466e49930d5d12`。未来候选必须在
+  完全相同 ROI 和输入身份下通过上述双目标门禁；编译成功、配置可加载或单目标通过均不能
+  替代该门禁。正式生产 handoff 与人工吊舱验收状态保持不变；未修改 `STATUS.md` 或
+  `integration-contract.yaml`。

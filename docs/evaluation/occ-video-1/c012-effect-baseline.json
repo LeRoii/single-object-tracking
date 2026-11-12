@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "candidate_id": "C012",
+  "baseline_source_commit": "e865c78679247cb45ddbdbf2fb466e49930d5d12",
+  "runtime_source_commit": "30b475f577e46ed8158a40f6463842ef5188169a",
+  "video_sha256": "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d",
+  "controller_config_sha256": "82ce1e035e202f10a46f1aa2a21f4ed42d79839dca01b0629e1848c90919432c",
+  "reference_outputs": {
+    "car_001_csv_sha256": "e94d3afc3eaff438900f488b0eb9901d9ef97e6d4a1a94330831acde3918936a",
+    "car_002_csv_sha256": "ff46e033c1e900832970fa4558164842004ea9adbc02073e5a2e64717b281f20"
+  },
+  "targets": {
+    "car_001": {
+      "initial_bbox": [992, 582, 37, 39],
+      "required_last_frame": 270,
+      "reacquisition_deadline_inclusive": 185,
+      "forbid_search_from_frame": 190,
+      "control_valid_through_frame": 270
+    },
+    "car_002": {
+      "initial_bbox": [970, 517, 38, 38],
+      "road_sign_continuity_frames": [60, 80]
+    }
+  },
+  "promotion_rule": "A candidate may not replace C012 unless both target gates pass from independent runs with the exact initial boxes above.",
+  "evidence_boundary": "car_001 is the canonical 271-frame board acceptance. car_002 is a user-observed 242-frame C012 interactive run; only its road-sign interval 60-80 is frozen as a regression gate."
+}
