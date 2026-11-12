@@ -901,19 +901,30 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   const bool response_weak = metrics.psr < config_.reliable_psr ||
                              metrics.apce < config_.reliable_apce ||
                              metrics.peak_margin < config_.reliable_peak_margin;
-  const bool degraded = isolated_response_dip || drops >= 2 ||
+  const bool single_response_drop = drops == 1;
+  const bool fast_temporal_degradation =
+      isolated_response_dip || single_response_drop;
+  const bool degraded = fast_temporal_degradation || drops >= 2 ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
     response_clean_since_ms_.reset();
     if (!response_degraded_since_ms_) response_degraded_since_ms_ = plan.timestamp_ms;
+    const auto degradation_age =
+        plan.timestamp_ms - *response_degraded_since_ms_;
+    // A single response dimension may dip for one frame. If the same
+    // one-dimensional evidence persists for a full suspicion interval, stop
+    // adapting the trusted baseline through it and enter search directly.
+    if (fast_temporal_degradation &&
+        degradation_age >= config_.suspicion_enter_ms) {
+      return RecentDisposition::kSearch;
+    }
     if (!suspected_since_ms_ &&
-        plan.timestamp_ms - *response_degraded_since_ms_ >= config_.suspicion_enter_ms) {
+        degradation_age >= config_.suspicion_enter_ms) {
       suspected_since_ms_ = plan.timestamp_ms;
     }
-    // Reuse the uncertainty budget after entering SUSPECTED. An intervening
-    // clean sample restarts the duration of continuous degradation.
     if (suspected_since_ms_ &&
-        plan.timestamp_ms - std::max(*suspected_since_ms_, *response_degraded_since_ms_) >=
+        plan.timestamp_ms - std::max(*suspected_since_ms_,
+                                     *response_degraded_since_ms_) >=
             config_.uncertain_ms) {
       return RecentDisposition::kSearch;
     }
