@@ -1,5 +1,22 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T16:19:23+08:00 四个已拒绝运动冻结实现的失败帧导出
+
+- 按用户复核请求，从四个已拒绝 RK3588 保留根的原始输出 AVI 导出失败窗口：
+  `d7ee7df`、`2b08bc5`、`3f3d7be`、`49027b1`。选择依据为 full evaluator 的首次坏帧、
+  错误重捕帧及 car002 的 213--216 帧遮挡语义失败；每个中心帧导出 `center-4` 到
+  `center+4` 共 9 张带真实源帧号 JPEG，并生成一张 3x3 contact sheet。
+- 最终板端目录为 `/home/neardi/Project/SOT/motion-freeze-failure-frames-v3`，压缩包为
+  `/home/neardi/Project/SOT/motion-freeze-failure-frames-v3.tar.gz`；当前工作树的忽略目录副本为
+  `results/failure-frame-sequences/motion-freeze-failure-frames-v3/`。共 28 个事件窗口、252 张
+  连续帧、28 张 contact sheet；`windows.csv` 记录全部精确帧段，`README.txt` 记录四种实现语义，
+  `SHA256SUMS` 覆盖 282 个非清单文件。
+- 最终压缩包 SHA-256 为
+  `c2bfd257d2817bc35d40dbc4cebbb78dc3403c857ce81899190ded9b3c83514c`。抽查
+  `d7ee7df/car_001/f104_false_reacquisition/contact_sheet.jpg` 确认角标为真实源帧
+  100--108，框来自各版本保存视频中绘制的 `control_bbox`。首次 v2 导出因旧 FFmpeg 将
+  contact-sheet 角标重编号为 0--8 而废弃；v3 才是交付版本，不改变任何源码、运行结果或判定。
+
 ## 2026-11-12T16:06:25+08:00 恢复版 2d31bfe RK3588 精确确认
 
 - 分支 `codex/recent-safe-occlusion-recovery-v2`，工作树
