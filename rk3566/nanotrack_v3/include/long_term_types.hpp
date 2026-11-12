@@ -17,9 +17,10 @@ enum class TrackingMode {
   kAssistedRecovery,
   kLost,
   kOcclusionHold,
+  kSuspected,
 };
 
-enum class TrackingPhase { kTracking, kSearching, kInvalid };
+enum class TrackingPhase { kTracking, kSearching, kInvalid, kSuspected };
 enum class ControlSource { kNone, kObservation, kMotionSearch };
 
 enum class QualityLevel { kReliable, kWeak, kRejected };
@@ -38,9 +39,26 @@ enum class OcclusionTriggerReason {
   kGradualHeightMotion,
 };
 enum class OcclusionProbeType { kNone, kSearch, kConfirm };
-enum class TemplateKind { kAnchor, kRecent };
+// kAnchor is used by the legacy controller and telemetry during migration.
+enum class TemplateKind { kAnchor, kRecent, kSafe, kStaged };
+enum class TemplateRunMode { kRecentOnly, kStagedAndRecent, kRecentAndSafe };
 enum class TemplateAction { kNone, kStageRecent, kCommitRecent, kRollbackRecent };
 enum class HypothesisSource { kMotion, kDetector };
+enum class RecoveryCandidateSource { kRecent, kSafe, kDetector };
+
+struct RecoveryCandidateKey {
+  RecoveryCandidateSource source = RecoveryCandidateSource::kRecent;
+  std::uint64_t id = 0;
+  std::uint64_t generation = 0;
+
+  bool operator==(const RecoveryCandidateKey& other) const noexcept {
+    return source == other.source && id == other.id && generation == other.generation;
+  }
+  bool operator!=(const RecoveryCandidateKey& other) const noexcept {
+    return !(*this == other);
+  }
+};
+
 enum class DetectorTargetMode { kFullObject, kSubtarget };
 enum class DetectorBatchStatus {
   kNone,
@@ -55,6 +73,10 @@ struct FrameSize {
   int width = 0;
   int height = 0;
 };
+
+BBox constrain_tracker_observation_dimensions(const BBox& candidate,
+                                              const BBox& committed_bbox,
+                                              FrameSize frame);
 
 struct ImageView {
   const std::uint8_t* data = nullptr;
@@ -71,7 +93,13 @@ struct TrackerObservation {
   ResponseMetrics metrics{};
   TemplateKind template_kind = TemplateKind::kAnchor;
   std::uint64_t search_token = 0;
+  // Geometry before rolling committed-size bounds are applied.
+  std::optional<BBox> decoded_bbox = std::nullopt;
 };
+
+TrackerObservation constrain_tracker_observation(TrackerObservation observation,
+                                                const BBox& committed_bbox,
+                                                FrameSize frame);
 
 struct DetectorCandidate {
   BBox bbox{};

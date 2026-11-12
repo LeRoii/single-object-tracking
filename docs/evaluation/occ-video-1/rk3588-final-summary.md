@@ -9,8 +9,8 @@ enters search after frame 190. The time-bounded template bridge covers frames
 200--206 and exits naturally; valid-observation mean IoU is `0.732253` and
 all-visible mean IoU is `0.725693`. All three semantic signatures are identical.
 
-Exact source: `30b475f577e46ed8158a40f6463842ef5188169a`.
-Board root: `/home/neardi/Project/SOT/occ-candidate-30b475f`.
+Exact source: `e865c78679247cb45ddbdbf2fb466e49930d5d12`.
+Board root: `/home/neardi/Project/SOT/occ-candidate-e865c78`.
 This is post-holdout canonical board acceptance. Real-gimbal-pod acceptance remains
 human-only and has not been claimed.
 

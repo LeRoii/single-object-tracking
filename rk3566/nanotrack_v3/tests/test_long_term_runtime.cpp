@@ -1,5 +1,6 @@
 #include "long_term_runtime.hpp"
 #include "target_class_session.hpp"
+#include "tracking_log.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -28,17 +29,22 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
                   const nanotrack::BBox& bbox) override {
     ++initialize_calls;
     initialized = true;
+    pending_template_id.reset();
+    recent_template_generation = safe_template_generation = 0;
     committed_bbox = bbox;
     if (on_initialize) on_initialize();
   }
 
   std::vector<nanotrack::TrackerObservation> infer(
       const nanotrack::ImageView&,
-      const nanotrack::SearchPlan& plan) override {
+      const nanotrack::SearchPlan& plan,
+      nanotrack::TemplateHeadExecution& heads) override {
     ++infer_calls;
     inferred_plans.push_back(plan);
     if (on_infer) on_infer();
     ++search_token;
+    heads = {true, plan.template_run_mode == nanotrack::TemplateRunMode::kRecentAndSafe,
+             plan.template_run_mode == nanotrack::TemplateRunMode::kStagedAndRecent, false};
     if (observation_override) return *observation_override;
     if (!emit_reliable && !emit_weak) return {};
     const nanotrack::ResponseMetrics metrics = emit_weak
@@ -47,40 +53,76 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
     const nanotrack::BBox bbox = emit_weak ? weak_bbox :
         reliable_bbox.value_or(plan.predicted_bbox);
     const auto observed_frame = invalid_observation ? plan.frame_id + 1 : plan.frame_id;
-    return {
+    auto secondary_template = nanotrack::TemplateKind::kAnchor;
+    if (emit_recent_safe_roles) {
+      secondary_template = plan.template_run_mode == nanotrack::TemplateRunMode::kStagedAndRecent
+          ? nanotrack::TemplateKind::kStaged : nanotrack::TemplateKind::kSafe;
+    }
+    std::vector<nanotrack::TrackerObservation> observations{
         nanotrack::TrackerObservation{observed_frame, plan.timestamp_ms,
                                       bbox, metrics,
-                                      nanotrack::TemplateKind::kAnchor,
+                                      secondary_template,
                                       search_token},
         nanotrack::TrackerObservation{plan.frame_id, plan.timestamp_ms,
                                       bbox, metrics,
                                       nanotrack::TemplateKind::kRecent,
                                       search_token},
     };
+    if (emit_recent_safe_roles &&
+        plan.template_run_mode == nanotrack::TemplateRunMode::kRecentOnly) {
+      observations.erase(observations.begin());
+    }
+    return observations;
   }
 
   void commit_bbox(const nanotrack::BBox& bbox) override {
     ++commit_calls;
-    committed_bbox = bbox;
     if (on_commit) on_commit();
+    committed_bbox = bbox;
+    if (on_commit_after_write) on_commit_after_write();
   }
-  void stage_recent(const nanotrack::ImageView&,
-                    const nanotrack::BBox& bbox) override {
+  void restore_bbox(const nanotrack::BBox& bbox) noexcept override {
+    committed_bbox = bbox;
+  }
+  void prepare_recent(const nanotrack::ImageView&, const nanotrack::BBox& bbox,
+                      std::uint64_t id) override {
     ++stage_calls;
+    last_prepare_id = id;
+    pending_template_id = id;
     staged_bbox = bbox;
     if (on_stage) on_stage();
   }
-  void commit_recent() override {
+  bool commit_recent(std::uint64_t id) noexcept override {
     ++recent_commit_calls;
+    last_commit_id = id;
     if (on_recent_commit) on_recent_commit();
+    if (reject_commit || pending_template_id != id) return false;
+    safe_template_generation = recent_template_generation;
+    recent_template_generation = id;
+    pending_template_id.reset();
+    return true;
   }
-  void rollback_recent() override {
+  bool abort_recent(std::uint64_t id) noexcept override {
     ++rollback_calls;
+    last_abort_id = id;
     if (on_rollback) on_rollback();
+    if (reject_abort || pending_template_id != id) return false;
+    pending_template_id.reset();
+    return true;
   }
+  void discard_staged_recent() noexcept override { pending_template_id.reset(); }
 
+  bool reject_commit = false;
+  bool reject_abort = false;
+  std::optional<std::uint64_t> pending_template_id;
+  std::uint64_t last_prepare_id = 0;
+  std::uint64_t last_commit_id = 0;
+  std::uint64_t last_abort_id = 0;
+  std::uint64_t recent_template_generation = 0;
+  std::uint64_t safe_template_generation = 0;
   bool initialized = false;
   bool emit_reliable = true;
+  bool emit_recent_safe_roles = false;
   bool emit_weak = false;
   bool invalid_observation = false;
   std::optional<nanotrack::BBox> reliable_bbox;
@@ -99,6 +141,7 @@ class FakeTracker final : public nanotrack::ShortTermTracker {
   std::function<void()> on_initialize;
   std::function<void()> on_infer;
   std::function<void()> on_commit;
+  std::function<void()> on_commit_after_write;
   std::function<void()> on_stage;
   std::function<void()> on_recent_commit;
   std::function<void()> on_rollback;
@@ -358,6 +401,7 @@ void test_runtime_atomic_search_commit(const nanotrack::ImageView& image) {
   config.motion_search_confidence_ms = 1000;
   config.recent_probation_frames = 2;
   FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
   tracker.emit_reliable = false;
   FakeDetector detector;
   LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
@@ -365,11 +409,12 @@ void test_runtime_atomic_search_commit(const nanotrack::ImageView& image) {
   runtime.process_frame(image, 1, 40);
   tracker.emit_reliable = true;
   RuntimeFrameResult first = runtime.process_frame(image, 2, 80);
-  expect_true(!first.output.accepted && tracker.commit_calls == 0 &&
-                  tracker.stage_calls == 0,
+  expect_true(!first.output.accepted && first.output.recovery_candidate_key &&
+                  tracker.commit_calls == 0 && tracker.stage_calls == 0,
               "runtime first search hit performs no bbox or template commit");
   RuntimeFrameResult second = runtime.process_frame(image, 3, 120);
-  expect_true(second.output.accepted && second.output.reacquired &&
+  expect_true(second.plan.recovery_probe == first.output.recovery_candidate_key &&
+                  second.output.accepted && second.output.reacquired &&
                   second.output.accepted_observation_path ==
                       AcceptedObservationPath::kSearchReacquisition &&
                   tracker.commit_calls == 1 && tracker.stage_calls == 1 &&
@@ -377,11 +422,328 @@ void test_runtime_atomic_search_commit(const nanotrack::ImageView& image) {
                             second.output.tracking_bbox) &&
                   same_bbox(tracker.staged_bbox,
                             second.output.tracking_bbox),
-              "runtime commits bbox and stages recent only on the atomic second hit");
+              "completed runtime cleanup preserves the first hit for atomic second-hit commit");
   RuntimeFrameResult ordinary = runtime.process_frame(image, 4, 160);
-  expect_true(ordinary.output.accepted && !ordinary.output.reacquired &&
+  expect_true(ordinary.plan.template_run_mode == TemplateRunMode::kStagedAndRecent &&
+                  ordinary.output.accepted && !ordinary.output.reacquired &&
                   tracker.commit_calls == 2 && tracker.stage_calls == 1,
               "later ordinary tracking cannot repeat the reacquired pulse or stage");
+}
+
+void test_controller_rejects_stale_transition_acknowledgements() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.stable_frames_for_update = 1;
+  config.recent_update_interval_ms = 1;
+  config.recent_probation_frames = 1;
+  const BBox bbox{40, 30, 20, 20};
+  const ResponseMetrics metrics{0.9F, 0.89F, 10.0F, 12.0F, 0.20F};
+  LongTermController controller(config);
+  controller.initialize(bbox, 0, 0, {320, 240});
+  const auto first = controller.begin_frame(1, 40, false);
+  const auto prepared = controller.finish_frame(
+      first, {{1, 40, bbox, metrics, TemplateKind::kRecent, 1}}, std::nullopt);
+  const auto stage = *prepared.template_transition;
+  expect_true(prepared.template_transition_result == TemplateTransitionResult::kPending &&
+                  !controller.has_template_probation() &&
+                  !controller.resolve_template_transition(stage.transaction_id + 1, true),
+              "a prepared request cannot advance controller probation before matching acknowledgement");
+  expect_true(controller.resolve_template_transition(stage.transaction_id, true) &&
+                  !controller.resolve_template_transition(stage.transaction_id, true) &&
+                  controller.has_template_probation(),
+              "stage acknowledgement is accepted once");
+  const auto second = controller.begin_frame(2, 80, false);
+  const auto terminal = controller.finish_frame(
+      second, {{2, 80, bbox, metrics, TemplateKind::kRecent, 2},
+               {2, 80, bbox, metrics, TemplateKind::kStaged, 2}}, std::nullopt);
+  const auto commit = *terminal.template_transition;
+  expect_true(commit.action == TemplateAction::kCommitRecent &&
+                  commit.template_slot_id == stage.transaction_id &&
+                  commit.transaction_id > stage.transaction_id &&
+                  !controller.resolve_template_transition(stage.transaction_id, true) &&
+                  controller.has_template_probation(),
+              "delayed prepare acknowledgement cannot commit the same physical slot");
+  expect_true(controller.resolve_template_transition(commit.transaction_id, true) &&
+                  !controller.resolve_template_transition(commit.transaction_id, true) &&
+                  !controller.has_template_probation(),
+              "the matching terminal request resolves exactly once");
+  const auto third = controller.begin_frame(3, 120, false);
+  const auto pending = controller.finish_frame(
+      third, {{3, 120, bbox, metrics, TemplateKind::kRecent, 3}}, std::nullopt);
+  controller.initialize(bbox, 3, 120, {320, 240});
+  expect_true(!controller.resolve_template_transition(pending.template_transition->transaction_id, true),
+              "reinitialization invalidates unacknowledged work");
+  const auto fresh = controller.begin_frame(4, 160, false);
+  const auto new_stage = controller.finish_frame(
+      fresh, {{4, 160, bbox, metrics, TemplateKind::kRecent, 4}}, std::nullopt);
+  expect_true(new_stage.template_transition->transaction_id > pending.template_transition->transaction_id,
+              "controller reinitialization preserves monotonically increasing request IDs");
+  controller.abort_frame();
+  expect_true(!controller.resolve_template_transition(new_stage.template_transition->transaction_id, true) &&
+                  !controller.has_template_probation(),
+              "aborted acknowledgement cannot replay on later frames");
+}
+
+void test_runtime_transition_failures(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.stable_frames_for_update = 1;
+  config.recent_update_interval_ms = 1;
+  config.recent_probation_frames = 1;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 1000;
+  const BBox roi{40, 30, 20, 20};
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  NullDetectorAdapter detector;
+  LongTermRuntime runtime(config, tracker, detector);
+  runtime.initialize(image, roi, 0, 0);
+  tracker.on_stage = [] { throw std::runtime_error("template extraction failed"); };
+  auto frame = runtime.process_frame(image, 1, 40);
+  expect_true(frame.output.accepted && frame.output.template_transition &&
+                  !frame.output.template_transition_applied &&
+                  frame.output.template_transition_result ==
+                      TemplateTransitionResult::kPrepareFailed &&
+                  !frame.output.template_probation_active && tracker.rollback_calls == 1 &&
+                  tracker.last_abort_id == tracker.last_prepare_id,
+              "failed ordinary prepare aborts its slot and publishes ordinary tracking");
+  const auto failed_id = frame.output.template_transition->transaction_id;
+  tracker.on_stage = {};
+  frame = runtime.process_frame(image, 2, 80);
+  expect_true(frame.plan.template_run_mode == TemplateRunMode::kRecentOnly &&
+                  frame.output.template_transition_applied &&
+                  frame.output.template_transition->transaction_id > failed_id,
+              "a fresh frame may prepare a newer transaction on committed templates");
+  const auto staged_id = frame.output.template_transition->transaction_id;
+  tracker.reject_commit = true;
+  frame = runtime.process_frame(image, 3, 120);
+  expect_true(frame.output.template_transition_result == TemplateTransitionResult::kTrackerRejected &&
+                  frame.output.template_transition->transaction_id > staged_id &&
+                  !frame.output.template_probation_active &&
+                  !tracker.pending_template_id && tracker.recent_commit_calls == 1 &&
+                  tracker.last_commit_id == staged_id && tracker.last_abort_id == staged_id,
+              "a false commit discards staged features and reports unapplied once");
+
+  runtime.initialize(image, roi, 3, 120);
+  frame = runtime.process_frame(image, 4, 160);
+  expect_true(frame.output.template_transition->transaction_id > staged_id,
+              "reinitialization preserves the transaction ID high-water mark");
+  tracker.emit_reliable = false;
+  tracker.reject_abort = true;
+  frame = runtime.process_frame(image, 5, 200);
+  expect_true(frame.output.template_transition_result == TemplateTransitionResult::kTrackerRejected &&
+                  !frame.output.template_probation_active && !tracker.pending_template_id &&
+                  tracker.last_abort_id == tracker.last_prepare_id,
+              "a false abort is reported and physical staged state is discarded");
+
+  runtime.initialize(image, roi, 5, 200);
+  tracker.reject_abort = false;
+  tracker.reject_commit = false;
+  tracker.emit_reliable = true;
+  const auto committed_stage = runtime.process_frame(image, 6, 240).output.template_transition;
+  frame = runtime.process_frame(image, 7, 280);
+  expect_true(frame.output.template_transition_applied && committed_stage &&
+                  tracker.recent_template_generation == committed_stage->template_slot_id &&
+                  tracker.safe_template_generation == 0,
+              "successful commit rotates the previous recent feature into safe");
+  tracker.emit_reliable = false;
+  runtime.process_frame(image, 8, 320);
+  tracker.emit_reliable = true;
+  tracker.reliable_bbox = BBox{44, 30, 20, 20};
+  runtime.process_frame(image, 9, 360);
+  tracker.on_stage = [] { throw std::runtime_error("recovery extraction failed"); };
+  frame = runtime.process_frame(image, 10, 400);
+  expect_true(frame.output.template_transition && frame.output.template_transition->recovery &&
+                  !frame.output.template_transition_applied && !frame.output.accepted &&
+                  !frame.output.reacquired && frame.output.tracking_phase == TrackingPhase::kSearching &&
+                  frame.output.control_source == ControlSource::kMotionSearch &&
+                  same_bbox(runtime.controller().current_bbox(), roi) &&
+                  same_bbox(tracker.committed_bbox, roi) && !tracker.pending_template_id &&
+                  tracker.recent_template_generation == committed_stage->template_slot_id &&
+                  tracker.safe_template_generation == 0,
+              "failed recovery prepare preserves both committed templates and search authorization");
+  tracker.on_stage = {};
+  frame = runtime.process_frame(image, 11, 440);
+  expect_true(!frame.output.accepted && frame.output.recovery_confirmation_hits == 1 &&
+                  frame.plan.template_run_mode == TemplateRunMode::kRecentAndSafe,
+              "recovery starts a fresh confirmation after a failed transaction");
+
+  tracker.on_commit = [] { throw std::runtime_error("post-prepare bbox commit failed"); };
+  bool bbox_commit_failed = false;
+  try { runtime.process_frame(image, 12, 480); }
+  catch (const std::runtime_error&) { bbox_commit_failed = true; }
+  expect_true(bbox_commit_failed && !tracker.pending_template_id &&
+                  !runtime.controller().has_template_probation() &&
+                  tracker.last_abort_id == tracker.last_prepare_id &&
+                  same_bbox(runtime.controller().current_bbox(), roi),
+              "post-finish bbox failure aborts the physical slot and controller request synchronously");
+  tracker.on_commit = {};
+  frame = runtime.process_frame(image, 13, 520);
+  expect_true(!frame.output.accepted && frame.output.recovery_confirmation_hits == 1 &&
+                  frame.plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                  !frame.template_slot_revocation,
+              "post-finish exception neither replays recovery nor revokes an unlogged new slot");
+
+}
+
+void test_runtime_rolls_back_finished_frames(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const BBox roi{40, 30, 20, 20};
+  const BBox moved{45, 30, 20, 20};
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.motion_search_confidence_ms = 1000;
+  config.recent_probation_frames = 1;
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  NullDetectorAdapter detector;
+  LongTermRuntime runtime(config, tracker, detector);
+  runtime.initialize(image, roi, 0, 0);
+  tracker.reliable_bbox = moved;
+  tracker.on_commit = [] { throw std::runtime_error("bbox write failed"); };
+  bool thrown = false;
+  try { runtime.process_frame(image, 1, 40); }
+  catch (const std::runtime_error&) { thrown = true; }
+  expect_true(thrown && same_bbox(runtime.controller().current_bbox(), roi) &&
+                  same_bbox(tracker.committed_bbox, roi),
+              "ordinary bbox failure restores completed controller geometry");
+  tracker.on_commit = {};
+  tracker.on_commit_after_write = [] { throw std::runtime_error("bbox write failed after mutation"); };
+  thrown = false;
+  try { runtime.process_frame(image, 1, 40); }
+  catch (const std::runtime_error&) { thrown = true; }
+  expect_true(thrown && same_bbox(runtime.controller().current_bbox(), roi) &&
+                  same_bbox(tracker.committed_bbox, roi),
+              "post-mutation bbox failure restores both controller and tracker geometry");
+  tracker.on_commit_after_write = {};
+  bool retried = false;
+  try { retried = runtime.process_frame(image, 1, 40).output.accepted; }
+  catch (const std::exception&) {}
+  expect_true(retried, "ordinary bbox failure leaves the same timestamp retryable");
+
+  runtime.initialize(image, roi, 1, 40);
+  tracker.emit_reliable = false;
+  runtime.process_frame(image, 2, 80);
+  tracker.emit_reliable = true;
+  runtime.process_frame(image, 3, 120);
+  const auto stage = runtime.process_frame(image, 4, 160);
+  expect_true(stage.output.reacquired && stage.output.template_transition_applied,
+              "recovery-commit fixture reaches acknowledged probation");
+  const auto previous_bbox = tracker.committed_bbox;
+  tracker.reliable_bbox = BBox{47, 30, 20, 20};
+  tracker.reject_commit = true;
+  const auto rejected = runtime.process_frame(image, 5, 200);
+  expect_true(rejected.output.template_transition_result == TemplateTransitionResult::kTrackerRejected &&
+                  !rejected.output.template_transition_applied && !rejected.output.accepted &&
+                  !rejected.output.trusted_for_state_update &&
+                  rejected.output.tracking_phase == TrackingPhase::kSearching &&
+                  rejected.output.control_source == ControlSource::kMotionSearch &&
+                  !tracker.pending_template_id &&
+                  same_bbox(tracker.committed_bbox, previous_bbox) &&
+                  same_bbox(runtime.controller().current_bbox(), previous_bbox),
+              "rejected recovery commit publishes motion search and restores both bboxes on the failure frame");
+  const auto next = runtime.process_frame(image, 6, 240);
+  expect_true(next.plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                  !next.output.accepted && next.output.recovery_confirmation_hits == 1,
+              "rejected recovery commit starts a fresh confirmation on the next frame");
+
+  config.motion_search_confidence_ms = 35;
+  FakeTracker expired_tracker;
+  expired_tracker.emit_recent_safe_roles = true;
+  LongTermRuntime expired_runtime(config, expired_tracker, detector);
+  expired_runtime.initialize(image, roi, 0, 0);
+  expired_tracker.emit_reliable = false;
+  expired_runtime.process_frame(image, 1, 40);
+  expired_tracker.emit_reliable = true;
+  expired_runtime.process_frame(image, 2, 80);
+  const auto expired_stage = expired_runtime.process_frame(image, 3, 120);
+  expired_tracker.reject_commit = true;
+  const auto expired_commit = expired_runtime.process_frame(image, 4, 160);
+  expect_true(expired_stage.output.reacquired && !expired_commit.output.accepted &&
+                  expired_commit.output.control_valid &&
+                  expired_commit.output.control_source == ControlSource::kMotionSearch &&
+                  expired_commit.output.template_transition_result == TemplateTransitionResult::kTrackerRejected,
+              "failed recovery commit resumes bounded search without accepting observation control");
+}
+
+void test_runtime_reports_unlogged_slot_revocations(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.stable_frames_for_update = 1;
+  config.recent_update_interval_ms = 1;
+  config.recent_probation_frames = 1;
+  const BBox bbox{40, 30, 20, 20};
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  NullDetectorAdapter detector;
+  LongTermRuntime runtime(config, tracker, detector);
+  runtime.initialize(image, bbox, 0, 0);
+  const auto staged = runtime.process_frame(image, 1, 40);
+  expect_true(staged.output.template_transition_applied &&
+                  staged.output.template_transition->template_slot_id == 1,
+              "revocation fixture starts with logged stage slot one");
+
+  tracker.on_commit_after_write = [] { throw std::runtime_error("bbox write failed"); };
+  bool threw = false;
+  try { runtime.process_frame(image, 2, 80); }
+  catch (const std::runtime_error&) { threw = true; }
+  tracker.on_commit_after_write = {};
+  expect_true(threw && !tracker.pending_template_id, "unlogged failure revokes physical stage");
+  expect_true(!runtime.acknowledge_template_slot_revocation(1),
+              "a revocation cannot be acknowledged before a row delivers it");
+  const auto retry = runtime.process_frame(image, 2, 80);
+  const auto row = make_tracking_log_row(retry);
+  expect_true(retry.output.template_transition_applied &&
+                  retry.output.template_transition->transaction_id == 3 &&
+                  retry.output.template_transition->template_slot_id == 3 &&
+                  retry.template_slot_revocation && retry.template_slot_revocation->slot_id == 1 &&
+                  retry.template_slot_revocation->reason == TemplateSlotRevocationReason::kFrameApplicationFailed &&
+                  tracking_frame_json(row).find("\"revoked_template_slot_id\":1") != std::string::npos,
+              "retry records the old slot revocation alongside a fresh stage after the burned ID");
+  expect_true(!runtime.acknowledge_template_slot_revocation(3),
+              "acknowledging a new stage cannot consume a pending revocation");
+  const auto before_rejected_frame = tracker.infer_calls;
+  const auto before_rejected_commit = tracker.commit_calls;
+  const auto trusted_bbox = runtime.controller().current_bbox();
+  bool unacknowledged_frame_rejected = false;
+  try { runtime.process_frame(image, 3, 120); }
+  catch (const std::logic_error&) { unacknowledged_frame_rejected = true; }
+  bool unacknowledged_reset_rejected = false;
+  try { runtime.initialize(image, bbox, 2, 80); }
+  catch (const std::logic_error&) { unacknowledged_reset_rejected = true; }
+  expect_true(unacknowledged_frame_rejected && unacknowledged_reset_rejected &&
+                  tracker.infer_calls == before_rejected_frame &&
+                  tracker.commit_calls == before_rejected_commit &&
+                  tracker.pending_template_id == 3 &&
+                  same_bbox(runtime.controller().current_bbox(), trusted_bbox),
+              "an unacknowledged revocation blocks later frames and reselection before mutation");
+  expect_true(runtime.acknowledge_template_slot_revocation(1) &&
+                  !runtime.acknowledge_template_slot_revocation(1),
+              "successful revocation acknowledgement matches once");
+  // Avoid masking the failure on the old runtime if it already consumed frame 3.
+  if (!unacknowledged_frame_rejected) return;
+
+  tracker.on_commit_after_write = [] { throw std::runtime_error("second bbox write failed"); };
+  threw = false;
+  try { runtime.process_frame(image, 3, 120); }
+  catch (const std::runtime_error&) { threw = true; }
+  tracker.on_commit_after_write = {};
+  const auto later = runtime.process_frame(image, 3, 120);
+  expect_true(threw && later.template_slot_revocation &&
+                  later.template_slot_revocation->slot_id == 3 &&
+                  later.output.template_transition_applied &&
+                  later.output.template_transition->template_slot_id == 5 &&
+                  !later.template_heads.staged,
+              "acknowledgement makes room for the next revocation and fresh stage");
+  expect_true(runtime.acknowledge_template_slot_revocation(3),
+              "second revocation can be acknowledged independently");
+  const auto replacement = later.output.template_transition->template_slot_id;
+  runtime.initialize(image, bbox, 3, 120);
+  const auto reinitialized = runtime.process_frame(image, 4, 160);
+  expect_true(reinitialized.template_slot_revocation &&
+                  reinitialized.template_slot_revocation->slot_id == replacement &&
+                  reinitialized.template_slot_revocation->reason == TemplateSlotRevocationReason::kReinitialized,
+              "reinitialization explicitly reports the revoked physical slot");
 }
 
 void test_runtime_target_class_recovery_requests(const nanotrack::ImageView& image) {
@@ -667,9 +1029,10 @@ void test_frame_lifetime(const nanotrack::ImageView& image) {
         action_runtime.process_frame(image, frame, frame * 100);
       }
     } catch (const TrackerFailure& error) { original_action_error = error.id == 93; }
-    expect_true(original_action_error &&
-                    same_bbox(action_runtime.controller().current_bbox(), BBox{41, 30, 20, 20}),
-                "tracker action exception preserves the original error and committed controller bbox");
+    expect_true(original_action_error != template_failure &&
+                    same_bbox(action_runtime.controller().current_bbox(),
+                              template_failure ? BBox{41, 30, 20, 20} : roi),
+                "bbox callback rolls back its frame and prepare failure retains accepted tracking");
     action_tracker.on_commit = {};
     action_tracker.on_stage = {};
     bool action_reinitialized = false;
@@ -979,10 +1342,110 @@ void test_target_class_session_config(const nanotrack::ImageView& image) {
               "fixed target with no detector initializes NanoTrack without detector recovery");
 }
 
+void test_tentative_recent_does_not_commit() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.suspicion_enter_ms = 40;
+  config.occlusion_min_reference_samples = 3;
+  config.stable_frames_for_update = 4;
+  config.recent_update_interval_ms = 1;
+  FakeTracker tracker;
+  FakeDetector detector;
+  LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  const BBox trusted{40, 30, 20, 20};
+  const BBox tentative{45, 30, 20, 20};
+  runtime.initialize(image, trusted, 0, 0);
+  for (std::uint64_t id = 1; id <= 6; ++id) {
+    const auto timestamp = static_cast<std::int64_t>(id * 40);
+    const bool clean = id <= 3;
+    const ResponseMetrics metrics = clean ? ResponseMetrics{0.98F, 0.96F, 20, 30, 0.28F}
+                                          : ResponseMetrics{0.98F, 0.96F, 11, 16, 0.15F};
+    tracker.observation_override = std::vector<TrackerObservation>{
+        {id, timestamp, clean ? trusted : tentative, metrics, TemplateKind::kRecent, id}};
+    if (id == 6) {
+      tracker.observation_override->push_back(
+          {id, timestamp, trusted, {}, TemplateKind::kSafe, id});
+    }
+    const auto result = runtime.process_frame(image, id, timestamp);
+    if (!clean) {
+      expect_true(!result.output.accepted && result.output.observation_present &&
+                      !result.output.trusted_for_state_update &&
+                      result.output.tracking_bbox.x == tentative.x &&
+                      result.output.control_valid,
+                  "runtime exposes the recent observation while controller trust is frozen");
+    }
+    if (id == 6) {
+      expect_true(result.plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+                      result.output.mode == TrackingMode::kSuspected,
+                  "suspected run mode reaches the short-term tracker");
+    }
+  }
+  expect_true(tracker.commit_calls == 3 && tracker.committed_bbox.x == trusted.x &&
+                  tracker.stage_calls == 0 && tracker.recent_commit_calls == 0 &&
+                  tracker.rollback_calls == 0,
+              "tentative frames call no bbox or template learning hooks");
+}
+
+void test_suspected_inference_retry_restores_prediction() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.suspicion_enter_ms = 40;
+  config.suspicion_clear_ms = 80;
+  config.stable_frames_for_update = 50;
+  FakeTracker tracker;
+  FakeDetector detector;
+  LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  runtime.initialize(image, {40, 30, 20, 20}, 0, 0);
+  const auto supply = [&](std::uint64_t id, bool healthy) {
+    const auto time = static_cast<std::int64_t>(id * 40);
+    const ResponseMetrics metrics = healthy ? ResponseMetrics{0.98F, 0.96F, 20, 30, 0.28F}
+                                            : ResponseMetrics{0.98F, 0.96F, 11, 16, 0.15F};
+    tracker.observation_override = std::vector<TrackerObservation>{
+        {id, time, {40.0F + static_cast<float>(id), 30, 20, 20},
+         metrics, TemplateKind::kRecent, id}};
+  };
+  for (std::uint64_t id = 1; id <= 6; ++id) {
+    supply(id, id <= 3 || id == 6);
+    runtime.process_frame(image, id, id * 40);
+  }
+  supply(7, true);
+  tracker.on_infer = [] { throw std::runtime_error("suspected retry fixture"); };
+  bool threw = false;
+  try {
+    runtime.process_frame(image, 7, 280);
+  } catch (const std::runtime_error& error) {
+    threw = std::string(error.what()) == "suspected retry fixture";
+  }
+  expect_true(threw, "suspected inference failure propagates through runtime");
+  const auto failed_plan = tracker.inferred_plans.back();
+  tracker.on_infer = {};
+  try {
+    const auto retried = runtime.process_frame(image, 7, 280);
+    expect_true(retried.plan.mode == TrackingMode::kSuspected &&
+                    retried.plan.motion_predicted_bbox.x == failed_plan.motion_predicted_bbox.x &&
+                    retried.plan.motion_velocity_x == failed_plan.motion_velocity_x &&
+                    retried.output.tracking_phase == TrackingPhase::kSuspected &&
+                    tracker.commit_calls == 3,
+                "same-frame retry preserves prediction, suspicion and frozen learning");
+    supply(8, true);
+    const auto cleared = runtime.process_frame(image, 8, 320);
+    expect_true(cleared.output.accepted && cleared.output.mode == TrackingMode::kTracking,
+                "inference abort does not restart clean hysteresis");
+  } catch (const std::exception& error) {
+    expect_true(false, std::string("same-frame suspected retry failed: ") + error.what());
+  }
+}
+
 }  // namespace
 
 int main() {
   using namespace nanotrack;
+  test_tentative_recent_does_not_commit();
+  test_suspected_inference_retry_restores_prediction();
 
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
@@ -994,6 +1457,10 @@ int main() {
   test_uncertain_runtime_cadence(image);
   test_motion_search_detector_failure_isolation(image);
   test_runtime_atomic_search_commit(image);
+  test_controller_rejects_stale_transition_acknowledgements();
+  test_runtime_transition_failures(image);
+  test_runtime_rolls_back_finished_frames(image);
+  test_runtime_reports_unlogged_slot_revocations(image);
   test_runtime_target_class_recovery_requests(image);
   test_late_precoast_batches(image);
   test_probe_failure_and_same_frame_reselect(image);

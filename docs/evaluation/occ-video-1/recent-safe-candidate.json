@@ -1,0 +1,1707 @@
+{
+  "schema_version": 1,
+  "candidate_id": "RS001",
+  "observed_at": "2026-11-12T02:38:54+08:00",
+  "decision": "HOLD",
+  "reason": "Both targets missed their formal reacquisition windows and lost continuous control. Both failed full-occlusion semantics, and car_002 also failed prediction continuity.",
+  "commits": {
+    "task_base": "68b527659e8be39304ab805c9a6f85219c2af5ce",
+    "runtime_source": "e027006339f0cdafb0b8d38c4dfa5e14abe66593",
+    "runtime_source_subject": "test: prepare recent-safe RK3588 candidate",
+    "evidence_commit_subject": "test: validate recent-safe recovery on RK3588",
+    "evidence_commit_lookup": "git log -1 --format=%H -- docs/evaluation/occ-video-1/recent-safe-candidate.json",
+    "original_evidence": "fcab231098371b4e659282b1472b7faf243934e5",
+    "refreshed_evaluator": "eb344708429949356c9f0161253bb326e0c16502",
+    "refresh_evidence_commit_subject": "test: refresh RS001 evidence with trusted recovery evaluator"
+  },
+  "branch": "codex/occ-video-1-tracking",
+  "worktree": "/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking",
+  "host_tests": {
+    "cmake_configure": "cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-occ-c010-host -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON",
+    "cmake_build": "cmake --build /tmp/nanotrack-occ-c010-host -j4",
+    "ctest_command": "ctest --test-dir /tmp/nanotrack-occ-c010-host --output-on-failure",
+    "ctest": "22/22 PASS in 6.76 s",
+    "ctest_log_sha256": "b1e0167c33ade2acc2fde5f29764e576ffbe0eeb9a37d16279e868efabf0975a",
+    "python_command": "python3 -m unittest discover -s tests -p test_evaluate_occ_video_1.py",
+    "python": "19/19 PASS",
+    "syntax_and_diff": [
+      "python3 -m py_compile scripts/evaluate_occ_video_1.py tests/test_evaluate_occ_video_1.py",
+      "bash -n rk3566/nanotrack_v3/scripts/verify_board.sh",
+      "git diff --check"
+    ],
+    "syntax_and_diff_result": "PASS"
+  },
+  "board": {
+    "board_root": "/home/neardi/Project/SOT/occ-recent-safe-rs001",
+    "source_dir": "/home/neardi/Project/SOT/occ-recent-safe-rs001/source/rk3566/nanotrack_v3",
+    "binary": {
+      "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/build/nanotrack_v3",
+      "sha256": "c4161c0a448351f4a6d84be60bc00ce8c7c6e98ed28134efb5069d7562821304"
+    },
+    "candidate_config": {
+      "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/source/rk3566/nanotrack_v3/config/visible-recent-safe-v1.conf",
+      "sha256": "7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34",
+      "calibrated": false
+    },
+    "archive": {
+      "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/source.tar",
+      "sha256": "fc8deb4fd4f96d28ab27be34feaf2133e6e8dc75937380b8304b913220af080e",
+      "commit_from_archive": "e027006339f0cdafb0b8d38c4dfa5e14abe66593",
+      "host_sha256": "fc8deb4fd4f96d28ab27be34feaf2133e6e8dc75937380b8304b913220af080e",
+      "tracked_files_byte_compared": 314
+    },
+    "car_002_transfer_archive": {
+      "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/car_002.tar",
+      "sha256": "2c35f41c82af6e25e1a793dc25e2f3b42dd68f965edd4bc1bc88373f450d382a",
+      "host_sha256": "2c35f41c82af6e25e1a793dc25e2f3b42dd68f965edd4bc1bc88373f450d382a"
+    },
+    "tracker_artifacts": [
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/models/template_backbone.rknn",
+        "sha256": "eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55",
+        "origin_path": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/models/template_backbone.rknn"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/models/search_backbone.rknn",
+        "sha256": "d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee",
+        "origin_path": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/models/search_backbone.rknn"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/models/head.rknn",
+        "sha256": "4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5",
+        "origin_path": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/models/head.rknn"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/models/manifest.json",
+        "sha256": "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261",
+        "origin_path": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/models/manifest.json"
+      }
+    ],
+    "detector_artifacts": [
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/detector/yolov8n-visdrone9-rk3588-fp16.rknn",
+        "sha256": "8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c",
+        "origin_path": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/detector/detector-manifest.json",
+        "sha256": "ac2b536c3a46761138ecc67a2be865890b8bc0bbe2fb7195c2bb8b12d34049c9",
+        "origin_path": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/detector-manifest.json"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/detector/visdrone9.txt",
+        "sha256": "41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992",
+        "origin_path": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/visdrone9.txt"
+      }
+    ],
+    "datasets": {
+      "shared_video": {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/1.mp4",
+        "sha256": "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d",
+        "width": 1920,
+        "height": 1080,
+        "fps": "30/1",
+        "frames": 271
+      },
+      "car_001": {
+        "origin": "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/data/occ_video_1",
+        "root": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1",
+        "initial_bbox_xywh": [
+          992,
+          582,
+          37,
+          39
+        ],
+        "observable_truth_frames": 258,
+        "verified": [
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/checksums.sha256",
+            "sha256": "872483add3bb9ae3ddc4172b689e224ccf3e65b51bd0ab07268ee02957c3254f"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/annotation_metadata.json",
+            "sha256": "5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/occlusion_events.json",
+            "sha256": "a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/annotation_status.csv",
+            "sha256": "e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/labels.sha256",
+            "sha256": "9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648"
+          }
+        ]
+      },
+      "car_002": {
+        "origin": "/home/u20/single-object-tracking/data/occ_video_1/ground_truth/car_002",
+        "root": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/ground_truth/car_002",
+        "initial_bbox_xywh": [
+          967,
+          513,
+          42,
+          42
+        ],
+        "observable_truth_frames": 252,
+        "formal_evaluation_authorized": true,
+        "verified": [
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/ground_truth/car_002/checksums.sha256",
+            "sha256": "4540ff280903a3e32d8b439f54ddca4497e855095da68ebdbe8fbea044371811"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/ground_truth/car_002/annotation_metadata.json",
+            "sha256": "ddbd8846cd12466d82a833f2f335160a6e6dd1f6189963d268db1b1c54d03a63"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/ground_truth/car_002/events.json",
+            "sha256": "efc0652335fcf19c766def88bf50bb8defab1441fdc8fbb412b85d02135c31db"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/ground_truth/car_002/annotation_status.csv",
+            "sha256": "212525642591c124320e93369f8748d82cc53092628beff051507f930946dec1"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/ground_truth/car_002/labels.sha256",
+            "sha256": "2f0e78ab1123cb035c87efa06171f1057c108f38b06fcc5c1ed3a3ec63fdbe98"
+          },
+          {
+            "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/ground_truth/car_002/estimated_labels.sha256",
+            "sha256": "62a2877bfc38bf4482e3e1cca1e81551272a677f81d932918723e557db3d24e4"
+          }
+        ]
+      }
+    },
+    "validation_artifacts": [
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/setup.sh",
+        "sha256": "51a0d6dc878464410244c91146fcc2d85aeb10a616b709937a68eee69ad0b8b9"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/setup.log",
+        "sha256": "936136391623bbfc9c043f7cd108305526c6b0fae972c64680d4c1a3783b9956"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/configure.log",
+        "sha256": "f8c9919e03c6e94c71f36607192f9f20b99bf797ec4af9dde1ba0c58f45d27e9"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/build.log",
+        "sha256": "1f62f9d04985dfaadebf8ed3e80a013fcbb975ebb1d89246932fef374a26f06a"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/ctest.log",
+        "sha256": "be788a9b84e3437d0d082650368c5529d07330b503c9c3c91a033fa4d2b44b72"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/ldd.txt",
+        "sha256": "3964a28b31a0805e2317a82c851887743a219035712a2c38e54d907573db6421"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/uname.txt",
+        "sha256": "0a1c45b4ddc12667cb6dee1119c48da043514758a9f56412f6564bde19a292e7"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/sdk-probe-verified.cpp",
+        "sha256": "ade1e81a93bb1876b1b90b24cd7f271b37cbe1843fc73f077b3aee039effd949"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/sdk-probe-verified.log",
+        "sha256": "b7ddcdc65f587aced127c56dce3e63219d1435b2e59a8186e8e53499784952db"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/run-target.sh",
+        "sha256": "972ab8e4acfaf8b349e2067759db1b276f9ffce3a7cab590526f2b5faf92bf5a"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/collect-run.py",
+        "sha256": "2591019165d85bee7734e5bad2965c800f1f23074cc18053012d70c9fcaa1c82"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/car_001-summary.json",
+        "sha256": "9e757eb4e660fc3f2b306acb8328c1ee64afe17f722fb9932f146098fcd9a9c0"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/car_002-summary.json",
+        "sha256": "501f0e9d911ae4e01acca22b4c82693dda9b02e7e3f8fe090039cabf11babf7e"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/source/rk3566/nanotrack_v3/scripts/verify_board.sh",
+        "sha256": "e0d36cbfdfa736487c017518f271a591740eadf2c74b82612dfc0a5abf760503"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/source/scripts/evaluate_occ_video_1.py",
+        "sha256": "accfe863093bc1efa1776b3b1582ee7b4796ec19eb3358192f0291c1b3f65d79"
+      },
+      {
+        "path": "/usr/lib/librknnrt.so",
+        "sha256": "0f1c5db6c649c8705759308aa56ecffc3295c7eb465f9ec9170882f44004aa8d"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/archive-compare.log",
+        "sha256": "b5241e4f576e64f5a0dd7ff4f94424804750c10adcbb8a089f886ba84a573652"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/collect-provenance.py",
+        "sha256": "fc4129ec85686206ae30863c6c5d2a5a2c7c425479088f4c25cfc5972ccc5b3e"
+      },
+      {
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/provenance/identity-summary.json",
+        "sha256": "f64855abb4877076d077e8a28a501e5b55d2734ba974f4359f4290bf019e57b1"
+      }
+    ],
+    "protected_c012": {
+      "root": "/home/neardi/Project/SOT/occ-candidate-e865c78",
+      "pre_post_verified": [
+        {
+          "path": "/home/neardi/Project/SOT/occ-candidate-e865c78/build/nanotrack_v3",
+          "sha256": "e2a44c74bf6410dc79b5d07a5c134e27cd0096cdca16a81c67d2f27df521ab4d"
+        },
+        {
+          "path": "/home/neardi/Project/SOT/occ-candidate-e865c78/rk3588-interactive-debug.conf",
+          "sha256": "e7daafa4373f676b3e9b10984e48fa2ffe46cc6d9ec1c422dbe3d4e77e88544a"
+        },
+        {
+          "path": "/home/neardi/Project/SOT/occ-candidate-e865c78/source/rk3566/nanotrack_v3/config/visible-occlusion-calibrated.conf",
+          "sha256": "82ce1e035e202f10a46f1aa2a21f4ed42d79839dca01b0629e1848c90919432c"
+        }
+      ]
+    },
+    "uname": "Linux LKD3588 6.1.84 #1 SMP Tue Feb  3 19:12:00 CST 2026 aarch64 aarch64 aarch64 GNU/Linux",
+    "native_ctest": [
+      "100% tests passed, 0 tests failed out of 22",
+      "",
+      "Total Test time (real) =  13.85 sec"
+    ],
+    "dynamic_dependencies": [
+      "libopencv_highgui.so.4.5d => /lib/aarch64-linux-gnu/libopencv_highgui.so.4.5d (0x0000007f85110000)",
+      "libopencv_videoio.so.4.5d => /lib/aarch64-linux-gnu/libopencv_videoio.so.4.5d (0x0000007f85090000)",
+      "libopencv_imgproc.so.4.5d => /lib/aarch64-linux-gnu/libopencv_imgproc.so.4.5d (0x0000007f84d20000)",
+      "libopencv_core.so.4.5d => /lib/aarch64-linux-gnu/libopencv_core.so.4.5d (0x0000007f84a90000)",
+      "librknnrt.so => /lib/librknnrt.so (0x0000007f843a0000)",
+      "libopencv_imgcodecs.so.4.5d => /lib/aarch64-linux-gnu/libopencv_imgcodecs.so.4.5d (0x0000007f83e90000)"
+    ],
+    "memory_measurement": {
+      "proc_status_interval_seconds": 0.1,
+      "tool": "/proc/<runtime PID>/status",
+      "sampled_fields": [
+        "VmRSS",
+        "VmHWM",
+        "Threads"
+      ],
+      "gnu_time_path_present": false,
+      "boundary": "Peak VmHWM observed at polling times for the tracker process, including decode, encode and detector threads. The final interval before exit is unsampled."
+    },
+    "hostname": "LKD3588",
+    "native_build_type": "Debug",
+    "native_build_commands": [
+      "cd /home/neardi/Project/SOT/occ-recent-safe-rs001",
+      "cmake -S source/rk3566/nanotrack_v3 -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON -DCMAKE_CXX_FLAGS=-Werror=switch -DOpenCV_DIR=/usr/lib/aarch64-linux-gnu/cmake/opencv4 -DRKNN_INCLUDE_DIR=/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/include -DRKNN_LIBRARY=/usr/lib/librknnrt.so",
+      "cmake --build build --parallel 4",
+      "ctest --test-dir build --output-on-failure"
+    ],
+    "rknn_api": "2.1.0 (967d001cc8@2024-08-07T19:28:19)",
+    "rknn_driver": "0.9.8"
+  },
+  "targets": {
+    "car_001": {
+      "run_root": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001",
+      "exit_codes": {
+        "runtime": 0,
+        "verifier": 0,
+        "evaluator": 1
+      },
+      "commands": [
+        "stdbuf -oL -eL /home/neardi/Project/SOT/occ-recent-safe-rs001/build/nanotrack_v3 --video /home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/1.mp4 --bbox 992\\,582\\,37\\,39 --model-dir /home/neardi/Project/SOT/occ-recent-safe-rs001/models --sensor visible --controller-config /home/neardi/Project/SOT/occ-recent-safe-rs001/source/rk3566/nanotrack_v3/config/visible-recent-safe-v1.conf --detector-model /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/yolov8n-visdrone9-rk3588-fp16.rknn --detector-manifest /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/detector-manifest.json --detector-labels /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/visdrone9.txt --detector-class-id 2 --detector-conf 0.25 --detector-nms 0.45 --max-frames 270 --output-size 1920x1080 --output-video /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/output.avi --output-boxes /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv --session-metadata /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/session-metadata.json",
+        "EXPECTED_RKNN_TARGET=rk3588 EXPECTED_TRACKING_SCHEMA=11 /home/neardi/Project/SOT/occ-recent-safe-rs001/source/rk3566/nanotrack_v3/scripts/verify_board.sh /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001 /home/neardi/Project/SOT/occ-recent-safe-rs001/models 271 1920 1080 /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/yolov8n-visdrone9-rk3588-fp16.rknn /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/detector-manifest.json /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/visdrone9.txt",
+        "python3 /home/neardi/Project/SOT/occ-recent-safe-rs001/source/scripts/evaluate_occ_video_1.py --dataset-root /home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1 --target-id car_001 --boxes /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv --session-metadata /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/session-metadata.json --scope full --source-commit e027006339f0cdafb0b8d38c4dfa5e14abe66593 --config-sha256 7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34 --model-sha256 3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261 --output-json /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.json --output-markdown /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.md",
+        "ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=width\\,height\\,r_frame_rate\\,avg_frame_rate\\,nb_read_frames -of json /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/output.avi"
+      ],
+      "artifact_sha256": {
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv": "0fa1e7ec2ad2d927d3340274703549ce50a2bdc070c5ac0682b604fb44f273eb",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv.jsonl": "57c3a3508a3e89676ea10c6de9282c35733b41dad36e252dc9de02cca303dbdd",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/commands.txt": "1bf06aa09cd2a4fcf7596d045fc63b791f0b1cc84f8fae1bb7f51099da968861",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-command-eb34470.txt": "2fd3f6203922fe92a1918b12429b5b92716852890b47bd409cf535af2b2fb700",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.json": "b338b8b8ce5967d377bbdf15751a8ab36b63023151758e162937a34a88ddee19",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.log": "77444698d2d91464b662b62d4995915ef78c2a9e3a92e216c8f9e6139e3ec20c",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-full.md": "0de2acb648f2aa4fd42e2ffdcc583392bf28031b7a882b29402edfa4ebb011ae",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/ffprobe.json": "0a961e7873866eb4c1a1b3415f5c1cba0e81ce06ade297f6ab43999810b636a1",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/manifest.json": "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/output.avi": "7d0438ea9da9dc08f5f7effa5d0084668c9c97091b8e818e4e2a5e11eb5aa1fd",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/process-status.csv": "dd7c3594fc74397ededf5e753cc4a3c66ff237eae0617c641f4b5c63396dc6ca",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/run.log": "f615f75051c29b70d5566fd05448c3d32c30743b57940127797f43c4917903a5",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/runtime.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/session-metadata.json": "3f38d89ab662342013438a2d5b2da190cf8370281b6c1483083155f76593486b",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/verifier.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/verifier.log": "86808013d246f358f354b6101ef4e84470bb2cd29dfb95fa89482d31d735f02e"
+      },
+      "output_video": {
+        "width": 1920,
+        "height": 1080,
+        "r_frame_rate": "30/1",
+        "avg_frame_rate": "30/1",
+        "nb_read_frames": "271"
+      },
+      "tracking_schema_version": 11,
+      "companion": {
+        "published": true,
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv.jsonl",
+        "rows": 271
+      },
+      "rknn_api_version": "2.1.0 (967d001cc8@2024-08-07T19:28:19)",
+      "rknn_driver_version": "0.9.8",
+      "detector_rknn_api_version": "2.1.0 (967d001cc8@2024-08-07T19:28:19)",
+      "detector_rknn_driver_version": "0.9.8",
+      "verifier_log": "PASS board artifacts output_frames=271 tracked_frames=270",
+      "evaluator_verdict": "FAIL",
+      "evaluator_dataset": "occ_video_1_car_001",
+      "evaluator_gates": {
+        "continuous_control": {
+          "applicable": true,
+          "detail": "post-initialization control and source invariants",
+          "frames": [
+            248,
+            249,
+            250,
+            251,
+            252,
+            253,
+            254,
+            255,
+            256,
+            257,
+            258,
+            259,
+            260,
+            261,
+            262,
+            263,
+            264,
+            265,
+            266,
+            267,
+            268,
+            269,
+            270
+          ],
+          "passed": false
+        },
+        "full_occlusion_semantics": {
+          "applicable": true,
+          "detail": "full occlusion must publish SEARCHING/no observation/MOTION_SEARCH control",
+          "frames": [
+            172,
+            173
+          ],
+          "passed": false
+        },
+        "identity_proxy": {
+          "applicable": true,
+          "detail": "no corridor jump or near-zero visible truth overlap; jump limit 29.834139px",
+          "frames": [],
+          "passed": true
+        },
+        "prediction_continuity": {
+          "applicable": true,
+          "detail": "estimated center <=1 diagonal; max speed 313.778508/593.399534, max acceleration 8935.680808/14261.261894",
+          "frames": [],
+          "passed": true
+        },
+        "reacquisition": {
+          "applicable": true,
+          "detail": "exactly one reacquisition in [182, 190) observed []. Invalid v11 claims []",
+          "frames": [],
+          "passed": false
+        },
+        "tracking_schema": {
+          "applicable": true,
+          "detail": "observed schema [11]; required 11 with semantic columns",
+          "frames": [],
+          "passed": true
+        },
+        "visible_boxes": {
+          "applicable": true,
+          "detail": "valid-observation mean IoU 0.764074 (floor 0.70); per-frame IoU >=0.45 and center error <=0.50; all-visible mean IoU 0.602621",
+          "frames": [],
+          "passed": true
+        }
+      },
+      "evaluator_strata": {
+        "estimated_trajectory": {
+          "frames": 13,
+          "max_acceleration_px_per_s2": 8935.680808482832,
+          "max_normalized_center_error": 0.15582096718556274,
+          "max_speed_px_per_s": 313.7785082936857
+        },
+        "full_occlusion": {
+          "frames": 9,
+          "semantic_failures": [
+            172,
+            173
+          ]
+        },
+        "observation_visible": {
+          "frames": 168,
+          "max_normalized_center_error": 0.19169261631084258,
+          "mean_iou": 0.7640744508475515,
+          "min_iou": 0.5147239937746557
+        },
+        "post_reappearance_visible": {
+          "frames": 89,
+          "mean_iou": 0.2948372084140905
+        },
+        "pre_occlusion_visible": {
+          "frames": 169,
+          "mean_iou": 0.7647079526748966
+        },
+        "visible": {
+          "frames": 258,
+          "max_normalized_center_error": 1.638377046642553,
+          "mean_iou": 0.6026207579492696,
+          "min_iou": 0.0
+        }
+      },
+      "evaluator_reacquisition": {
+        "deadline_exclusive": 190,
+        "first_frame": null,
+        "first_reliable_reappearance_frame": 182,
+        "frames": [],
+        "invalid_claim_frames": []
+      },
+      "latency_ms": {
+        "tracker": {
+          "samples": 270,
+          "mean": 7.571640596296296,
+          "p50": 7.6262135,
+          "p95": 9.6330005,
+          "p99": 10.480796830000001,
+          "max": 10.650186
+        },
+        "runtime": {
+          "samples": 270,
+          "mean": 7.751234440740741,
+          "p50": 7.824823,
+          "p95": 9.97299015,
+          "p99": 10.76469649,
+          "max": 12.075772
+        },
+        "pipeline": {
+          "samples": 270,
+          "mean": 110.15822858518519,
+          "p50": 109.9026525,
+          "p95": 113.4164433,
+          "p99": 115.25682595,
+          "max": 118.638336
+        }
+      },
+      "memory": {
+        "samples": 291,
+        "first_sample_ms": 3,
+        "last_sample_ms": 30823,
+        "max_sampled_VmHWM_kB": 237260,
+        "max_sampled_VmRSS_kB": 237260,
+        "max_sampled_threads": 17
+      },
+      "head_execution": {
+        "physical_calls": {
+          "recent": 270,
+          "safe": 96,
+          "staged": 14
+        },
+        "physical_calls_per_frame_counts": {
+          "1": 160,
+          "2": 110
+        },
+        "safe_reused_recent_frames": [],
+        "safe_reused_recent_count": 0
+      },
+      "state_counts": {
+        "ASSISTED_RECOVERY": 60,
+        "LOCAL_RECOVERY": 24,
+        "LOST": 7,
+        "TRACKING": 174,
+        "UNCERTAIN": 6
+      },
+      "phase_counts": {
+        "SEARCHING": 97,
+        "SUSPECTED": 3,
+        "TRACKING": 171
+      },
+      "state_transitions": [
+        {
+          "state": "TRACKING",
+          "tracking_phase": "TRACKING",
+          "first_frame": 0,
+          "last_frame": 48
+        },
+        {
+          "state": "TRACKING",
+          "tracking_phase": "SUSPECTED",
+          "first_frame": 49,
+          "last_frame": 49
+        },
+        {
+          "state": "TRACKING",
+          "tracking_phase": "TRACKING",
+          "first_frame": 50,
+          "last_frame": 169
+        },
+        {
+          "state": "TRACKING",
+          "tracking_phase": "SUSPECTED",
+          "first_frame": 170,
+          "last_frame": 170
+        },
+        {
+          "state": "TRACKING",
+          "tracking_phase": "TRACKING",
+          "first_frame": 171,
+          "last_frame": 172
+        },
+        {
+          "state": "TRACKING",
+          "tracking_phase": "SUSPECTED",
+          "first_frame": 173,
+          "last_frame": 173
+        },
+        {
+          "state": "UNCERTAIN",
+          "tracking_phase": "SEARCHING",
+          "first_frame": 174,
+          "last_frame": 179
+        },
+        {
+          "state": "LOCAL_RECOVERY",
+          "tracking_phase": "SEARCHING",
+          "first_frame": 180,
+          "last_frame": 203
+        },
+        {
+          "state": "ASSISTED_RECOVERY",
+          "tracking_phase": "SEARCHING",
+          "first_frame": 204,
+          "last_frame": 263
+        },
+        {
+          "state": "LOST",
+          "tracking_phase": "SEARCHING",
+          "first_frame": 264,
+          "last_frame": 270
+        }
+      ],
+      "recovery_events": [],
+      "candidate_source_counts": {
+        "DETECTOR": 59,
+        "NONE": 186,
+        "RECENT": 18,
+        "SAFE": 8
+      },
+      "candidate_conflict_frames": [
+        187,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        195,
+        196,
+        197,
+        198,
+        200,
+        201,
+        202,
+        203,
+        204,
+        205,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+        219,
+        220,
+        221,
+        222,
+        223,
+        224,
+        225,
+        226,
+        227,
+        228,
+        229,
+        230,
+        231,
+        232,
+        233,
+        234,
+        235,
+        236,
+        237,
+        238,
+        239,
+        240,
+        241,
+        242,
+        243,
+        244,
+        245,
+        246,
+        247,
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+        254,
+        255,
+        256,
+        257,
+        258,
+        259,
+        260,
+        261,
+        262,
+        263,
+        264,
+        265,
+        266,
+        267,
+        268,
+        269,
+        270
+      ],
+      "detector_same_class_ambiguity_frames": [
+        177,
+        178,
+        212,
+        213,
+        214,
+        224,
+        225,
+        226,
+        236,
+        237,
+        238,
+        248,
+        249,
+        250,
+        260,
+        261,
+        262
+      ],
+      "control_source_counts": {
+        "MOTION_SEARCH": 74,
+        "NONE": 23,
+        "OBSERVATION": 174
+      },
+      "control_validity": [
+        {
+          "control_valid": "1",
+          "control_source": "OBSERVATION",
+          "first_frame": 0,
+          "last_frame": 173
+        },
+        {
+          "control_valid": "1",
+          "control_source": "MOTION_SEARCH",
+          "first_frame": 174,
+          "last_frame": 247
+        },
+        {
+          "control_valid": "0",
+          "control_source": "NONE",
+          "first_frame": 248,
+          "last_frame": 270
+        }
+      ],
+      "post_init_control_invalid_frames": [
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+        254,
+        255,
+        256,
+        257,
+        258,
+        259,
+        260,
+        261,
+        262,
+        263,
+        264,
+        265,
+        266,
+        267,
+        268,
+        269,
+        270
+      ],
+      "search_without_motion_authorization_frames": [
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+        254,
+        255,
+        256,
+        257,
+        258,
+        259,
+        260,
+        261,
+        262,
+        263,
+        264,
+        265,
+        266,
+        267,
+        268,
+        269,
+        270
+      ],
+      "template_action_counts": {
+        "COMMIT_RECENT": 4,
+        "NONE": 261,
+        "ROLLBACK_RECENT": 1,
+        "STAGE_RECENT": 5
+      },
+      "template_transition_result_counts": {
+        "APPLIED": 10,
+        "NONE": 261
+      },
+      "transition_failures": [],
+      "artifact_manifest": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/SHA256SUMS",
+      "candidate_conflict_count": 76,
+      "control_expiry": [
+        {
+          "first_invalid_frame": 248,
+          "first_invalid_timestamp_ms": 8267,
+          "last_trusted_frame": 172,
+          "last_trusted_timestamp_ms": 5733,
+          "elapsed_since_trusted_ms": 2534
+        }
+      ],
+      "artifact_manifest_sha256": "7fef754341a9c1d1b8fc70a32dda7cb865476552189a7cdee37f7ebd5aab8cee",
+      "archived_original_manifest": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/SHA256SUMS",
+      "archived_original_manifest_sha256": "ed898ad8df126e4bf4cb21543cbec3b651512b849db05277b1a0f88624dbad43",
+      "evaluator_original_archive": {
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/evaluator-full.json": "76e164a66b706535bfd408abd1c3d6b02cbbe5e4ad9f45451c720f765def04f0",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/evaluator-full.log": "b8c9b4c6b07be68606ea81d0beab7f74e576e9b80946a45456593b08ad0e8871",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/evaluator-full.md": "9ccaf9746f3d958854120b69820ef7b4847f2d1feca8f6897af645dfd2e1d818",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/evaluator-original-e027006/evaluator.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+      },
+      "evaluator_refresh_command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/evaluator-eb34470.py --dataset-root /home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1 --target-id car_001 --boxes /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/bboxes.csv --session-metadata /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/session-metadata.json --scope full --source-commit e027006339f0cdafb0b8d38c4dfa5e14abe66593 --config-sha256 7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34 --model-sha256 3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261 --output-json /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/.evaluator-refresh-eb34470/evaluator-full.json --output-markdown /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_001/.evaluator-refresh-eb34470/evaluator-full.md",
+      "gate_outcomes_match_original": true
+    },
+    "car_002": {
+      "run_root": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002",
+      "exit_codes": {
+        "runtime": 0,
+        "verifier": 0,
+        "evaluator": 1
+      },
+      "commands": [
+        "stdbuf -oL -eL /home/neardi/Project/SOT/occ-recent-safe-rs001/build/nanotrack_v3 --video /home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1/1.mp4 --bbox 967\\,513\\,42\\,42 --model-dir /home/neardi/Project/SOT/occ-recent-safe-rs001/models --sensor visible --controller-config /home/neardi/Project/SOT/occ-recent-safe-rs001/source/rk3566/nanotrack_v3/config/visible-recent-safe-v1.conf --detector-model /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/yolov8n-visdrone9-rk3588-fp16.rknn --detector-manifest /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/detector-manifest.json --detector-labels /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/visdrone9.txt --detector-class-id 2 --detector-conf 0.25 --detector-nms 0.45 --max-frames 270 --output-size 1920x1080 --output-video /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/output.avi --output-boxes /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv --session-metadata /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/session-metadata.json",
+        "EXPECTED_RKNN_TARGET=rk3588 EXPECTED_TRACKING_SCHEMA=11 /home/neardi/Project/SOT/occ-recent-safe-rs001/source/rk3566/nanotrack_v3/scripts/verify_board.sh /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002 /home/neardi/Project/SOT/occ-recent-safe-rs001/models 271 1920 1080 /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/yolov8n-visdrone9-rk3588-fp16.rknn /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/detector-manifest.json /home/neardi/Project/SOT/occ-recent-safe-rs001/detector/visdrone9.txt",
+        "python3 /home/neardi/Project/SOT/occ-recent-safe-rs001/source/scripts/evaluate_occ_video_1.py --dataset-root /home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1 --target-id car_002 --boxes /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv --session-metadata /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/session-metadata.json --scope full --source-commit e027006339f0cdafb0b8d38c4dfa5e14abe66593 --config-sha256 7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34 --model-sha256 3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261 --output-json /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.json --output-markdown /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.md",
+        "ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=width\\,height\\,r_frame_rate\\,avg_frame_rate\\,nb_read_frames -of json /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/output.avi"
+      ],
+      "artifact_sha256": {
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv": "f2ccaaedfa8db7ea3195861b796ac176857ea6ea4ed68a1880d4950c38801f46",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv.jsonl": "08e31d90292316fe11087c409af210115bb821351943de81fe47556c968e5593",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/commands.txt": "03e0bf5e86d62083bbc34f9f43b03bcf738c00f127c1fede3afc8b30ed43fba1",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-command-eb34470.txt": "85b009d139f289d6aa8a49e681c7a004625295039bd670a91c70f78895e65b1a",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.json": "3e37c58e1387769203353dd81dcebbacf441ec55a269522b13deb1426fbd1846",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.log": "94f36dbeb52624a695e4a4a0300c4394b2dde218d0fadbb58a7a03263fef1eff",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-full.md": "b2673e732693c3f43e15caf4abe9723ae638d0440e5808dc4c3d53aced6c21b0",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/ffprobe.json": "0a961e7873866eb4c1a1b3415f5c1cba0e81ce06ade297f6ab43999810b636a1",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/manifest.json": "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/output.avi": "dee808467725707228f5eda6045f21aa8388425bc3099855189acab28fc0e0ef",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/process-status.csv": "a4ee96be248374cb5724aa4a5a12173ba22965482505f190bd87bf915a1d3bed",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/run.log": "caf5b028c6fff58e1a24348815a2345b72331119b51c028bb6b147516e915d05",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/runtime.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/session-metadata.json": "e55f67f49cf88ed1a41b1cba3a248ca69109dbbb7b111ff31d81e79f4f94ddbc",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/verifier.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/verifier.log": "86808013d246f358f354b6101ef4e84470bb2cd29dfb95fa89482d31d735f02e"
+      },
+      "output_video": {
+        "width": 1920,
+        "height": 1080,
+        "r_frame_rate": "30/1",
+        "avg_frame_rate": "30/1",
+        "nb_read_frames": "271"
+      },
+      "tracking_schema_version": 11,
+      "companion": {
+        "published": true,
+        "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv.jsonl",
+        "rows": 271
+      },
+      "rknn_api_version": "2.1.0 (967d001cc8@2024-08-07T19:28:19)",
+      "rknn_driver_version": "0.9.8",
+      "detector_rknn_api_version": "2.1.0 (967d001cc8@2024-08-07T19:28:19)",
+      "detector_rknn_driver_version": "0.9.8",
+      "verifier_log": "PASS board artifacts output_frames=271 tracked_frames=270",
+      "evaluator_verdict": "FAIL",
+      "evaluator_dataset": "occ_video_1_car_002",
+      "evaluator_gates": {
+        "continuous_control": {
+          "applicable": true,
+          "detail": "post-initialization control and source invariants",
+          "frames": [
+            145,
+            146,
+            147,
+            148,
+            149,
+            150,
+            151,
+            152,
+            153,
+            154,
+            155,
+            156,
+            157,
+            158,
+            159,
+            160,
+            161,
+            162,
+            163,
+            164,
+            165,
+            166,
+            167,
+            168,
+            169,
+            170,
+            171,
+            172,
+            173,
+            174,
+            175,
+            176,
+            177,
+            178,
+            179,
+            180,
+            181,
+            182,
+            183,
+            184,
+            185,
+            186,
+            187,
+            188,
+            189,
+            190,
+            191,
+            192,
+            193,
+            194,
+            195,
+            196,
+            197,
+            198,
+            199,
+            200,
+            201,
+            202,
+            203,
+            204,
+            205,
+            206,
+            207,
+            208,
+            209,
+            210,
+            211,
+            212,
+            213,
+            214,
+            215,
+            216,
+            217,
+            218,
+            219,
+            220,
+            221,
+            222,
+            223,
+            224,
+            225,
+            226,
+            227,
+            228,
+            229,
+            230,
+            231,
+            232,
+            233,
+            234,
+            235,
+            236,
+            237,
+            238,
+            239,
+            240,
+            241,
+            242,
+            243,
+            244,
+            245,
+            246,
+            247,
+            248,
+            249,
+            250,
+            251,
+            252,
+            253,
+            254,
+            255,
+            256,
+            257,
+            258,
+            259,
+            260,
+            261,
+            262,
+            263,
+            264,
+            265,
+            266,
+            267,
+            268,
+            269,
+            270
+          ],
+          "passed": false
+        },
+        "full_occlusion_semantics": {
+          "applicable": true,
+          "detail": "full occlusion must publish SEARCHING/no observation/MOTION_SEARCH control",
+          "frames": [
+            213,
+            214,
+            215,
+            216
+          ],
+          "passed": false
+        },
+        "identity_proxy": {
+          "applicable": true,
+          "detail": "no corridor jump or near-zero visible truth overlap; jump limit 27.085728px",
+          "frames": [],
+          "passed": true
+        },
+        "prediction_continuity": {
+          "applicable": true,
+          "detail": "estimated center <=1 diagonal; max speed 365.100541/546.850199, max acceleration 7381.659516/12903.614384",
+          "frames": [
+            213,
+            214,
+            215,
+            216
+          ],
+          "passed": false
+        },
+        "reacquisition": {
+          "applicable": true,
+          "detail": "exactly one reacquisition in [230, 271) observed []. Invalid v11 claims []",
+          "frames": [],
+          "passed": false
+        },
+        "tracking_schema": {
+          "applicable": true,
+          "detail": "observed schema [11]; required 11 with semantic columns",
+          "frames": [],
+          "passed": true
+        },
+        "visible_boxes": {
+          "applicable": true,
+          "detail": "valid-observation mean IoU 0.910586 (floor 0.70); per-frame IoU >=0.45 and center error <=0.50; all-visible mean IoU 0.302287",
+          "frames": [],
+          "passed": true
+        }
+      },
+      "evaluator_strata": {
+        "estimated_trajectory": {
+          "frames": 4,
+          "max_acceleration_px_per_s2": 7381.659516440518,
+          "max_normalized_center_error": 5.809881857852028,
+          "max_speed_px_per_s": 365.10054119331795
+        },
+        "full_occlusion": {
+          "frames": 4,
+          "semantic_failures": [
+            213,
+            214,
+            215,
+            216
+          ]
+        },
+        "observation_visible": {
+          "frames": 70,
+          "max_normalized_center_error": 0.11790639615073754,
+          "mean_iou": 0.9105857725976289,
+          "min_iou": 0.6713534007158092
+        },
+        "post_reappearance_visible": {
+          "frames": 41,
+          "mean_iou": 0.0
+        },
+        "pre_occlusion_visible": {
+          "frames": 211,
+          "mean_iou": 0.36102544223144717
+        },
+        "visible": {
+          "frames": 252,
+          "max_normalized_center_error": 6.403835352647382,
+          "mean_iou": 0.30228717583664827,
+          "min_iou": 0.0
+        }
+      },
+      "evaluator_reacquisition": {
+        "deadline_exclusive": 271,
+        "first_frame": null,
+        "first_reliable_reappearance_frame": 230,
+        "frames": [],
+        "invalid_claim_frames": []
+      },
+      "latency_ms": {
+        "tracker": {
+          "samples": 270,
+          "mean": 8.335458614814815,
+          "p50": 8.2932345,
+          "p95": 10.351679599999999,
+          "p99": 10.71591947,
+          "max": 15.090761
+        },
+        "runtime": {
+          "samples": 270,
+          "mean": 8.560600081481482,
+          "p50": 8.710294999999999,
+          "p95": 10.5538083,
+          "p99": 11.094261620000001,
+          "max": 16.803043
+        },
+        "pipeline": {
+          "samples": 270,
+          "mean": 111.20989058888888,
+          "p50": 111.022682,
+          "p95": 113.77696525,
+          "p99": 117.5388651,
+          "max": 125.612617
+        }
+      },
+      "memory": {
+        "samples": 292,
+        "first_sample_ms": 2,
+        "last_sample_ms": 31128,
+        "max_sampled_VmHWM_kB": 235476,
+        "max_sampled_VmRSS_kB": 235476,
+        "max_sampled_threads": 17
+      },
+      "head_execution": {
+        "physical_calls": {
+          "recent": 270,
+          "safe": 200,
+          "staged": 6
+        },
+        "physical_calls_per_frame_counts": {
+          "1": 64,
+          "2": 206
+        },
+        "safe_reused_recent_frames": [],
+        "safe_reused_recent_count": 0
+      },
+      "state_counts": {
+        "ASSISTED_RECOVERY": 60,
+        "LOCAL_RECOVERY": 24,
+        "LOST": 111,
+        "TRACKING": 70,
+        "UNCERTAIN": 6
+      },
+      "phase_counts": {
+        "SEARCHING": 201,
+        "TRACKING": 70
+      },
+      "state_transitions": [
+        {
+          "state": "TRACKING",
+          "tracking_phase": "TRACKING",
+          "first_frame": 0,
+          "last_frame": 69
+        },
+        {
+          "state": "UNCERTAIN",
+          "tracking_phase": "SEARCHING",
+          "first_frame": 70,
+          "last_frame": 75
+        },
+        {
+          "state": "LOCAL_RECOVERY",
+          "tracking_phase": "SEARCHING",
+          "first_frame": 76,
+          "last_frame": 99
+        },
+        {
+          "state": "ASSISTED_RECOVERY",
+          "tracking_phase": "SEARCHING",
+          "first_frame": 100,
+          "last_frame": 159
+        },
+        {
+          "state": "LOST",
+          "tracking_phase": "SEARCHING",
+          "first_frame": 160,
+          "last_frame": 270
+        }
+      ],
+      "recovery_events": [],
+      "candidate_source_counts": {
+        "DETECTOR": 121,
+        "NONE": 124,
+        "RECENT": 24,
+        "SAFE": 2
+      },
+      "candidate_conflict_frames": [
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        174,
+        175,
+        176,
+        177,
+        178,
+        179,
+        180,
+        181,
+        182,
+        183,
+        184,
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        194,
+        195,
+        196,
+        197,
+        198,
+        199,
+        200,
+        201,
+        202,
+        203,
+        204,
+        205,
+        206,
+        207,
+        208,
+        209,
+        210,
+        211,
+        212,
+        213,
+        214,
+        216,
+        217,
+        218,
+        228,
+        229,
+        230,
+        240,
+        241,
+        242,
+        243,
+        244,
+        252,
+        253,
+        254,
+        255,
+        256,
+        264,
+        265,
+        266,
+        267
+      ],
+      "detector_same_class_ambiguity_frames": [
+        73,
+        74,
+        86,
+        108,
+        109,
+        110,
+        132,
+        133,
+        134,
+        216,
+        217,
+        218,
+        228,
+        229,
+        230,
+        242,
+        254,
+        264,
+        265
+      ],
+      "control_source_counts": {
+        "MOTION_SEARCH": 75,
+        "NONE": 126,
+        "OBSERVATION": 70
+      },
+      "control_validity": [
+        {
+          "control_valid": "1",
+          "control_source": "OBSERVATION",
+          "first_frame": 0,
+          "last_frame": 69
+        },
+        {
+          "control_valid": "1",
+          "control_source": "MOTION_SEARCH",
+          "first_frame": 70,
+          "last_frame": 144
+        },
+        {
+          "control_valid": "0",
+          "control_source": "NONE",
+          "first_frame": 145,
+          "last_frame": 270
+        }
+      ],
+      "post_init_control_invalid_frames": [
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        174,
+        175,
+        176,
+        177,
+        178,
+        179,
+        180,
+        181,
+        182,
+        183,
+        184,
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        194,
+        195,
+        196,
+        197,
+        198,
+        199,
+        200,
+        201,
+        202,
+        203,
+        204,
+        205,
+        206,
+        207,
+        208,
+        209,
+        210,
+        211,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+        219,
+        220,
+        221,
+        222,
+        223,
+        224,
+        225,
+        226,
+        227,
+        228,
+        229,
+        230,
+        231,
+        232,
+        233,
+        234,
+        235,
+        236,
+        237,
+        238,
+        239,
+        240,
+        241,
+        242,
+        243,
+        244,
+        245,
+        246,
+        247,
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+        254,
+        255,
+        256,
+        257,
+        258,
+        259,
+        260,
+        261,
+        262,
+        263,
+        264,
+        265,
+        266,
+        267,
+        268,
+        269,
+        270
+      ],
+      "search_without_motion_authorization_frames": [
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        174,
+        175,
+        176,
+        177,
+        178,
+        179,
+        180,
+        181,
+        182,
+        183,
+        184,
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        194,
+        195,
+        196,
+        197,
+        198,
+        199,
+        200,
+        201,
+        202,
+        203,
+        204,
+        205,
+        206,
+        207,
+        208,
+        209,
+        210,
+        211,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+        219,
+        220,
+        221,
+        222,
+        223,
+        224,
+        225,
+        226,
+        227,
+        228,
+        229,
+        230,
+        231,
+        232,
+        233,
+        234,
+        235,
+        236,
+        237,
+        238,
+        239,
+        240,
+        241,
+        242,
+        243,
+        244,
+        245,
+        246,
+        247,
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+        254,
+        255,
+        256,
+        257,
+        258,
+        259,
+        260,
+        261,
+        262,
+        263,
+        264,
+        265,
+        266,
+        267,
+        268,
+        269,
+        270
+      ],
+      "template_action_counts": {
+        "COMMIT_RECENT": 2,
+        "NONE": 267,
+        "STAGE_RECENT": 2
+      },
+      "template_transition_result_counts": {
+        "APPLIED": 4,
+        "NONE": 267
+      },
+      "transition_failures": [],
+      "artifact_manifest": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/SHA256SUMS",
+      "candidate_conflict_count": 143,
+      "control_expiry": [
+        {
+          "first_invalid_frame": 145,
+          "first_invalid_timestamp_ms": 4833,
+          "last_trusted_frame": 69,
+          "last_trusted_timestamp_ms": 2300,
+          "elapsed_since_trusted_ms": 2533
+        }
+      ],
+      "artifact_manifest_sha256": "277ce03fc64659fc15167e61af00cb77151063451fd2eb6a7dfd2e701411c892",
+      "archived_original_manifest": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/SHA256SUMS",
+      "archived_original_manifest_sha256": "859ef2ae96b931642d63782676cea0667b64889cabff79c25b7f8e55e05eaf21",
+      "evaluator_original_archive": {
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/evaluator-full.json": "26a1212c49e0c3e94d254be4a8a873a224ea5c99737879cf4cb29a889f513c3b",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/evaluator-full.log": "7143ff1b842d0f4862ef5b0682340701762beff57e4db554636b2246180c5236",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/evaluator-full.md": "e041eb6b73856e281fd2345a1d08b58e9d67417517cce851a10952b0f13da754",
+        "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/evaluator-original-e027006/evaluator.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+      },
+      "evaluator_refresh_command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/evaluator-eb34470.py --dataset-root /home/neardi/Project/SOT/occ-recent-safe-rs001/data/occ_video_1 --target-id car_002 --boxes /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/bboxes.csv --session-metadata /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/session-metadata.json --scope full --source-commit e027006339f0cdafb0b8d38c4dfa5e14abe66593 --config-sha256 7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34 --model-sha256 3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261 --output-json /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/.evaluator-refresh-eb34470/evaluator-full.json --output-markdown /home/neardi/Project/SOT/occ-recent-safe-rs001/runs/car_002/.evaluator-refresh-eb34470/evaluator-full.md",
+      "gate_outcomes_match_original": true
+    }
+  },
+  "acceptance": {
+    "scope": "RK3588 native Debug evidence on one 271-frame visible-light video with two separately initialized targets.",
+    "formal_run_count": 2,
+    "candidate_promoted_to_interactive_default": false,
+    "threshold_retuning_performed": false,
+    "production_handoff_approved": false,
+    "real_gimbal_pod_acceptance_observed": false,
+    "identity_proxy_scope": "The evaluator found no jump or near-zero overlap on authorized visible observations. After tracking loss the runs yielded motion predictions and never committed an identity."
+  },
+  "diagnostic_command": {
+    "description": "Print the exact run, verifier, evaluator and ffprobe commands from each completed run.",
+    "command": "cd /home/neardi/Project/SOT/occ-recent-safe-rs001 && cat runs/car_001/commands.txt runs/car_002/commands.txt",
+    "run_command_note": "The stored commands use completed run paths. For a new diagnostic invocation, give all output arguments fresh paths.",
+    "interactive_diagnostic_example": [
+      "cd /home/neardi/Project/SOT/occ-recent-safe-rs001",
+      "./build/nanotrack_v3 --interactive --video data/occ_video_1/1.mp4 --model-dir models --sensor visible --controller-config source/rk3566/nanotrack_v3/config/visible-recent-safe-v1.conf --detector-model detector/yolov8n-visdrone9-rk3588-fp16.rknn --detector-manifest detector/detector-manifest.json --detector-labels detector/visdrone9.txt --detector-class-id 2 --detector-conf 0.25 --detector-nms 0.45 --max-frames 270 --output-size 1920x1080"
+    ],
+    "interactive_example_executed": false
+  },
+  "evaluator_refresh": {
+    "observed_at": "2026-11-12T02:53:15+08:00",
+    "evaluator_commit": "eb344708429949356c9f0161253bb326e0c16502",
+    "runtime_source_commit": "e027006339f0cdafb0b8d38c4dfa5e14abe66593",
+    "board_evaluator": {
+      "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/evaluator-eb34470.py",
+      "sha256": "57bdd5d6824c5517adaeeac1910152b52dbc1721589983cea548c6c4f5f1b7f4"
+    },
+    "board_refresh_script": {
+      "path": "/home/neardi/Project/SOT/occ-recent-safe-rs001/runs/complete-evaluator-refresh-eb34470.sh",
+      "sha256": "d30e8fde16eb77cdfbb7bf2528f9a47b8048a5f75341879a246509c305514ec1"
+    },
+    "source": "Previously retained v11 CSVs and matching metadata. Both original evaluator reports remain in the per-run archive.",
+    "tracked_outputs_reevaluated": 2,
+    "tracker_runs_added": 0,
+    "host_tests": {
+      "python_command": "python3 -m unittest discover -s tests -p test_evaluate_occ_video_1.py",
+      "python": "23/23 PASS",
+      "python_log_sha256": "f22730652b32d926fc08de44dbd6e2bddd9e4d4b49551541d955775fed9913cb",
+      "ctest_command": "ctest --test-dir /tmp/nanotrack-occ-c010-host --output-on-failure",
+      "ctest": "22/22 PASS in 6.79 s",
+      "ctest_log_sha256": "c079474ccca035766b20d8d2629a3303be534c75e272d9c34275defda09ecd4b"
+    }
+  }
+}

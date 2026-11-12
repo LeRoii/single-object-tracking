@@ -44,12 +44,13 @@ BBox MotionEstimator::predict(std::int64_t timestamp_ms) {
                0.5F * acceleration_y_ * last_dt_seconds_ * last_dt_seconds_;
   velocity_x_ += acceleration_x_ * last_dt_seconds_;
   velocity_y_ += acceleration_y_ * last_dt_seconds_;
-  clamp_derivatives();
   if (!scale_frozen_) {
     width_ = std::max(1.0F, width_ + velocity_width_ * last_dt_seconds_);
     height_ = std::max(1.0F, height_ + velocity_height_ * last_dt_seconds_);
   }
   clamp_state_to_frame();
+  // Prediction can shrink the box and therefore its allowed scale velocity.
+  clamp_derivatives();
   last_timestamp_ms_ = timestamp_ms;
   correction_allowed_ = true;
   return current_bbox_;
@@ -128,6 +129,13 @@ void MotionEstimator::freeze_scale(float width, float height) {
   clamp_derivatives();
 }
 
+void MotionEstimator::freeze_open_loop_dynamics() noexcept {
+  acceleration_x_ = 0.0F;
+  acceleration_y_ = 0.0F;
+  velocity_width_ = 0.0F;
+  velocity_height_ = 0.0F;
+}
+
 void MotionEstimator::begin_search(std::int64_t timestamp_ms) {
   if (!initialized_) throw std::logic_error("motion estimator is not initialized");
   if (timestamp_ms != last_timestamp_ms_) {
@@ -135,6 +143,20 @@ void MotionEstimator::begin_search(std::int64_t timestamp_ms) {
         "motion search must start at the latest prediction timestamp");
   }
   if (!search_start_ms_) search_start_ms_ = timestamp_ms;
+}
+
+void MotionEstimator::begin_search(
+    std::int64_t timestamp_ms, const MotionSnapshot& trusted_trend) {
+  begin_search(timestamp_ms);
+  if (!std::isfinite(trusted_trend.velocity_x) ||
+      !std::isfinite(trusted_trend.velocity_y)) {
+    throw std::invalid_argument("trusted search velocity must be finite");
+  }
+  velocity_x_ = trusted_trend.velocity_x;
+  velocity_y_ = trusted_trend.velocity_y;
+  acceleration_x_ = 0.0F;
+  acceleration_y_ = 0.0F;
+  clamp_derivatives();
 }
 
 void MotionEstimator::end_search() noexcept { search_start_ms_.reset(); }

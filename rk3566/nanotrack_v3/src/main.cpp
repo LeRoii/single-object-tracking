@@ -46,6 +46,7 @@ cv::Scalar state_color(const nanotrack::ControllerOutput& output) {
   if (output.control_valid) return cv::Scalar(0, 255, 0);
   switch (output.mode) {
     case nanotrack::TrackingMode::kTracking: return cv::Scalar(0, 255, 255);
+    case nanotrack::TrackingMode::kSuspected: return cv::Scalar(0, 255, 255);
     case nanotrack::TrackingMode::kUncertain: return cv::Scalar(0, 255, 255);
     case nanotrack::TrackingMode::kLocalRecovery: return cv::Scalar(0, 165, 255);
     case nanotrack::TrackingMode::kAssistedRecovery: return cv::Scalar(255, 0, 255);
@@ -77,7 +78,9 @@ cv::Mat render_annotated(const cv::Mat& source,
   const cv::Scalar color = state_color(output);
   cv::rectangle(rendered, rectangle, color, 2);
   const std::string label =
-      std::string(nanotrack::to_string(output.mode)) + " " +
+      std::string(output.tracking_phase == nanotrack::TrackingPhase::kSuspected
+                      ? "SUSPECTED / RECENT OBSERVATION"
+                      : nanotrack::to_string(output.tracking_phase)) + " " +
       nanotrack::to_string(output.quality) +
       (output.control_valid ? " CTRL" : " NO_CTRL");
   cv::putText(rendered, label,
@@ -110,8 +113,12 @@ cv::Mat render_interactive(const cv::Mat& source,
           return cv::Scalar(0, 165, 255);
         case nanotrack::DebugBoxKind::kNanoTrackAnchor:
           return cv::Scalar(255, 0, 0);
+        case nanotrack::DebugBoxKind::kNanoTrackSafe:
+        case nanotrack::DebugBoxKind::kNanoTrackStaged:
         case nanotrack::DebugBoxKind::kNanoTrackRecent:
           return cv::Scalar(0, 255, 255);
+        case nanotrack::DebugBoxKind::kTentativeControl:
+          return cv::Scalar(0, 180, 255);
         case nanotrack::DebugBoxKind::kAcceptedControl:
           return cv::Scalar(0, 255, 0);
         case nanotrack::DebugBoxKind::kSearchControlPrediction:
@@ -356,7 +363,6 @@ void write_session_metadata(const std::string& path,
   metadata.controller_config_hash_algorithm = "fnv1a64";
   metadata.controller_config_hash = config_hash;
   metadata.sensor = config.sensor;
-  metadata.calibrated = config.calibrated;
   metadata.detector_target_mode = config.detector_target_mode;
   metadata.detector_candidate_max_center_ratio =
       config.detector_candidate_max_center_ratio;
@@ -397,6 +403,11 @@ int main(int argc, char** argv) {
       return 0;
     }
     nanotrack::validate_input_paths(options);
+    const auto artifacts = nanotrack::resolve_tracking_artifact_paths(
+        options.output_boxes, options.session_metadata, options.output_video);
+    if (!artifacts.frame_json_disabled_reason.empty()) {
+      std::cerr << "Frame JSON companion disabled: " << artifacts.frame_json_disabled_reason << '\n';
+    }
     nanotrack::ControllerConfig controller_config =
         options.controller_config.empty()
             ? nanotrack::default_controller_config(options.sensor)
@@ -450,6 +461,7 @@ int main(int argc, char** argv) {
     }
     cv::VideoWriter writer;
     std::ofstream boxes;
+    nanotrack::TrackingFrameJsonWriter frame_json(artifacts);
 
     nanotrack::NanoTrackV3 tracker(options.model_dir);
     std::unique_ptr<nanotrack::DetectorAdapter> detector;
@@ -554,6 +566,15 @@ int main(int argc, char** argv) {
       initial_output.bbox = bbox;
       initial_output.control_valid = true;
       initial_output.accepted = true;
+      initial_output.motion_update_valid = true;
+      initial_output.tracking_phase = nanotrack::TrackingPhase::kTracking;
+      initial_output.observation_valid = true;
+      initial_output.observation_present = true;
+      initial_output.trusted_for_state_update = true;
+      initial_output.control_source = nanotrack::ControlSource::kObservation;
+      initial_output.tracking_bbox = bbox;
+      initial_output.display_bbox = bbox;
+      initial_output.control_bbox = bbox;
       initial_output.target_class = initialization.target_class;
       nanotrack::RuntimeFrameResult initial_result;
       initial_result.plan.frame_id = source_frame;
@@ -566,8 +587,8 @@ int main(int argc, char** argv) {
       initial_result.initialization = initialization;
       displayed_result = initial_result;
       if (!initialized) {
-        if (!options.output_video.empty()) {
-          writer.open(options.output_video,
+        if (!artifacts.video.empty()) {
+          writer.open(artifacts.video.string(),
                       cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), output_fps,
                       cv::Size(output_width, output_height));
           if (!writer.isOpened()) {
@@ -576,16 +597,17 @@ int main(int argc, char** argv) {
           writer.write(render_annotated(frame, bbox, initial_output, output_width,
                                         output_height));
         }
-        if (!options.output_boxes.empty()) {
-          boxes.open(options.output_boxes);
+        if (!artifacts.boxes.empty()) {
+          boxes.open(artifacts.boxes);
           if (!boxes) throw std::runtime_error("cannot open output CSV");
+          const auto initial_row = nanotrack::make_initial_log_row(
+              source_frame, timestamp_ms, bbox, detector->available(),
+              detector->available() && detector->can_submit(),
+              controller_config.detector_target_mode, initialization.target_class);
           boxes << nanotrack::tracking_csv_header() << '\n';
-          boxes << nanotrack::tracking_csv_row(nanotrack::make_initial_log_row(
-                       source_frame, timestamp_ms, bbox, detector->available(),
-                       detector->available() && detector->can_submit(),
-                       controller_config.detector_target_mode,
-                       initialization.target_class))
-                << '\n';
+          boxes << nanotrack::tracking_csv_row(initial_row) << '\n';
+          frame_json.open();
+          frame_json.append(initial_row);
         }
       }
       initialized = true;
@@ -709,7 +731,7 @@ int main(int argc, char** argv) {
         throw std::runtime_error("measured tracking latency is invalid");
       }
       if (writer.isOpened()) {
-        writer.write(render_annotated(frame, result.output.bbox, result.output,
+        writer.write(render_annotated(frame, result.output.control_bbox, result.output,
                                       output_width, output_height));
       }
       displayed_result = result;
@@ -729,8 +751,14 @@ int main(int argc, char** argv) {
       nanotrack::TrackingLogRow log_row =
           nanotrack::make_tracking_log_row(result);
       log_row.pipeline_ms = pipeline_ms;
+      bool revocation_logged = false;
       if (boxes.is_open()) {
         boxes << nanotrack::tracking_csv_row(log_row) << '\n';
+        frame_json.append(log_row);
+        if (result.template_slot_revocation) {
+          boxes.flush();
+          revocation_logged = static_cast<bool>(boxes);
+        }
       }
       if (options.interactive) {
         for (const std::string& event :
@@ -738,6 +766,13 @@ int main(int argc, char** argv) {
                                           force_heartbeat)) {
           std::cout << event << '\n';
         }
+        if (!boxes.is_open() && result.template_slot_revocation) {
+          std::cout.flush();
+          revocation_logged = static_cast<bool>(std::cout);
+        }
+      }
+      if (revocation_logged) {
+        runtime.acknowledge_template_slot_revocation(result.template_slot_revocation->slot_id);
       }
     }
     if (options.interactive) {
@@ -750,9 +785,8 @@ int main(int argc, char** argv) {
     if (writer.isOpened()) {
       writer.release();
     }
-    if (boxes.is_open()) {
-      boxes.close();
-    }
+    if (boxes.is_open()) boxes.close();
+    session_metadata.frame_json_file = frame_json.finish(static_cast<bool>(boxes));
     if (!initialized) {
       std::cout << "SUMMARY tracked_frames=0 initialized=0\n";
       return 0;
@@ -796,13 +830,8 @@ int main(int argc, char** argv) {
       detector_metadata.rknn_api_version = yolo_engine->api_version();
       detector_metadata.rknn_driver_version = yolo_engine->driver_version();
     }
-    const std::string metadata_path = !options.session_metadata.empty()
-                                          ? options.session_metadata
-                                          : options.output_boxes.empty()
-                                                ? std::string()
-                                                : options.output_boxes + ".metadata.json";
-    if (!metadata_path.empty()) {
-      write_session_metadata(metadata_path, options, controller_config, tracker,
+    if (!artifacts.metadata.empty()) {
+      write_session_metadata(artifacts.metadata.string(), options, controller_config, tracker,
                              video_clock, source_fps, tracked_count, latency,
                              detector_metadata, session_metadata);
     }
@@ -820,7 +849,7 @@ int main(int argc, char** argv) {
               << " initializations=" << initialization_count
               << " calibrated=" << (controller_config.calibrated ? 1 : 0)
               << " metadata="
-              << (metadata_path.empty() ? "disabled" : metadata_path) << '\n';
+              << (artifacts.metadata.empty() ? "disabled" : artifacts.metadata.string()) << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "ERROR: " << error.what() << '\n';

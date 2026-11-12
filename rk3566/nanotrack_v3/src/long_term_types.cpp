@@ -2,6 +2,26 @@
 
 namespace nanotrack {
 
+BBox constrain_tracker_observation_dimensions(const BBox& candidate,
+                                              const BBox& committed_bbox,
+                                              FrameSize frame) {
+  constexpr float kMinimumDimensionRatio = 0.75F;
+  constexpr float kMaximumDimensionRatio = 1.33F;
+  return constrain_bbox_dimensions(candidate, committed_bbox,
+                                   kMinimumDimensionRatio,
+                                   kMaximumDimensionRatio,
+                                   frame.width, frame.height);
+}
+
+TrackerObservation constrain_tracker_observation(TrackerObservation observation,
+                                                const BBox& committed_bbox,
+                                                FrameSize frame) {
+  if (!observation.decoded_bbox) observation.decoded_bbox = observation.bbox;
+  observation.bbox = constrain_tracker_observation_dimensions(
+      *observation.decoded_bbox, committed_bbox, frame);
+  return observation;
+}
+
 const char* to_string(OcclusionReferenceSource value) {
   switch (value) {
     case OcclusionReferenceSource::kNone: return "NONE";
@@ -107,6 +127,7 @@ const char* to_string(TargetClassCandidateRejection value) {
 const char* to_string(TrackingMode value) {
   switch (value) {
     case TrackingMode::kTracking: return "TRACKING";
+    case TrackingMode::kSuspected: return "SUSPECTED";
     case TrackingMode::kUncertain: return "UNCERTAIN";
     case TrackingMode::kLocalRecovery: return "LOCAL_RECOVERY";
     case TrackingMode::kAssistedRecovery: return "ASSISTED_RECOVERY";
@@ -119,6 +140,7 @@ const char* to_string(TrackingMode value) {
 const char* to_string(TrackingPhase value) {
   switch (value) {
     case TrackingPhase::kTracking: return "TRACKING";
+    case TrackingPhase::kSuspected: return "SUSPECTED";
     case TrackingPhase::kSearching: return "SEARCHING";
     case TrackingPhase::kInvalid: return "INVALID";
   }
@@ -144,7 +166,13 @@ const char* to_string(QualityLevel value) {
 }
 
 const char* to_string(TemplateKind value) {
-  return value == TemplateKind::kAnchor ? "ANCHOR" : "RECENT";
+  switch (value) {
+    case TemplateKind::kAnchor: return "ANCHOR";
+    case TemplateKind::kRecent: return "RECENT";
+    case TemplateKind::kSafe: return "SAFE";
+    case TemplateKind::kStaged: return "STAGED";
+  }
+  return "UNKNOWN";
 }
 
 const char* to_string(TemplateAction value) {

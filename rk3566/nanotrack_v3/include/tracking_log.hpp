@@ -3,13 +3,15 @@
 #include "long_term_runtime.hpp"
 
 #include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 10;
+constexpr int kTrackingSchemaVersion = 12;
 
 class MonotonicVideoClock {
  public:
@@ -29,7 +31,13 @@ struct TrackingLogRow {
   std::int64_t timestamp_ms = 0;
   TrackingMode mode = TrackingMode::kTracking;
   TrackingPhase tracking_phase = TrackingPhase::kInvalid;
+  // Legacy column with accepted-observation semantics.
   bool observation_valid = false;
+  bool observation_present = false;
+  bool trusted_for_state_update = false;
+  bool motion_update_valid = false;
+  const char* state_change_reason = "NONE";
+  const char* rect0_source = "MOTION_PREDICTION";
   ControlSource control_source = ControlSource::kNone;
   AcceptedObservationPath accepted_observation_path =
       AcceptedObservationPath::kDirect;
@@ -43,6 +51,28 @@ struct TrackingLogRow {
   BBox control_bbox{};
   TemplateKind selected_template = TemplateKind::kAnchor;
   TemplateAction template_action = TemplateAction::kNone;
+  std::optional<TemplateTransitionRequest> template_transition;
+  std::optional<TemplateSlotRevocation> template_slot_revocation;
+  TemplateTransitionResult template_transition_result = TemplateTransitionResult::kNone;
+  bool template_transition_applied = false;
+  bool template_probation_active = false;
+  const char* template_transition_reason = "NONE";
+  TemplateHeadExecution template_heads;
+  std::optional<BBox> recent_raw_bbox;
+  std::optional<BBox> safe_raw_bbox;
+  std::optional<BBox> staged_raw_bbox;
+  ResponseMetrics safe_metrics{};
+  ResponseMetrics staged_metrics{};
+  std::optional<ResponseReference> trusted_response_reference;
+  std::optional<float> response_psr_relative_delta;
+  std::optional<float> response_apce_relative_delta;
+  std::optional<float> response_peak_margin_absolute_delta;
+  std::optional<RecoveryCandidateKey> recovery_candidate_key;
+  std::size_t recovery_confirmation_hits = 0;
+  bool recovery_conflict = false;
+  std::optional<RecoveryCandidateKey> recovery_probe;
+  BBox recovery_probe_bbox{};
+  const char* recovery_reason = "NONE";
   bool anchor_present = false;
   ResponseMetrics anchor_metrics{};
   bool recent_present = false;
@@ -143,6 +173,45 @@ struct TrackingLogRow {
   std::string note;
 };
 
+struct TrackingArtifactPaths {
+  std::filesystem::path boxes;
+  std::filesystem::path metadata;
+  std::filesystem::path video;
+  std::filesystem::path frame_json;
+  std::string frame_json_reference;
+  std::string frame_json_disabled_reason;
+};
+
+TrackingArtifactPaths resolve_tracking_artifact_paths(
+    const std::filesystem::path& boxes,
+    const std::filesystem::path& metadata,
+    const std::filesystem::path& video);
+
+class TrackingFrameJsonWriter {
+ public:
+  explicit TrackingFrameJsonWriter(const TrackingArtifactPaths& paths);
+  ~TrackingFrameJsonWriter();
+  TrackingFrameJsonWriter(const TrackingFrameJsonWriter&) = delete;
+  TrackingFrameJsonWriter& operator=(const TrackingFrameJsonWriter&) = delete;
+
+  void open() noexcept;
+  void append(const TrackingLogRow& row);
+  std::string finish(bool primary_complete);
+
+ private:
+  bool publish() const noexcept;
+  bool directory_matches_open_path() const noexcept;
+  void discard() noexcept;
+
+  std::filesystem::path directory_;
+  std::filesystem::path filename_;
+  std::string reference_;
+  std::FILE* stream_ = nullptr;
+  int directory_fd_ = -1;
+  int publication_fd_ = -1;
+  bool wrote_frame_ = false;
+};
+
 struct LatencySummary {
   float mean_runtime_ms = 0.0F;
   float p50_runtime_ms = 0.0F;
@@ -185,6 +254,7 @@ struct InitializationDetectorSummary {
 
 struct TrackingSessionMetadata {
   std::string video;
+  std::string frame_json_file;
   std::string model_dir;
   std::string manifest_hash_algorithm;
   std::string manifest_hash;
@@ -193,6 +263,8 @@ struct TrackingSessionMetadata {
   std::string controller_config_hash;
   std::string sensor;
   bool calibrated = false;
+  TemplatePolicy template_policy = TemplatePolicy::kRecentSafeV1;
+  RecoveryPolicy recovery_policy = RecoveryPolicy::kUnifiedCandidatesV1;
   int requested_target_class_id = -1;
   int engine_class_filter = -1;
   TargetClassMatchConfig target_class_match_config{};
@@ -257,6 +329,8 @@ std::string tracking_csv_header();
 void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
                                       const ControllerConfig& config);
 std::string tracking_csv_row(const TrackingLogRow& row);
+std::string tracking_frame_json(const TrackingLogRow& row);
+std::string tracking_frame_event_fields(const TrackingLogRow& row);
 TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     std::int64_t timestamp_ms,
                                     const BBox& bbox,

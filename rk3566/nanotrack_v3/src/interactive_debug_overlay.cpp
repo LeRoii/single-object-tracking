@@ -198,22 +198,35 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
   }
 
   if (result.output.mode != TrackingMode::kOcclusionHold) {
-    for (const TemplateKind kind :
-         {TemplateKind::kAnchor, TemplateKind::kRecent}) {
-      for (const TrackerObservation& observation : result.observations) {
-        if (observation.template_kind != kind) continue;
-        overlay.boxes.push_back(DebugBoxDescriptor{
-            kind == TemplateKind::kAnchor
-                ? DebugBoxKind::kNanoTrackAnchor
-                : DebugBoxKind::kNanoTrackRecent,
-            observation.bbox,
-            std::string(kind == TemplateKind::kAnchor ? "NT ANCHOR score="
-                                                      : "NT RECENT score=") +
-                formatted_float(observation.metrics.raw_score),
-            2});
-        break;
+    for (const TrackerObservation& observation : result.observations) {
+      DebugBoxKind kind = DebugBoxKind::kNanoTrackRecent;
+      switch (observation.template_kind) {
+        case TemplateKind::kAnchor: kind = DebugBoxKind::kNanoTrackAnchor; break;
+        case TemplateKind::kRecent: break;
+        case TemplateKind::kSafe: kind = DebugBoxKind::kNanoTrackSafe; break;
+        case TemplateKind::kStaged: kind = DebugBoxKind::kNanoTrackStaged; break;
       }
+      overlay.boxes.push_back(DebugBoxDescriptor{
+          kind, observation.decoded_bbox.value_or(observation.bbox),
+          std::string("NT ") + to_string(observation.template_kind) + " score=" +
+              formatted_float(observation.metrics.raw_score),
+          2});
     }
+  }
+
+  if (result.plan.recovery_probe &&
+      result.plan.hypothesis_source != HypothesisSource::kDetector) {
+    overlay.boxes.push_back(DebugBoxDescriptor{
+        DebugBoxKind::kSearchHint, result.plan.predicted_bbox,
+        "RECOVERY PROBE id=" + std::to_string(result.plan.recovery_probe->id), 1});
+  }
+  if (result.output.template_transition) {
+    overlay.texts.push_back(DebugTextDescriptor{
+        std::string(to_string(result.output.template_action)) + " " +
+        to_string(result.output.template_transition_result)});
+  }
+  if (result.output.recovery_conflict) {
+    overlay.texts.push_back(DebugTextDescriptor{"RECOVERY IDENTITY CONFLICT"});
   }
 
   if (result.output.occlusion_probe_type != OcclusionProbeType::kNone) {
@@ -257,20 +270,30 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
       result.output.tracking_phase == TrackingPhase::kTracking &&
       result.output.control_source == ControlSource::kObservation &&
       result.output.observation_valid && result.output.control_valid;
-  overlay.control_valid = motion_search_control || observation_control;
+  const bool tentative_observation =
+      result.output.tracking_phase == TrackingPhase::kSuspected &&
+      result.output.observation_present && !result.output.accepted &&
+      !result.output.trusted_for_state_update;
+  const bool tentative_control = tentative_observation &&
+      result.output.control_source == ControlSource::kObservation &&
+      result.output.control_valid;
+  overlay.control_valid = motion_search_control || observation_control || tentative_control;
   if (overlay.control_valid) {
     const std::string label = motion_search_control
         ? "SEARCHING / MOTION_SEARCH PREDICTION"
-        : "TRACKING / OBSERVATION";
+        : tentative_control ? "SUSPECTED / RECENT OBSERVATION" : "TRACKING / OBSERVATION";
     if (drawable_bbox(result.output.control_bbox)) {
       overlay.boxes.push_back(DebugBoxDescriptor{
           motion_search_control ? DebugBoxKind::kSearchControlPrediction
-                                : DebugBoxKind::kAcceptedControl,
+                                : tentative_control ? DebugBoxKind::kTentativeControl
+                                                    : DebugBoxKind::kAcceptedControl,
           result.output.control_bbox, label, 3});
     } else {
       overlay.texts.push_back(DebugTextDescriptor{label});
     }
     overlay.status_label = label;
+  } else if (tentative_observation) {
+    overlay.status_label = "SUSPECTED / RECENT OBSERVATION / NO_CONTROL";
   } else if (result.output.tracking_phase == TrackingPhase::kSearching) {
     overlay.status_label = "SEARCHING / NO_CONTROL";
   } else {

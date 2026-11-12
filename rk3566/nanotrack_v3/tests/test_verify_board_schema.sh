@@ -2,6 +2,7 @@
 set -euo pipefail
 
 verify_script=$1
+export EXPECTED_TRACKING_SCHEMA=10
 tmp_dir=$(mktemp -d /tmp/nanotrack-verify-schema.XXXXXX)
 trap 'rm -rf "$tmp_dir"' EXIT
 artifact_dir=$tmp_dir/artifacts
@@ -494,3 +495,242 @@ PY
 done
 cp "$artifact_dir/metadata.valid.json" "$artifact_dir/session-metadata.json"
 
+
+unset EXPECTED_TRACKING_SCHEMA
+if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
+  echo "verify_board accepted historical v10 without explicit selection" >&2
+  exit 1
+fi
+
+for schema_case in valid no_decode missing_safe_raw no_decode_with_raw missing_trust tentative_trusted \
+                   ambiguous_observation ambiguous_unauthorized applied_without_id wrong_slot \
+                   failed_commit_probation rejected_claimed_committed recovery_without_identity \
+                   accepted_no_decode live_slot_replaced live_slot_disappeared valid_retry_revocation staged_head_at_stage staged_head_at_retry wrong_revoked_slot missing_revoked_slot \
+                   revocation_without_live_slot revocation_without_reason unrecorded_reinitialization valid_reinitialized valid_commit valid_rejected_recovery_commit \
+                   valid_rollback valid_failed_rollback companion_cross_directory companion_alias json_mismatch \
+                   json_missing_field valid_two_retry_revocations; do
+  python3 - "$artifact_dir" "$schema_case" <<'PY'
+import csv
+import json
+import pathlib
+import sys
+
+root, case = pathlib.Path(sys.argv[1]), sys.argv[2]
+with (root / "bboxes.valid.csv").open(newline="") as stream:
+    rows = list(csv.DictReader(stream))
+metadata = json.loads((root / "metadata.valid.json").read_text())
+metadata.update(schema_version=12, observation_valid_semantics="ACCEPTED_OBSERVATION",
+                rect0_bbox="tracking_bbox", frame_json_file="bboxes.csv.jsonl")
+roles = ("recent", "safe", "staged")
+geometry = ("x", "y", "width", "height")
+raw = (*geometry, "score", "penalized_peak", "psr", "apce", "peak_margin")
+roles_and_raw = {f"{role}_raw_{key}": "" for role in roles for key in raw}
+defaults = {
+    "schema_version": "12", "state_change_reason": "NONE", "rect0_source": "ACCEPTED_OBSERVATION",
+    "active_template": "RECENT", "selected_template": "RECENT",
+    "safe_template_used": "0", "safe_reused_recent": "0",
+    "trusted_baseline_psr": "", "trusted_baseline_apce": "", "trusted_baseline_peak_margin": "",
+    "response_psr_relative_delta": "", "response_apce_relative_delta": "",
+    "response_peak_margin_absolute_delta": "", "template_action": "NONE",
+    "template_transaction_id": "", "template_slot_id": "",
+    "revoked_template_slot_id": "", "template_slot_revocation_reason": "NONE",
+    "template_transition_recovery": "0", "template_transition_applied": "0",
+    "template_transition_result": "NONE", "template_transition_reason": "NONE",
+    "template_probation_active": "0", "candidate_source": "NONE", "candidate_id": "",
+    "candidate_generation": "", "recovery_confirmation_hits": "0", "recovery_conflict": "0",
+    "recovery_probe_source": "NONE", "recovery_probe_id": "", "recovery_probe_generation": "",
+    "recovery_reason": "NONE",
+    **{f"recovery_probe_{key}": "" for key in geometry},
+    **{f"{role}_head_executed": "0" for role in roles},
+    **{f"{role}_decode_status": "NOT_RUN" for role in roles},
+    **roles_and_raw,
+}
+for row in rows:
+    row.update(defaults, observation_present=row["accepted"],
+               trusted_for_state_update=row["accepted"],
+               motion_update_valid=row["accepted"])
+rows[0].update(rect0_source="INITIAL_ROI", state_change_reason="INITIALIZED")
+rows[1].update(state="SUSPECTED", tracking_phase="SUSPECTED", observation_present="1",
+               trusted_for_state_update="0", motion_update_valid="0",
+               observation_valid="0", accepted="0",
+               accepted_observation_path="direct", rect0_source="RECENT_OBSERVATION",
+               state_change_reason="RESPONSE_DEGRADED", recent_head_executed="1",
+               recent_decode_status="DECODED", safe_head_executed="1", safe_template_used="1",
+               safe_decode_status="DECODED")
+for role in ("recent", "safe"):
+    rows[1].update({f"{role}_raw_{name}": value for name, value in zip(
+        raw, ("1", "1", "4", "4", "0.9", "0.8", "8", "12", "0.15"))})
+rows[2].update(rect0_source="MOTION_PREDICTION", recovery_conflict="1",
+               candidate_source="DETECTOR", candidate_id="3", candidate_generation="2",
+               recovery_reason="IDENTITY_CONFLICT", detector_same_class_ambiguous="1",
+               detector_same_class_candidates="1")
+if case in {"no_decode", "no_decode_with_raw"}:
+    rows[1]["safe_decode_status"] = "NO_DECODE"
+    if case == "no_decode":
+        rows[1].update({f"safe_raw_{key}": "" for key in raw})
+elif case == "missing_safe_raw":
+    rows[1]["safe_raw_psr"] = ""
+elif case == "missing_trust":
+    for row in rows:
+        del row["trusted_for_state_update"]
+elif case == "tentative_trusted":
+    rows[1]["trusted_for_state_update"] = "1"
+elif case == "ambiguous_observation":
+    rows[2]["control_source"] = "OBSERVATION"
+elif case == "ambiguous_unauthorized":
+    rows[2]["motion_control_authorized"] = "0"
+elif case == "applied_without_id":
+    rows[1]["template_transition_applied"] = "1"
+elif case in {"accepted_no_decode", "recovery_without_identity"}:
+    rows[1].update(state="TRACKING", tracking_phase="TRACKING", accepted="1",
+                   observation_valid="1", trusted_for_state_update="1", motion_update_valid="1",
+                   rect0_source="ACCEPTED_OBSERVATION")
+    if case == "accepted_no_decode":
+        rows[1].update(roles_and_raw, recent_decode_status="NO_DECODE", safe_decode_status="NO_DECODE")
+    else:
+        rows[1].update(reacquired="1", template_action="STAGE_RECENT",
+                       template_transaction_id="5", template_slot_id="5",
+                       template_transition_recovery="1", template_transition_applied="1",
+                       template_transition_result="APPLIED", template_probation_active="1",
+                       template_transition_reason="RECOVERY_CONFIRMED",
+                       recovery_reason="RECOVERY_STAGED", accepted_observation_path="search_reacquisition")
+elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected_claimed_committed",
+              "live_slot_replaced", "live_slot_disappeared", "valid_rollback", "valid_failed_rollback",
+              "valid_rejected_recovery_commit", "valid_retry_revocation", "staged_head_at_stage",
+              "staged_head_at_retry", "valid_two_retry_revocations", "wrong_revoked_slot",
+              "missing_revoked_slot", "revocation_without_live_slot", "revocation_without_reason",
+              "unrecorded_reinitialization", "valid_reinitialized"}:
+    rows[1].update(state="TRACKING", tracking_phase="TRACKING",
+                   accepted="1", observation_valid="1", trusted_for_state_update="1",
+                   motion_update_valid="1",
+                   rect0_source="ACCEPTED_OBSERVATION", template_action="STAGE_RECENT",
+                   template_transaction_id="5", template_slot_id="5",
+                   template_transition_result="APPLIED", template_transition_applied="1",
+                   template_transition_reason="STABLE_TRACKING", template_probation_active="1")
+    rows[2].update(template_action="COMMIT_RECENT", template_transaction_id="6",
+                   template_slot_id="5", template_transition_result="APPLIED",
+                   template_transition_applied="1", template_transition_reason="PROBATION_PASSED",
+                   template_probation_active="0", state="TRACKING", tracking_phase="TRACKING",
+                   observation_present="1", observation_valid="1", accepted="1",
+                   trusted_for_state_update="1", motion_update_valid="1",
+                   control_source="OBSERVATION",
+                   rect0_source="ACCEPTED_OBSERVATION", motion_control_authorized="0",
+                   occlusion_coast_age_frames="0", occlusion_hold_remaining_frames="0",
+                   recovery_conflict="0", detector_same_class_ambiguous="0",
+                   recovery_reason="NONE", candidate_source="NONE", candidate_id="",
+                   candidate_generation="")
+    rows[2].update(recent_head_executed="1", recent_decode_status="DECODED", tracker_skipped="0",
+                   detector_suppressed_by_hold="0", tracker_ms="1", detector_same_class_candidates="0")
+    rows[2].update({f"recent_raw_{key}": rows[1][f"recent_raw_{key}"] for key in raw})
+    if case == "wrong_slot":
+        rows[2]["template_slot_id"] = "4"
+    if case in {"valid_rollback", "valid_failed_rollback"}:
+        rows[2].update(template_action="ROLLBACK_RECENT", template_transition_reason="FRAME_INVALIDATED")
+        if case == "valid_failed_rollback":
+            rows[2].update(template_transition_result="TRACKER_REJECTED", template_transition_applied="0")
+    if case in {"rejected_claimed_committed", "valid_rejected_recovery_commit"}:
+        rows[1].update(template_transition_recovery="1", template_transition_reason="RECOVERY_CONFIRMED",
+                       candidate_source="RECENT", candidate_id="1", candidate_generation="2",
+                       recovery_confirmation_hits="2", recovery_reason="RECOVERY_STAGED",
+                       accepted_observation_path="search_reacquisition", reacquired="1")
+        rows[2].update(template_transition_result="TRACKER_REJECTED", template_transition_applied="0",
+                       template_transition_recovery="1", recovery_reason="RECOVERY_COMMIT_REJECTED",
+                       state="UNCERTAIN", tracking_phase="SEARCHING", accepted="0", observation_valid="0",
+                       observation_present="0", trusted_for_state_update="0", motion_update_valid="0",
+                       control_source="MOTION_SEARCH",
+                       motion_control_authorized="1", rect0_source="MOTION_PREDICTION")
+        if case == "rejected_claimed_committed":
+            rows[2]["recovery_reason"] = "RECOVERY_COMMITTED"
+    if case == "live_slot_replaced":
+        rows[2].update(template_action="STAGE_RECENT", template_slot_id="6",
+                       template_transition_reason="STABLE_TRACKING", template_probation_active="1")
+    if case == "live_slot_disappeared":
+        rows[2].update(template_action="NONE", template_slot_id="", template_transaction_id="",
+                       template_transition_reason="NONE", template_transition_result="NONE",
+                       template_transition_applied="0")
+    if case in {"valid_retry_revocation", "valid_two_retry_revocations", "staged_head_at_retry",
+                "wrong_revoked_slot", "missing_revoked_slot",
+                "revocation_without_live_slot", "revocation_without_reason",
+                "unrecorded_reinitialization", "valid_reinitialized"}:
+        rows[1].update(template_transaction_id="1", template_slot_id="1")
+        rows[2].update(template_action="STAGE_RECENT", template_transaction_id="3",
+                       template_slot_id="3", template_transition_reason="STABLE_TRACKING",
+                       template_probation_active="1", revoked_template_slot_id="1",
+                       template_slot_revocation_reason="FRAME_APPLICATION_FAILED")
+        if case == "wrong_revoked_slot":
+            rows[2]["revoked_template_slot_id"] = "2"
+        elif case == "missing_revoked_slot":
+            rows[2]["revoked_template_slot_id"] = ""
+        elif case == "revocation_without_reason":
+            rows[2]["template_slot_revocation_reason"] = "NONE"
+        elif case in {"unrecorded_reinitialization", "valid_reinitialized"}:
+            rows[2]["template_slot_revocation_reason"] = "REINITIALIZED"
+            if case == "valid_reinitialized":
+                metadata["target_class_initializations"] = [
+                    {"frame_id": 0, "initialization_index": 1},
+                    {"frame_id": 1, "initialization_index": 2},
+                ]
+        elif case == "revocation_without_live_slot":
+            rows[1].update(template_action="NONE", template_transaction_id="", template_slot_id="",
+                           template_transition_reason="NONE", template_transition_result="NONE",
+                           template_transition_applied="0", template_probation_active="0")
+    if case == "staged_head_at_stage":
+        rows[1].update(staged_head_executed="1", staged_decode_status="NO_DECODE",
+                       safe_head_executed="0", safe_decode_status="NOT_RUN", safe_template_used="0")
+        rows[1].update({f"safe_raw_{key}": "" for key in raw})
+    if case == "staged_head_at_retry":
+        rows[2].update(staged_head_executed="1", staged_decode_status="DECODED")
+        rows[2].update({f"staged_raw_{key}": rows[2][f"recent_raw_{key}"] for key in raw})
+    if case == "failed_commit_probation":
+        rows[2].update(template_transition_result="TRACKER_REJECTED",
+                       template_transition_applied="0", template_probation_active="1")
+
+if case == "valid_two_retry_revocations":
+    rows.append(dict(rows[2], frame_id="3", timestamp_ms="99",
+                     revoked_template_slot_id="3", template_transaction_id="5", template_slot_id="5"))
+    metadata["tracked_frames"] = 3
+    run_log = root / "run.log"
+    run_log.write_text(run_log.read_text().replace("tracked_frames=2", "tracked_frames=3"))
+
+shared = set(defaults) | {
+    "frame_id", "timestamp_ms", "state", "tracking_phase", "observation_valid", "accepted",
+    "reacquired", "control_valid", "control_source", "motion_control_authorized",
+    "observation_present", "trusted_for_state_update", "motion_update_valid",
+    "detector_same_class_ambiguous",
+    *(f"{box}_{key}" for box in ("tracking", "display", "control") for key in geometry),
+}
+frames = [{key: row[key] or None for key in shared if key in row} for row in rows]
+if case == "json_mismatch":
+    frames[1]["safe_raw_psr"] = 20.0
+if case == "json_missing_field":
+    del frames[1]["template_slot_id"]
+with (root / "bboxes.csv").open("w", newline="") as stream:
+    writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+    writer.writeheader()
+    writer.writerows(rows)
+json_path = root / "bboxes.csv.jsonl"
+if case == "companion_cross_directory":
+    json_path = root.parent / "companion-dir" / "frames.jsonl"
+    json_path.parent.mkdir()
+    metadata["frame_json_file"] = "../companion-dir/frames.jsonl"
+elif case == "companion_alias":
+    alias = root / "alias.jsonl"
+    alias.symlink_to(root / "bboxes.csv")
+    metadata["frame_json_file"] = alias.name
+json_path.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
+(root / "session-metadata.json").write_text(json.dumps(metadata))
+PY
+  case "$schema_case" in
+    valid_two_retry_revocations)
+      ffmpeg -y -loglevel error -f lavfi -i color=size=16x16:rate=1 \
+        -frames:v 4 "$artifact_dir/output.avi"
+      bash "$verify_script" "$artifact_dir" "$model_dir" 4 16 16 ;;
+    valid|no_decode|valid_commit|valid_rollback|valid_failed_rollback|valid_rejected_recovery_commit|valid_retry_revocation|valid_reinitialized|companion_cross_directory)
+      bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 ;;
+    *)
+      if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
+        echo "verify_board accepted invalid v11 case: $schema_case" >&2
+        exit 1
+      fi ;;
+  esac
+done

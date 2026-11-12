@@ -1,12 +1,19 @@
 #include "tracking_log.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <iomanip>
+#include <iterator>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace nanotrack {
 namespace {
@@ -210,6 +217,136 @@ std::string join(const std::vector<std::string>& fields) {
   return stream.str();
 }
 
+const char* candidate_source(RecoveryCandidateSource source) {
+  switch (source) {
+    case RecoveryCandidateSource::kRecent: return "RECENT";
+    case RecoveryCandidateSource::kSafe: return "SAFE";
+    case RecoveryCandidateSource::kDetector: return "DETECTOR";
+  }
+  return "UNKNOWN";
+}
+
+template <typename Field>
+void visit_box(const std::string& prefix, const std::optional<BBox>& bbox, Field& field) {
+  field(prefix + "x", bbox ? std::optional<float>(bbox->x) : std::nullopt);
+  field(prefix + "y", bbox ? std::optional<float>(bbox->y) : std::nullopt);
+  field(prefix + "width", bbox ? std::optional<float>(bbox->width) : std::nullopt);
+  field(prefix + "height", bbox ? std::optional<float>(bbox->height) : std::nullopt);
+}
+
+template <typename Field>
+void visit_head(const std::string& name, bool executed, bool reused,
+                const std::optional<BBox>& bbox, const ResponseMetrics& metrics,
+                Field& field) {
+  field(name + "_head_executed", executed);
+  field(name + "_decode_status", bbox ? "DECODED" :
+        executed || reused ? "NO_DECODE" : "NOT_RUN");
+  visit_box(name + "_raw_", bbox, field);
+  field(name + "_raw_score", bbox ? std::optional<float>(metrics.raw_score) : std::nullopt);
+  field(name + "_raw_penalized_peak", bbox ? std::optional<float>(metrics.penalized_peak) : std::nullopt);
+  field(name + "_raw_psr", bbox ? std::optional<float>(metrics.psr) : std::nullopt);
+  field(name + "_raw_apce", bbox ? std::optional<float>(metrics.apce) : std::nullopt);
+  field(name + "_raw_peak_margin", bbox ? std::optional<float>(metrics.peak_margin) : std::nullopt);
+}
+
+template <typename Field>
+void visit_observability_fields(const TrackingLogRow& row, Field field) {
+  const auto& request = row.template_transition;
+  const auto& revocation = row.template_slot_revocation;
+  const auto& reference = row.trusted_response_reference;
+  const auto& candidate = row.recovery_candidate_key;
+  const auto& probe = row.recovery_probe;
+  field("observation_present", row.observation_present);
+  field("trusted_for_state_update", row.trusted_for_state_update);
+  field("motion_update_valid", row.motion_update_valid);
+  field("state_change_reason", row.state_change_reason);
+  field("rect0_source", row.rect0_source);
+  field("active_template", "RECENT");
+  field("safe_template_used", row.template_heads.safe || row.template_heads.safe_reused_recent);
+  field("safe_reused_recent", row.template_heads.safe_reused_recent);
+  visit_head("recent", row.template_heads.recent, false, row.recent_raw_bbox, row.recent_metrics, field);
+  visit_head("safe", row.template_heads.safe, row.template_heads.safe_reused_recent,
+             row.safe_raw_bbox, row.safe_metrics, field);
+  visit_head("staged", row.template_heads.staged, false, row.staged_raw_bbox, row.staged_metrics, field);
+  field("trusted_baseline_psr", reference ? std::optional<float>(reference->psr) : std::nullopt);
+  field("trusted_baseline_apce", reference ? std::optional<float>(reference->apce) : std::nullopt);
+  field("trusted_baseline_peak_margin", reference ? std::optional<float>(reference->peak_margin) : std::nullopt);
+  field("response_psr_relative_delta", row.response_psr_relative_delta);
+  field("response_apce_relative_delta", row.response_apce_relative_delta);
+  field("response_peak_margin_absolute_delta", row.response_peak_margin_absolute_delta);
+  field("template_transaction_id", request ? std::optional<std::uint64_t>(request->transaction_id) : std::nullopt);
+  field("template_slot_id", request ? std::optional<std::uint64_t>(request->template_slot_id) : std::nullopt);
+  field("template_transition_recovery", request && request->recovery);
+  field("template_transition_applied", row.template_transition_applied);
+  field("template_transition_result", to_string(row.template_transition_result));
+  field("template_transition_reason", row.template_transition_reason);
+  field("template_probation_active", row.template_probation_active);
+  field("revoked_template_slot_id", revocation ? std::optional<std::uint64_t>(revocation->slot_id) : std::nullopt);
+  field("template_slot_revocation_reason", revocation ? to_string(revocation->reason) : "NONE");
+  field("candidate_source", candidate ? candidate_source(candidate->source) : "NONE");
+  field("candidate_id", candidate ? std::optional<std::uint64_t>(candidate->id) : std::nullopt);
+  field("candidate_generation", candidate ? std::optional<std::uint64_t>(candidate->generation) : std::nullopt);
+  field("recovery_confirmation_hits", row.recovery_confirmation_hits);
+  field("recovery_conflict", row.recovery_conflict);
+  field("recovery_probe_source", probe ? candidate_source(probe->source) : "NONE");
+  field("recovery_probe_id", probe ? std::optional<std::uint64_t>(probe->id) : std::nullopt);
+  field("recovery_probe_generation", probe ? std::optional<std::uint64_t>(probe->generation) : std::nullopt);
+  visit_box("recovery_probe_", probe ? std::optional<BBox>(row.recovery_probe_bbox) : std::nullopt, field);
+  field("recovery_reason", row.recovery_reason);
+}
+
+template <typename Field>
+void visit_frame_fields(const TrackingLogRow& row, Field field) {
+  field("schema_version", kTrackingSchemaVersion);
+  field("frame_id", row.frame_id);
+  field("timestamp_ms", row.timestamp_ms);
+  field("state", to_string(row.mode));
+  field("tracking_phase", to_string(row.tracking_phase));
+  field("observation_valid", row.observation_valid);
+  field("accepted", row.accepted);
+  field("reacquired", row.reacquired);
+  field("control_valid", row.control_valid);
+  field("control_source", to_string(row.control_source));
+  field("motion_control_authorized", row.motion_control_authorized);
+  field("template_action", to_string(row.template_action));
+  field("selected_template", to_string(row.selected_template));
+  field("detector_same_class_ambiguous", row.detector_same_class_ambiguous);
+  visit_box("tracking_", row.tracking_bbox, field);
+  visit_box("display_", row.display_bbox, field);
+  visit_box("control_", row.control_bbox, field);
+  visit_observability_fields(row, field);
+}
+
+std::string field_value(const char* value) { return value; }
+std::string field_value(bool value) { return value ? "1" : "0"; }
+template <typename Value>
+std::string field_value(Value value) { return std::to_string(value); }
+std::string field_value(const std::optional<float>& value) { return optional_number(value); }
+std::string field_value(const std::optional<std::uint64_t>& value) { return optional_integer(value); }
+
+std::filesystem::path artifact_open_path(const std::filesystem::path& path) {
+  if (path.empty()) return {};
+  const auto absolute = std::filesystem::absolute(path);
+  // Resolve directory aliases while preserving the final extension used by
+  // the video encoder and the final directory entry checked by exclusive open.
+  return std::filesystem::weakly_canonical(absolute.parent_path()) / absolute.filename();
+}
+
+std::filesystem::path artifact_identity(std::filesystem::path path) {
+  if (path.empty()) return path;
+  // weakly_canonical also handles existing parent directories of new outputs.
+  // A dangling final symlink still aliases the path it would create on open.
+  for (int depth = 0; depth < 40; ++depth) {
+    std::error_code error;
+    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(path, error))) {
+      return std::filesystem::weakly_canonical(path);
+    }
+    const auto target = std::filesystem::read_symlink(path);
+    path = target.is_absolute() ? target : path.parent_path() / target;
+  }
+  throw std::invalid_argument("tracking artifact has a cyclic symlink");
+}
+
 }  // namespace
 
 MonotonicVideoClock::MonotonicVideoClock(double source_fps) {
@@ -238,7 +375,7 @@ std::int64_t MonotonicVideoClock::next(double pts_ms) {
 }
 
 std::string tracking_csv_header() {
-  return "schema_version,frame_id,timestamp_ms,state,quality,control_valid,accepted,reacquired,"
+  std::string header = "schema_version,frame_id,timestamp_ms,state,quality,control_valid,accepted,reacquired,"
          "x,y,width,height,selected_template,template_action,"
          "anchor_score,anchor_penalized_peak,anchor_psr,anchor_apce,anchor_peak_margin,"
          "recent_score,recent_penalized_peak,recent_psr,recent_apce,recent_peak_margin,"
@@ -315,6 +452,11 @@ std::string tracking_csv_header() {
          "search_hint_projected_width,search_hint_projected_height,search_hint_generation,"
          "search_hint_first_hit_frame,search_hint_confirmation_count,search_hint_used,"
          "search_hint_rejection";
+  visit_observability_fields(TrackingLogRow{}, [&](const auto& name, const auto&) {
+    header += ',';
+    header += name;
+  });
+  return header;
 }
 
 std::string tracking_csv_row(const TrackingLogRow& row) {
@@ -468,7 +610,184 @@ std::string tracking_csv_row(const TrackingLogRow& row) {
                  hint ? std::to_string(hint->confirmation_count) : "",
                  hint ? (hint->used ? "1" : "0") : "",
                  hint ? to_string(hint->rejection) : ""});
+  visit_observability_fields(row, [&](const auto&, const auto& value) {
+    fields.push_back(field_value(value));
+  });
   return join(fields);
+}
+
+std::string tracking_frame_json(const TrackingLogRow& row) {
+  std::ostringstream stream;
+  stream << '{';
+  bool first = true;
+  visit_frame_fields(row, [&](const auto& name, const auto& value) {
+    if (!first) stream << ',';
+    first = false;
+    stream << '"' << name << "\":";
+    using Value = std::decay_t<decltype(value)>;
+    if constexpr (std::is_same_v<Value, const char*>) {
+      stream << '"' << json_escape(value) << '"';
+    } else if constexpr (std::is_same_v<Value, bool>) {
+      stream << (value ? "true" : "false");
+    } else {
+      const auto formatted = field_value(value);
+      stream << (formatted.empty() ? "null" : formatted);
+    }
+  });
+  stream << '}';
+  return stream.str();
+}
+
+std::string tracking_frame_event_fields(const TrackingLogRow& row) {
+  std::ostringstream stream;
+  visit_frame_fields(row, [&](const auto& name, const auto& value) {
+    const auto formatted = field_value(value);
+    stream << ' ' << name << '=' << (formatted.empty() ? "NA" : formatted);
+  });
+  return stream.str();
+}
+
+TrackingArtifactPaths resolve_tracking_artifact_paths(
+    const std::filesystem::path& boxes,
+    const std::filesystem::path& metadata,
+    const std::filesystem::path& video) {
+  TrackingArtifactPaths paths;
+  paths.boxes = artifact_open_path(boxes);
+  paths.metadata = artifact_open_path(metadata.empty() && !boxes.empty()
+      ? std::filesystem::path(boxes.string() + ".metadata.json") : metadata);
+  paths.video = artifact_open_path(video);
+  if (!boxes.empty()) {
+    paths.frame_json = artifact_open_path(boxes.string() + ".jsonl");
+  }
+  std::filesystem::path identities[] = {
+      artifact_identity(paths.boxes), artifact_identity(paths.metadata),
+      artifact_identity(paths.video), {},
+  };
+  const char* labels[] = {"CSV", "session metadata", "video"};
+  constexpr auto companion_index = std::size(labels);
+  try {
+    identities[companion_index] = artifact_identity(paths.frame_json);
+  } catch (const std::filesystem::filesystem_error&) {
+    paths.frame_json.clear();
+    paths.frame_json_disabled_reason = "could not resolve derived companion path";
+  } catch (const std::invalid_argument&) {
+    paths.frame_json.clear();
+    paths.frame_json_disabled_reason = "derived companion has a cyclic symlink";
+  }
+  const auto aliases = [&](std::size_t first, std::size_t second) {
+    if (identities[first].empty() || identities[second].empty()) return false;
+    std::error_code error;
+    return identities[first] == identities[second] ||
+           std::filesystem::equivalent(identities[first], identities[second], error);
+  };
+  for (std::size_t i = 0; i < std::size(labels); ++i) {
+    for (std::size_t j = i + 1; j < std::size(labels); ++j) {
+      if (aliases(i, j)) {
+        throw std::invalid_argument(std::string("tracking outputs share a destination: ") +
+                                    labels[i] + " and " + labels[j]);
+      }
+    }
+    if (aliases(i, companion_index)) {
+      paths.frame_json.clear();
+      paths.frame_json_disabled_reason = std::string("derived companion aliases ") + labels[i];
+    }
+  }
+  if (!paths.frame_json.empty()) {
+    const auto& companion = identities[companion_index];
+    const auto reference = companion.lexically_relative(identities[1].parent_path());
+    paths.frame_json_reference = (reference.empty() ? companion : reference).generic_string();
+  }
+  return paths;
+}
+
+TrackingFrameJsonWriter::TrackingFrameJsonWriter(const TrackingArtifactPaths& paths)
+    : directory_(paths.frame_json.parent_path()),
+      filename_(paths.frame_json.filename()), reference_(paths.frame_json_reference) {}
+
+TrackingFrameJsonWriter::~TrackingFrameJsonWriter() { discard(); }
+
+void TrackingFrameJsonWriter::open() noexcept {
+#if defined(__linux__) && defined(O_TMPFILE) && defined(AT_EMPTY_PATH) && defined(AT_SYMLINK_FOLLOW)
+  if (filename_.empty() || publication_fd_ >= 0) return;
+  directory_fd_ = ::open(directory_.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (directory_fd_ < 0) return;
+  publication_fd_ = ::openat(directory_fd_, ".", O_TMPFILE | O_WRONLY | O_CLOEXEC, 0666);
+  if (publication_fd_ >= 0) {
+    const int stream_fd = ::fcntl(publication_fd_, F_DUPFD_CLOEXEC, 0);
+    if (stream_fd >= 0) {
+      stream_ = ::fdopen(stream_fd, "w");
+      if (!stream_) ::close(stream_fd);
+    }
+  }
+  wrote_frame_ = false;
+  if (!stream_) discard();
+#endif
+}
+
+void TrackingFrameJsonWriter::append(const TrackingLogRow& row) {
+  if (!stream_) return;
+  const auto json = tracking_frame_json(row);
+  if (std::fwrite(json.data(), 1, json.size(), stream_) != json.size() ||
+      std::fputc('\n', stream_) == EOF) {
+    discard();
+    return;
+  }
+  wrote_frame_ = true;
+}
+
+std::string TrackingFrameJsonWriter::finish(bool primary_complete) {
+  if (!stream_) return {};
+  const bool complete = primary_complete && wrote_frame_ &&
+      std::fflush(stream_) == 0 && ::fsync(publication_fd_) == 0;
+  const bool closed = std::fclose(stream_) == 0;
+  stream_ = nullptr;
+  const bool published = complete && closed && publish();
+  discard();
+  return published ? reference_ : std::string{};
+}
+
+bool TrackingFrameJsonWriter::directory_matches_open_path() const noexcept {
+  struct stat held{}, current{};
+  return ::fstat(directory_fd_, &held) == 0 &&
+         ::stat(directory_.c_str(), &current) == 0 &&
+         held.st_dev == current.st_dev && held.st_ino == current.st_ino;
+}
+
+bool TrackingFrameJsonWriter::publish() const noexcept {
+#if defined(__linux__) && defined(O_TMPFILE) && defined(AT_EMPTY_PATH) && defined(AT_SYMLINK_FOLLOW)
+  if (!directory_matches_open_path()) return false;
+  int linked = ::linkat(publication_fd_, "", directory_fd_, filename_.c_str(), AT_EMPTY_PATH);
+  if (linked != 0 && (errno == ENOENT || errno == EPERM)) {
+    // Unprivileged Linux processes may not use AT_EMPTY_PATH. This form
+    // follows the procfs link to the same held anonymous inode. Both forms
+    // create the final name only if it is absent.
+    char source[64];
+    std::snprintf(source, sizeof(source), "/proc/self/fd/%d", publication_fd_);
+    linked = ::linkat(AT_FDCWD, source, directory_fd_, filename_.c_str(), AT_SYMLINK_FOLLOW);
+  }
+  struct stat opened{}, published{};
+  return linked == 0 && directory_matches_open_path() &&
+         ::fstat(publication_fd_, &opened) == 0 &&
+         ::fstatat(directory_fd_, filename_.c_str(), &published, AT_SYMLINK_NOFOLLOW) == 0 &&
+         opened.st_dev == published.st_dev && opened.st_ino == published.st_ino;
+#else
+  return false;
+#endif
+}
+
+void TrackingFrameJsonWriter::discard() noexcept {
+  if (stream_) {
+    std::fclose(stream_);
+    stream_ = nullptr;
+  }
+  if (publication_fd_ >= 0) {
+    ::close(publication_fd_);
+    publication_fd_ = -1;
+  }
+  if (directory_fd_ >= 0) {
+    ::close(directory_fd_);
+    directory_fd_ = -1;
+  }
 }
 
 TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
@@ -484,6 +803,11 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.mode = TrackingMode::kTracking;
   row.tracking_phase = TrackingPhase::kTracking;
   row.observation_valid = true;
+  row.observation_present = true;
+  row.trusted_for_state_update = true;
+  row.motion_update_valid = true;
+  row.state_change_reason = "INITIALIZED";
+  row.rect0_source = "INITIAL_ROI";
   row.control_source = ControlSource::kObservation;
   row.quality = QualityLevel::kReliable;
   row.control_valid = true;
@@ -517,6 +841,12 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.mode = output.mode;
   row.tracking_phase = output.tracking_phase;
   row.observation_valid = output.observation_valid;
+  row.observation_present = output.observation_present;
+  row.trusted_for_state_update = output.trusted_for_state_update;
+  row.motion_update_valid = output.motion_update_valid;
+  row.state_change_reason = output.state_change_reason;
+  row.rect0_source = output.accepted ? "ACCEPTED_OBSERVATION" :
+      output.observation_present ? "RECENT_OBSERVATION" : "MOTION_PREDICTION";
   row.control_source = output.control_source;
   row.accepted_observation_path = output.accepted_observation_path;
   row.quality = output.quality;
@@ -529,13 +859,43 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.control_bbox = output.control_bbox;
   row.selected_template = output.selected_template;
   row.template_action = output.template_action;
+  row.template_transition = output.template_transition;
+  row.template_slot_revocation = result.template_slot_revocation;
+  row.template_transition_result = output.template_transition_result;
+  row.template_transition_applied = output.template_transition_applied;
+  row.template_probation_active = output.template_probation_active;
+  row.template_transition_reason = output.template_transition_reason;
+  row.template_heads = result.template_heads;
+  row.trusted_response_reference = output.trusted_response_reference;
+  row.response_psr_relative_delta = output.response_psr_relative_delta;
+  row.response_apce_relative_delta = output.response_apce_relative_delta;
+  row.response_peak_margin_absolute_delta = output.response_peak_margin_absolute_delta;
+  row.recovery_candidate_key = output.recovery_candidate_key;
+  row.recovery_confirmation_hits = output.recovery_confirmation_hits;
+  row.recovery_conflict = output.recovery_conflict;
+  row.recovery_probe = result.plan.recovery_probe;
+  row.recovery_probe_bbox = result.plan.predicted_bbox;
+  row.recovery_reason = output.recovery_reason;
   for (const TrackerObservation& observation : result.observations) {
-    if (observation.template_kind == TemplateKind::kAnchor) {
-      row.anchor_present = true;
-      row.anchor_metrics = observation.metrics;
-    } else {
-      row.recent_present = true;
-      row.recent_metrics = observation.metrics;
+    const auto bbox = observation.decoded_bbox.value_or(observation.bbox);
+    switch (observation.template_kind) {
+      case TemplateKind::kAnchor:
+        row.anchor_present = true;
+        row.anchor_metrics = observation.metrics;
+        break;
+      case TemplateKind::kRecent:
+        row.recent_present = true;
+        row.recent_metrics = observation.metrics;
+        row.recent_raw_bbox = bbox;
+        break;
+      case TemplateKind::kSafe:
+        row.safe_metrics = observation.metrics;
+        row.safe_raw_bbox = bbox;
+        break;
+      case TemplateKind::kStaged:
+        row.staged_metrics = observation.metrics;
+        row.staged_raw_bbox = bbox;
+        break;
     }
   }
   row.template_iou = output.template_iou;
@@ -712,6 +1072,9 @@ void record_target_class_initialization(
 
 void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
                                       const ControllerConfig& config) {
+  metadata.calibrated = config.calibrated;
+  metadata.template_policy = config.template_policy;
+  metadata.recovery_policy = config.recovery_policy;
   metadata.occlusion_probe_interval_frames = config.occlusion_probe_interval_frames;
   metadata.occlusion_gradual_dimension_ratio = config.occlusion_gradual_dimension_ratio;
   metadata.occlusion_gradual_consecutive_frames = config.occlusion_gradual_consecutive_frames;
@@ -813,6 +1176,12 @@ std::string tracking_session_metadata_json(
   stream << std::fixed << std::setprecision(6)
          << "{\n"
          << "  \"schema_version\": " << kTrackingSchemaVersion << ",\n"
+         << "  \"observation_valid_semantics\": \"ACCEPTED_OBSERVATION\",\n"
+         << "  \"rect0_bbox\": \"tracking_bbox\",\n"
+         << "  \"frame_json_file\": ";
+  if (metadata.frame_json_file.empty()) stream << "null";
+  else stream << '"' << json_escape(metadata.frame_json_file) << '"';
+  stream << ",\n"
          << "  \"video\": \"" << json_escape(metadata.video) << "\",\n"
          << "  \"model_dir\": \"" << json_escape(metadata.model_dir) << "\",\n"
          << "  \"manifest_hash_algorithm\": \""
@@ -828,6 +1197,10 @@ std::string tracking_session_metadata_json(
          << "  \"sensor\": \"" << json_escape(metadata.sensor) << "\",\n"
          << "  \"calibrated\": " << (metadata.calibrated ? "true" : "false")
          << ",\n"
+         << "  \"template_policy\": \"" << to_string(metadata.template_policy)
+         << "\",\n"
+         << "  \"recovery_policy\": \"" << to_string(metadata.recovery_policy)
+         << "\",\n"
          << "  \"requested_target_class_mode\": \""
          << (metadata.requested_target_class_id < 0 ? "AUTO" : "FIXED")
          << "\",\n"

@@ -30,7 +30,7 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def synthetic_contract(schema=10):
+def synthetic_contract(schema=12):
     truth = []
     for frame_id in range(11):
         status = "visible"
@@ -47,7 +47,7 @@ def synthetic_contract(schema=10):
             }
         )
     return {
-        "identity": {"name": "synthetic", "frame_count": 11},
+        "identity": {"name": "synthetic", "frame_count": 11, "width": 320, "height": 240},
         "truth": truth,
         "event_frames": {
             "estimated_start": 3,
@@ -62,7 +62,28 @@ def synthetic_contract(schema=10):
     }
 
 
-def passing_rows(schema=10):
+def mark_recovery(row):
+    row.update(
+        reacquired=True,
+        motion_control_authorized=False,
+        rect0_source="ACCEPTED_OBSERVATION",
+        accepted_observation_path="search_reacquisition",
+        template_action="STAGE_RECENT",
+        template_transition_applied=True,
+        template_transition_recovery=True,
+        template_transition_result="APPLIED",
+        template_probation_active=True,
+        template_transition_reason="RECOVERY_CONFIRMED",
+        template_transaction_id=1,
+        template_slot_id=1,
+        recovery_reason="RECOVERY_STAGED",
+        recovery_confirmation_hits=2,
+        recovery_conflict=False,
+        candidate_source="RECENT",
+    )
+
+
+def passing_rows(schema=12):
     rows = []
     for frame_id in range(11):
         searching = 3 <= frame_id <= 6
@@ -74,18 +95,20 @@ def passing_rows(schema=10):
                 "state": "OCCLUSION_HOLD" if searching else "TRACKING",
                 "tracking_phase": "SEARCHING" if searching else "TRACKING",
                 "observation_valid": not searching,
+                "observation_present": not searching,
+                "trusted_for_state_update": not searching,
+                "motion_update_valid": not searching,
                 "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
                 "control_valid": True,
+                "motion_control_authorized": searching,
+                "motion_prediction_confident": searching,
+                "rect0_source": "MOTION_PREDICTION" if searching else "ACCEPTED_OBSERVATION",
                 "accepted": not searching,
                 "reacquired": frame_id == 7,
                 "tracking_bbox": [10.0 + frame_id, 20.0, 10.0, 10.0],
             }
         )
-    rows[6]["accepted"] = False
-    rows[7]["accepted"] = True
-    rows[7]["observation_valid"] = True
-    rows[7]["tracking_phase"] = "TRACKING"
-    rows[7]["control_source"] = "OBSERVATION"
+    mark_recovery(rows[7])
     return rows
 
 
@@ -175,6 +198,171 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "continuous"):
                     evaluator.load_contract(Path(directory))
 
+    def test_car001_source_precedes_review_status_for_estimated_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            expected = self.make_dataset(directory)
+            status_path = Path(directory, "annotation_status.csv")
+            with status_path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            with status_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=["frame_id", "status", "source", "review_status"],
+                )
+                writer.writeheader()
+                for row in rows:
+                    row["review_status"] = "confirmed"
+                    writer.writerow(row)
+            expected["hashes"]["annotation_status"] = sha256(status_path)
+            with mock.patch.object(evaluator, "CANONICAL_IDENTITY", expected):
+                truth = evaluator.load_truth(evaluator.load_contract(Path(directory)))
+            self.assertFalse(truth[1]["observable"])
+
+    def test_load_contract_selects_car002_and_preserves_sparse_truth_semantics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "ground_truth" / "car_002"
+            labels = package / "labels"
+            estimated = package / "estimated_labels"
+            labels.mkdir(parents=True)
+            estimated.mkdir()
+            (root / "1.mp4").write_bytes(b"shared-video")
+            write_json(
+                package / "annotation_metadata.json",
+                {
+                    "draft": False,
+                    "formal_evaluation_authorized": True,
+                    "unresolved_review_count": 0,
+                    "video": {"width": 100, "height": 50, "frame_count": 4},
+                },
+            )
+            write_json(
+                package / "events.json",
+                {
+                    "events": [
+                        {
+                            "type": "occlusion",
+                            "full_occlusion_frames": [1, 1],
+                            "re_emergence_frames": [2, 2],
+                            "first_full_object_candidate_frame": 3,
+                        },
+                        {"type": "runtime_observation"},
+                    ]
+                },
+            )
+            with (package / "annotation_status.csv").open(
+                    "w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=["frame_id", "target_state", "review_status"],
+                )
+                writer.writeheader()
+                writer.writerows(
+                    [
+                        {"frame_id": 0, "target_state": "visible",
+                         "review_status": "manual_confirmed_visible"},
+                        {"frame_id": 1, "target_state": "full_occlusion",
+                         "review_status": "estimated_non_observable"},
+                        {"frame_id": 2, "target_state": "partial_occlusion",
+                         "review_status": "manual_confirmed_no_bbox"},
+                        {"frame_id": 3, "target_state": "visible",
+                         "review_status": "manual_confirmed_visible"},
+                    ]
+                )
+            label_manifest = []
+            estimate_manifest = []
+            for frame_id in range(4):
+                label = labels / "frame_{:06d}.txt".format(frame_id)
+                estimate = estimated / "frame_{:06d}.txt".format(frame_id)
+                label.write_text(
+                    "0 0.5 0.5 0.2 0.4\n" if frame_id in {0, 3} else "",
+                    encoding="utf-8",
+                )
+                estimate.write_text(
+                    "0 0.5 0.5 0.2 0.4\n" if frame_id == 1 else "",
+                    encoding="utf-8",
+                )
+                label_manifest.append(
+                    "{}  labels/{}\n".format(sha256(label), label.name)
+                )
+                estimate_manifest.append(
+                    "{}  estimated_labels/{}\n".format(sha256(estimate), estimate.name)
+                )
+            (package / "labels.sha256").write_text(
+                "".join(label_manifest), encoding="utf-8"
+            )
+            (package / "estimated_labels.sha256").write_text(
+                "".join(estimate_manifest), encoding="utf-8"
+            )
+            expected = {
+                "name": "fixture_car_002",
+                "target_id": "car_002",
+                "annotation_root": "ground_truth/car_002",
+                "frame_count": 4,
+                "width": 100,
+                "height": 50,
+                "class_id": 0,
+                "confirmed_package": True,
+                "files": {
+                    "video": "1.mp4",
+                    "annotation_metadata": "annotation_metadata.json",
+                    "occlusion_events": "events.json",
+                    "annotation_status": "annotation_status.csv",
+                    "labels_manifest": "labels.sha256",
+                    "estimated_labels_manifest": "estimated_labels.sha256",
+                },
+                "hashes": {
+                    "video": sha256(root / "1.mp4"),
+                    "annotation_metadata": sha256(package / "annotation_metadata.json"),
+                    "occlusion_events": sha256(package / "events.json"),
+                    "annotation_status": sha256(package / "annotation_status.csv"),
+                    "labels_manifest": sha256(package / "labels.sha256"),
+                    "estimated_labels_manifest": sha256(
+                        package / "estimated_labels.sha256"
+                    ),
+                },
+            }
+            with mock.patch.dict(
+                    evaluator.CANONICAL_IDENTITIES, {"car_002": expected}):
+                contract = evaluator.load_contract(root, "car_002")
+                truth = evaluator.load_truth(contract)
+            self.assertEqual(contract["event_frames"]["first_reliable_reappearance"], 3)
+            self.assertEqual(contract["event_frames"]["reacquisition_deadline_exclusive"], 4)
+            self.assertTrue(truth[0]["observable"])
+            self.assertTrue(truth[1]["estimated"])
+            self.assertFalse(truth[1]["observable"])
+            self.assertIsNone(truth[2]["bbox"])
+            self.assertTrue(truth[3]["observable"])
+            rows = []
+            last_box = truth[0]["bbox"]
+            for item in truth:
+                box = item["bbox"] or last_box
+                last_box = box
+                searching = item["frame_id"] in {1, 2}
+                rows.append(
+                    {
+                        "schema_version": 12,
+                        "frame_id": item["frame_id"],
+                        "timestamp_ms": item["frame_id"] * 33,
+                        "state": "OCCLUSION_HOLD" if searching else "TRACKING",
+                        "tracking_phase": "SEARCHING" if searching else "TRACKING",
+                        "observation_valid": not searching,
+                        "observation_present": not searching,
+                        "trusted_for_state_update": not searching,
+                        "motion_update_valid": not searching,
+                        "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
+                        "control_valid": True,
+                        "motion_control_authorized": searching,
+                        "motion_prediction_confident": searching,
+                        "rect0_source": "MOTION_PREDICTION" if searching else "ACCEPTED_OBSERVATION",
+                        "accepted": not searching,
+                        "reacquired": item["frame_id"] == 3,
+                        "tracking_bbox": box,
+                    }
+                )
+            mark_recovery(rows[3])
+            self.assertEqual(evaluator.evaluate(contract, rows, "full")["verdict"], "PASS")
+
     def write_tracking_csv(self, path, rows):
         fields = [
             "schema_version",
@@ -183,10 +371,29 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             "state",
             "tracking_phase",
             "observation_valid",
+            "observation_present",
+            "trusted_for_state_update",
+            "motion_update_valid",
             "control_source",
             "control_valid",
             "accepted",
             "reacquired",
+            "motion_control_authorized",
+            "motion_prediction_confident",
+            "rect0_source",
+            "accepted_observation_path",
+            "template_action",
+            "template_transition_applied",
+            "template_transition_recovery",
+            "template_transition_result",
+            "template_probation_active",
+            "template_transition_reason",
+            "template_transaction_id",
+            "template_slot_id",
+            "recovery_reason",
+            "recovery_confirmation_hits",
+            "recovery_conflict",
+            "candidate_source",
             "tracking_x",
             "tracking_y",
             "tracking_width",
@@ -202,8 +409,16 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                     tracking_x=box[0], tracking_y=box[1],
                     tracking_width=box[2], tracking_height=box[3]
                 )
-                for key in ("observation_valid", "control_valid", "accepted", "reacquired"):
-                    serialized[key] = "1" if row[key] else "0"
+                for key in (
+                    "observation_valid", "observation_present", "trusted_for_state_update",
+                    "motion_update_valid",
+                    "control_valid", "accepted", "reacquired",
+                    "motion_control_authorized", "motion_prediction_confident",
+                    "template_transition_applied", "template_transition_recovery",
+                    "template_probation_active", "recovery_conflict",
+                ):
+                    if key in row:
+                        serialized[key] = "1" if row[key] else "0"
                 writer.writerow(serialized)
 
     def test_tracking_csv_parser_rejects_duplicate_nan_and_partial_boxes(self):
@@ -213,6 +428,8 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             self.write_tracking_csv(path, rows)
             parsed = evaluator.load_tracking_csv(path)
             self.assertEqual([row["frame_id"] for row in parsed], [0, 1, 2])
+            self.assertIs(parsed[0]["observation_present"], True)
+            self.assertIs(parsed[0]["trusted_for_state_update"], True)
 
             duplicate = rows + [dict(rows[-1])]
             self.write_tracking_csv(path, duplicate)
@@ -280,12 +497,15 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             )
             rows.append(
                 {
-                    "schema_version": 10,
+                    "schema_version": 12,
                     "frame_id": frame_id,
                     "timestamp_ms": frame_id * 33,
                     "state": "TRACKING",
                     "tracking_phase": "TRACKING",
                     "observation_valid": True,
+                    "observation_present": True,
+                    "trusted_for_state_update": True,
+                    "motion_update_valid": True,
                     "control_source": "OBSERVATION",
                     "control_valid": True,
                     "accepted": True,
@@ -302,7 +522,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertFalse(passing["gates"]["full_occlusion_semantics"]["applicable"])
         self.assertIn("N/A", evaluator.render_markdown(passing))
 
-        rows[190]["reacquired"] = True
+        mark_recovery(rows[190])
         failing = evaluator.evaluate(contract, rows, "holdout")
 
         self.assertEqual(failing["verdict"], "FAIL")
@@ -317,7 +537,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         rows[4]["control_source"] = "NONE"
         rows[5]["observation_valid"] = True
         rows[7]["reacquired"] = False
-        rows[9]["reacquired"] = True
+        mark_recovery(rows[9])
         report = evaluator.evaluate(synthetic_contract(), rows, "full")
         self.assertEqual(report["verdict"], "FAIL")
         self.assertFalse(report["gates"]["visible_boxes"]["passed"])
@@ -391,6 +611,134 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertFalse(report["gates"]["tracking_schema"]["passed"])
         self.assertIn("legacy schema 9", report["gates"]["tracking_schema"]["detail"])
         self.assertGreater(report["strata"]["visible"]["mean_iou"], 0.99)
+
+    def test_candidate_rejects_archived_v10_and_missing_current_semantics(self):
+        archived = passing_rows(schema=10)
+        for row in archived:
+            row.pop("observation_present")
+            row.pop("trusted_for_state_update")
+            row.pop("motion_update_valid")
+        self.assertEqual(evaluator.evaluate(synthetic_contract(schema=10), archived, "full")["verdict"], "PASS")
+        candidate = evaluator.evaluate(synthetic_contract(), archived, "full")
+        self.assertEqual(candidate["verdict"], "FAIL")
+        self.assertFalse(candidate["gates"]["tracking_schema"]["passed"])
+
+        rows = passing_rows()
+        rows[0].pop("trusted_for_state_update")
+        self.assertFalse(evaluator.evaluate(synthetic_contract(), rows, "full")["gates"]["tracking_schema"]["passed"])
+
+    def test_candidate_rejects_metadata_schema_mismatch(self):
+        contract = synthetic_contract()
+        contract["tracking_session_metadata"] = {"schema_version": 10}
+        report = evaluator.evaluate(contract, passing_rows(), "full")
+        self.assertFalse(report["gates"]["tracking_schema"]["passed"])
+
+    def test_current_recovery_counts_only_trusted_tracking_with_applied_recovery_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "rows.csv")
+            self.write_tracking_csv(path, passing_rows())
+            report = evaluator.evaluate(synthetic_contract(), evaluator.load_tracking_csv(path), "full")
+        self.assertTrue(report["gates"]["reacquisition"]["passed"])
+        self.assertEqual(report["reacquisition"]["frames"], [7])
+        for changes in (
+            {"state": "LOCAL_RECOVERY", "tracking_phase": "SEARCHING"},
+            {"trusted_for_state_update": False},
+            {"motion_update_valid": False},
+            {"observation_present": False},
+            {"observation_valid": False},
+            {"accepted": False},
+            {"state": "LOST"},
+            {"control_valid": False},
+            {"control_source": "MOTION_SEARCH"},
+            {"motion_control_authorized": True},
+            {"tracking_bbox": [17.0, 20.0, 0.0, 10.0]},
+            {"tracking_bbox": [-1.0, 20.0, 10.0, 10.0]},
+            {"tracking_bbox": [319.0, 20.0, 10.0, 10.0]},
+            {"template_transition_applied": False},
+            {"template_transition_recovery": False},
+            {"template_transition_result": "TRACKER_REJECTED"},
+            {"template_action": "COMMIT_RECENT", "recovery_reason": "RECOVERY_COMMITTED"},
+            {"template_slot_id": 2},
+            {"recovery_confirmation_hits": 1},
+            {"recovery_conflict": True},
+        ):
+            with self.subTest(changes=changes):
+                rows = passing_rows()
+                rows[7].update(changes)
+                report = evaluator.evaluate(synthetic_contract(), rows, "full")
+                self.assertFalse(report["gates"]["reacquisition"]["passed"])
+                self.assertEqual(report["gates"]["reacquisition"]["frames"], [7])
+                self.assertEqual(report["reacquisition"]["frames"], [])
+
+    def test_bare_recovery_flag_cannot_exempt_identity_jump(self):
+        rows = passing_rows()
+        rows[7]["reacquired"] = False
+        rows[8]["reacquired"] = True
+        rows[8]["tracking_bbox"][0] += 6.0
+        report = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertFalse(report["gates"]["reacquisition"]["passed"])
+        self.assertEqual(report["reacquisition"]["frames"], [])
+        self.assertIn(8, report["gates"]["identity_proxy"]["frames"])
+
+    def test_lost_rejects_authorized_motion_and_claimed_observation(self):
+        for changes in (
+            {"control_valid": True, "control_source": "MOTION_SEARCH"},
+            {"control_valid": True, "control_source": "OBSERVATION"},
+            {"motion_control_authorized": True},
+            {"observation_present": True},
+            {"trusted_for_state_update": True, "accepted": True, "observation_valid": True},
+        ):
+            with self.subTest(changes=changes):
+                rows = passing_rows()
+                rows[0].update(
+                    state="LOST", tracking_phase="SEARCHING", control_valid=False,
+                    control_source="NONE", observation_present=False,
+                    trusted_for_state_update=False, accepted=False, observation_valid=False,
+                    motion_update_valid=False,
+                )
+                clean = evaluator.evaluate(synthetic_contract(), rows, "full")
+                self.assertTrue(clean["gates"]["continuous_control"]["passed"])
+                rows[0].update(changes)
+                report = evaluator.evaluate(synthetic_contract(), rows, "full")
+                self.assertEqual(report["gates"]["continuous_control"]["frames"], [0])
+
+    def test_full_occlusion_attributes_false_observation_and_unauthorized_motion(self):
+        for changes in (
+            {"observation_present": True},
+            {"accepted": True},
+            {"trusted_for_state_update": True},
+            {"motion_update_valid": True},
+            {"motion_control_authorized": False},
+            {"motion_prediction_confident": False},
+            {"rect0_source": "RECENT_OBSERVATION"},
+        ):
+            with self.subTest(changes=changes):
+                rows = passing_rows()
+                rows[4].update(changes)
+                report = evaluator.evaluate(synthetic_contract(), rows, "full")
+                gate = report["gates"]["full_occlusion_semantics"]
+                self.assertFalse(gate["passed"])
+                self.assertEqual(gate["frames"], [4])
+
+    def test_tentative_control_requires_present_untrusted_observation_and_preserves_identity(self):
+        rows = passing_rows()
+        tentative = rows[2]
+        tentative.update(
+            state="SUSPECTED", tracking_phase="SUSPECTED",
+            observation_valid=False, trusted_for_state_update=False, accepted=False,
+            motion_update_valid=False,
+        )
+        self.assertEqual(evaluator.evaluate(synthetic_contract(), rows, "full")["verdict"], "PASS")
+
+        tentative["tracking_bbox"] = [80.0, 20.0, 10.0, 10.0]
+        report = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertFalse(report["gates"]["identity_proxy"]["passed"])
+        self.assertIn(2, report["gates"]["identity_proxy"]["frames"])
+
+        tentative["observation_present"] = False
+        report = evaluator.evaluate(synthetic_contract(), rows, "full")
+        self.assertFalse(report["gates"]["continuous_control"]["passed"])
+        self.assertIn(2, report["gates"]["continuous_control"]["frames"])
 
     def test_render_markdown_reports_scope_verdict_and_worst_frames(self):
         rows = passing_rows()

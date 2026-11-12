@@ -67,6 +67,20 @@ queries and validates the RKNN artifact's actual input/output tensor metadata.
 
 ## Board build
 
+For RK3588 recent/safe candidate verification, build the committed tree with
+`-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON
+-DCMAKE_CXX_FLAGS=-Werror=switch` and the board's RKNN headers and runtime.
+Run the complete native CTest suite before running the video. The candidate
+uses `config/visible-recent-safe-v1.conf` (`calibrated=false`) and writes
+tracking schema v12. Run each target with its own initial ROI and output
+directory, then run `scripts/verify_board.sh` with `EXPECTED_RKNN_TARGET=rk3588`
+and the repository's `scripts/evaluate_occ_video_1.py` with the matching
+`--target-id` and `--scope full`. The v12 verifier checks the optional JSONL
+companion when the session metadata advertises it. Archived v10 runs use
+`EXPECTED_TRACKING_SCHEMA=10` with the verifier and their original evaluator.
+
+The RK3566 native build uses:
+
 ```bash
 cmake -S . -B build -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=ON \
   -DOpenCV_DIR=/home/cat/ThirdParty/OpenCV4100/lib/cmake/opencv4 \
@@ -182,6 +196,24 @@ Unknown or duplicate config keys, malformed values, and partial detector file
 sets fail before model startup. Existing CLI-only commands remain supported.
 The shipped profile omits `bbox`, pauses on its first frame, and waits for a
 mouse selection.
+
+On the RK3588 final accepted Debug candidate, the profile is also deployed at
+the candidate root. From a terminal opened in the RK3588 graphical desktop
+(where `DISPLAY` is already set), run the current accepted binary and
+configuration with:
+
+```bash
+cd /home/neardi/Project/SOT/occ-candidate-e865c78
+./build/nanotrack_v3 --config rk3588-interactive-debug.conf
+```
+
+This profile loads the C012 `visible-occlusion-calibrated.conf`, the RK3588
+tracker and VisDrone9 detector artifacts, and writes the latest manual Debug
+run to `/tmp/rk3588-interactive-debug.avi`, `.csv`, and `.json`. It deliberately
+contains no `bbox`: draw the initial ROI with the mouse, then press `Space` to
+play. Re-running the command replaces those fixed `/tmp` Debug artifacts. A
+headless SSH shell does not inherit the desktop display; use `DISPLAY=:0` before
+the executable there if remote GUI startup is required.
 
 The controls are:
 

@@ -1,6 +1,9 @@
 #include "tracking_log.hpp"
 
+#include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -37,6 +40,236 @@ std::size_t csv_columns(const std::string& line) {
 
 bool contains(const std::string& value, const std::string& expected) {
   return value.find(expected) != std::string::npos;
+}
+
+void test_tracking_artifact_paths() {
+  using namespace nanotrack;
+  namespace fs = std::filesystem;
+  const auto unique_id = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto root = fs::temp_directory_path() / ("nanotrack-artifacts-" + std::to_string(unique_id));
+  fs::create_directories(root / "results");
+  fs::create_directories(root / "metadata");
+  fs::create_directory_symlink(root / "results", root / "alias");
+  const auto csv = root / "results" / "bboxes.csv";
+  const auto meta = root / "metadata" / "session.json";
+  const auto video = root / "results" / "output.avi";
+  const auto companion = root / "results" / "bboxes.csv.jsonl";
+  const auto rejects = [&](const fs::path& boxes, const fs::path& metadata, const fs::path& output) {
+    try {
+      resolve_tracking_artifact_paths(boxes, metadata, output);
+      return false;
+    } catch (const std::invalid_argument&) {
+      return true;
+    }
+  };
+  std::ofstream(csv) << "existing evidence";
+  const auto relative_alias = fs::relative(root / "alias", fs::current_path()) / "bboxes.csv";
+  expect_true(rejects(csv, relative_alias, video) &&
+                  rejects(csv, meta, root / "results" / ".." / "alias" / "bboxes.csv"),
+              "relative, parent and symlink aliases cannot overwrite outputs");
+  fs::create_hard_link(csv, root / "metadata" / "hard-link");
+  expect_true(rejects(csv, root / "metadata" / "hard-link", video),
+              "existing hard links count as the same artifact");
+  fs::create_symlink(companion, root / "metadata" / "dangling-alias");
+  for (const auto& metadata : {companion, root / "alias" / "bboxes.csv.jsonl",
+                               root / "metadata" / "dangling-alias"}) {
+    bool primary_outputs_preserved = false;
+    try {
+      const auto collision = resolve_tracking_artifact_paths(csv, metadata, video);
+      std::ofstream(collision.metadata) << "required session metadata";
+      TrackingFrameJsonWriter writer(collision);
+      writer.open();
+      writer.append(make_initial_log_row(0, 0, BBox{1, 1, 4, 4}));
+      std::ifstream metadata_contents(collision.metadata);
+      std::string written;
+      std::getline(metadata_contents, written);
+      primary_outputs_preserved = collision.frame_json.empty() &&
+          collision.frame_json_reference.empty() && !collision.frame_json_disabled_reason.empty() &&
+          !collision.boxes.empty() && !collision.metadata.empty() && !collision.video.empty() &&
+          writer.finish(true).empty() && written == "required session metadata";
+      fs::remove(companion);
+    } catch (const std::invalid_argument&) {}
+    expect_true(primary_outputs_preserved,
+                "a derived companion collision leaves required outputs enabled");
+  }
+  std::ifstream original(csv);
+  std::string contents;
+  std::getline(original, contents);
+  expect_true(contents == "existing evidence", "collision detection precedes truncation");
+
+  const auto paths = resolve_tracking_artifact_paths(csv, meta, video);
+  const auto row = make_initial_log_row(0, 0, BBox{1, 1, 4, 4});
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    expect_true(!fs::exists(companion), "open leaves no final pathname");
+    writer.append(row);
+    expect_true(!fs::exists(companion), "append leaves no final pathname");
+    expect_true(writer.finish(false).empty() && !fs::exists(companion),
+                "incomplete primary output leaves no companion to advertise");
+  }
+  for (bool before_append : {false, true}) {
+    for (bool primary_complete : {false, true}) {
+      TrackingFrameJsonWriter writer(paths);
+      writer.open();
+      if (!before_append) writer.append(row);
+      const auto foreign = root / "results" / "independent-artifact";
+      std::ofstream(foreign) << "concurrent evidence";
+      std::error_code publication_error;
+      fs::create_hard_link(foreign, companion, publication_error);
+      if (before_append) writer.append(row);
+      expect_true(!publication_error && writer.finish(primary_complete).empty() &&
+                      fs::exists(companion) && fs::equivalent(foreign, companion),
+                  "concurrent final creation survives every pre-publication stage");
+      std::ifstream replacement(companion);
+      std::string replacement_contents;
+      std::getline(replacement, replacement_contents);
+      expect_true(replacement_contents == "concurrent evidence",
+                  "another writer's final inode remains byte-identical");
+      fs::remove(companion);
+    }
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    writer.append(row);
+    std::error_code alias_error;
+    fs::create_symlink(csv, companion, alias_error);
+    expect_true(!alias_error && writer.finish(true).empty() && fs::is_symlink(companion),
+                "a final symlink alias is never followed or replaced");
+    fs::remove(companion);
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    expect_true(writer.finish(true).empty() && !fs::exists(companion),
+                "empty companion is not advertised");
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    writer.append(row);
+    const auto reference = writer.finish(true);
+    expect_true(!reference.empty() && fs::equivalent(meta.parent_path() / reference, companion),
+                "completed companion resolves from the metadata directory");
+    std::ifstream final(companion);
+    std::string complete_json;
+    std::getline(final, complete_json);
+    expect_true(complete_json == tracking_frame_json(row) && final.peek() == EOF,
+                "published companion has the complete serialized row");
+  }
+  {
+    TrackingFrameJsonWriter writer(paths);
+    writer.open();
+    writer.append(row);
+    expect_true(writer.finish(true).empty() && fs::exists(companion),
+                "an earlier companion is preserved and is not advertised by a new run");
+  }
+  {
+    const auto elsewhere = root / "other-output";
+    fs::create_directory(elsewhere);
+    const auto changed = resolve_tracking_artifact_paths(elsewhere / "bboxes.csv", meta, video);
+    TrackingFrameJsonWriter writer(changed);
+    writer.open();
+    writer.append(row);
+    const auto moved = root / "moved-output";
+    fs::rename(elsewhere, moved);
+    fs::create_directory(elsewhere);
+    std::ofstream(changed.frame_json) << "replacement directory evidence";
+    expect_true(writer.finish(true).empty() &&
+                    !fs::exists(moved / "bboxes.csv.jsonl"),
+                "moving the publication directory does not advertise or publish to the old path");
+    std::ifstream replacement(changed.frame_json);
+    std::string replacement_contents;
+    std::getline(replacement, replacement_contents);
+    expect_true(replacement_contents == "replacement directory evidence",
+                "a replacement publication directory remains untouched");
+  }
+  fs::remove_all(root);
+}
+
+void test_recent_safe_serialization() {
+  using namespace nanotrack;
+  RuntimeFrameResult frame;
+  frame.template_heads = {true, true, false, false};
+  frame.plan.recovery_probe = RecoveryCandidateKey{RecoveryCandidateSource::kDetector, 7, 2};
+  frame.plan.predicted_bbox = {51, 30, 20, 20};
+  frame.observations = {
+      {1, 40, {50, 30, 20, 20}, {0.90F, 0.88F, 8.0F, 12.0F, 0.10F},
+       TemplateKind::kRecent, 1, BBox{49, 29, 22, 22}},
+      {1, 40, {55, 30, 20, 20}, {0.70F, 0.65F, 5.0F, 7.0F, 0.05F},
+       TemplateKind::kSafe, 1},
+  };
+  auto& output = frame.output;
+  output.frame_id = 1;
+  output.timestamp_ms = 40;
+  output.mode = TrackingMode::kSuspected;
+  output.tracking_phase = TrackingPhase::kSuspected;
+  output.observation_present = true;
+  output.control_valid = true;
+  output.control_source = ControlSource::kObservation;
+  output.tracking_bbox = frame.observations[0].bbox;
+  output.display_bbox = {45, 30, 20, 20};
+  output.control_bbox = {48, 30, 20, 20};
+  output.template_action = TemplateAction::kRollbackRecent;
+  output.template_transition = TemplateTransitionRequest{8, output.template_action, output.tracking_bbox, false, 6};
+  output.template_transition_result = TemplateTransitionResult::kTrackerRejected;
+  output.template_transition_reason = "PROBATION_REJECTED";
+  output.state_change_reason = "RESPONSE_DEGRADED";
+  output.trusted_response_reference = ResponseReference{10.0F, 16.0F, 0.25F};
+  output.response_psr_relative_delta = -0.20F;
+  output.response_apce_relative_delta = -0.25F;
+  output.response_peak_margin_absolute_delta = -0.15F;
+  output.recovery_candidate_key = RecoveryCandidateKey{RecoveryCandidateSource::kSafe, 9, 2};
+  output.recovery_confirmation_hits = 1;
+  output.recovery_reason = "AWAITING_CONFIRMATION";
+  const auto row = make_tracking_log_row(frame);
+  const auto csv = tracking_csv_header();
+  const auto json = tracking_frame_json(row);
+  for (const auto& expected : {
+           "\"schema_version\":12", "\"tracking_phase\":\"SUSPECTED\"",
+           "\"observation_valid\":false", "\"observation_present\":true",
+           "\"trusted_for_state_update\":false", "\"control_source\":\"OBSERVATION\"",
+           "\"rect0_source\":\"RECENT_OBSERVATION\"", "\"active_template\":\"RECENT\"",
+           "\"recent_raw_x\":49.000000", "\"safe_raw_x\":55.000000",
+           "\"safe_raw_penalized_peak\":0.650000", "\"staged_head_executed\":false",
+           "\"trusted_baseline_psr\":10.000000", "\"response_psr_relative_delta\":-0.200000",
+           "\"response_peak_margin_absolute_delta\":-0.150000", "\"template_transaction_id\":8",
+           "\"template_slot_id\":6", "\"template_transition_result\":\"TRACKER_REJECTED\"",
+           "\"template_transition_applied\":false", "\"candidate_source\":\"SAFE\"",
+           "\"candidate_id\":9", "\"recovery_probe_source\":\"DETECTOR\"",
+           "\"recovery_probe_x\":51.000000", "\"recovery_confirmation_hits\":1",
+           "\"tracking_x\":50.000000", "\"display_x\":45.000000", "\"control_x\":48.000000"}) {
+    expect_true(contains(json, expected), std::string("v12 JSON field ") + expected);
+    const std::string field(expected);
+    expect_true(contains(csv, field.substr(1, field.find('"', 1) - 1) + ',') ||
+                    csv.rfind(field.substr(1, field.find('"', 1) - 1)) != std::string::npos,
+                std::string("v12 CSV field ") + expected);
+  }
+  expect_true(csv_columns(csv) == csv_columns(tracking_csv_row(row)),
+              "v12 CSV includes exactly one value per named column");
+}
+
+void test_recent_safe_profile_metadata() {
+  using namespace nanotrack;
+  const auto profile = std::filesystem::path(__FILE__).parent_path() /
+      "../config/visible-recent-safe-v1.conf";
+  const ControllerConfig config = load_controller_config(profile.string());
+  TrackingSessionMetadata metadata;
+  metadata.calibrated = true;
+  apply_controller_config_metadata(metadata, config);
+  const auto json = tracking_session_metadata_json(metadata);
+
+  expect_true(contains(json, "\"schema_version\": 12,\n") &&
+                  contains(json, "\"template_policy\": \"recent_safe_v1\",\n") &&
+                  contains(json, "\"recovery_policy\": \"unified_candidates_v1\",\n") &&
+                  contains(json, "|recent_safe_v1|unified_candidates_v1|") &&
+                  contains(json, "  \"calibrated\": false,\n"),
+              "v12 session metadata identifies the uncalibrated recent-safe profile");
+  expect_true(contains(json, "\"search_reacquisition_requires_detector\": false,\n") &&
+                  contains(json, "\"template_bridge_min_stable_frames\": 0,\n") &&
+                  contains(json, "\"template_bridge_max_duration_ms\": 0,\n"),
+              "v12 recent-safe session metadata reports inactive legacy recovery settings");
 }
 
 void test_adaptive_coast_serialization() {
@@ -185,7 +418,16 @@ void test_adaptive_coast_serialization() {
 }  // namespace
 
 int main() {
+  expect_true(nanotrack::kTrackingSchemaVersion == 12 &&
+                  nanotrack::tracking_csv_header().find("template_transition_result") != std::string::npos &&
+                  nanotrack::tracking_csv_header().find("trusted_for_state_update") != std::string::npos &&
+                  nanotrack::tracking_csv_header().find("motion_update_valid") != std::string::npos,
+              "schema v12 exposes independent motion-update trust");
+
   using namespace nanotrack;
+  test_tracking_artifact_paths();
+  test_recent_safe_serialization();
+  test_recent_safe_profile_metadata();
   test_adaptive_coast_serialization();
 
   MonotonicVideoClock clock(30.0);
@@ -313,8 +555,8 @@ int main() {
         "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("10,", 0) == 0 && kTrackingSchemaVersion == 10,
-              "tracking rows carry schema version 10 exactly once");
+  expect_true(encoded.rfind("12,", 0) == 0 && kTrackingSchemaVersion == 12,
+              "tracking rows carry schema version 12 exactly once");
   expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
               "CSV writes established class and recovery gate");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
@@ -324,7 +566,7 @@ int main() {
               "CSV text fields escape commas and quotes");
 
   const TrackingLogRow initial = make_initial_log_row(0, 0, BBox{10, 20, 30, 40});
-  expect_true(initial.control_valid && initial.accepted &&
+  expect_true(initial.control_valid && initial.accepted && initial.motion_update_valid &&
                   initial.mode == TrackingMode::kTracking &&
                   initial.tracking_phase == TrackingPhase::kTracking &&
                   initial.observation_valid &&
@@ -595,7 +837,7 @@ int main() {
                   contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
                   contains(json, "\"detector_ms\": 15.000000"),
               "same-frame initialization history retains order, result diagnostics and null optionals");
-  expect_true(contains(json, "\"schema_version\": 10") &&
+  expect_true(contains(json, "\"schema_version\": 12") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&
@@ -622,7 +864,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v10 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
+              "schema-v12 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

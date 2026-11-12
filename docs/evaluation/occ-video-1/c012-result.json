@@ -3,11 +3,11 @@
   "candidate_id": "C012",
   "status": "PASS_CANONICAL_BOARD_ACCEPTANCE",
   "development_mode": "post_holdout",
-  "runtime_source_commit": "30b475f577e46ed8158a40f6463842ef5188169a",
-  "board_root": "/home/neardi/Project/SOT/occ-candidate-30b475f",
+  "runtime_source_commit": "e865c78679247cb45ddbdbf2fb466e49930d5d12",
+  "board_root": "/home/neardi/Project/SOT/occ-candidate-e865c78",
   "identities": {
-    "source_archive_sha256": "f06678f5d6c941c856e8c07b45c55240be53461a8195c526c0d1a0b2ea240f64",
-    "executable_sha256": "274076fe1c505270fd77da5075375ae98465d18d2dbd517292cbb67085239ce0",
+    "source_archive_sha256": "64896748bbedbe16a8bcea762087e3060db0f0a0ba4b7a64cbc113b56755ef69",
+    "executable_sha256": "e2a44c74bf6410dc79b5d07a5c134e27cd0096cdca16a81c67d2f27df521ab4d",
     "config_sha256": "82ce1e035e202f10a46f1aa2a21f4ed42d79839dca01b0629e1848c90919432c",
     "evaluator_sha256": "cabdbe3562bb065f5183e69f2f40765d2a40b398df694133d9ac9a4148d0df1d",
     "tracker_manifest_sha256": "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261",
@@ -18,7 +18,7 @@
     "rknn_enabled": true,
     "warnings_as_errors_switch": true,
     "ctest": "19/19 PASS",
-    "ctest_log_sha256": "362dae8abf675a79bd4743af5539d165deb09dfafdfb233c775e6a9ded902abe"
+    "ctest_log_sha256": "00053560d553328883312a4ceb98312ee13f51ad2cb50208dcb96ab6455a7ea3"
   },
   "acceptance": {
     "run_count": 3,
@@ -32,16 +32,16 @@
     "all_visible_mean_iou": 0.7256928050661865,
     "video_format_each_run": "1920x1080, 271 frames",
     "verifier_log_sha256_each_run": "86808013d246f358f354b6101ef4e84470bb2cd29dfb95fa89482d31d735f02e",
-    "evaluator_json_sha256_each_run": "873c5936dbf3dab3177ae2023b782c8c3e953e5bc7cd14f3efc1c5932004cda2",
+    "evaluator_json_sha256_each_run": "8748b91ca59a8a91ecb013099d3aa43cb7868b1227c6123a5008c4f16f530aaf",
     "evaluator_markdown_sha256_each_run": "cb6ca3a4bcb5ae8af9b9bb3182df335c78f60ac7b4be52fdfc953404123c3f8c"
   },
   "run_roots": [
-    "/home/neardi/Project/SOT/occ-candidate-30b475f/runs/C012-full-run1",
-    "/home/neardi/Project/SOT/occ-candidate-30b475f/runs/C012-full-run2",
-    "/home/neardi/Project/SOT/occ-candidate-30b475f/runs/C012-full-run3"
+    "/home/neardi/Project/SOT/occ-candidate-e865c78/runs/C012-final-run1",
+    "/home/neardi/Project/SOT/occ-candidate-e865c78/runs/C012-final-run2",
+    "/home/neardi/Project/SOT/occ-candidate-e865c78/runs/C012-final-run3"
   ],
   "review_artifact": {
-    "path": "/home/neardi/Project/SOT/occ-candidate-30b475f/runs/C012-full-run1/review-160-190-195-212.avi",
+    "path": "/home/neardi/Project/SOT/occ-candidate-e865c78/runs/C012-final-run1/review-160-190-195-212.avi",
     "sha256": "a3e76846fbf5b256a52226f21d041deec8b102c458fe3810c1f3410eb2f221c6",
     "format": "1920x1080, 49 frames",
     "human_review_status": "PENDING"

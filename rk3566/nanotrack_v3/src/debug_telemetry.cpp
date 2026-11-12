@@ -1,4 +1,5 @@
 #include "debug_telemetry.hpp"
+#include "tracking_log.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -258,12 +259,16 @@ std::vector<std::string> DebugTelemetry::frame_events(
            << " motion_control_authorized=" << o.motion_control_authorized
            << " control_valid=" << o.control_valid
            << " motion_bbox=" << bbox_value(result.plan.motion_predicted_bbox)
-           << " control_bbox=" << bbox_value(o.bbox)
+           << " control_bbox=" << bbox_value(o.control_bbox)
            << extra;
     for (const auto& observation : result.observations) {
-      stream << (observation.template_kind == TemplateKind::kAnchor
-                     ? " anchor_bbox=" : " recent_bbox=")
-             << bbox_value(observation.bbox);
+      switch (observation.template_kind) {
+        case TemplateKind::kAnchor: stream << " anchor_bbox="; break;
+        case TemplateKind::kRecent: stream << " recent_bbox="; break;
+        case TemplateKind::kSafe: stream << " safe_bbox="; break;
+        case TemplateKind::kStaged: stream << " staged_bbox="; break;
+      }
+      stream << bbox_value(observation.bbox);
     }
     events.push_back(stream.str());
   };
@@ -514,10 +519,26 @@ std::vector<std::string> DebugTelemetry::frame_events(
     std::ostringstream stream = event_stream("template_action");
     stream << " frame=" << result.output.frame_id
            << " action=" << to_string(result.output.template_action);
+    if (const auto& request = result.output.template_transition) {
+      stream << " template_transaction_id=" << request->transaction_id
+             << " template_slot_id=" << request->template_slot_id
+             << " template_transition_recovery=" << request->recovery
+             << " template_transition_applied=" << result.output.template_transition_applied
+             << " template_transition_result=" << to_string(result.output.template_transition_result)
+             << " template_transition_reason=" << result.output.template_transition_reason;
+    }
     events.push_back(stream.str());
   }
 
-  if (force_heartbeat || observed_frames_ % heartbeat_interval_ == 0) {
+  const bool heartbeat = force_heartbeat || observed_frames_ % heartbeat_interval_ == 0;
+  if (heartbeat || o.template_transition || result.template_slot_revocation ||
+      (o.observation_present && !o.accepted) || o.recovery_candidate_key || o.recovery_conflict) {
+    std::ostringstream stream = event_stream("frame_observation");
+    stream << tracking_frame_event_fields(make_tracking_log_row(result));
+    events.push_back(stream.str());
+  }
+
+  if (heartbeat) {
     std::ostringstream stream = event_stream("frame_status");
     stream << " frame=" << result.output.frame_id
            << " mode=" << to_string(result.output.mode)

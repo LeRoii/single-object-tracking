@@ -9,6 +9,33 @@ include(CTest)
 find_package(Threads REQUIRED)
 
 option(ENABLE_RKNN_RUNTIME "Build the RKNN/OpenCV runtime executable" OFF)
+option(BUILD_ANNOTATION_TOOLS "Build host-only annotation tools" OFF)
+
+if(BUILD_ANNOTATION_TOOLS)
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio tracking)
+  add_library(nanotrack_bidirectional_annotation
+    src/bidirectional_annotation.cpp
+  )
+  target_include_directories(nanotrack_bidirectional_annotation
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS}
+  )
+  target_link_libraries(nanotrack_bidirectional_annotation
+    PUBLIC nanotrack_math ${OpenCV_LIBS}
+  )
+  target_compile_options(nanotrack_bidirectional_annotation
+    PRIVATE -Wall -Wextra -Wpedantic
+  )
+
+  add_executable(generate_bidirectional_candidates
+    tools/generate_bidirectional_candidates.cpp
+  )
+  target_link_libraries(generate_bidirectional_candidates
+    PRIVATE nanotrack_bidirectional_annotation ${OpenCV_LIBS}
+  )
+  target_compile_options(generate_bidirectional_candidates
+    PRIVATE -Wall -Wextra -Wpedantic
+  )
+endif()
 
 add_library(nanotrack_production_deployment_config src/production_deployment_config.cpp)
 target_include_directories(nanotrack_production_deployment_config
@@ -42,6 +69,9 @@ add_library(nanotrack_controller_support
   src/long_term_controller.cpp
   src/long_term_runtime.cpp
   src/long_term_types.cpp
+  src/recent_safe_templates.cpp
+  src/response_baseline.cpp
+  src/recovery_candidates.cpp
   src/target_class.cpp
   src/motion_estimator.cpp
   src/occlusion_evidence.cpp
@@ -49,6 +79,9 @@ add_library(nanotrack_controller_support
 )
 target_include_directories(nanotrack_controller_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(nanotrack_controller_support PUBLIC nanotrack_math)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+  target_link_libraries(nanotrack_controller_support PUBLIC stdc++fs)
+endif()
 target_compile_options(nanotrack_controller_support PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(nanotrack_debug_telemetry
@@ -76,6 +109,16 @@ target_include_directories(nanotrack_sha256 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_compile_options(nanotrack_sha256 PRIVATE -Wall -Wextra -Wpedantic)
 
 if(BUILD_TESTING)
+  if(BUILD_ANNOTATION_TOOLS)
+    add_executable(test_bidirectional_annotation
+      tests/test_bidirectional_annotation.cpp
+    )
+    target_link_libraries(test_bidirectional_annotation
+      PRIVATE nanotrack_bidirectional_annotation ${OpenCV_LIBS}
+    )
+    add_test(NAME bidirectional_annotation COMMAND test_bidirectional_annotation)
+  endif()
+
   add_executable(test_production_deployment_config tests/test_production_deployment_config.cpp)
   target_link_libraries(test_production_deployment_config PRIVATE nanotrack_production_deployment_config)
   add_test(NAME production_deployment_config COMMAND test_production_deployment_config)
@@ -118,6 +161,18 @@ if(BUILD_TESTING)
   add_executable(test_long_term_runtime tests/test_long_term_runtime.cpp)
   target_link_libraries(test_long_term_runtime PRIVATE nanotrack_controller_support)
   add_test(NAME long_term_runtime COMMAND test_long_term_runtime)
+
+  add_executable(test_recent_safe_templates tests/test_recent_safe_templates.cpp)
+  target_link_libraries(test_recent_safe_templates PRIVATE nanotrack_controller_support)
+  add_test(NAME recent_safe_templates COMMAND test_recent_safe_templates)
+
+  add_executable(test_response_baseline tests/test_response_baseline.cpp)
+  target_link_libraries(test_response_baseline PRIVATE nanotrack_controller_support)
+  add_test(NAME response_baseline COMMAND test_response_baseline)
+
+  add_executable(test_recovery_candidates tests/test_recovery_candidates.cpp)
+  target_link_libraries(test_recovery_candidates PRIVATE nanotrack_controller_support)
+  add_test(NAME recovery_candidates COMMAND test_recovery_candidates)
 
   add_executable(test_tracking_log tests/test_tracking_log.cpp)
   target_link_libraries(test_tracking_log PRIVATE nanotrack_controller_support)

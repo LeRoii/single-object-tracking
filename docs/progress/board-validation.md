@@ -1,5 +1,215 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T16:19:23+08:00 四个已拒绝运动冻结实现的失败帧导出
+
+- 按用户复核请求，从四个已拒绝 RK3588 保留根的原始输出 AVI 导出失败窗口：
+  `d7ee7df`、`2b08bc5`、`3f3d7be`、`49027b1`。选择依据为 full evaluator 的首次坏帧、
+  错误重捕帧及 car002 的 213--216 帧遮挡语义失败；每个中心帧导出 `center-4` 到
+  `center+4` 共 9 张带真实源帧号 JPEG，并生成一张 3x3 contact sheet。
+- 最终板端目录为 `/home/neardi/Project/SOT/motion-freeze-failure-frames-v3`，压缩包为
+  `/home/neardi/Project/SOT/motion-freeze-failure-frames-v3.tar.gz`；当前工作树的忽略目录副本为
+  `results/failure-frame-sequences/motion-freeze-failure-frames-v3/`。共 28 个事件窗口、252 张
+  连续帧、28 张 contact sheet；`windows.csv` 记录全部精确帧段，`README.txt` 记录四种实现语义，
+  `SHA256SUMS` 覆盖 282 个非清单文件。
+- 最终压缩包 SHA-256 为
+  `c2bfd257d2817bc35d40dbc4cebbb78dc3403c857ce81899190ded9b3c83514c`。抽查
+  `d7ee7df/car_001/f104_false_reacquisition/contact_sheet.jpg` 确认角标为真实源帧
+  100--108，框来自各版本保存视频中绘制的 `control_bbox`。首次 v2 导出因旧 FFmpeg 将
+  contact-sheet 角标重编号为 0--8 而废弃；v3 才是交付版本，不改变任何源码、运行结果或判定。
+
+## 2026-11-12T16:06:25+08:00 恢复版 2d31bfe RK3588 精确确认
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，工作树
+  `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking`，基线
+  `49027b1a7f6ab6da2f81d0693ae4a6b420463cb7`，源码提交
+  `2d31bfee11e381a345ffba958beccd7eadd39289`。该提交恢复已验证的 `5fbcf83` search 趋势行为，
+  不再采用本轮四个已拒绝的分级运动冻结实现；schema v12 与 `motion_update_valid` 可观测字段
+  保留。主机 CTest `22/22`、evaluator 单测 `23/23`、`git diff --check` 均 PASS。
+- 源码归档 `/tmp/occ-restored-2d31bfe.tar.gz` 与板端同名文件 SHA-256 均为
+  `b070320cfa355dab7fb1eac7692674414361c2acd678450fa1fdef4fd2027aa4`；独立板端根
+  `/home/neardi/Project/SOT/occ-restored-2d31bfe`。RK3588 原生 Debug 构建和 CTest `22/22`
+  PASS；`build/nanotrack_v3` SHA-256
+  `9a30f2305060cd4d1d7aae7e2e41e23b7cd5c3dda011316234d6a43c34e4c240`。配置/模型 manifest
+  SHA-256 分别为 `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`、
+  `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`。
+- 固定 ROI `car_001=992,582,37,39`、`car_002=970,517,38,38` 各运行 0--270 帧并 exit 0；
+  schema v12 verifier 均 PASS，AVI 均为 `1920x1080`、271 帧。car001 full evaluator **PASS**，
+  visible mean IoU `0.751326`、唯一重捕 `[185]`，所有门通过。CSV/AVI/metadata/evaluator JSON
+  SHA-256 分别为 `20dabd22713d37e8e38fbecf2bf3bdd4530eab91a0b02164c3d51542e81d0b1e`、
+  `edf20ddcf711e329047ba4d70ce1c18d188a11ba93b57f4deafe091f0062dd03`、
+  `96a846da68118a5dcc1703dcd3c46766501f7e0cdc2641d456ea4d890634e929`、
+  `90d706c80eac5dea5c5b1921eec249049e6d5dfa5f26aba2dd1a5715422a6c41`。
+- car002 visible mean IoU `0.798100`，唯一重捕 `[235]`；visible、prediction continuity、
+  reacquisition、continuous control、identity proxy 均 PASS，只有已知 213--216 帧
+  `full_occlusion_semantics` FAIL，因此 full verdict 仍为 **FAIL**。CSV/AVI/metadata/evaluator JSON
+  SHA-256 分别为 `943ca28e792ad2a12a350af0ef5f840c740253ad941cc7086b44350d0b962a41`、
+  `78fe73d1628d2b9b23f91d368175d3e907a02e847c48665a4ffd41186ec04765`、
+  `2a5ebdf9d6edf7a89609cc10fa0e127e489d53912dd98cb4d1ff3e3d7bdce441`、
+  `14187890856aa0909328e9f0450a642278aef09631a536354a0e2dd555dfab3d`。
+- **结论 / Handoff**：最新 HEAD 已恢复到最后验证过的不退化行为，四个实验版本继续作为拒绝
+  证据保留，不进入 handoff。用户提出的“运动更新停止早于确认遮挡”原则仍合理，但当前 response
+  单指标不能可靠区分遮挡与正常强形变；在增加独立遮挡证据并覆盖多场景验证前，不再针对该单一
+  视频调冻结阈值。当前候选仍 HOLD，不构成正式生产或真实吊舱验收。
+
+## 2026-11-12T15:59:24+08:00 49027b1 板端拒绝，恢复最后通过候选
+
+- SUSPECTED 分级提交 `49027b1a7f6ab6da2f81d0693ae4a6b420463cb7` 已部署到独立根
+  `/home/neardi/Project/SOT/occ-motion-suspected-49027b1`；源码归档 SHA-256
+  `1a713edccd21d13ca30cff20b2178dac4fb74cc10b870b8ee86294fe046e16c6`。原生构建、CTest
+  `22/22`、两目标运行与 schema v12 verifier 均 PASS，但 full evaluator 仍非双目标通过。
+- car002 明显改善：唯一重捕为234帧，visible/control/identity/prediction/reacquisition 均 PASS，
+  只保留已知213--216帧 full-occlusion semantics FAIL；但 car001 出现错误重捕
+  `[80,101,212]` 并发生大范围身份/可见框失败。car001 的早期强形变/遮挡依赖原运动加速度
+  穿越，SUSPECTED 时无差别清零加速度会破坏它，因此 `49027b1` 仍低于 C012/`5fbcf83`
+  基线并被拒绝。
+- 四次真实板端失败表明，在当前观测量下，仅靠同一组 response 指标无法通用地区分“正常强
+  形变/临时遮挡但应继续运动估计”和“稳定尺寸遮挡即将污染运动”；继续调该视频阈值会产生
+  过拟合。分支最新源码恢复最后一个双目标已验证不退化的 `5fbcf83` 行为：继续更新当前运动，
+  只冻结 search 专用干净趋势；进入 SEARCH 时仅在当前趋势反向时采用干净趋势并清零加速度。
+  schema v12 的 `motion_update_valid` 可观测字段保留，但恢复版中所有 accepted TRACKING 观测均
+  为 true。失败根目录和报告全部保留。
+- **边界 / 下一步**：恢复版本不是对旧策略的最终否定；若继续实现，需增加独立于当前单指标
+  波动的遮挡证据或跨场景数据，而不是继续调 `occ_video_1`。恢复提交仍需主机回归与一次精确
+  RK3588 确认；在确认前不宣称最新 HEAD 已回到基线。
+
+## 2026-11-12T15:53:46+08:00 3f3d7be 板端拒绝与 SUSPECTED 分级边界校正
+
+- 几何解耦提交 `3f3d7be753096ad3de6e2d27082f73b7054eeb50` 已部署到独立根
+  `/home/neardi/Project/SOT/occ-motion-trust-3f3d7be`；原生 RK3588 Debug 构建/CTest
+  `22/22` 与两目标程序均成功，但 full evaluator 仍 **FAIL**：car001 错误重捕
+  `[84,102,127]`，car002 错误重捕 `[110]`。局部连续性允许 NanoTrack 框继续输出，却也会在
+  单指标波动触发的长冻结期间逐渐接受错误目标，因此该提交拒绝，不作为候选。
+- 三次失败共同说明：把任一单项 response 相对下降直接解释为“完全正常跟踪结束”过于敏感；
+  这不是用户所述旧策略本身，而是本轮对其触发边界的错误映射。现有状态机已经提供所需递进：
+  `TRACKING accepted` → `SUSPECTED tentative` → `SEARCHING`。SUSPECTED 框仍对外输出并可控制，
+  但已不被接受为可信状态更新，正好是“禁止运动更新早于确认丢失”的阶段。
+- 后续实现撤销所有“accepted 单指标下降即冻结”逻辑及冻结几何特例，改为首次发布
+  SUSPECTED tentative 时冻结 motion/shadow motion 的开环加速度和尺度速度、保留此前速度；
+  SEARCH 继续使用该未被 tentative 框污染的趋势。既有 `suspicion_clear_ms` 清洁迟滞通过后，
+  第一帧重新 accepted 时以当前框重新初始化运动模型。该设计不新增阈值，也不根据视频帧号或
+  方向做决策。
+- 单测覆盖 tentative 期间 observation/control 连续、`motion_update_valid=false`、速度保留、
+  加速度清零，以及原有清洁迟滞通过后重建运动状态。当前尚未提交或部署；旧三组失败证据均保留。
+
+## 2026-11-12T15:48:10+08:00 2b08bc5 板端拒绝与冻结几何参考解耦
+
+- 收窄提交 `2b08bc5bd4bd5c69bab6de2888db53972cc88de3` 已部署到独立根
+  `/home/neardi/Project/SOT/occ-motion-trust-2b08bc5`，原生 RK3588 Debug 构建和 CTest
+  `22/22` PASS，两目标程序 exit 0；但 full evaluator 仍 **FAIL**：car001 错误重捕
+  `[84,102,127]`，car002 错误重捕 `[115,175,226]`，故该提交继续拒绝。
+- 逐帧证据确认：即使仅冻结运动模型，观测质量的几何门仍以被冻结的运动预测为参考；随着
+  NanoTrack 当前框继续运动，两者残差必然增长，最终由“主动冻结”自身制造 observation
+  rejection 和 SEARCH。这违反“禁止运动更新先于确认遮挡，但当前 NanoTrack 框仍继续输出”
+  的递进语义。
+- 后续修正只解开这一处因果耦合：`motion_updates_held_` 且尚未进入 loss/search 时，观测的
+  center/area/aspect 连续性改用上一已接受 `current_bbox_`，不再用有意冻结的 motion bbox；
+  响应质量门和后续 SUSPECTED/SEARCH 递进保持不变，真正进入搜索后仍使用运动预测几何。
+  单测通过人为拉开冻结预测与局部连续观测，确认不会发生自致拒绝。当前尚未提交或部署。
+
+## 2026-11-12T15:43:51+08:00 d7ee7df 板端拒绝与运动信任边界收窄
+
+- 精确提交 `d7ee7df5c6f3ab9805e7f29d08cf73e13e819564` 已部署到 RK3588 独立根
+  `/home/neardi/Project/SOT/occ-motion-trust-d7ee7df`；源码归档主机/板端 SHA-256 均为
+  `aa9137740e60a9d5ddd3508a401f4864235c9b2f3fc1b1bcdf9b97edace7b8fa`，二进制 SHA-256
+  `e62028fa9f60aaf0585ef4710bae33c9556c02382454d060ecb6e2b1fffedde5`。原生 Debug、RKNN、
+  `-Werror=switch` 构建与 CTest `22/22` PASS，两目标程序 exit 0，schema v12 板端 verifier
+  均 PASS；这些功能结果不覆盖下述算法拒绝。
+- 固定 ROI 双目标 full evaluator 均 **FAIL**。car001 出现错误重捕 `[104,158,194,236]`，
+  car002 出现错误早期重捕 `[71]` 且未形成目标遮挡后的正式重捕；两个目标可见期质量均大幅
+  回退。根因不是初始 ROI：首个单项 peak-margin 相对下降即同时冻结了运动、响应基线、稳定
+  计数和模板推进，冻结参考无法适应正常外观变化，运动预测逐渐远离仍正确的 NanoTrack 观测，
+  最终由自身制造几何拒绝和错误搜索。
+- 本轮拒绝把上述结果升级为候选。修正边界收窄为用户原始要求：`motion_update_valid` 只控制
+  运动模型校正；已接受观测原有的响应基线、stable 计数和 recent-safe 模板状态机恢复原行为，
+  避免把“运动模型输入更严格”扩大成所有学习状态同时冻结。运动冻结/连续干净后恢复、schema
+  v12 和方向启发式移除继续保留。
+- 收窄后的主机 RKNN-off 构建、CTest `22/22`、evaluator 单测 `23/23`、`git diff --check`
+  均 PASS；尚未提交或部署，下一步必须以新精确提交重新执行 RK3588 双目标回归。旧
+  `d7ee7df` 根目录和失败报告保留，不覆盖。
+
+## 2026-11-12T15:35:54+08:00 分级运动更新信任（主机验证）
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，基线
+  `3f50eb205899e2b8e656d9c194de67f63478fea4`；结果为包含本条记录的当前提交。根据用户确认，
+  本提交废止 `5fbcf83` 的“进入 SEARCH 时若方向相反则切换最后干净趋势”启发式，历史 RK3588
+  结果继续保留为失败分析证据，不删除、不改写。
+- 新策略将“当前 NanoTrack 框可继续输出/控制”和“允许更新运动模型”拆成独立语义：响应相对
+  退化但仍被跟踪器接受时，`tracking_bbox/control_bbox` 继续采用当前观测，状态仍可保持
+  `TRACKING`，但 `motion_update_valid=false`，运动位置/速度不再被该框校正，开环加速度和尺度
+  速度清零；响应基线、稳定计数和 recent 模板推进同步冻结。只有连续干净观测达到既有
+  `suspicion_clear_ms` 后，才用该干净时间段的首尾观测重新建立运动状态并恢复更新。
+- 日志协议升为 schema v12，新增 `motion_update_valid`；CSV、JSONL、遥测、板端 verifier 与
+  `occ_video_1` evaluator 同步校验“只有已接受的 TRACKING 观测才能更新运动模型”。这只是
+  可观测性与安全不变量升级，不改变模型、检测器、遮挡阈值、重捕门或云台控制框语义。
+- 主机 RKNN-off Debug 目录 `/tmp/nanotrack-motion-trust` 使用
+  `-DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS=-Werror=switch` 完成构建；
+  CTest `22/22` PASS，`python3 -m unittest tests.test_evaluate_occ_video_1` `23/23` PASS，
+  `git diff --check` PASS。新增单测覆盖退化观测继续控制但冻结运动、保留干净速度并清零加速度、
+  连续干净时间达标后才恢复更新。
+- **边界 / Handoff**：当前仅为主机验证，尚未在 RK3588 上构建或复跑 car001/car002；不能据此
+  声称视频效果改善或批准生产 handoff。下一步以精确提交部署到独立板端目录，固定双目标 ROI
+  回归并与 C012、`b538667` 及 `5fbcf83` 保留结果比较。
+
+## 2026-11-12T15:06:46+08:00 search 反向趋势修正 RK3588 双目标验证
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，源码提交
+  `5fbcf8301ce52ad1c779541e30a35ad4153b2753`，基线
+  `59c79e74a1dfc150d6257734598459f886d3da49`。源码归档在主机与板端 SHA-256 均为
+  `6e73944baa06cf20ef24cca147da11c2a16f03be662c506bad1e7971d36609d5`，独立板端根为
+  `/home/neardi/Project/SOT/occ-motion-opposite-5fbcf83`。原生 Debug、RKNN runtime、
+  `-Werror=switch` 构建和 CTest `22/22` PASS；二进制 SHA-256
+  `8766a6122b2d621bfeb95d4e32db8122cb3566fa9bd57c82aa2f8285de72762e`。
+- 初版 `0a8304e9485dcb4b9754e37ca8a05300b03ad819` 对所有退化期都采用冻结趋势，car002
+  方向改善但 car001 重捕从185延迟到194，故拒绝；其独立根
+  `/home/neardi/Project/SOT/occ-motion-clean-0a8304e` 保留为失败证据。最终版只在进入 SEARCH
+  时当前速度与最后干净趋势点积为负才替换速度并清零加速度；方向一致的 car001 保留原运动
+  模型。
+- 固定 ROI `car_001=992,582,37,39`、`car_002=970,517,38,38` 各运行0--270帧，均
+  exit 0，AVI 均为1920x1080、30 FPS、271帧。非交互输出视频主框已改画
+  `control_bbox`；`display_bbox`、交互调试叠框及生产显示路径未修改。
+- car001 full evaluator **PASS**，重捕帧仍为185，visible/control/identity/prediction/
+  full-occlusion 全部门通过。CSV、AVI、metadata、evaluator JSON SHA-256 分别为
+  `f9161e18ee0fc6857459246262b59c2079025f51559e97595ede7091e8b08314`、
+  `edf20ddcf711e329047ba4d70ce1c18d188a11ba93b57f4deafe091f0062dd03`、
+  `575566a3b9e9645942d06342f4a65792c4cd9fc4bba46a6d5249e2c177c80ab6`、
+  `dd9859784dfa2e4a00e4bd0e0d841264159aa6e04d5e42ecb4186033967e869f`。
+- car002 在210帧仍是左下速度 `(-19.852020,+15.126831)`；遮挡物观测把216帧运动状态污染
+  为速度 `(+21.519398,-8.891993)`、加速度 `(+146.120041,-109.989998)`。最终版在222帧
+  SEARCH 切换为最后干净趋势 `(-15.818654,+16.426685)` 且加速度归零，并保持到234帧；
+  预测中心相对正式重现目标的偏差由旧版约56 px降至约21 px，235帧重捕不变。full evaluator
+  仍因既有213--216帧错误声明观测而 FAIL，但 visible/control/identity/prediction/reacquisition
+  门均 PASS。CSV、AVI、metadata、evaluator JSON SHA-256 分别为
+  `0a1d9288f555adb9561c98560f5de2e2d1f8ef0828b9295e18fbf75eceb80144`、
+  `78fe73d1628d2b9b23f91d368175d3e907a02e847c48665a4ffd41186ec04765`、
+  `63eb52962671321eb86e16bd4f159a22d2f6fe5ce08ede82a347ae74487b2eb7`、
+  `7fd391078f91e8120c7a7f953274341ec5dd8c318547fc2727c61df0dc136637`。
+- **边界 / Handoff**：本轮只修正进入 SEARCH 后采用反向污染趋势的问题，不修改阈值、配置、
+  模型、模板、遮挡状态机或重捕确认。car001 不低于 `b538667` 基线，car002 已改善但并未解决
+  213--216帧遮挡判定过晚；候选继续 HOLD，不构成正式生产 handoff 或真实吊舱验收。
+
+## 2026-11-12T14:55:16+08:00 recent-safe v2 search 运动趋势修正（主机验证）
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，基线
+  `59c79e74a1dfc150d6257734598459f886d3da49`。复核 RK3588 保留运行
+  `/home/neardi/Project/SOT/occ-recent-safe-v2-b538667/runs/car_002/bboxes.csv`：目标在
+  195--210 帧总体向左下运动，210 帧运动状态仍为
+  `velocity=(-19.852020,+15.126831)`；211--216 帧遮挡物上的观测仍被判为可信并修正运动，
+  到 216 帧已反向为 `velocity=(+21.519398,-8.891993)`、
+  `acceleration=(+146.120041,-109.989998)`。217--221 帧虽不再更新可信状态，旧加速度仍被
+  开环积分，222 帧进入 SEARCH 时进一步变为
+  `velocity=(+39.388611,-23.931980)`，解释了预测框向右上偏离。
+- 通用修正不改变遮挡判定、跟踪框、控制阈值、模板或模型：控制器保留最近一次“响应未出现
+  相对退化”时的运动趋势；单项响应退化只冻结该 search 专用参考，不提前进入 SEARCH，连续
+  `suspicion_clear_ms` 干净观测后才更新。真正进入 SEARCH 时，仅当当前速度与保留趋势方向
+  相反才采用保留速度并将加速度清零；方向一致时保持原运动模型，避免无差别替换正常趋势。
+- 后续非交互保存视频改为绘制 `control_bbox`；`display_bbox` 算法、交互叠框和生产
+  `rect_show` 均未修改，等待真实吊舱测试后再决定显示平滑策略。
+- 主机 RKNN-off 在独立目录 `/tmp/nanotrack-recent-safe-prediction` 完成 Debug 构建，CTest
+  `22/22` PASS；新增测试覆盖保留趋势、反向退化观测和 SEARCH 清零加速度；视频主框切换经
+  源码链路复核，`git diff --check` 通过。当前仅为主机验证，尚未部署或运行 RK3588，不能声称 car002 实际
+  视频中的预测偏离已消除；下一步是提交源码后在独立板端目录原生构建，并以固定双目标 ROI
+  复跑，C012 与 `b538667` 保留结果继续作为不得退化的对照。
+
 ## 2026-11-11T14:51:34+08:00 C009 holdout FAIL，停止调参与重复运行
 
 - 冻结命令在 RK3588 上精确执行一次，输出 `1920x1080`/271 帧；首个正式
@@ -1855,12 +2065,12 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 
 ## 2026-11-11T15:31:46+08:00 C012 canonical board acceptance PASS
 
-- 分支 `codex/occ-video-1-tracking`，源码提交
-  `30b475f577e46ed8158a40f6463842ef5188169a`，板端根目录
-  `/home/neardi/Project/SOT/occ-candidate-30b475f`。源码归档、配置、可执行 SHA-256
-  分别为 `f06678f5d6c941c856e8c07b45c55240be53461a8195c526c0d1a0b2ea240f64`、
+- 分支 `codex/occ-video-1-tracking`，最终源码提交
+  `e865c78679247cb45ddbdbf2fb466e49930d5d12`，板端根目录
+  `/home/neardi/Project/SOT/occ-candidate-e865c78`。源码归档、配置、可执行 SHA-256
+  分别为 `64896748bbedbe16a8bcea762087e3060db0f0a0ba4b7a64cbc113b56755ef69`、
   `82ce1e035e202f10a46f1aa2a21f4ed42d79839dca01b0629e1848c90919432c`、
-  `274076fe1c505270fd77da5075375ae98465d18d2dbd517292cbb67085239ce0`。
+  `e2a44c74bf6410dc79b5d07a5c134e27cd0096cdca16a81c67d2f27df521ab4d`。
 - C011 两帧预算 full FAIL（重捕获 `[185,218]`），三帧诊断仅将失败平移到 203，
   因此停止按帧追参。C012 改为与帧率无关的 200 ms 短时滞回，不改变 tracker
   reliability、geometry 或 evaluator 阈值。
@@ -1868,8 +2078,9 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   0--270 运行均 verifier PASS、full evaluator PASS，语义签名完全一致：唯一重捕获
   帧 185，模板桥接帧 200--206，190 以后无 SEARCHING；valid-observation mean IoU
   `0.732253`，all-visible mean IoU `0.725693`。
-- 三次 evaluator JSON SHA-256 均为
-  `873c5936dbf3dab3177ae2023b782c8c3e953e5bc7cd14f3efc1c5932004cda2`；
+- 最终审查补充了 abort / motion prediction exception 立即撤销 bridge 的 fail-closed
+  负例；修复后重新构建并重新执行三次。三次 evaluator JSON SHA-256 均为
+  `8748b91ca59a8a91ecb013099d3aa43cb7868b1227c6123a5008c4f16f530aaf`；
   verifier log 均为
   `86808013d246f358f354b6101ef4e84470bb2cd29dfb95fa89482d31d735f02e`。
   49 帧复核视频保留在 run1，SHA-256
@@ -1906,3 +2117,369 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   完全相同 ROI 和输入身份下通过上述双目标门禁；编译成功、配置可加载或单目标通过均不能
   替代该门禁。正式生产 handoff 与人工吊舱验收状态保持不变；未修改 `STATUS.md` 或
   `integration-contract.yaml`。
+## 2026-11-11T16:10:00+08:00 RK3588 interactive one-command profile startup PASS
+
+- 分支 `codex/occ-video-1-tracking`，任务基线
+  `10c311e4576e67036ff30eb2538e9298aab5abfc`，配置/测试/文档提交
+  `b3a7e4a`。本机配置为
+  `rk3566/nanotrack_v3/config/rk3588-interactive-debug.conf`，板端部署路径为
+  `/home/neardi/Project/SOT/occ-candidate-e865c78/rk3588-interactive-debug.conf`；两端
+  SHA-256 均为
+  `e7daafa4373f676b3e9b10984e48fa2ffe46cc6d9ec1c422dbe3d4e77e88544a`。
+- 主机侧先修改 CLI 测试形成 3 个预期失败断言，再更新配置；聚焦 `cli` 测试通过，
+  全量 CTest `19/19` 通过，`git diff --check` 通过。配置保留
+  `interactive=true` 且不预置 bbox，绑定 C012 已验收的 RK3588 NanoTrack 模型、
+  `visible-occlusion-calibrated.conf` 和 RK3588 VisDrone9 detector release；固定输出为
+  `/tmp/rk3588-interactive-debug.avi`、`.csv`、`.json`。
+- 板端在 `/home/neardi/Project/SOT/occ-candidate-e865c78` 执行
+  `DISPLAY=:0 timeout --signal=INT --kill-after=2s 15s stdbuf -oL -eL ./build/nanotrack_v3 --config rk3588-interactive-debug.conf`。
+  日志确认 RKNN API `2.1.0`、driver `0.9.8`、detector `target=rk3588 outputs=9`，
+  随后出现 `runtime_ready`、三个输出均 enabled，以及
+  `interactive_ready playing=0 initialized=0`；冒烟结束后无残留 `nanotrack_v3`
+  进程。日志保留于板端 `/tmp/rk3588-interactive-config-smoke.log`。
+- 证据边界：本次只验证新配置通过既有二进制加载并进入等待鼠标选框状态；未人工画框、
+  未运行完整视频、未生成新的算法验收结论，也未声称真实云台 pod 验收。C012 的
+  canonical acceptance 及其源码/可执行身份不因本次运行配置部署而改变。SSH 登录环境
+  的 `DISPLAY` 为空，本次冒烟因此显式使用 `DISPLAY=:0`；用户给出的原样两行命令应在
+  RK3588 图形桌面终端（已继承 `DISPLAY`）执行，不能把 SSH 冒烟误记为字面命令验收。
+
+## 2026-11-11T22:21:04+08:00 occ_video_1 car_002 271-frame draft generated
+
+- 分支 `codex/occ-video-1-tracking`，本任务执行基线
+  `8545f97ac9539231e936dfcc2a322d8916e5f143`，候选工具提交 `1ccff5d`，分层草案打包器
+  提交 `8545f97`，review contact-sheet 纳入包与哈希的修复提交
+  `5d186f8705b5f8a1bababe51a11ffdd43a080935`，独立审查后的 provenance/validator/
+  staged-replace 加固提交 `b1d9dc2`、`d33e848`、`e069bf6` 与 `db20a75`。这是主机侧标注草案生成，不是
+  RK3588 新运行或板端验收。
+- 原视频 `/home/u20/single-object-tracking/data/occ_video_1/1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，严格解码为
+  1920x1080、30/1 fps、271 帧。用于辅助定位运行行为的保留证据 CSV/log/JSON/AVI
+  SHA-256 依次为
+  `ab5f05f2b278ae0216f404f8fee8130b53a396a582a361f0cd00e07fc13ae79f`、
+  `269b80673b436db70e2f1d16be56898e69f64b78b114068a128fed7cba6d78b0`、
+  `c588f6867043256266a838e2c95517f31bd334355dfbf402e6d53028ae6a8088`、
+  `7146e5719363ff4a5611d15b758f67b6e3abc09a5997fd30c6c3358c8d2cce61`；运行证据只作
+  诊断参考，不充当真值。
+- 工作输入位于
+  `artifacts/ground_truth/occ_video_1_car_002_work/`：`anchors.csv`、`candidates.csv`、
+  `review-policy.csv` SHA-256 分别为
+  `9a618cb492bf5d47b6d6688feb8cf2af7780b6c030438c78c1d027da377cf994`、
+  `39c23fa800287843d5e20f3e528c796b7d44bb6315c6c10652c4c82465ca3821`、
+  `e9bfa7ab37394b299ce5dc9c482878dc759b5936f84dd6ff78f1f847e6c4f3ac`。
+  `distractors.json` SHA-256 为
+  `dfcde77592f879ca85924c6155f2f0ffc49c5f1a1925ea6d77c50ac677723f23`。
+  候选 review AVI SHA-256
+  `ca40b981acb8dd8c4fae41cd75b157dcd77041105eb4e64baa63d81eb5233a67`，解码为
+  1920x1080、30/1 fps、271 帧；三张 contact sheet 已逐张查看，SHA-256 为
+  `dc3976f3da8d7be84740227b450e52d24e43acf4ce70736a737640e6c5ed2762`、
+  `607796268c2b5031c857c6d34d264dd11aa52eaac1e3984541a57c0c79170116`、
+  `4968b176b57957a2a8e212b06fa004a0421ba535e79ec6b0cf63439f2b982b94`。
+- 草案位于 `artifacts/ground_truth/occ_video_1_car_002_draft/`，
+  `checksums.sha256` SHA-256
+  `be57dbaee44cfda1e2f925ea08f24a76edbf968c1159076a8c2c7f39303e1e27`，
+  `annotation_metadata.json` SHA-256
+  `2df9f8ccdb5c546133cac0e7e2bc26111a6aae3635938b9ba23a0ae4f7ce28b2`；连续两次重建
+  获得相同两项哈希。
+  三层均恰有 271 个连续文件：正式 `labels/` 非空 0，未确认候选
+  `candidate_labels/` 非空 252，非可观测估计 `estimated_labels/` 非空 4；
+  `frames.jsonl`、`annotation_status.csv` 均为 271 帧，`review_manifest.csv` 有 267 条
+  待确认记录。状态计数为 assistant candidate 252、needs human review 15、estimated
+  non-observable 4、manual confirmed 0。
+- 身份复核结论：目标是桥前初始化白车，桥后为绿色车左侧白车；双向候选在 0--210、
+  230--270 连续跟随该车。211--212 与 217--229 为高优先级人工复核区间；213--216
+  标为 full occlusion，仅保存低置信度运动估计。运行在 259 帧取得的 detector 候选及
+  262 帧恢复对应另一辆同类白车，已以 `car_002_distractor_001` 连续记录 259--264 帧
+  （并保留 270 帧参照），不能作为目标真值。
+- 实际生成命令为
+  `/tmp/nanotrack-car002-tools/generate_bidirectional_candidates --video ... --anchors ...`
+  与 `python3 rk3566/nanotrack_v3/tools/build_occ_car002_draft.py build ... --review-dir ...`；
+  `validate --require-confirmed false` PASS，`validate --require-confirmed true` 按预期以
+  `unresolved review rows: 267` FAIL。三个 layer manifest 与总 `checksums.sha256` 均经
+  `sha256sum -c --quiet` PASS；Python 聚焦测试 8/8、annotation-tools CTest 20/20、
+  既有主机 CTest 19/19 PASS，`git diff --check` PASS。
+- 独立终审指出的四项问题已处理：人工确认必须通过独立 `confirmed_*` 框且保留原候选；
+  validator 重新检查几何、枚举、派生字段、估计依据、逐层 YOLO 一致性、状态计数、
+  metadata/video/episode 身份、状态与可见率关系、干扰物类型/ID 及 checksum 完整覆盖；
+  独立 `validate` 默认绑定 canonical `occ_video_1` 固定 SHA-256，包内即使改绑到另一存在
+  文件并提供其正确哈希也会被拒绝；
+  `--replace-draft` 先在同级 staging 完整构建并通过
+  validator，再以可恢复备份交换（不声称单次系统调用原子交换）；错误同类车补齐
+  259--264 逐帧记录。测试覆盖多类语义篡改后重算哈希仍必须失败、结构无效 staging
+  不得替换旧包，以及非法输入不得破坏旧草案。
+- 证据边界：这是完整覆盖 0--270 的 assistant draft，不是人工确认真值。正式层为空，
+  在用户逐帧确认并生成新版本/新哈希前，不授权 IoU、阈值标定、算法准确率、canonical
+  dataset 晋级、板端验收或云台 pod 验收；没有修改 `car_001`、`STATUS.md` 或
+  `integration-contract.yaml`。
+
+## 2026-11-11T23:33:23+08:00 occ_video_1 car_002 confirmed package generated
+
+- 分支 `codex/occ-video-1-tracking`，任务基线
+  `100afb18d371707d9700b40a8f3931d5c22a931c`，结果代码与本记录位于同一 Git 提交。
+  用户明确“整体接受”：接受 0--210、230--270 的候选框；确认遮挡区间；确认
+  259--264 的候选框仍是正确目标，并与既有运行在 264 帧跳到错误车辆的负面证据严格
+  区分。原 assistant draft 未作为本轮生成目的地，也未被重建或覆盖。
+- 确认策略输入为
+  `artifacts/ground_truth/occ_video_1_car_002_work/review-policy-confirmed.csv`，SHA-256
+  `2fd9a8959ddb141292680fc4c5c30f7a0c3a682358788a0def55880eacde75a5`。0--210、
+  230--270 共 252 帧使用 `manual_confirmed_visible`，候选框晋级到正式 `labels/`，同时
+  保留同框的 candidate 层和候选来源；211--212、217--229 共 15 帧使用
+  `manual_confirmed_no_bbox`，只确认遮挡状态与目标身份，正式层和候选层都明确为空；
+  213--216 共 4 帧保留 `estimated_non_observable`，估计层不晋级为正式真值。
+- 独立确认包位于
+  `artifacts/ground_truth/occ_video_1_car_002_confirmed/`。`checksums.sha256` 与
+  `annotation_metadata.json` SHA-256 分别为
+  `4540ff280903a3e32d8b439f54ddca4497e855095da68ebdbe8fbea044371811`、
+  `ddbd8846cd12466d82a833f2f335160a6e6dd1f6189963d268db1b1c54d03a63`；正式、候选、
+  估计 manifest SHA-256 分别为
+  `2f0e78ab1123cb035c87efa06171f1057c108f38b06fcc5c1ed3a3ec63fdbe98`、
+  `c6d1093c16fd17c02c9b8ce1743a85bbc5316dacef76d08e368093a976a6c11e`、
+  `62a2877bfc38bf4482e3e1cca1e81551272a677f81d932918723e557db3d24e4`。
+  三层仍各有 271 个连续文件，非空计数依次为 252、252、4；
+  `review_manifest.csv` 只有表头，未决计数为 0。连续两次生成得到相同 metadata 与总清单
+  哈希，`validate --require-confirmed true` 及确认包 `sha256sum -c` 均 PASS。
+- 打包器新增 confirmed-package 模式及严格语义：只有零未决项才可写入
+  `draft=false`、`formal_evaluation_authorized=true`；`manual_confirmed_no_bbox` 必须身份
+  certain、质量 unusable，且 formal/candidate/estimate 三种框都为空。实际执行 Python
+  单元测试 10/10、含 annotation tool 的 CTest 20/20、既有主机 CTest 19/19，全部通过；
+  `git diff --check` 通过。
+- 复核旧 draft 时发现其
+  `review_contact_sheets/contact-sheet-000.jpg` 当前缺失，旧总清单仍期望其 SHA-256
+  `dc3976f3da8d7be84740227b450e52d24e43acf4ce70736a737640e6c5ed2762`，因此旧 draft
+  当前独立校验失败。工作输入和新 confirmed 包都含有该文件且哈希匹配；为遵守“保留原
+  draft、不覆盖”的边界，本轮未修改或修复旧 draft，并把此漂移作为外部证据异常记录。
+- 证据边界：`formal_evaluation_authorized=true` 只授权新 confirmed 包中 252 个非空正式
+  框参与 ordinary IoU；211--229 中无正式框的帧不能被当成零框误计 IoU，213--216 的
+  估计框也必须排除。该确认不自动完成阈值标定、canonical dataset 晋级、RK3588 新运行、
+  板端验收或真实云台 pod 验收；未修改协调者所有的 `STATUS.md` 与
+  `integration-contract.yaml`。
+
+## 2026-11-11T23:44:37+08:00 dual ground-truth sequences installed
+
+- 分支 `codex/occ-video-1-tracking`，任务基线
+  `4d38c28f31f125479bcc24c92231584a9cdde3e1`。按用户要求，将第二目标 confirmed 包从
+  `artifacts/ground_truth/occ_video_1_car_002_confirmed/` 移至真实 canonical 数据目录
+  `/home/u20/single-object-tracking/data/occ_video_1/ground_truth/car_002/`；原 artifacts
+  confirmed 路径现已不存在。共享视频仍只有根目录 `1.mp4` 一份，不复制视频。
+- 新增 `ground_truth/index.json` 与 `ground_truth/README.md`，SHA-256 分别为
+  `42d08ea98642f81640842dd166ff8ba3518668441d430ce9931f99d1dc544177`、
+  `2b2b9e10e7d70cecffc693f7044cde6a61128e8517188bf897bdcae6578dc6b9`；既有第一目标
+  标注以逐文件相同的镜像放入 `ground_truth/car_001/`，根目录旧路径继续保留以兼容现有
+  公共契约和旧命令。镜像 metadata/status/events/labels manifest 哈希仍分别为
+  `5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076`、
+  `e44fd23514d6871e72d628ad4843fc90bb4246f306322ee297c8a2aa75818036`、
+  `a43f016c96b34c8a0ec6125dcb944ba4fa07a79d99a46ce696bbb29841ded256`、
+  `9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648`，271 项标签
+  `sha256sum -c` 全部通过。
+- 第二目标迁移后 `checksums.sha256` 仍为
+  `4540ff280903a3e32d8b439f54ddca4497e855095da68ebdbe8fbea044371811`，严格 confirmed
+  validator PASS；metadata/status/events/formal manifest/estimate manifest 哈希分别为
+  `ddbd8846cd12466d82a833f2f335160a6e6dd1f6189963d268db1b1c54d03a63`、
+  `212525642591c124320e93369f8748d82cc53092628beff051507f930946dec1`、
+  `efc0652335fcf19c766def88bf50bb8defab1441fdc8fbb412b85d02135c31db`、
+  `2f0e78ab1123cb035c87efa06171f1057c108f38b06fcc5c1ed3a3ec63fdbe98`、
+  `62a2877bfc38bf4482e3e1cca1e81551272a677f81d932918723e557db3d24e4`。
+- `scripts/evaluate_occ_video_1.py` 新增
+  `--target-id {car_001,car_002}`，默认仍为 `car_001`。第二序列读取空正式标签、独立估计层
+  与新遮挡事件：252 帧允许 ordinary IoU、4 帧仅作估计轨迹参考、15 帧无 bbox 且不参与
+  几何评分。第一序列继续按 `source` 排除 169--181 共 13 个插值帧，避免被同一 CSV 的
+  `review_status` 覆盖。双序列身份加载分别得到 271 帧；合成完美运行对两序列 full evaluator
+  均为全部 gate PASS。Python evaluator 单元测试 16/16 通过。
+- 后续同一运行 CSV 可分别执行：
+  `python3 scripts/evaluate_occ_video_1.py --dataset-root /home/u20/single-object-tracking/data/occ_video_1 --target-id car_001 ...`
+  与将 target 改为 `car_002` 的第二次评估。一次运行的初始化目标必须与所选真值目标一致，
+  不能用初始化 `car_001` 的 CSV 对 `car_002` 结论作有效性声明。
+- Handoff：请求协调对话把双序列目录、索引和上述新哈希纳入
+  `integration-contract.yaml`，并决定板端数据复制路径；本任务按所有权规则未直接修改
+  `STATUS.md` 或公共契约。此次仅完成主机数据安装和 evaluator 消费能力，不是新的 RK3588
+  算法运行、阈值标定、板端验收或吊舱验收。
+
+## 2026-11-12T02:38:54+08:00 RS001 recent/safe RK3588 原生验证 HOLD
+
+- 分支 `codex/occ-video-1-tracking`，工作树
+  `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking`，Task 6 基线
+  `68b527659e8be39304ab805c9a6f85219c2af5ce`。板端源码先提交为
+  `e027006339f0cdafb0b8d38c4dfa5e14abe66593`，证据与本条记录同提交
+  （`test: validate recent-safe recovery on RK3588`）。
+  `git archive` 两端 SHA-256 均为
+  `fc8deb4fd4f96d28ab27be34feaf2133e6e8dc75937380b8304b913220af080e`；
+  板端逐文件比对 314 个归档文件内容与执行权限通过。
+- 实际板为 `LKD3588`，Linux 6.1.84 aarch64。独立候选根
+  `/home/neardi/Project/SOT/occ-recent-safe-rs001`。RKNN API
+  `2.1.0 (967d001cc8@2024-08-07T19:28:19)`、driver `0.9.8`；
+  运行前用同一提交的 RKNN loader 逐一查询三份 tracker 模型和 detector。
+  `build/nanotrack_v3` SHA-256
+  `c4161c0a448351f4a6d84be60bc00ce8c7c6e98ed28134efb5069d7562821304`，
+  `visible-recent-safe-v1.conf` SHA-256
+  `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`（`calibrated=false`）。
+  原生 CMake 使用 Debug、`ENABLE_RKNN_RUNTIME=ON`、`BUILD_TESTING=ON`、
+  `-Werror=switch`，`cmake --build build --parallel 4` 和
+  `ctest --test-dir build --output-on-failure` 通过 22/22（13.85 s）。
+  主机 RKNN-off CTest 22/22、evaluator Python 19/19、语法检查和 `git diff --check` 通过。
+- 两次各读取独立 ROI 和真值，`car_001=992,582,37,39` 使用 canonical 标注，
+  `car_002=967,513,42,42` 使用已确认包（252 帧正式可观测框）。
+  两次均运行 0–270 帧，1920×1080、30/1 fps，runtime exit 0，
+  schema v11 verifier PASS，271 行 CSV 与实际 CLI 发布的 271 行 JSONL companion 均完整。
+  模型、标注、输出哈希、完整 evaluator 门槛、源码与运行命令记录在
+  [RS001 评估记录](../evaluation/occ-video-1/recent-safe-candidate.json)；
+  大工件留在板端 `runs/car_001/` 与 `runs/car_002/`，每个目录有 `SHA256SUMS`。
+- `car_001` full evaluator **FAIL**。172–173 帧未满足完全遮挡语义，174 帧开始搜索，
+  `[182,190)` 内及整段均无重捕获，248–270 帧控制无效。最后可信帧 172，
+  到首次失去控制经过 2534 ms。有效观测 mean IoU 0.764074（168 帧），
+  全部可见帧 mean IoU 0.602621。候选冲突 76 帧。
+- `car_002` full evaluator **FAIL**。70 帧进入搜索后无重捕获，145–270 帧控制无效；
+  213–216 帧完全遮挡语义和估计轨迹连续性均失败，`[230,271)` 无重捕获。
+  最后可信帧 69，到首次失去控制经过 2533 ms。有效观测 mean IoU 0.910586（70 帧），
+  全部可见帧 mean IoU 0.302287。候选冲突 143 帧。两目标 identity proxy 均 PASS，
+  其结论限于有权使用的可见观测，两次均未提交新恢复身份。
+- recent/safe/staged 物理 head 调用分别为 `270/96/14` 与 `270/200/6`，
+  safe 复用各 0 次，任何帧最多 2 次，未观察到模板事务应用失败。
+  runtime p50/p95 分别为 7.82/9.97 ms 和 8.71/10.55 ms，pipeline p50/p95 为
+  109.90/113.42 ms 和 111.02/113.78 ms。板端缺少 `/usr/bin/time`，以约 100 ms
+  间隔采样进程 `/proc/<PID>/status`，观察到 VmHWM 237260 / 235476 kB。
+- **Handoff**：RS001 保持 HOLD 和 `calibrated=false`。两次均按原配置一次运行，
+  C012 图形启动仍使用原路径与配置；其二进制、交互配置和控制器配置 SHA-256
+  前后一致。需复查 RS001 时，在候选根执行
+  `cat runs/car_001/commands.txt runs/car_002/commands.txt` 查阅准确诊断命令，
+  新诊断使用新的输出路径。证据限 RK3588 原生 Debug 的两目标算法结果。
+  请求协调对话继续保留正式 handoff 门槛，生产交叉编译与人工吊舱验收未启动。
+
+## 2026-11-12T02:53:15+08:00 RS001 v11 evaluator 复核与重新评分
+
+- 在 `codex/occ-video-1-tracking` 的既有证据提交
+  `fcab231098371b4e659282b1472b7faf243934e5` 上修复 evaluator。板端运行源码仍为
+  `e027006339f0cdafb0b8d38c4dfa5e14abe66593`，重新评分脚本提交为
+  `eb344708429949356c9f0161253bb326e0c16502`，脚本 SHA-256
+  `57bdd5d6824c5517adaeeac1910152b52dbc1721589983cea548c6c4f5f1b7f4`。
+  v11 重捕获必须来自可信跟踪观测和已应用的恢复阶段；`LOST` 禁止控制和观测声明；
+  完全遮挡门直接核对观测缺失、可信标记和已获授权的运动预测。新增负例先失败，修复后
+  evaluator Python 23/23、完整主机 CTest 22/22、Python 语法与 Git diff 检查通过。
+- 用该提交的脚本在 RS001 分别重新评估保留的 `runs/car_001/bboxes.csv` 和
+  `runs/car_002/bboxes.csv`，沿用各自正式真值及 session metadata。两次仍为 **FAIL**，
+  每项 gate 的布尔结果和失败帧与原报告一致，均无重捕获或无效重捕获声明。
+  更新后的 JSON SHA-256 分别为
+  `b338b8b8ce5967d377bbdf15751a8ab36b63023151758e162937a34a88ddee19` 和
+  `3e37c58e1387769203353dd81dcebbacf441ec55a269522b13deb1426fbd1846`，
+  Markdown SHA-256 分别为
+  `0de2acb648f2aa4fd42e2ffdcc583392bf28031b7a882b29402edfa4ebb011ae` 和
+  `b2673e732693c3f43e15caf4abe9723ae638d0440e5808dc4c3d53aced6c21b0`。
+  新 `SHA256SUMS` 均通过复核，非 evaluator 文件逐项哈希与旧清单一致；原报告及清单保留于
+  两个 run 的 `evaluator-original-e027006/`。准确命令、原始及更新后的哈希见
+  [RS001 评估记录](../evaluation/occ-video-1/recent-safe-candidate.json)。
+- **Handoff**：保持 RS001 **HOLD**。本次仅对保留 CSV 重新评分，新增推理运行 0 次。
+
+## 2026-11-12T09:56:47+08:00 latest HEAD RK3588 双目标视频运行与回传
+
+- 分支 `codex/occ-video-1-tracking`，运行源码提交与任务基线均为
+  `3ec5d56c72567b4e3eb6cab89cda149f51ce77f3`。源码通过 `git archive` 部署，归档在
+  主机与板端核验的 SHA-256 均为
+  `5d523e03c7d13a70b4065e9f450f8c79f1b0627d2f7a652610a8a68ba7114cc1`；独立板端根为
+  `/home/neardi/Project/SOT/occ-latest-3ec5d56`，未覆盖 C012 或 RS001。
+- 实际板为 `LKD3588`、Linux 6.1.84 aarch64，RKNN API
+  `2.1.0 (967d001cc8@2024-08-07T19:28:19)`、driver `0.9.8`。原生 Debug 构建启用
+  `ENABLE_RKNN_RUNTIME=ON`、`BUILD_TESTING=ON` 和 `-Werror=switch`，CTest 22/22 通过；
+  新 `build/nanotrack_v3` SHA-256 为
+  `8b30b04ce84dcfe4b4209a9aff7cf94a21697b78c35d2422fb2cee9396aebd38`。
+- 输入仍为 `data/occ_video_1/1.mp4`，SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；控制器配置
+  `visible-recent-safe-v1.conf` SHA-256
+  `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`
+  （`calibrated=false`）。tracker manifest 和 RK3588 detector SHA-256 分别为
+  `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`、
+  `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`。
+- `car_001=992,582,37,39` 与 `car_002=967,513,42,42` 分别独立运行 0--270 帧，
+  runtime 均 exit 0；schema v11 `verify_board.sh` 均 PASS，CSV 均为 271 数据行，输出视频
+  均经 `ffprobe` 确认为 1920x1080、30/1 fps、271 帧。板端完整结果保留在
+  `runs/car_001/` 与 `runs/car_002/`。
+- 两段视频已回传至 `/home/u20/occ-video-1-latest-3ec5d56-results/`，并在 u20 端重新
+  解码计数和复核哈希。`car_001-3ec5d56.avi` SHA-256 为
+  `7d0438ea9da9dc08f5f7effa5d0084668c9c97091b8e818e4e2a5e11eb5aa1fd`；
+  `car_002-3ec5d56.avi` SHA-256 为
+  `dee808467725707228f5eda6045f21aa8388425bc3099855189acab28fc0e0ef`。
+- **证据边界**：本次按用户要求完成最新程序的两目标单次运行、结构校验和视频交付，未执行
+  full evaluator，也不改变 RS001 HOLD、`calibrated=false`、正式 handoff 门槛或人工吊舱
+  验收状态；未修改 `STATUS.md` 或 `integration-contract.yaml`。
+
+## 2026-11-12T13:07:25+08:00 recent-safe v2 阶段 1：单指标瞬降板端验证
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，任务基线
+  `ef0c02130fba4aa900f85daf3341943bd408e634`，本阶段源码提交
+  `c3d27bea3087f42ae60b8aa7e891bbc9a61fe605`。改动只调整 recent 观测判定：恰好一个
+  响应指标失败时发布 tentative/SUSPECTED 观测，不更新可信运动、响应基线或模板；尺寸
+  塌缩和多个绝对响应指标失败仍直接进入 SEARCH。主机 RKNN-off CTest 22/22、C012
+  门禁 Python 单测 5/5 和 `git diff --check` 通过。
+- 源码以 `git archive` 部署到实际板 `LKD3588` 的独立目录
+  `/home/neardi/Project/SOT/occ-recent-safe-v2-c3d27be`，未覆盖 C012、RS001 或 latest。
+  `source.tar` SHA-256 为
+  `42741709a2dc50150c558cd4452b95dafbaa7eadfcbb1814b4613784aba915b3`。
+  板端原生 Debug 构建启用 `ENABLE_RKNN_RUNTIME=ON`、`BUILD_TESTING=ON` 和
+  `-Werror=switch`，CTest 22/22 通过；`build/nanotrack_v3` SHA-256 为
+  `668aa05e6a7981f428afd3591d7436862575864afb39e13499dace806639ce52`。
+- 使用固定 C012 A/B 初始框 `car_002=970,517,38,38`，同一视频、tracker 模型、detector
+  和 `visible-recent-safe-v1.conf` 单次运行 0--270 帧。视频、配置、detector SHA-256
+  分别为 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`、
+  `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`、
+  `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`；三份 tracker
+  RKNN SHA-256 记录在板端 `provenance/car002-inputs.sha256`。runtime exit 0，schema v11
+  verifier PASS，CSV 和 1920x1080 AVI 均为 271 帧。
+- 60--80 帧没有 SEARCH 且全部 `control_valid=1`。第 70 帧从 RS001 的直接 SEARCH 变为
+  一帧 SUSPECTED，仍输出 NanoTrack 观测框并保持 observation control；第 71 帧恢复
+  TRACKING。第 70 帧框为 `894.354431,618.288696,36.756348,37.964905`，与 C012 同帧
+  `896.088928,618.415588,37,38` 接近。新 CSV、AVI 和 session metadata SHA-256 分别为
+  `69fd729a37415b8c9071b4e9527c367e0b791e8fc13fcf4017399c1578b2fa67`、
+  `6350da6ec20043f9bce4cce36dbefad108f4eb5745182d3812b12b741a6a9abd`、
+  `a054f00d3d02b25042fb730a594299401a79705773a11319b91619d42f26bda7`；完整大工件留在
+  板端 `runs/car_002/`。
+- **证据边界 / Handoff**：阶段 1 的遮挡判定目标在 car002 上达到，但现有 C012 晋级脚本
+  要求 60--80 每帧均 `tracking_phase=TRACKING` 且 `accepted=1`，因此会在有意冻结可信
+  状态的第 70 帧报告失败。此处不修改或放宽协调者批准的门禁，不宣称候选已达到 C012
+  全部晋级条件；C012 继续作为默认效果基线。尚未实施阶段 2 重捕获候选关联、阶段 3
+  持续搜索控制，也未完成 car001 新运行、生产交叉编译或人工吊舱验收。
+
+## 2026-11-12T13:38:53+08:00 recent-safe v2 三阶段 RK3588 双目标验证 HOLD
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`。阶段 2 候选关联提交
+  `d36ae22a200522314f7b8e0a4362e04e0cd97bc3`，恢复 probation 提交
+  `5ce180dd4e14b04e9328150fd87bc38ca58e0c33`、`b18bb8241e39fc0f13886564d6e843eb584f0d0f`，
+  阶段 3 持续有界搜索控制提交
+  `b53866785d4a50855f3c2abf08ccb89f2aa69b9d`。后续实验
+  `ffe8bd9a466b13de641a62b51928903e118759a7` 试图让持续单指标下降快速进入 SEARCH，
+  但板端双目标均出现多次正常段误 SEARCH/误重捕获，已由
+  `b8aa1006b66843a37f711e147ce4f92632279317` 明确撤销；当前分支树与已验证的
+  `b538667` 相同。未修改阈值、配置或 ROI 扰动策略。
+- 保留候选源码部署根为
+  `/home/neardi/Project/SOT/occ-recent-safe-v2-b538667`，`source.tar` SHA-256
+  `ed2f4f61014a4ef107eabe44d7a2d02b57ee2a42dc6a42f2582cedf2b36c8ed2`。
+  RK3588 原生 Debug CTest 22/22 通过；主机 RKNN-off CTest 22/22、C012 门禁单测 5/5
+  与 `git diff --check` 通过。板端 `build/nanotrack_v3` SHA-256 为
+  `c97945d117dc6d611f222477308dfe4a7a07d2067b0c306872c091d3b557c3c2`；配置 SHA-256
+  仍为 `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`
+  （`calibrated=false`）。视频、detector 和三份 tracker 模型哈希均与 RS001 相同，精确清单
+  位于板端 `provenance/final-inputs.sha256`。
+- 最终固定 A/B ROI 运行：`car_001=992,582,37,39`、`car_002=970,517,38,38`，各
+  0--270 帧。两次 runtime exit 0、schema v11 verifier PASS、AVI 1920x1080 共 271 帧；
+  两次均全程 `control_valid=1` 且无 `LOST`。car001 在 185 帧重捕获，186 帧只进入一帧
+  SUSPECTED，187--189 由 staged 承接并提交 recent，190--270 无 SEARCH。car002 在
+  60--80 无 SEARCH，第 70 帧为单帧 SUSPECTED 且 observation control 有效；后续搜索在
+  运动置信度衰减后仍保持有界 `MOTION_SEARCH` 控制。
+- car001 CSV/AVI/session metadata SHA-256 分别为
+  `82e23ad08e80d976ed072187ea1e0e2344a220595f2a925e3e33ce302792c89a`、
+  `4f40eeb1b35b5a23d4814213a6bdeabde6587d7b5ea4f72a481bf7d4a23c0a89`、
+  `e5db2fd2225e580c00a0ece936aa747780cd081ce6d2e5532809060e1cb39944`；car002 对应为
+  `2c03b7de9803922e83fc75ab46e09ba08211005c7f8ff6d09eebb607abda427e`、
+  `cde0c9267243483c1319b7c65454b761d1cb55575a7abdd54d3043b780b6eb75`、
+  `49dbc0385e5d8da53a34e2264f72a379520a1d5448c2a7882bb8416843a8c07b`。
+  大工件和完整日志保留在板端 `runs/car_001/`、`runs/car_002/`。
+- full evaluator：car001 **PASS**，有效观测 mean IoU `0.752494`，重捕获恰为 185，
+  evaluator JSON SHA-256
+  `7b945e043c0c9c5f6c485b5f20beb5f00e361f7aa77c12cd2a75a804a5a67c3e`；car002
+  可见框、连续控制、identity proxy、预测连续性和 235 帧重捕获均 PASS，但 213--216
+  完全遮挡仍声明观测，`full_occlusion_semantics` FAIL，JSON SHA-256
+  `886b4aead8f8595bd721c57ae155159969c8cea09ae51b7531d3757dc62101bf`。
+  现有 C012 双目标脚本另因 car002 第 70 帧有意为 `accepted=0` 的 SUSPECTED 状态而在该
+  单帧 FAIL；视觉框和控制未中断，但未经协调者批准不放宽该门禁。
+- **结论 / Handoff**：相对 RS001，car001 的永久身份冲突、恢复后立即回滚及搜索控制失效
+  已修复；car002 路牌段不再丢失，且后段可重捕获。候选仍为 **HOLD**，C012 保持正式效果
+  基线和默认部署。未解决项是 car002 完全遮挡的提前识别，以及 C012 门禁是否应允许
+  `SUSPECTED + observation control + accepted=0` 的单帧冻结语义；不得用已否决的单指标
+  快速升级规则解决。未启动生产交叉编译或人工吊舱验收，未修改协调者所有的
+  `STATUS.md` 或 `integration-contract.yaml`。
