@@ -162,6 +162,7 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
       batch.source_frame_id = request.frame_id;
       batch.source_timestamp_ms = request.timestamp_ms;
       batch.generation = request.generation;
+      batch.purpose = request.purpose;
       next_batch = batch;
     }
   }
@@ -193,6 +194,7 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
     batch.source_timestamp_ms = request.timestamp_ms;
     batch.generation = request.generation;
     batch.request_id = next_request_id++;
+    batch.purpose = request.purpose;
     return nanotrack::DetectorBlockingResult{batch.request_id, batch};
   }
 
@@ -1649,6 +1651,30 @@ int main() {
                   error_detector.submit_calls == 1 &&
                   error_tracker.infer_calls == 3,
               "disabled detector remains out of later NanoTrack frames");
+
+  ControllerConfig display_config = config;
+  display_config.adaptive_display_enabled = true;
+  display_config.display_detector_refresh_enabled = true;
+  FakeTracker display_tracker;
+  FakeDetector display_detector;
+  display_detector.enabled = true;
+  display_detector.complete_immediately = true;
+  LongTermRuntime display_runtime(display_config, display_tracker, display_detector,
+                                  TargetClassRuntimeConfig{2, 9, {}});
+  display_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  RuntimeFrameResult display_frame = display_runtime.process_frame(image, 1, 40);
+  expect_true(!display_frame.plan.request_detector &&
+                  display_frame.detector.request_submitted &&
+                  display_frame.detector.request_purpose ==
+                      DetectorRequestPurpose::kDisplayRefresh &&
+                  display_frame.detector.batch_purpose ==
+                      DetectorRequestPurpose::kDisplayRefresh,
+              "normal tracking schedules a tagged display-only detector request");
+  expect_true(display_frame.output.detector_status == DetectorBatchStatus::kNone &&
+                  same_bbox(display_frame.output.tracking_bbox,
+                            display_frame.output.control_bbox) &&
+                  display_frame.output.control_valid,
+              "display detector results never enter recovery or alter tracking/control");
 
   ControllerConfig hold_config = config;
   hold_config.occlusion_reference_window = 3;

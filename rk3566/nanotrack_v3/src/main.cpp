@@ -99,6 +99,20 @@ cv::Mat render_interactive(const cv::Mat& source,
   std::optional<nanotrack::InteractiveDebugOverlay> overlay;
   if (result) {
     overlay = nanotrack::make_interactive_debug_overlay(*result, labels);
+    const auto& display = result->output.display_bbox;
+    const cv::Rect display_rectangle(
+        static_cast<int>(std::lround(display.x)),
+        static_cast<int>(std::lround(display.y)),
+        std::max(1, static_cast<int>(std::lround(display.width))),
+        std::max(1, static_cast<int>(std::lround(display.height))));
+    cv::rectangle(rendered, display_rectangle, cv::Scalar(255, 255, 255), 3);
+    cv::putText(rendered,
+                std::string("DISPLAY ") +
+                    nanotrack::to_string(result->adaptive_display.source),
+                cv::Point(std::max(0, display_rectangle.x),
+                          std::max(18, display_rectangle.y - 6)),
+                cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
     const auto box_color = [](nanotrack::DebugBoxKind kind) {
       switch (kind) {
         case nanotrack::DebugBoxKind::kMotionPrediction:
@@ -563,7 +577,7 @@ int main(int argc, char** argv) {
       initial_output.timestamp_ms = timestamp_ms;
       initial_output.mode = nanotrack::TrackingMode::kTracking;
       initial_output.quality = nanotrack::QualityLevel::kReliable;
-      initial_output.bbox = bbox;
+      initial_output.bbox = initialization.display_bbox;
       initial_output.control_valid = true;
       initial_output.accepted = true;
       initial_output.motion_update_valid = true;
@@ -573,7 +587,7 @@ int main(int argc, char** argv) {
       initial_output.trusted_for_state_update = true;
       initial_output.control_source = nanotrack::ControlSource::kObservation;
       initial_output.tracking_bbox = bbox;
-      initial_output.display_bbox = bbox;
+      initial_output.display_bbox = initialization.display_bbox;
       initial_output.control_bbox = bbox;
       initial_output.target_class = initialization.target_class;
       nanotrack::RuntimeFrameResult initial_result;
@@ -584,6 +598,11 @@ int main(int argc, char** argv) {
       initial_result.plan.detector_target_mode = controller_config.detector_target_mode;
       initial_result.output = initial_output;
       initial_result.target_class = initialization.target_class;
+      initial_result.adaptive_display.source = initialization.target_class.selected_candidate
+          ? nanotrack::DisplayBoxSource::kDetectorInitialized
+          : nanotrack::DisplayBoxSource::kTrackerPropagated;
+      initial_result.adaptive_display.class_id =
+          initialization.target_class.target_class_id;
       initial_result.initialization = initialization;
       displayed_result = initial_result;
       if (!initialized) {
@@ -603,7 +622,8 @@ int main(int argc, char** argv) {
           const auto initial_row = nanotrack::make_initial_log_row(
               source_frame, timestamp_ms, bbox, detector->available(),
               detector->available() && detector->can_submit(),
-              controller_config.detector_target_mode, initialization.target_class);
+              controller_config.detector_target_mode, initialization.target_class,
+              initialization.display_bbox);
           boxes << nanotrack::tracking_csv_header() << '\n';
           boxes << nanotrack::tracking_csv_row(initial_row) << '\n';
           frame_json.open();
@@ -716,7 +736,9 @@ int main(int argc, char** argv) {
       if (result.detector.request_submitted) ++detector_request_count;
       if (result.detector.batch_received) {
         ++detector_complete_count;
-        if (result.output.detector_status !=
+        if (result.detector.batch_purpose ==
+                nanotrack::DetectorRequestPurpose::kSearchRecovery &&
+            result.output.detector_status !=
             nanotrack::DetectorBatchStatus::kAccepted) {
           ++detector_reject_count;
         }

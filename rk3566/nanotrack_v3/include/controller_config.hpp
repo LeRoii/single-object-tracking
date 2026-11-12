@@ -42,6 +42,26 @@ struct ControllerConfig {
   float accepted_center_max_correction_ratio = 0.00F;
   float max_reacquisition_center_distance = 0.00F;
 
+  bool adaptive_display_enabled = false;
+  bool display_detector_refresh_enabled = false;
+  float display_car_padding_x = 0.06F;
+  float display_car_padding_y = 0.08F;
+  float display_person_padding_x = 0.10F;
+  float display_person_padding_y = 0.06F;
+  float display_unknown_padding_x = 0.08F;
+  float display_unknown_padding_y = 0.08F;
+  float display_detector_blend_alpha = 0.20F;
+  float display_max_size_step_ratio = 0.05F;
+  float display_detection_consistency_iou = 0.50F;
+  int display_detection_confirmations = 2;
+  int display_reacquisition_blend_frames = 5;
+  std::int64_t display_detector_min_interval_ms = 100;
+  std::int64_t display_detector_initial_interval_ms = 200;
+  std::int64_t display_detector_max_interval_ms = 1000;
+  float display_runtime_p95_speedup_ms = 20.0F;
+  float display_runtime_p95_slowdown_ms = 25.0F;
+  float display_runtime_p95_pause_ms = 30.0F;
+
   std::int64_t uncertain_ms = 200;
   std::int64_t local_recovery_ms = 1000;
   std::int64_t assisted_recovery_ms = 3000;

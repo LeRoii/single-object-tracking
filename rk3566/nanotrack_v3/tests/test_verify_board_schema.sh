@@ -519,14 +519,14 @@ root, case = pathlib.Path(sys.argv[1]), sys.argv[2]
 with (root / "bboxes.valid.csv").open(newline="") as stream:
     rows = list(csv.DictReader(stream))
 metadata = json.loads((root / "metadata.valid.json").read_text())
-metadata.update(schema_version=12, observation_valid_semantics="ACCEPTED_OBSERVATION",
+metadata.update(schema_version=13, observation_valid_semantics="ACCEPTED_OBSERVATION",
                 rect0_bbox="tracking_bbox", frame_json_file="bboxes.csv.jsonl")
 roles = ("recent", "safe", "staged")
 geometry = ("x", "y", "width", "height")
 raw = (*geometry, "score", "penalized_peak", "psr", "apce", "peak_margin")
 roles_and_raw = {f"{role}_raw_{key}": "" for role in roles for key in raw}
 defaults = {
-    "schema_version": "12", "state_change_reason": "NONE", "rect0_source": "ACCEPTED_OBSERVATION",
+    "schema_version": "13", "state_change_reason": "NONE", "rect0_source": "ACCEPTED_OBSERVATION",
     "active_template": "RECENT", "selected_template": "RECENT",
     "safe_template_used": "0", "safe_reused_recent": "0",
     "trusted_baseline_psr": "", "trusted_baseline_apce": "", "trusted_baseline_peak_margin": "",
@@ -540,6 +540,12 @@ defaults = {
     "candidate_generation": "", "recovery_confirmation_hits": "0", "recovery_conflict": "0",
     "recovery_probe_source": "NONE", "recovery_probe_id": "", "recovery_probe_generation": "",
     "recovery_reason": "NONE",
+    "detector_request_purpose": "NONE",
+    "detector_batch_purpose": "NONE",
+    "display_box_source": "CONTROLLER_FALLBACK", "display_class_id": "",
+    "display_correction_pending": "0", "display_correction_applied": "0",
+    "display_confirmation_count": "0", "display_refresh_interval_ms": "0",
+    "display_refresh_paused": "0", "display_runtime_p95_ms": "0",
     **{f"recovery_probe_{key}": "" for key in geometry},
     **{f"{role}_head_executed": "0" for role in roles},
     **{f"{role}_decode_status": "NOT_RUN" for role in roles},

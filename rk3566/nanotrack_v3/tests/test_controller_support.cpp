@@ -289,6 +289,19 @@ int main() {
   } catch (const std::exception& error) {
     expect_true(false, std::string("recent-safe profile must load: ") + error.what());
   }
+  try {
+    const ControllerConfig adaptive =
+        load_controller_config(config_dir + "visible-adaptive-display.conf");
+    expect_true(adaptive.adaptive_display_enabled &&
+                    adaptive.display_detector_refresh_enabled &&
+                    adaptive.display_detection_confirmations == 2 &&
+                    adaptive.display_detector_initial_interval_ms == 200 &&
+                    adaptive.display_runtime_p95_pause_ms == 30.0F,
+                "adaptive display profile enables the bounded display-only policy");
+  } catch (const std::exception& error) {
+    expect_true(false, std::string("adaptive display profile failed to load: ") +
+                           error.what());
+  }
   if (failures != 0) return 1;
 
   write_file(config_path,

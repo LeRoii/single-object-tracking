@@ -219,6 +219,7 @@ void YoloDetectorAdapter::worker_loop() {
       batch.source_timestamp_ms = work.request.timestamp_ms;
       batch.generation = work.request.generation;
       batch.request_id = work.identity.request_id;
+      batch.purpose = work.request.purpose;
       batch.candidates = std::move(engine_result.candidates);
       batch.raw_candidate_count = engine_result.raw_candidate_count;
       batch.filtered_candidate_count = engine_result.filtered_candidate_count;

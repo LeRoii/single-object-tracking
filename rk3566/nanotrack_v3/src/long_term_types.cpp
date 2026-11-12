@@ -193,6 +193,29 @@ const char* to_string(DetectorTargetMode value) {
   return value == DetectorTargetMode::kFullObject ? "FULL_OBJECT" : "SUBTARGET";
 }
 
+const char* to_string(DetectorRequestPurpose value) {
+  switch (value) {
+    case DetectorRequestPurpose::kNone: return "NONE";
+    case DetectorRequestPurpose::kSearchRecovery: return "SEARCH_RECOVERY";
+    case DetectorRequestPurpose::kInitialization: return "INITIALIZATION";
+    case DetectorRequestPurpose::kDisplayRefresh: return "DISPLAY_REFRESH";
+  }
+  return "UNKNOWN";
+}
+
+const char* to_string(DisplayBoxSource value) {
+  switch (value) {
+    case DisplayBoxSource::kControllerFallback: return "CONTROLLER_FALLBACK";
+    case DisplayBoxSource::kTrackerPropagated: return "TRACKER_PROPAGATED";
+    case DisplayBoxSource::kDetectorInitialized: return "DETECTOR_INITIALIZED";
+    case DisplayBoxSource::kDetectorConfirmed: return "DETECTOR_CONFIRMED";
+    case DisplayBoxSource::kSuspectedFrozen: return "SUSPECTED_FROZEN";
+    case DisplayBoxSource::kSearchPredicted: return "SEARCH_PREDICTED";
+    case DisplayBoxSource::kReacquisitionBlend: return "REACQUISITION_BLEND";
+  }
+  return "UNKNOWN";
+}
+
 const char* to_string(DetectorBatchStatus value) {
   switch (value) {
     case DetectorBatchStatus::kNone: return "NONE";

@@ -1,5 +1,31 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T21:52:12+08:00 车/人自适应显示框主机实现
+
+- 分支 `codex/adaptive-display-box`，工作树
+  `/home/u20/.codex/worktrees/adaptive-display-box/single-object-tracking`，基线
+  `main@dccf8e0844b78cf9a1f4ee207352429b6d884979`；结果为包含本条记录的同一提交。实现独立
+  `AdaptiveDisplayBox` 后处理层，只覆盖 `ControllerOutput::display_bbox` 及兼容别名 `bbox`；
+  `tracking_bbox`、`control_bbox`、模板、运动模型、遮挡判定及重捕控制器均不读取显示状态。
+- 检测请求新增 `INITIALIZATION`、`SEARCH_RECOVERY`、`DISPLAY_REFRESH` 用途，运行时按用途
+  分流；显示批次不进入恢复候选队列，SEARCH 请求优先提交。自动类别初始化使用
+  VisDrone9 `person=0`、`car=2`；唯一匹配时显示框从鼠标 ROI 扩展到带类别边距的全目标框，
+  否则保持 ROI。TRACKING 低频修正、SUSPECTED/SEARCH 冻结可信尺寸、SEARCH 跟随预测中心，
+  重捕使用五帧渐进过渡。
+- 新增 `config/visible-adaptive-display.conf` 与
+  `config/rk3588-adaptive-display-debug.conf`；历史配置字节未修改。显示检测初始 5 Hz、范围
+  1--10 Hz，并按算法运行时间滚动 P95 在 20/25/30 ms 门槛加速、降频或暂停；schema 升至
+  v13，记录请求用途、显示框来源、纠正确认、刷新周期和运行时间 P95。
+- 主机命令：`cmake -S rk3566/nanotrack_v3 -B /tmp/nanotrack-adaptive-display-build
+  -DCMAKE_BUILD_TYPE=Debug -DENABLE_RKNN_RUNTIME=OFF`，随后 `cmake --build ... -j4` 与
+  `ctest --test-dir ... --output-on-failure`，结果 `23/23 PASS`。另以
+  `-DCMAKE_CXX_FLAGS=-Werror=switch` 在 `/tmp/nanotrack-adaptive-display-werror` 重建并运行，
+  同样 `23/23 PASS`；`git diff --check` PASS。
+- **边界 / 下一步**：当前仅为主机实现证据，尚未构成 RK3588 原生构建、性能或视频效果证据；
+  下一步将精确提交部署到 RK3588 独立目录，使用 `occ_video_1` 固定 car001/car002 ROI 运行，
+  核对 schema v13、算法 P95、无检测积压及既有 C012/当前基线不退化。人物仅完成代码与单测，
+  没有合规人物视频前不声明板端人物验收。
+
 ## 2026-11-12T16:19:23+08:00 四个已拒绝运动冻结实现的失败帧导出
 
 - 按用户复核请求，从四个已拒绝 RK3588 保留根的原始输出 AVI 导出失败窗口：

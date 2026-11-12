@@ -65,6 +65,7 @@ target_include_directories(nanotrack_interactive_control
 target_compile_options(nanotrack_interactive_control PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(nanotrack_controller_support
+  src/adaptive_display_box.cpp
   src/controller_config.cpp
   src/long_term_controller.cpp
   src/long_term_runtime.cpp
@@ -126,6 +127,10 @@ if(BUILD_TESTING)
   add_executable(test_occlusion_evidence tests/test_occlusion_evidence.cpp)
   target_link_libraries(test_occlusion_evidence PRIVATE nanotrack_controller_support)
   add_test(NAME occlusion_evidence COMMAND test_occlusion_evidence)
+
+  add_executable(test_adaptive_display_box tests/test_adaptive_display_box.cpp)
+  target_link_libraries(test_adaptive_display_box PRIVATE nanotrack_controller_support)
+  add_test(NAME adaptive_display_box COMMAND test_adaptive_display_box)
 
   add_executable(test_target_class tests/test_target_class.cpp)
   target_link_libraries(test_target_class PRIVATE nanotrack_controller_support)

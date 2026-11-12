@@ -11,7 +11,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 12;
+constexpr int kTrackingSchemaVersion = 13;
 
 class MonotonicVideoClock {
  public:
@@ -90,6 +90,8 @@ struct TrackingLogRow {
   std::optional<std::uint64_t> detector_request_frame_id;
   std::string detector_worker_status = "disabled";
   std::string detector_error;
+  DetectorRequestPurpose detector_request_purpose = DetectorRequestPurpose::kNone;
+  DetectorRequestPurpose detector_batch_purpose = DetectorRequestPurpose::kNone;
   std::optional<std::uint64_t> detector_batch_frame_id;
   std::optional<std::int64_t> detector_batch_age_ms;
   std::size_t detector_raw_candidate_count = 0;
@@ -167,6 +169,14 @@ struct TrackingLogRow {
   bool tracker_skipped = false;
   bool detector_suppressed_by_hold = false;
   TargetClassState target_class{};
+  DisplayBoxSource display_box_source = DisplayBoxSource::kControllerFallback;
+  std::optional<int> display_class_id;
+  bool display_correction_pending = false;
+  bool display_correction_applied = false;
+  int display_confirmation_count = 0;
+  std::int64_t display_refresh_interval_ms = 0;
+  bool display_refresh_paused = false;
+  float display_runtime_p95_ms = 0.0F;
   float tracker_ms = 0.0F;
   float runtime_ms = 0.0F;
   float pipeline_ms = 0.0F;
@@ -339,7 +349,9 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     DetectorTargetMode detector_target_mode =
                                         DetectorTargetMode::kFullObject,
                                     const TargetClassState& target_class =
-                                        TargetClassState{});
+                                        TargetClassState{},
+                                    const std::optional<BBox>& display_bbox =
+                                        std::nullopt);
 TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
                                      const std::string& note = "");
 LatencySummary summarize_latencies(const std::vector<float>& runtime_ms,
