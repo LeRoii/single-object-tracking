@@ -823,6 +823,24 @@ int main() {
   expect_true(!bounded_motion.prediction_confident(sample_time + 67) &&
                   bounded_motion.snapshot(sample_time + 67).search_age_ms == -1,
               "ending search removes motion-control confidence");
+
+  MotionEstimator referenced_search(motion_config);
+  referenced_search.initialize(BBox{40, 30, 20, 20}, 0, 200, 160);
+  referenced_search.predict(100);
+  referenced_search.correct(BBox{50, 20, 20, 20}, 100);
+  MotionSnapshot trusted_trend;
+  trusted_trend.velocity_x = -12.0F;
+  trusted_trend.velocity_y = 8.0F;
+  referenced_search.begin_search(100, trusted_trend);
+  const auto referenced_prediction = referenced_search.predict(200);
+  const auto referenced_snapshot = referenced_search.snapshot(200);
+  expect_true(referenced_prediction.x < 50.0F && referenced_prediction.y > 20.0F,
+              "search follows the retained trusted trend instead of the latest reversal");
+  expect_near(referenced_snapshot.acceleration_x, 0.0F, 1e-6F,
+              "open-loop search clears horizontal acceleration");
+  expect_near(referenced_snapshot.acceleration_y, 0.0F, 1e-6F,
+              "open-loop search clears vertical acceleration");
+
   MotionEstimator uninitialized_motion(bounded_motion_config);
   expect_throws([&] { uninitialized_motion.snapshot(0); },
                 "uninitialized motion snapshots fail closed");

@@ -135,6 +135,9 @@ void LongTermController::initialize(const BBox& initial_bbox,
   tentative_control_.reset();
   response_baseline_.reset_after_recovery();
   clear_suspicion();
+  search_motion_reference_ = motion_.snapshot(timestamp_ms);
+  search_motion_reference_held_ = false;
+  search_motion_clean_since_ms_.reset();
   last_trusted_timestamp_ms_ = timestamp_ms;
   legacy_anchor_observations_ = false;
   recent_safe_observations_ = false;
@@ -1494,6 +1497,9 @@ void LongTermController::apply_recovery_acceptance() noexcept {
   frozen_scale_reference_.reset();
   occlusion_suspicion_frames_ = 0;
   response_baseline_.reset_after_recovery();
+  search_motion_reference_ = motion_.snapshot(last_timestamp_ms_);
+  search_motion_reference_held_ = false;
+  search_motion_clean_since_ms_.reset();
   confirmations_.clear();
   active_detector_candidate_.reset();
   detector_candidates_.clear();
@@ -2279,6 +2285,24 @@ ControllerOutput LongTermController::finish_frame(
     defer_recovery_acceptance(plan, *selected, output);
   } else if (accepted) {
     accept_observation(plan, *selected, acceptance_path, output);
+    const bool response_degraded = response.psr_drop || response.apce_drop ||
+                                   response.peak_margin_drop;
+    if (response_degraded) {
+      search_motion_reference_held_ = true;
+      search_motion_clean_since_ms_.reset();
+    } else if (search_motion_reference_held_) {
+      if (!search_motion_clean_since_ms_) {
+        search_motion_clean_since_ms_ = plan.timestamp_ms;
+      }
+      if (plan.timestamp_ms - *search_motion_clean_since_ms_ >=
+          config_.suspicion_clear_ms) {
+        search_motion_reference_ = motion_.snapshot(plan.timestamp_ms);
+        search_motion_reference_held_ = false;
+        search_motion_clean_since_ms_.reset();
+      }
+    } else {
+      search_motion_reference_ = motion_.snapshot(plan.timestamp_ms);
+    }
     if (ordinary_recent && !recent_probation_) {
       response_baseline_.resume_tracking();
       response_baseline_.observe_trusted(selected->observation.metrics);
@@ -2304,7 +2328,17 @@ ControllerOutput LongTermController::finish_frame(
       active_detector_candidate_.reset();
     }
     if (config_.motion_search_enabled && !motion_search_active_) {
-      motion_.begin_search(plan.timestamp_ms);
+      const MotionSnapshot current_motion = motion_.snapshot(plan.timestamp_ms);
+      const float trend_dot = search_motion_reference_
+          ? current_motion.velocity_x * search_motion_reference_->velocity_x +
+                current_motion.velocity_y * search_motion_reference_->velocity_y
+          : 0.0F;
+      if (search_motion_reference_held_ && search_motion_reference_ &&
+          trend_dot < 0.0F) {
+        motion_.begin_search(plan.timestamp_ms, *search_motion_reference_);
+      } else {
+        motion_.begin_search(plan.timestamp_ms);
+      }
       motion_search_active_ = true;
     }
     if (config_.motion_search_enabled && motion_search_active_) {

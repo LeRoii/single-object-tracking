@@ -2366,6 +2366,61 @@ void test_recent_safe_single_metric_dip_is_tentative() {
               "one healthy frame clears an isolated pre-entry response dip");
 }
 
+void test_search_uses_last_clean_response_motion_trend() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.occlusion_min_reference_samples = 3;
+  config.stable_frames_for_update = 50;
+  config.suspicion_clear_ms = 100;
+  config.motion_alpha = 1.0F;
+  config.motion_beta = 0.5F;
+  config.motion_max_speed_diagonals_per_s = 10.0F;
+  config.motion_max_acceleration_diagonals_per_s2 = 100.0F;
+  ResolvedControllerFixture controller(config);
+  const ResponseMetrics healthy{0.98F, 0.96F, 20.0F, 30.0F, 0.60F};
+  controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300});
+
+  for (std::uint64_t id = 1; id <= 4; ++id) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto observation = reliable_observation(
+        plan, TemplateKind::kRecent,
+        {100.0F - 2.0F * static_cast<float>(id),
+         80.0F + 2.0F * static_cast<float>(id), 20, 20});
+    observation.metrics = healthy;
+    expect_true(controller.finish_frame(plan, {observation}, std::nullopt).accepted,
+                "clean left-down observations establish a search trend");
+  }
+  const MotionSnapshot clean = *controller.search_motion_reference_;
+  expect_true(clean.velocity_x < 0.0F && clean.velocity_y > 0.0F,
+              "fixture retains the clean left-down trend");
+
+  auto plan = controller.begin_frame(5, 200, false);
+  BBox reversed = plan.predicted_bbox;
+  reversed.x += 4.0F;
+  reversed.y -= 4.0F;
+  auto degraded = reliable_observation(plan, TemplateKind::kRecent, reversed);
+  degraded.metrics = healthy;
+  degraded.metrics.peak_margin = 0.30F;
+  const auto accepted_degraded =
+      controller.finish_frame(plan, {degraded}, std::nullopt);
+  expect_true(accepted_degraded.accepted &&
+                  controller.search_motion_reference_held_,
+              "a relative response drop freezes only the search-motion reference");
+
+  plan = controller.begin_frame(6, 240, false);
+  auto collapsed = rejected_observation(plan, TemplateKind::kRecent,
+                                        plan.predicted_bbox);
+  collapsed.metrics.raw_score = 0.10F;
+  const auto searching = controller.finish_frame(plan, {collapsed}, std::nullopt);
+  expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
+                  searching.motion_velocity_x < 0.0F &&
+                  searching.motion_velocity_y > 0.0F &&
+                  searching.motion_acceleration_x == 0.0F &&
+                  searching.motion_acceleration_y == 0.0F,
+              "search starts from the clean trend without extrapolating acceleration");
+}
+
 void test_recent_safe_transient_and_probation() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2571,6 +2626,7 @@ void test_recent_safe_rolling_scale() {
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
+  test_search_uses_last_clean_response_motion_trend();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();
   test_production_observation_preserves_collapse();

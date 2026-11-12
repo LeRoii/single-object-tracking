@@ -138,6 +138,20 @@ void MotionEstimator::begin_search(std::int64_t timestamp_ms) {
   if (!search_start_ms_) search_start_ms_ = timestamp_ms;
 }
 
+void MotionEstimator::begin_search(
+    std::int64_t timestamp_ms, const MotionSnapshot& trusted_trend) {
+  begin_search(timestamp_ms);
+  if (!std::isfinite(trusted_trend.velocity_x) ||
+      !std::isfinite(trusted_trend.velocity_y)) {
+    throw std::invalid_argument("trusted search velocity must be finite");
+  }
+  velocity_x_ = trusted_trend.velocity_x;
+  velocity_y_ = trusted_trend.velocity_y;
+  acceleration_x_ = 0.0F;
+  acceleration_y_ = 0.0F;
+  clamp_derivatives();
+}
+
 void MotionEstimator::end_search() noexcept { search_start_ms_.reset(); }
 
 bool MotionEstimator::prediction_confident(std::int64_t timestamp_ms) const {

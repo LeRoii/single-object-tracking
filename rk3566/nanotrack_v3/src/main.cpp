@@ -730,7 +730,7 @@ int main(int argc, char** argv) {
         throw std::runtime_error("measured tracking latency is invalid");
       }
       if (writer.isOpened()) {
-        writer.write(render_annotated(frame, result.output.bbox, result.output,
+        writer.write(render_annotated(frame, result.output.control_bbox, result.output,
                                       output_width, output_height));
       }
       displayed_result = result;
