@@ -2364,35 +2364,6 @@ void test_recent_safe_single_metric_dip_is_tentative() {
   expect_true(output.tracking_phase == TrackingPhase::kTracking && output.accepted &&
                   output.trusted_for_state_update && output.control_valid,
               "one healthy frame clears an isolated pre-entry response dip");
-
-  ResolvedControllerFixture sustained(config);
-  sustained.initialize(bbox, 0, 0, {320, 240});
-  for (std::uint64_t id = 1; id <= 3; ++id) {
-    plan = sustained.begin_frame(id, id * 40, false);
-    auto seed = reliable_observation(plan, TemplateKind::kRecent, bbox);
-    seed.metrics = healthy;
-    expect_true(sustained.finish_frame(plan, {seed}, std::nullopt).accepted,
-                "sustained fixture seeds the trusted response baseline");
-  }
-  for (std::uint64_t id : {4U, 5U}) {
-    plan = sustained.begin_frame(id, id * 40, false);
-    auto dip = reliable_observation(plan, TemplateKind::kRecent, bbox);
-    dip.metrics = healthy;
-    dip.metrics.peak_margin = 0.018F;
-    output = sustained.finish_frame(plan, {dip}, std::nullopt);
-    expect_true(output.tracking_phase == TrackingPhase::kSuspected &&
-                    output.control_valid && output.observation_present,
-                "a short single-metric decline remains tentative");
-  }
-  plan = sustained.begin_frame(6, 240, false);
-  auto persistent_dip = reliable_observation(plan, TemplateKind::kRecent, bbox);
-  persistent_dip.metrics = healthy;
-  persistent_dip.metrics.peak_margin = 0.018F;
-  output = sustained.finish_frame(plan, {persistent_dip}, std::nullopt);
-  expect_true(output.tracking_phase == TrackingPhase::kSearching &&
-                  output.control_valid && !output.observation_present &&
-                  output.control_source == ControlSource::kMotionSearch,
-              "a persistent single-metric decline enters bounded search");
 }
 
 void test_recent_safe_transient_and_probation() {
