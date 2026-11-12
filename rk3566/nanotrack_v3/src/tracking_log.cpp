@@ -258,6 +258,7 @@ void visit_observability_fields(const TrackingLogRow& row, Field field) {
   const auto& probe = row.recovery_probe;
   field("observation_present", row.observation_present);
   field("trusted_for_state_update", row.trusted_for_state_update);
+  field("motion_update_valid", row.motion_update_valid);
   field("state_change_reason", row.state_change_reason);
   field("rect0_source", row.rect0_source);
   field("active_template", "RECENT");
@@ -804,6 +805,7 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.observation_valid = true;
   row.observation_present = true;
   row.trusted_for_state_update = true;
+  row.motion_update_valid = true;
   row.state_change_reason = "INITIALIZED";
   row.rect0_source = "INITIAL_ROI";
   row.control_source = ControlSource::kObservation;
@@ -841,6 +843,7 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.observation_valid = output.observation_valid;
   row.observation_present = output.observation_present;
   row.trusted_for_state_update = output.trusted_for_state_update;
+  row.motion_update_valid = output.motion_update_valid;
   row.state_change_reason = output.state_change_reason;
   row.rect0_source = output.accepted ? "ACCEPTED_OBSERVATION" :
       output.observation_present ? "RECENT_OBSERVATION" : "MOTION_PREDICTION";

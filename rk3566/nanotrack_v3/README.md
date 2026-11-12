@@ -72,10 +72,10 @@ For RK3588 recent/safe candidate verification, build the committed tree with
 -DCMAKE_CXX_FLAGS=-Werror=switch` and the board's RKNN headers and runtime.
 Run the complete native CTest suite before running the video. The candidate
 uses `config/visible-recent-safe-v1.conf` (`calibrated=false`) and writes
-tracking schema v11. Run each target with its own initial ROI and output
+tracking schema v12. Run each target with its own initial ROI and output
 directory, then run `scripts/verify_board.sh` with `EXPECTED_RKNN_TARGET=rk3588`
 and the repository's `scripts/evaluate_occ_video_1.py` with the matching
-`--target-id` and `--scope full`. The v11 verifier checks the optional JSONL
+`--target-id` and `--scope full`. The v12 verifier checks the optional JSONL
 companion when the session metadata advertises it. Archived v10 runs use
 `EXPECTED_TRACKING_SCHEMA=10` with the verifier and their original evaluator.
 

@@ -30,7 +30,7 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def synthetic_contract(schema=11):
+def synthetic_contract(schema=12):
     truth = []
     for frame_id in range(11):
         status = "visible"
@@ -83,7 +83,7 @@ def mark_recovery(row):
     )
 
 
-def passing_rows(schema=11):
+def passing_rows(schema=12):
     rows = []
     for frame_id in range(11):
         searching = 3 <= frame_id <= 6
@@ -97,6 +97,7 @@ def passing_rows(schema=11):
                 "observation_valid": not searching,
                 "observation_present": not searching,
                 "trusted_for_state_update": not searching,
+                "motion_update_valid": not searching,
                 "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
                 "control_valid": True,
                 "motion_control_authorized": searching,
@@ -340,7 +341,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                 searching = item["frame_id"] in {1, 2}
                 rows.append(
                     {
-                        "schema_version": 11,
+                        "schema_version": 12,
                         "frame_id": item["frame_id"],
                         "timestamp_ms": item["frame_id"] * 33,
                         "state": "OCCLUSION_HOLD" if searching else "TRACKING",
@@ -348,6 +349,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                         "observation_valid": not searching,
                         "observation_present": not searching,
                         "trusted_for_state_update": not searching,
+                        "motion_update_valid": not searching,
                         "control_source": "MOTION_SEARCH" if searching else "OBSERVATION",
                         "control_valid": True,
                         "motion_control_authorized": searching,
@@ -371,6 +373,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             "observation_valid",
             "observation_present",
             "trusted_for_state_update",
+            "motion_update_valid",
             "control_source",
             "control_valid",
             "accepted",
@@ -408,6 +411,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                 )
                 for key in (
                     "observation_valid", "observation_present", "trusted_for_state_update",
+                    "motion_update_valid",
                     "control_valid", "accepted", "reacquired",
                     "motion_control_authorized", "motion_prediction_confident",
                     "template_transition_applied", "template_transition_recovery",
@@ -493,7 +497,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             )
             rows.append(
                 {
-                    "schema_version": 11,
+                    "schema_version": 12,
                     "frame_id": frame_id,
                     "timestamp_ms": frame_id * 33,
                     "state": "TRACKING",
@@ -501,6 +505,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                     "observation_valid": True,
                     "observation_present": True,
                     "trusted_for_state_update": True,
+                    "motion_update_valid": True,
                     "control_source": "OBSERVATION",
                     "control_valid": True,
                     "accepted": True,
@@ -607,11 +612,12 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertIn("legacy schema 9", report["gates"]["tracking_schema"]["detail"])
         self.assertGreater(report["strata"]["visible"]["mean_iou"], 0.99)
 
-    def test_candidate_rejects_archived_v10_and_missing_v11_semantics(self):
+    def test_candidate_rejects_archived_v10_and_missing_current_semantics(self):
         archived = passing_rows(schema=10)
         for row in archived:
             row.pop("observation_present")
             row.pop("trusted_for_state_update")
+            row.pop("motion_update_valid")
         self.assertEqual(evaluator.evaluate(synthetic_contract(schema=10), archived, "full")["verdict"], "PASS")
         candidate = evaluator.evaluate(synthetic_contract(), archived, "full")
         self.assertEqual(candidate["verdict"], "FAIL")
@@ -627,7 +633,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         report = evaluator.evaluate(contract, passing_rows(), "full")
         self.assertFalse(report["gates"]["tracking_schema"]["passed"])
 
-    def test_v11_recovery_counts_only_trusted_tracking_with_applied_recovery_stage(self):
+    def test_current_recovery_counts_only_trusted_tracking_with_applied_recovery_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "rows.csv")
             self.write_tracking_csv(path, passing_rows())
@@ -637,6 +643,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         for changes in (
             {"state": "LOCAL_RECOVERY", "tracking_phase": "SEARCHING"},
             {"trusted_for_state_update": False},
+            {"motion_update_valid": False},
             {"observation_present": False},
             {"observation_valid": False},
             {"accepted": False},
@@ -663,7 +670,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                 self.assertEqual(report["gates"]["reacquisition"]["frames"], [7])
                 self.assertEqual(report["reacquisition"]["frames"], [])
 
-    def test_bare_v11_recovery_flag_cannot_exempt_identity_jump(self):
+    def test_bare_recovery_flag_cannot_exempt_identity_jump(self):
         rows = passing_rows()
         rows[7]["reacquired"] = False
         rows[8]["reacquired"] = True
@@ -687,6 +694,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
                     state="LOST", tracking_phase="SEARCHING", control_valid=False,
                     control_source="NONE", observation_present=False,
                     trusted_for_state_update=False, accepted=False, observation_valid=False,
+                    motion_update_valid=False,
                 )
                 clean = evaluator.evaluate(synthetic_contract(), rows, "full")
                 self.assertTrue(clean["gates"]["continuous_control"]["passed"])
@@ -699,6 +707,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             {"observation_present": True},
             {"accepted": True},
             {"trusted_for_state_update": True},
+            {"motion_update_valid": True},
             {"motion_control_authorized": False},
             {"motion_prediction_confident": False},
             {"rect0_source": "RECENT_OBSERVATION"},
@@ -717,6 +726,7 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         tentative.update(
             state="SUSPECTED", tracking_phase="SUSPECTED",
             observation_valid=False, trusted_for_state_update=False, accepted=False,
+            motion_update_valid=False,
         )
         self.assertEqual(evaluator.evaluate(synthetic_contract(), rows, "full")["verdict"], "PASS")
 

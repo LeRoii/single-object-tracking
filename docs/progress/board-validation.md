@@ -1,5 +1,28 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T15:35:54+08:00 分级运动更新信任（主机验证）
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，基线
+  `3f50eb205899e2b8e656d9c194de67f63478fea4`；结果为包含本条记录的当前提交。根据用户确认，
+  本提交废止 `5fbcf83` 的“进入 SEARCH 时若方向相反则切换最后干净趋势”启发式，历史 RK3588
+  结果继续保留为失败分析证据，不删除、不改写。
+- 新策略将“当前 NanoTrack 框可继续输出/控制”和“允许更新运动模型”拆成独立语义：响应相对
+  退化但仍被跟踪器接受时，`tracking_bbox/control_bbox` 继续采用当前观测，状态仍可保持
+  `TRACKING`，但 `motion_update_valid=false`，运动位置/速度不再被该框校正，开环加速度和尺度
+  速度清零；响应基线、稳定计数和 recent 模板推进同步冻结。只有连续干净观测达到既有
+  `suspicion_clear_ms` 后，才用该干净时间段的首尾观测重新建立运动状态并恢复更新。
+- 日志协议升为 schema v12，新增 `motion_update_valid`；CSV、JSONL、遥测、板端 verifier 与
+  `occ_video_1` evaluator 同步校验“只有已接受的 TRACKING 观测才能更新运动模型”。这只是
+  可观测性与安全不变量升级，不改变模型、检测器、遮挡阈值、重捕门或云台控制框语义。
+- 主机 RKNN-off Debug 目录 `/tmp/nanotrack-motion-trust` 使用
+  `-DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS=-Werror=switch` 完成构建；
+  CTest `22/22` PASS，`python3 -m unittest tests.test_evaluate_occ_video_1` `23/23` PASS，
+  `git diff --check` PASS。新增单测覆盖退化观测继续控制但冻结运动、保留干净速度并清零加速度、
+  连续干净时间达标后才恢复更新。
+- **边界 / Handoff**：当前仅为主机验证，尚未在 RK3588 上构建或复跑 car001/car002；不能据此
+  声称视频效果改善或批准生产 handoff。下一步以精确提交部署到独立板端目录，固定双目标 ROI
+  回归并与 C012、`b538667` 及 `5fbcf83` 保留结果比较。
+
 ## 2026-11-12T15:06:46+08:00 search 反向趋势修正 RK3588 双目标验证
 
 - 分支 `codex/recent-safe-occlusion-recovery-v2`，源码提交

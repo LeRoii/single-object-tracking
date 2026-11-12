@@ -31,9 +31,8 @@ class MotionEstimator {
   BBox predict(std::int64_t timestamp_ms);
   void correct(const BBox& observation, std::int64_t timestamp_ms);
   void freeze_scale(float width, float height);
+  void freeze_open_loop_dynamics() noexcept;
   void begin_search(std::int64_t timestamp_ms);
-  void begin_search(std::int64_t timestamp_ms,
-                    const MotionSnapshot& trusted_trend);
   void end_search() noexcept;
   bool prediction_confident(std::int64_t timestamp_ms) const;
   MotionSnapshot snapshot(std::int64_t timestamp_ms) const;

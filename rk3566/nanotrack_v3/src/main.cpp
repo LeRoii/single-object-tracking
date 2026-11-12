@@ -566,6 +566,7 @@ int main(int argc, char** argv) {
       initial_output.bbox = bbox;
       initial_output.control_valid = true;
       initial_output.accepted = true;
+      initial_output.motion_update_valid = true;
       initial_output.tracking_phase = nanotrack::TrackingPhase::kTracking;
       initial_output.observation_valid = true;
       initial_output.observation_present = true;

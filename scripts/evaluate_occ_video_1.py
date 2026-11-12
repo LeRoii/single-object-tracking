@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 REPORT_SCHEMA_VERSION = 1
-REQUIRED_TRACKING_SCHEMA = 11
+REQUIRED_TRACKING_SCHEMA = 12
 MIN_OBSERVATION_VISIBLE_MEAN_IOU = 0.70
 MIN_OBSERVATION_VISIBLE_FRAME_IOU = 0.45
 CANONICAL_IDENTITY = {
@@ -439,6 +439,7 @@ def load_tracking_csv(path):
                 raise ValueError("frame {} tracking box must have positive size".format(frame_id))
             semantic_flags = (
                 "observation_valid", "observation_present", "trusted_for_state_update",
+                "motion_update_valid",
                 "motion_control_authorized", "motion_prediction_confident",
                 "template_transition_recovery", "template_transition_applied",
                 "template_probation_active", "recovery_conflict",
@@ -578,7 +579,7 @@ def _continuity_segments(rows, reacquisition_frames):
     return segments
 
 
-def _is_v11_reacquisition(row, frame_width, frame_height):
+def _is_current_reacquisition(row, frame_width, frame_height):
     # A recovery stage is acknowledged on the reacquisition frame. The
     # template commit is a separate acknowledgement after probation.
     transaction_id = row.get("template_transaction_id")
@@ -588,7 +589,7 @@ def _is_v11_reacquisition(row, frame_width, frame_height):
         and row["state"] == row.get("tracking_phase") == "TRACKING"
         and all(row.get(field) is True for field in (
             "observation_present", "accepted", "observation_valid",
-            "trusted_for_state_update", "control_valid",
+            "trusted_for_state_update", "motion_update_valid", "control_valid",
             "template_transition_recovery", "template_transition_applied",
             "template_probation_active",
         ))
@@ -696,7 +697,9 @@ def evaluate(contract, rows, scope):
     semantic_fields = ["tracking_phase", "observation_valid", "control_source"]
     recent_safe = required_schema == REQUIRED_TRACKING_SCHEMA
     if recent_safe:
-        semantic_fields.extend(("observation_present", "trusted_for_state_update"))
+        semantic_fields.extend((
+            "observation_present", "trusted_for_state_update", "motion_update_valid",
+        ))
     semantic_columns_present = all(
         row.get(field) is not None for row in rows for field in semantic_fields
     )
@@ -751,6 +754,7 @@ def evaluate(contract, rows, scope):
                 row["state"] != "LOST"
                 and all(row.get(field) is False for field in (
                     "observation_present", "accepted", "trusted_for_state_update",
+                    "motion_update_valid",
                 ))
                 and row.get("rect0_source") == "MOTION_PREDICTION"
                 and row.get("motion_control_authorized") is True
@@ -776,9 +780,13 @@ def evaluate(contract, rows, scope):
             phase = row["tracking_phase"]
             present = row["observation_present"]
             trusted = row["trusted_for_state_update"]
+            motion_update_valid = row["motion_update_valid"]
             if (
                 trusted != row["accepted"]
                 or row["observation_valid"] != trusted
+                or (motion_update_valid and (
+                    not trusted or not present or phase != "TRACKING"
+                ))
                 or row["control_valid"] != (row["control_source"] != "NONE")
                 or phase not in {"TRACKING", "SUSPECTED", "SEARCHING"}
                 or (phase == "TRACKING" and (
@@ -801,7 +809,7 @@ def evaluate(contract, rows, scope):
                 or row.get("motion_control_authorized") is True
                 or any(row.get(field) is not False for field in (
                     "control_valid", "observation_present", "trusted_for_state_update",
-                    "accepted", "observation_valid",
+                    "accepted", "observation_valid", "motion_update_valid",
                 ))
             )
         )
@@ -811,7 +819,7 @@ def evaluate(contract, rows, scope):
     frame_height = contract["identity"].get("height", math.inf)
     invalid_reacquisitions = sorted(
         row["frame_id"] for row in claimed_reacquisitions
-        if recent_safe and not _is_v11_reacquisition(row, frame_width, frame_height)
+        if recent_safe and not _is_current_reacquisition(row, frame_width, frame_height)
     )
     valid_reacquisitions = {row["frame_id"] for row in claimed_reacquisitions}.difference(
         invalid_reacquisitions
@@ -828,7 +836,7 @@ def evaluate(contract, rows, scope):
         first_reliable, deadline, reacquisition_frames
     )
     if recent_safe:
-        reacquisition_detail += ". Invalid v11 claims {}".format(invalid_reacquisitions)
+        reacquisition_detail += ". Invalid schema claims {}".format(invalid_reacquisitions)
 
     truth_motion_items = []
     for frame_id in required_frames:

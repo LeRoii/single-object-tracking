@@ -227,7 +227,7 @@ void test_recent_safe_serialization() {
   const auto csv = tracking_csv_header();
   const auto json = tracking_frame_json(row);
   for (const auto& expected : {
-           "\"schema_version\":11", "\"tracking_phase\":\"SUSPECTED\"",
+           "\"schema_version\":12", "\"tracking_phase\":\"SUSPECTED\"",
            "\"observation_valid\":false", "\"observation_present\":true",
            "\"trusted_for_state_update\":false", "\"control_source\":\"OBSERVATION\"",
            "\"rect0_source\":\"RECENT_OBSERVATION\"", "\"active_template\":\"RECENT\"",
@@ -240,14 +240,14 @@ void test_recent_safe_serialization() {
            "\"candidate_id\":9", "\"recovery_probe_source\":\"DETECTOR\"",
            "\"recovery_probe_x\":51.000000", "\"recovery_confirmation_hits\":1",
            "\"tracking_x\":50.000000", "\"display_x\":45.000000", "\"control_x\":48.000000"}) {
-    expect_true(contains(json, expected), std::string("v11 JSON field ") + expected);
+    expect_true(contains(json, expected), std::string("v12 JSON field ") + expected);
     const std::string field(expected);
     expect_true(contains(csv, field.substr(1, field.find('"', 1) - 1) + ',') ||
                     csv.rfind(field.substr(1, field.find('"', 1) - 1)) != std::string::npos,
-                std::string("v11 CSV field ") + expected);
+                std::string("v12 CSV field ") + expected);
   }
   expect_true(csv_columns(csv) == csv_columns(tracking_csv_row(row)),
-              "v11 CSV includes exactly one value per named column");
+              "v12 CSV includes exactly one value per named column");
 }
 
 void test_recent_safe_profile_metadata() {
@@ -260,16 +260,16 @@ void test_recent_safe_profile_metadata() {
   apply_controller_config_metadata(metadata, config);
   const auto json = tracking_session_metadata_json(metadata);
 
-  expect_true(contains(json, "\"schema_version\": 11,\n") &&
+  expect_true(contains(json, "\"schema_version\": 12,\n") &&
                   contains(json, "\"template_policy\": \"recent_safe_v1\",\n") &&
                   contains(json, "\"recovery_policy\": \"unified_candidates_v1\",\n") &&
                   contains(json, "|recent_safe_v1|unified_candidates_v1|") &&
                   contains(json, "  \"calibrated\": false,\n"),
-              "v11 session metadata identifies the uncalibrated recent-safe profile");
+              "v12 session metadata identifies the uncalibrated recent-safe profile");
   expect_true(contains(json, "\"search_reacquisition_requires_detector\": false,\n") &&
                   contains(json, "\"template_bridge_min_stable_frames\": 0,\n") &&
                   contains(json, "\"template_bridge_max_duration_ms\": 0,\n"),
-              "v11 recent-safe session metadata reports inactive legacy recovery settings");
+              "v12 recent-safe session metadata reports inactive legacy recovery settings");
 }
 
 void test_adaptive_coast_serialization() {
@@ -418,10 +418,11 @@ void test_adaptive_coast_serialization() {
 }  // namespace
 
 int main() {
-  expect_true(nanotrack::kTrackingSchemaVersion == 11 &&
+  expect_true(nanotrack::kTrackingSchemaVersion == 12 &&
                   nanotrack::tracking_csv_header().find("template_transition_result") != std::string::npos &&
-                  nanotrack::tracking_csv_header().find("trusted_for_state_update") != std::string::npos,
-              "schema v11 exposes trusted and resolved transition semantics");
+                  nanotrack::tracking_csv_header().find("trusted_for_state_update") != std::string::npos &&
+                  nanotrack::tracking_csv_header().find("motion_update_valid") != std::string::npos,
+              "schema v12 exposes independent motion-update trust");
 
   using namespace nanotrack;
   test_tracking_artifact_paths();
@@ -554,8 +555,8 @@ int main() {
         "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("11,", 0) == 0 && kTrackingSchemaVersion == 11,
-              "tracking rows carry schema version 11 exactly once");
+  expect_true(encoded.rfind("12,", 0) == 0 && kTrackingSchemaVersion == 12,
+              "tracking rows carry schema version 12 exactly once");
   expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
               "CSV writes established class and recovery gate");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
@@ -565,7 +566,7 @@ int main() {
               "CSV text fields escape commas and quotes");
 
   const TrackingLogRow initial = make_initial_log_row(0, 0, BBox{10, 20, 30, 40});
-  expect_true(initial.control_valid && initial.accepted &&
+  expect_true(initial.control_valid && initial.accepted && initial.motion_update_valid &&
                   initial.mode == TrackingMode::kTracking &&
                   initial.tracking_phase == TrackingPhase::kTracking &&
                   initial.observation_valid &&
@@ -836,7 +837,7 @@ int main() {
                   contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
                   contains(json, "\"detector_ms\": 15.000000"),
               "same-frame initialization history retains order, result diagnostics and null optionals");
-  expect_true(contains(json, "\"schema_version\": 11") &&
+  expect_true(contains(json, "\"schema_version\": 12") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&
@@ -863,7 +864,7 @@ int main() {
                   contains(json, "\"complete_count\": 7") &&
                   contains(json, "\"reject_count\": 2") &&
                   contains(json, "\"error_count\": 1"),
-              "schema-v11 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
+              "schema-v12 metadata exposes hold, position gate, detector identity, tensors, versions, and counters");
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

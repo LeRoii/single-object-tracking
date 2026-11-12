@@ -519,14 +519,14 @@ root, case = pathlib.Path(sys.argv[1]), sys.argv[2]
 with (root / "bboxes.valid.csv").open(newline="") as stream:
     rows = list(csv.DictReader(stream))
 metadata = json.loads((root / "metadata.valid.json").read_text())
-metadata.update(schema_version=11, observation_valid_semantics="ACCEPTED_OBSERVATION",
+metadata.update(schema_version=12, observation_valid_semantics="ACCEPTED_OBSERVATION",
                 rect0_bbox="tracking_bbox", frame_json_file="bboxes.csv.jsonl")
 roles = ("recent", "safe", "staged")
 geometry = ("x", "y", "width", "height")
 raw = (*geometry, "score", "penalized_peak", "psr", "apce", "peak_margin")
 roles_and_raw = {f"{role}_raw_{key}": "" for role in roles for key in raw}
 defaults = {
-    "schema_version": "11", "state_change_reason": "NONE", "rect0_source": "ACCEPTED_OBSERVATION",
+    "schema_version": "12", "state_change_reason": "NONE", "rect0_source": "ACCEPTED_OBSERVATION",
     "active_template": "RECENT", "selected_template": "RECENT",
     "safe_template_used": "0", "safe_reused_recent": "0",
     "trusted_baseline_psr": "", "trusted_baseline_apce": "", "trusted_baseline_peak_margin": "",
@@ -546,10 +546,13 @@ defaults = {
     **roles_and_raw,
 }
 for row in rows:
-    row.update(defaults, observation_present=row["accepted"], trusted_for_state_update=row["accepted"])
+    row.update(defaults, observation_present=row["accepted"],
+               trusted_for_state_update=row["accepted"],
+               motion_update_valid=row["accepted"])
 rows[0].update(rect0_source="INITIAL_ROI", state_change_reason="INITIALIZED")
 rows[1].update(state="SUSPECTED", tracking_phase="SUSPECTED", observation_present="1",
-               trusted_for_state_update="0", observation_valid="0", accepted="0",
+               trusted_for_state_update="0", motion_update_valid="0",
+               observation_valid="0", accepted="0",
                accepted_observation_path="direct", rect0_source="RECENT_OBSERVATION",
                state_change_reason="RESPONSE_DEGRADED", recent_head_executed="1",
                recent_decode_status="DECODED", safe_head_executed="1", safe_template_used="1",
@@ -580,7 +583,7 @@ elif case == "applied_without_id":
     rows[1]["template_transition_applied"] = "1"
 elif case in {"accepted_no_decode", "recovery_without_identity"}:
     rows[1].update(state="TRACKING", tracking_phase="TRACKING", accepted="1",
-                   observation_valid="1", trusted_for_state_update="1",
+                   observation_valid="1", trusted_for_state_update="1", motion_update_valid="1",
                    rect0_source="ACCEPTED_OBSERVATION")
     if case == "accepted_no_decode":
         rows[1].update(roles_and_raw, recent_decode_status="NO_DECODE", safe_decode_status="NO_DECODE")
@@ -599,6 +602,7 @@ elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected
               "unrecorded_reinitialization", "valid_reinitialized"}:
     rows[1].update(state="TRACKING", tracking_phase="TRACKING",
                    accepted="1", observation_valid="1", trusted_for_state_update="1",
+                   motion_update_valid="1",
                    rect0_source="ACCEPTED_OBSERVATION", template_action="STAGE_RECENT",
                    template_transaction_id="5", template_slot_id="5",
                    template_transition_result="APPLIED", template_transition_applied="1",
@@ -608,7 +612,8 @@ elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected
                    template_transition_applied="1", template_transition_reason="PROBATION_PASSED",
                    template_probation_active="0", state="TRACKING", tracking_phase="TRACKING",
                    observation_present="1", observation_valid="1", accepted="1",
-                   trusted_for_state_update="1", control_source="OBSERVATION",
+                   trusted_for_state_update="1", motion_update_valid="1",
+                   control_source="OBSERVATION",
                    rect0_source="ACCEPTED_OBSERVATION", motion_control_authorized="0",
                    occlusion_coast_age_frames="0", occlusion_hold_remaining_frames="0",
                    recovery_conflict="0", detector_same_class_ambiguous="0",
@@ -631,7 +636,8 @@ elif case in {"valid_commit", "wrong_slot", "failed_commit_probation", "rejected
         rows[2].update(template_transition_result="TRACKER_REJECTED", template_transition_applied="0",
                        template_transition_recovery="1", recovery_reason="RECOVERY_COMMIT_REJECTED",
                        state="UNCERTAIN", tracking_phase="SEARCHING", accepted="0", observation_valid="0",
-                       observation_present="0", trusted_for_state_update="0", control_source="MOTION_SEARCH",
+                       observation_present="0", trusted_for_state_update="0", motion_update_valid="0",
+                       control_source="MOTION_SEARCH",
                        motion_control_authorized="1", rect0_source="MOTION_PREDICTION")
         if case == "rejected_claimed_committed":
             rows[2]["recovery_reason"] = "RECOVERY_COMMITTED"
@@ -689,7 +695,8 @@ if case == "valid_two_retry_revocations":
 shared = set(defaults) | {
     "frame_id", "timestamp_ms", "state", "tracking_phase", "observation_valid", "accepted",
     "reacquired", "control_valid", "control_source", "motion_control_authorized",
-    "observation_present", "trusted_for_state_update", "detector_same_class_ambiguous",
+    "observation_present", "trusted_for_state_update", "motion_update_valid",
+    "detector_same_class_ambiguous",
     *(f"{box}_{key}" for box in ("tracking", "display", "control") for key in geometry),
 }
 frames = [{key: row[key] or None for key in shared if key in row} for row in rows]

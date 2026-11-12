@@ -129,6 +129,13 @@ void MotionEstimator::freeze_scale(float width, float height) {
   clamp_derivatives();
 }
 
+void MotionEstimator::freeze_open_loop_dynamics() noexcept {
+  acceleration_x_ = 0.0F;
+  acceleration_y_ = 0.0F;
+  velocity_width_ = 0.0F;
+  velocity_height_ = 0.0F;
+}
+
 void MotionEstimator::begin_search(std::int64_t timestamp_ms) {
   if (!initialized_) throw std::logic_error("motion estimator is not initialized");
   if (timestamp_ms != last_timestamp_ms_) {
@@ -136,20 +143,6 @@ void MotionEstimator::begin_search(std::int64_t timestamp_ms) {
         "motion search must start at the latest prediction timestamp");
   }
   if (!search_start_ms_) search_start_ms_ = timestamp_ms;
-}
-
-void MotionEstimator::begin_search(
-    std::int64_t timestamp_ms, const MotionSnapshot& trusted_trend) {
-  begin_search(timestamp_ms);
-  if (!std::isfinite(trusted_trend.velocity_x) ||
-      !std::isfinite(trusted_trend.velocity_y)) {
-    throw std::invalid_argument("trusted search velocity must be finite");
-  }
-  velocity_x_ = trusted_trend.velocity_x;
-  velocity_y_ = trusted_trend.velocity_y;
-  acceleration_x_ = 0.0F;
-  acceleration_y_ = 0.0F;
-  clamp_derivatives();
 }
 
 void MotionEstimator::end_search() noexcept { search_start_ms_.reset(); }

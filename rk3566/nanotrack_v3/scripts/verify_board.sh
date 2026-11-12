@@ -52,7 +52,7 @@ if grep -Eqi 'GTK|selectROI|imshow|cannot open display|RKNN:.*(error|unsupported
   exit 1
 fi
 
-python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-11}" <<'PY'
+python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-12}" <<'PY'
 import csv
 import hashlib
 import json
@@ -71,8 +71,8 @@ detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
 expected_rknn_target = sys.argv[9]
 EXPECTED_TRACKING_SCHEMA = int(sys.argv[10])
-if EXPECTED_TRACKING_SCHEMA not in {10, 11}:
-    raise SystemExit("expected tracking schema must be 10 or 11")
+if EXPECTED_TRACKING_SCHEMA not in {10, 11, 12}:
+    raise SystemExit("expected tracking schema must be 10, 11, or 12")
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
 for key, low, high in [
@@ -412,8 +412,10 @@ def verify_recent_safe(row, index, last_transaction, staged_slot, reinitialized)
         reject("reacquisition lacks confirmed applied stage")
     return last_transaction, staged_slot
 
-if EXPECTED_TRACKING_SCHEMA == 11:
+if EXPECTED_TRACKING_SCHEMA >= 11:
     required |= v11_fields
+if EXPECTED_TRACKING_SCHEMA >= 12:
+    required.add("motion_update_valid")
 missing = required - set(rows[0])
 if missing:
     raise SystemExit(f"CSV header is missing: {sorted(missing)}")
@@ -426,7 +428,7 @@ reset_frames = {
     entry["frame_id"] for entry in metadata.get("target_class_initializations", [])
     if isinstance(entry, dict) and isinstance(entry.get("frame_id"), int)
     and entry.get("initialization_index", 0) > 1
-} if EXPECTED_TRACKING_SCHEMA == 11 else set()
+} if EXPECTED_TRACKING_SCHEMA >= 11 else set()
 for index, row in enumerate(rows):
     if row["schema_version"] != str(EXPECTED_TRACKING_SCHEMA):
         raise SystemExit(f"unexpected CSV schema version at row {index}")
@@ -450,7 +452,7 @@ for index, row in enumerate(rows):
             "local_or_deeper_recovery", "detector_recovery",
             "occlusion_probe_recovery", "search_reacquisition"},
     }
-    if EXPECTED_TRACKING_SCHEMA == 11:
+    if EXPECTED_TRACKING_SCHEMA >= 11:
         enums["state"].add("SUSPECTED")
         enums["tracking_phase"].add("SUSPECTED")
     for key, valid in enums.items():
@@ -478,9 +480,17 @@ for index, row in enumerate(rows):
         raise SystemExit(f"control source/valid mismatch at row {index}")
     if row["control_source"] == "OBSERVATION" and row["tracking_phase"] not in {"TRACKING", "SUSPECTED"}:
         raise SystemExit(f"observation control outside tracking or suspicion at row {index}")
-    if EXPECTED_TRACKING_SCHEMA == 11:
+    if EXPECTED_TRACKING_SCHEMA >= 11:
         last_transaction, staged_slot = verify_recent_safe(
             row, index, last_transaction, staged_slot, int(row["frame_id"]) - 1 in reset_frames)
+    if EXPECTED_TRACKING_SCHEMA >= 12:
+        if row["motion_update_valid"] not in {"0", "1"}:
+            raise SystemExit(f"invalid motion_update_valid at row {index}")
+        if row["motion_update_valid"] == "1" and not (
+                row["accepted"] == "1" and row["observation_present"] == "1" and
+                row["trusted_for_state_update"] == "1" and
+                row["tracking_phase"] == "TRACKING"):
+            raise SystemExit(f"motion update without trusted tracking observation at row {index}")
     if row["control_source"] == "MOTION_SEARCH":
         if row["tracking_phase"] != "SEARCHING" or row["motion_control_authorized"] != "1" or row["motion_prediction_confident"] != "1":
             raise SystemExit(f"invalid motion-search control at row {index}")
@@ -631,7 +641,7 @@ for index, row in enumerate(rows):
     if same_class_candidates < 0:
         raise SystemExit(f"invalid detector_same_class_candidates at row {index}")
     ambiguous = row["detector_same_class_ambiguous"] == "1"
-    persistent_conflict = EXPECTED_TRACKING_SCHEMA == 11 and row["recovery_conflict"] == "1"
+    persistent_conflict = EXPECTED_TRACKING_SCHEMA >= 11 and row["recovery_conflict"] == "1"
     if (same_class_candidates > 1 and not ambiguous) or (
             ambiguous and same_class_candidates <= 1 and not persistent_conflict):
         raise SystemExit(f"inconsistent same-class ambiguity at row {index}")
@@ -672,7 +682,7 @@ if metadata.get("schema_version") != EXPECTED_TRACKING_SCHEMA:
     raise SystemExit(
         f"session metadata schema_version must be {EXPECTED_TRACKING_SCHEMA}"
     )
-if EXPECTED_TRACKING_SCHEMA == 11:
+if EXPECTED_TRACKING_SCHEMA >= 11:
     if metadata.get("observation_valid_semantics") != "ACCEPTED_OBSERVATION" or metadata.get("rect0_bbox") != "tracking_bbox":
         raise SystemExit("missing observation_valid or rect0 schema semantics")
     companion = metadata.get("frame_json_file")
@@ -694,6 +704,8 @@ if EXPECTED_TRACKING_SCHEMA == 11:
             "motion_control_authorized", "detector_same_class_ambiguous",
             *(f"{box}_{key}" for box in ("tracking", "display", "control") for key in bbox_components),
         }
+        if EXPECTED_TRACKING_SCHEMA >= 12:
+            shared_fields.add("motion_update_valid")
         for index, (row, frame) in enumerate(zip(rows, frame_json)):
             for key in shared_fields:
                 value = frame.get(key)

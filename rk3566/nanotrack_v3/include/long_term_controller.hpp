@@ -100,6 +100,7 @@ struct ControllerOutput {
   bool control_valid = false;
   bool accepted = false;
   bool reacquired = false;
+  bool motion_update_valid = false;
   AcceptedObservationPath accepted_observation_path =
       AcceptedObservationPath::kDirect;
   TemplateKind selected_template = TemplateKind::kAnchor;
@@ -354,6 +355,7 @@ class LongTermController {
   void accept_observation(const SearchPlan& plan,
                           const EvaluatedObservation& selected,
                           AcceptedObservationPath acceptance_path,
+                          bool response_degraded,
                           ControllerOutput& output);
   DetectorIngestResult ingest_detector_batch(
       const SearchPlan& plan,
@@ -398,9 +400,12 @@ class LongTermController {
   std::optional<std::int64_t> response_degraded_since_ms_;
   std::optional<std::int64_t> suspected_since_ms_;
   std::optional<std::int64_t> response_clean_since_ms_;
-  std::optional<MotionSnapshot> search_motion_reference_;
-  bool search_motion_reference_held_ = false;
-  std::optional<std::int64_t> search_motion_clean_since_ms_;
+  struct MotionResumeSample {
+    BBox bbox;
+    std::int64_t timestamp_ms;
+  };
+  bool motion_updates_held_ = false;
+  std::optional<MotionResumeSample> motion_resume_sample_;
   std::int64_t last_trusted_timestamp_ms_ = 0;
   bool legacy_anchor_observations_ = false;
   bool recent_safe_observations_ = false;

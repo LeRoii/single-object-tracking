@@ -2366,7 +2366,7 @@ void test_recent_safe_single_metric_dip_is_tentative() {
               "one healthy frame clears an isolated pre-entry response dip");
 }
 
-void test_search_uses_last_clean_response_motion_trend() {
+void test_motion_updates_freeze_before_search() {
   using namespace nanotrack;
   ControllerConfig config;
   config.motion_search_enabled = true;
@@ -2391,24 +2391,52 @@ void test_search_uses_last_clean_response_motion_trend() {
     expect_true(controller.finish_frame(plan, {observation}, std::nullopt).accepted,
                 "clean left-down observations establish a search trend");
   }
-  const MotionSnapshot clean = *controller.search_motion_reference_;
+  const MotionSnapshot clean = controller.motion_.snapshot(160);
   expect_true(clean.velocity_x < 0.0F && clean.velocity_y > 0.0F,
               "fixture retains the clean left-down trend");
 
   auto plan = controller.begin_frame(5, 200, false);
-  BBox reversed = plan.predicted_bbox;
-  reversed.x += 4.0F;
-  reversed.y -= 4.0F;
-  auto degraded = reliable_observation(plan, TemplateKind::kRecent, reversed);
+  BBox contaminated = plan.predicted_bbox;
+  contaminated.x += 4.0F;
+  contaminated.y -= 4.0F;
+  auto degraded = reliable_observation(plan, TemplateKind::kRecent, contaminated);
   degraded.metrics = healthy;
   degraded.metrics.peak_margin = 0.30F;
   const auto accepted_degraded =
       controller.finish_frame(plan, {degraded}, std::nullopt);
+  const MotionSnapshot frozen = controller.motion_.snapshot(200);
   expect_true(accepted_degraded.accepted &&
-                  controller.search_motion_reference_held_,
-              "a relative response drop freezes only the search-motion reference");
+                  accepted_degraded.motion_update_valid == false &&
+                  controller.motion_updates_held_,
+              "an accepted response drop freezes motion updates before search");
+  expect_true(accepted_degraded.tracking_bbox.x == contaminated.x &&
+                  accepted_degraded.tracking_bbox.y == contaminated.y &&
+                  accepted_degraded.control_valid,
+              "the degraded tracking observation still drives output and control");
+  expect_true(frozen.velocity_x < 0.0F && frozen.velocity_y > 0.0F &&
+                  frozen.acceleration_x == 0.0F &&
+                  frozen.acceleration_y == 0.0F,
+              "motion retains clean direction and clears open-loop acceleration");
 
-  plan = controller.begin_frame(6, 240, false);
+  for (std::uint64_t id = 6; id <= 8; ++id) {
+    const std::int64_t timestamp = id == 6 ? 240 : (id == 7 ? 320 : 360);
+    plan = controller.begin_frame(id, timestamp, false);
+    auto clean_observation = reliable_observation(
+        plan, TemplateKind::kRecent,
+        {contaminated.x - 2.0F * static_cast<float>(id - 5),
+         contaminated.y + 2.0F * static_cast<float>(id - 5), 20, 20});
+    clean_observation.metrics = healthy;
+    const auto clean_output =
+        controller.finish_frame(plan, {clean_observation}, std::nullopt);
+    expect_true(clean_output.accepted &&
+                    clean_output.motion_update_valid == (id == 8),
+                "motion resumes only after a continuous clean interval");
+  }
+  expect_true(!controller.motion_updates_held_ &&
+                  !controller.motion_resume_sample_.has_value(),
+              "clean confirmation releases the motion-update hold");
+
+  plan = controller.begin_frame(9, 400, false);
   auto collapsed = rejected_observation(plan, TemplateKind::kRecent,
                                         plan.predicted_bbox);
   collapsed.metrics.raw_score = 0.10F;
@@ -2418,7 +2446,7 @@ void test_search_uses_last_clean_response_motion_trend() {
                   searching.motion_velocity_y > 0.0F &&
                   searching.motion_acceleration_x == 0.0F &&
                   searching.motion_acceleration_y == 0.0F,
-              "search starts from the clean trend without extrapolating acceleration");
+              "later search starts from the frozen clean motion state");
 }
 
 void test_recent_safe_transient_and_probation() {
@@ -2626,7 +2654,7 @@ void test_recent_safe_rolling_scale() {
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
-  test_search_uses_last_clean_response_motion_trend();
+  test_motion_updates_freeze_before_search();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();
   test_production_observation_preserves_collapse();
