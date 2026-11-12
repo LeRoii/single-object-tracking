@@ -2160,3 +2160,39 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
 - **证据边界**：本次按用户要求完成最新程序的两目标单次运行、结构校验和视频交付，未执行
   full evaluator，也不改变 RS001 HOLD、`calibrated=false`、正式 handoff 门槛或人工吊舱
   验收状态；未修改 `STATUS.md` 或 `integration-contract.yaml`。
+
+## 2026-11-12T13:07:25+08:00 recent-safe v2 阶段 1：单指标瞬降板端验证
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，任务基线
+  `ef0c02130fba4aa900f85daf3341943bd408e634`，本阶段源码提交
+  `c3d27bea3087f42ae60b8aa7e891bbc9a61fe605`。改动只调整 recent 观测判定：恰好一个
+  响应指标失败时发布 tentative/SUSPECTED 观测，不更新可信运动、响应基线或模板；尺寸
+  塌缩和多个绝对响应指标失败仍直接进入 SEARCH。主机 RKNN-off CTest 22/22、C012
+  门禁 Python 单测 5/5 和 `git diff --check` 通过。
+- 源码以 `git archive` 部署到实际板 `LKD3588` 的独立目录
+  `/home/neardi/Project/SOT/occ-recent-safe-v2-c3d27be`，未覆盖 C012、RS001 或 latest。
+  `source.tar` SHA-256 为
+  `42741709a2dc50150c558cd4452b95dafbaa7eadfcbb1814b4613784aba915b3`。
+  板端原生 Debug 构建启用 `ENABLE_RKNN_RUNTIME=ON`、`BUILD_TESTING=ON` 和
+  `-Werror=switch`，CTest 22/22 通过；`build/nanotrack_v3` SHA-256 为
+  `668aa05e6a7981f428afd3591d7436862575864afb39e13499dace806639ce52`。
+- 使用固定 C012 A/B 初始框 `car_002=970,517,38,38`，同一视频、tracker 模型、detector
+  和 `visible-recent-safe-v1.conf` 单次运行 0--270 帧。视频、配置、detector SHA-256
+  分别为 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`、
+  `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`、
+  `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`；三份 tracker
+  RKNN SHA-256 记录在板端 `provenance/car002-inputs.sha256`。runtime exit 0，schema v11
+  verifier PASS，CSV 和 1920x1080 AVI 均为 271 帧。
+- 60--80 帧没有 SEARCH 且全部 `control_valid=1`。第 70 帧从 RS001 的直接 SEARCH 变为
+  一帧 SUSPECTED，仍输出 NanoTrack 观测框并保持 observation control；第 71 帧恢复
+  TRACKING。第 70 帧框为 `894.354431,618.288696,36.756348,37.964905`，与 C012 同帧
+  `896.088928,618.415588,37,38` 接近。新 CSV、AVI 和 session metadata SHA-256 分别为
+  `69fd729a37415b8c9071b4e9527c367e0b791e8fc13fcf4017399c1578b2fa67`、
+  `6350da6ec20043f9bce4cce36dbefad108f4eb5745182d3812b12b741a6a9abd`、
+  `a054f00d3d02b25042fb730a594299401a79705773a11319b91619d42f26bda7`；完整大工件留在
+  板端 `runs/car_002/`。
+- **证据边界 / Handoff**：阶段 1 的遮挡判定目标在 car002 上达到，但现有 C012 晋级脚本
+  要求 60--80 每帧均 `tracking_phase=TRACKING` 且 `accepted=1`，因此会在有意冻结可信
+  状态的第 70 帧报告失败。此处不修改或放宽协调者批准的门禁，不宣称候选已达到 C012
+  全部晋级条件；C012 继续作为默认效果基线。尚未实施阶段 2 重捕获候选关联、阶段 3
+  持续搜索控制，也未完成 car001 新运行、生产交叉编译或人工吊舱验收。
