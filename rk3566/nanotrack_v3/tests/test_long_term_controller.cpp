@@ -2032,17 +2032,18 @@ void test_atomic_search_reacquisition_and_template_probation() {
        reliable_observation(plan, TemplateKind::kStaged, staged_shifted, 4)},
       std::nullopt);
   expect_true(output.template_iou > 0.66F && output.template_iou < 0.67F &&
-                  !output.accepted && !output.trusted_for_state_update &&
-                  output.tracking_phase == TrackingPhase::kSearching &&
-                  output.template_action == TemplateAction::kRollbackRecent &&
-                  threshold_split.current_bbox().x == initial.x &&
-                  threshold_split.last_trusted_timestamp_ms_ == 120,
-              "probation agreement failure rolls back before any trusted observation update");
+                  output.accepted && output.trusted_for_state_update &&
+                  output.tracking_phase == TrackingPhase::kTracking &&
+                  output.selected_template == TemplateKind::kStaged &&
+                  output.template_action == TemplateAction::kNone &&
+                  threshold_split.current_bbox().x == staged_shifted.x &&
+                  threshold_split.last_trusted_timestamp_ms_ == 160,
+              "reliable staged recovery survives one divergent recent response");
   plan = threshold_split.begin_frame(5, 200, false);
-  expect_true(plan.tracking_phase == TrackingPhase::kSearching &&
-                  plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
+  expect_true(plan.tracking_phase == TrackingPhase::kTracking &&
+                  plan.template_run_mode == TemplateRunMode::kStagedAndRecent &&
                   !plan.recovery_probe,
-              "failed probation leaves no staged template or candidate for the next search");
+              "recovery probation keeps recent and staged heads active");
   threshold_split.abort_frame();
 
   ResolvedControllerFixture off_probe(config);

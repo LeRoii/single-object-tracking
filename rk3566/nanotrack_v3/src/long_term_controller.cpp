@@ -1948,12 +1948,23 @@ ControllerOutput LongTermController::finish_frame(
     if (recent && other) {
       output.template_iou = bbox_iou(recent->observation.bbox, other->observation.bbox);
     }
-    const bool probation_geometry_allows_acceptance = !recovery_probation_ ||
+    const bool probation_geometry_allows_acceptance = !recent_probation_ ||
         (probation_templates_agree &&
          recovery_candidates_.geometry_consistent(
              probation_template->observation.bbox, recent->observation.bbox));
-    auto disposition = recent && probation_geometry_allows_acceptance
-        ? assess_recent(plan, *recent, response) : RecentDisposition::kSearch;
+    RecentDisposition disposition = RecentDisposition::kSearch;
+    if (recovery_probation_) {
+      // The staged recovery template has already passed the two-hit identity
+      // gate. Keep it authoritative while recent proves it can follow the same
+      // object; one divergent recent response must not discard the confirmed
+      // recovery immediately.
+      if (staged && staged->quality == QualityLevel::kReliable) {
+        selected = staged;
+        disposition = RecentDisposition::kDirect;
+      }
+    } else if (recent && probation_geometry_allows_acceptance) {
+      disposition = assess_recent(plan, *recent, response);
+    }
     if (recovery_probation_ && disposition != RecentDisposition::kDirect) {
       disposition = RecentDisposition::kSearch;
     }
@@ -2334,6 +2345,11 @@ ControllerOutput LongTermController::finish_frame(
       if (probation_reliable_frames_ >= config_.recent_probation_frames) {
         output.template_action = TemplateAction::kCommitRecent;
       }
+    } else if (recovery_probation_ && accepted && staged &&
+               output.selected_template == TemplateKind::kStaged) {
+      // A reliable staged head keeps the recovered target alive, but recent
+      // disagreement contributes no evidence toward committing recent.
+      probation_reliable_frames_ = 0;
     } else {
       output.template_action = TemplateAction::kRollbackRecent;
     }
