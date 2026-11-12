@@ -868,15 +868,30 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     const ResponseBaselineEvaluation& response) {
   const auto& observation = recent.observation;
+  const auto& metrics = observation.metrics;
   const auto bounded =
       constrain_tracker_observation_dimensions(observation.bbox, current_bbox_, frame_size_);
-  if (recent.quality == QualityLevel::kRejected ||
-      observation.bbox.width < bounded.width ||
+  if (observation.bbox.width < bounded.width ||
       observation.bbox.height < bounded.height) {
     return RecentDisposition::kSearch;
   }
 
-  const auto& metrics = observation.metrics;
+  const int reliable_failures =
+      static_cast<int>(metrics.raw_score < config_.reliable_score) +
+      static_cast<int>(metrics.psr < config_.reliable_psr) +
+      static_cast<int>(metrics.apce < config_.reliable_apce) +
+      static_cast<int>(metrics.peak_margin < config_.reliable_peak_margin);
+  const int weak_failures =
+      static_cast<int>(metrics.raw_score < config_.weak_score) +
+      static_cast<int>(metrics.psr < config_.weak_psr) +
+      static_cast<int>(metrics.apce < config_.weak_apce) +
+      static_cast<int>(metrics.peak_margin < config_.weak_peak_margin);
+  const bool isolated_response_dip =
+      reliable_failures == 1 && weak_failures <= 1;
+  if (recent.quality == QualityLevel::kRejected && !isolated_response_dip) {
+    return RecentDisposition::kSearch;
+  }
+
   const int drops = static_cast<int>(response.psr_drop) +
                     static_cast<int>(response.apce_drop) +
                     static_cast<int>(response.peak_margin_drop);
@@ -885,7 +900,7 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   const bool response_weak = metrics.psr < config_.reliable_psr ||
                              metrics.apce < config_.reliable_apce ||
                              metrics.peak_margin < config_.reliable_peak_margin;
-  const bool degraded = drops >= 2 ||
+  const bool degraded = isolated_response_dip || drops >= 2 ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
     response_clean_since_ms_.reset();

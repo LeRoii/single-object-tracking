@@ -2259,6 +2259,57 @@ void test_recent_safe_tentative_tracking() {
               "collapsed recent escalates even if safe is strong");
 }
 
+void test_recent_safe_single_metric_dip_is_tentative() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.occlusion_min_reference_samples = 3;
+  config.suspicion_enter_ms = 80;
+  config.suspicion_clear_ms = 80;
+  config.uncertain_ms = 120;
+  config.stable_frames_for_update = 50;
+  ResolvedControllerFixture controller(config);
+  const BBox bbox{70, 50, 30, 30};
+  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
+  controller.initialize(bbox, 0, 0, {320, 240});
+  for (std::uint64_t id = 1; id <= 3; ++id) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    recent.metrics = healthy;
+    expect_true(controller.finish_frame(plan, {recent}, std::nullopt).accepted,
+                "healthy recent seeds the trusted response baseline");
+  }
+
+  auto plan = controller.begin_frame(4, 160, false);
+  auto margin_dip = reliable_observation(plan, TemplateKind::kRecent, bbox);
+  margin_dip.metrics = healthy;
+  margin_dip.metrics.peak_margin = 0.018F;
+  auto output = controller.finish_frame(plan, {margin_dip}, std::nullopt);
+  expect_true(output.tracking_phase == TrackingPhase::kSuspected,
+              "an isolated peak-margin dip enters SUSPECTED");
+  expect_true(output.mode == TrackingMode::kTracking,
+              "a pre-entry isolated dip retains tracking mode");
+  expect_true(output.observation_present && !output.accepted &&
+                  !output.trusted_for_state_update,
+              "an isolated dip is visible but cannot update trusted state");
+  expect_true(output.control_valid &&
+                  output.control_source == ControlSource::kObservation,
+              "an isolated dip retains bounded observation control");
+  expect_true(std::string(output.state_change_reason) == "RESPONSE_DEGRADED",
+              std::string("an isolated dip records response degradation, actual=") +
+                  output.state_change_reason);
+  expect_true(output.template_action == TemplateAction::kNone,
+              "an isolated dip does not update templates");
+
+  plan = controller.begin_frame(5, 200, false);
+  auto recovered = reliable_observation(plan, TemplateKind::kRecent, bbox);
+  recovered.metrics = healthy;
+  output = controller.finish_frame(plan, {recovered}, std::nullopt);
+  expect_true(output.tracking_phase == TrackingPhase::kTracking && output.accepted &&
+                  output.trusted_for_state_update && output.control_valid,
+              "one healthy frame clears an isolated pre-entry response dip");
+}
+
 void test_recent_safe_transient_and_probation() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2302,12 +2353,13 @@ void test_recent_safe_transient_and_probation() {
                   controller.response_baseline_.evaluate(healthy).reference->psr == 20,
               "staged probation leaves the trusted response baseline untouched");
 
-  auto score_only = healthy;
-  score_only.raw_score = 0.6F;
-  const auto searching = track(8, score_only);
+  auto multi_metric_collapse = healthy;
+  multi_metric_collapse.raw_score = 0.6F;
+  multi_metric_collapse.peak_margin = 0.01F;
+  const auto searching = track(8, multi_metric_collapse);
   expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
                   searching.mode != TrackingMode::kSuspected,
-              "a raw-score drop alone cannot enter SUSPECTED");
+              "multiple absolute response failures enter search without softening");
   expect_true(!track(9, healthy).accepted && track(10, healthy).accepted &&
                   !controller.response_baseline_.evaluate(healthy).reference,
               "recovery from short search also requires a fresh response baseline");
@@ -2462,6 +2514,7 @@ void test_recent_safe_rolling_scale() {
 
 int main() {
   test_recent_safe_tentative_tracking();
+  test_recent_safe_single_metric_dip_is_tentative();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();
   test_production_observation_preserves_collapse();
