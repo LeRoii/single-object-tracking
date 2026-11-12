@@ -1,5 +1,46 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T22:02:57+08:00 自适应显示框 RK3588 双车验收
+
+- 分支 `codex/adaptive-display-box`，实施基线
+  `main@dccf8e0844b78cf9a1f4ee207352429b6d884979`，运行与验收源码提交为
+  `eb66cf6115eff274aa809f5e875a939de632ef99`（显示实现提交
+  `59769e89df45e6e39a69306dadae7a6294e7e911`）。精确 HEAD 源码归档在主机与板端的
+  SHA-256 均为 `0a7c2f228407304ffe69b989f2c249c39ee26df29b986980d341e394896db042`；
+  独立板端根为 `/home/neardi/Project/SOT/adaptive-display-59769e8`，未覆盖现有基线部署。
+- 实际 `LKD3588` 原生 Debug 构建启用 RKNN、`BUILD_TESTING=ON` 与 `-Werror=switch`，
+  CTest `23/23 PASS`。`build/nanotrack_v3` SHA-256 为
+  `ea562308a9970e93ef8839d9fc3d919c99ed48c841f6edc98d7b6bda7e5fd9f6`；自适应 runtime
+  配置与 controller 配置 SHA-256 分别为
+  `5d67b007ff13cbd617e6ac54485b45c4a89d52da38d3651f54f5e0d3b92dfaca`、
+  `3a949556b682011b7ebb40fb0353471b71af0677685e37a938f8af01d66928af`；tracker manifest
+  SHA-256 为 `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`。
+- 固定 ROI `car_001=992,582,37,39`、`car_002=970,517,38,38` 分别运行 0--270 帧。两次
+  runtime exit 0、schema v13 verifier PASS，输出 CSV 与两类 AVI 均为 271 帧；算法运行时间
+  P95 分别为 `10.573 ms`、`10.470 ms`，低于 `33.3 ms` 验收线。两次自动类别均唯一建立为
+  VisDrone9 car=`2`，显示刷新请求分别 78/80 次、SEARCH 请求均为 2 次、显示纠正应用
+  36/37 次、暂停 0 次，最终刷新周期均为 100 ms；single-flight 与 SEARCH 抢占测试通过，
+  未见请求积压。
+- `output.avi` 保持绘制 `control_bbox`；同一次运行的原视频与 v13 CSV 只读重放生成
+  `display-output.avi`，绘制 `display_bbox`。两份显示视频均经 `ffprobe` 确认为
+  1920x1080、30 fps、271 帧，car001/car002 SHA-256 分别为
+  `cca38a4b6e7f34457e6f9060711a835e589ce5891402cb90a865f3430fb9c7e0`、
+  `3caba35936c7c4a4da62d8925ece73d42b0931c6a8fa645c95a739c9ef3b89a6`。控制诊断视频
+  SHA-256 分别为 `edf20ddcf711e329047ba4d70ce1c18d188a11ba93b57f4deafe091f0062dd03`、
+  `78fe73d1628d2b9b23f91d368175d3e907a02e847c48665a4ffd41186ec04765`。
+- 对比既有 `occ-restored-2d31bfe` 基线，两个目标各 271 帧的 53 个跟踪、控制、状态机、
+  模板事务和运动模型字段逐项完全一致，差异数均为 0。full evaluator：car001 **PASS**，
+  visible mean IoU `0.751326`、185 帧重捕；car002 的可见框、预测连续性、235 帧重捕、连续
+  控制和 identity proxy 均 PASS，visible mean IoU `0.798100`，只保留基线已知的 213--216
+  帧 `full_occlusion_semantics` FAIL。evaluation JSON SHA-256 分别为
+  `dddc669ae1288a6f8c4505095cb710813a699b7e4543fc8596ddae929ef8062e`、
+  `131a535178779408ef84a510c6e04dd4536252e6afc298101888dfc9a448f2a9`；完整大工件与日志保留在
+  板端 `runs/car_001/`、`runs/car_002/`。
+- **证据边界 / Handoff**：本轮证明车目标自适应显示在 RK3588 上满足性能与隔离要求，且不使
+  C012/当前控制基线退化。人物类别、边距、姿态变化及接口已有主机单测，但没有新的合规人物
+  视频，故不声明人物板端验收；如需纳入正式人物基准，请协调对话更新集成契约。未修改
+  `STATUS.md` 或 `integration-contract.yaml`，未执行生产交叉编译或人工吊舱验收。
+
 ## 2026-11-12T21:59:27+08:00 evaluator 对 additive schema v13 的兼容修正
 
 - 分支 `codex/adaptive-display-box`，基线为本分支实现提交
