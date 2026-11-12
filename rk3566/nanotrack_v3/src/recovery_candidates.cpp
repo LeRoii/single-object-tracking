@@ -171,6 +171,23 @@ bool RecoveryCandidateTable::geometry_consistent(const BBox& reference,
          std::fabs(std::log(second_aspect / first_aspect)) <= max_aspect_log_change_;
 }
 
+bool RecoveryCandidateTable::temporally_consistent(
+    const BBox& reference, const BBox& bbox) const noexcept {
+  if (!valid_box(reference) || !valid_box(bbox)) return false;
+  const double first_area = static_cast<double>(reference.width) * reference.height;
+  const double second_area = static_cast<double>(bbox.width) * bbox.height;
+  const double first_aspect = static_cast<double>(reference.width) / reference.height;
+  const double second_aspect = static_cast<double>(bbox.width) / bbox.height;
+  const double dx = static_cast<double>(bbox.x) - reference.x +
+                    0.5 * (static_cast<double>(bbox.width) - reference.width);
+  const double dy = static_cast<double>(bbox.y) - reference.y +
+                    0.5 * (static_cast<double>(bbox.height) - reference.height);
+  return std::hypot(dx, dy) / std::sqrt(std::max(1.0, first_area)) <=
+             max_center_distance_ &&
+         std::fabs(std::log(second_area / first_area)) <= max_area_log_change_ &&
+         std::fabs(std::log(second_aspect / first_aspect)) <= max_aspect_log_change_;
+}
+
 std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
     RecoveryCandidateSource source, const BBox& bbox, float confidence,
     std::optional<std::int64_t> source_timestamp_ms,
@@ -193,10 +210,14 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   std::optional<RecoveryCandidateKey> matched;
   for (const auto& candidate : entries_) {
     const bool compare_regions = detector && subtarget_region && candidate.subtarget_carrier;
-    const BBox& reference = compare_regions ? *candidate.subtarget_carrier
-                                           : candidate.preferred_evidence().bbox;
+    const auto& same_source = candidate.from(source);
+    const BBox& reference = compare_regions ? *candidate.subtarget_carrier :
+        same_source ? same_source->bbox : candidate.preferred_evidence().bbox;
     const BBox& observed = compare_regions ? *subtarget_region : bbox;
-    if (!geometry_consistent(reference, observed)) continue;
+    const bool consistent = !detector && same_source
+        ? temporally_consistent(reference, observed)
+        : geometry_consistent(reference, observed);
+    if (!consistent) continue;
     if (matched) {
       unrepresented_conflict_ = FrameStamp{evidence.frame_id, evidence.timestamp_ms};
       mark_identity_conflict();
@@ -206,14 +227,7 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   }
 
   const auto index = source_index(source);
-  if (!detector) {
-    for (auto& candidate : entries_) {
-      if (candidate.key != matched && candidate.evidence[index]) {
-        candidate.evidence[index].reset();
-        candidate.verifications = {};
-      }
-    }
-  } else if ((!matched || !find(*matched)->from(source)) &&
+  if (detector && (!matched || !find(*matched)->from(source)) &&
              detector_count() == detector_capacity_) {
     // A geometrically distinct eligible detection remains an ambiguity even
     // if its metadata cannot be retained at the configured capacity.
@@ -266,12 +280,14 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   if (!detector && tracker_verified) {
     auto& hits = entry->verifications;
     if (!hits[1] || hits[1]->frame_id != frame_->frame_id) {
-      if (hits[1] && !geometry_consistent(hits[1]->bbox, bbox)) hits = {};
+      if (hits[1] && !temporally_consistent(hits[1]->bbox, bbox)) hits = {};
       hits[0] = hits[1];
       hits[1] = evidence;
     }
   }
-  if (conflicted()) mark_identity_conflict();
+  if (conflicted()) {
+    for (auto& candidate : entries_) candidate.verifications = {};
+  }
   return entry->key;
 }
 
@@ -310,10 +326,7 @@ void RecoveryCandidateTable::advance_subtarget_probe(
 }
 
 bool RecoveryCandidateTable::conflicted() const noexcept {
-  return entries_.size() > 1 || unrepresented_conflict_.has_value() ||
-         std::any_of(entries_.begin(), entries_.end(), [](const auto& entry) {
-           return entry.identity_conflicted;
-         });
+  return entries_.size() > 1 || unrepresented_conflict_.has_value();
 }
 
 bool RecoveryCandidateTable::confirmed(RecoveryCandidateKey key) const noexcept {
@@ -323,13 +336,11 @@ bool RecoveryCandidateTable::confirmed(RecoveryCandidateKey key) const noexcept 
 }
 
 void RecoveryCandidateTable::mark_identity_conflict() noexcept {
-  // Passive expiry of a rival supplies no evidence about which object was
-  // correct. A continuously refreshed identity remains ineligible until it
-  // expires or search eligibility is invalidated.
-  for (auto& candidate : entries_) {
-    candidate.identity_conflicted = true;
-    candidate.verifications = {};
-  }
+  // Conflict is evidence scoped to the current candidate window. It must not
+  // permanently poison an otherwise continuous NanoTrack tracklet after a
+  // spatially distinct rival expires.
+  if (frame_) unrepresented_conflict_ = *frame_;
+  for (auto& candidate : entries_) candidate.verifications = {};
 }
 
 std::size_t RecoveryCandidateTable::detector_count() const noexcept {

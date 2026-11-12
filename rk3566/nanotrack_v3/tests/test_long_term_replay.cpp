@@ -272,17 +272,29 @@ void test_recent_safe_recovery_replay() {
                           {{initial, 0.80F, 0}, {other, 0.99F, 0}}};
   competing.generation = competing_request.generation;
   ambiguous.finish_frame(plan, {}, competing);
-  for (std::uint64_t frame = 3; frame <= 8; ++frame) {
+  for (std::uint64_t frame = 3; frame <= 6; ++frame) {
     plan = ambiguous.begin_frame(frame, frame * 30, false);
     out = ambiguous.finish_frame(
         plan, {reliable_for_plan(plan, other, frame, TemplateKind::kRecent)},
         std::nullopt);
-    expect_true(!out.accepted && out.tracking_phase == TrackingPhase::kSearching &&
-                    out.recovery_conflict && out.template_action == TemplateAction::kNone,
-                "repeated hits at the higher-confidence object cannot resolve identity as its rival ages out");
+    if (frame <= 4) {
+      expect_true(!out.accepted && out.tracking_phase == TrackingPhase::kSearching &&
+                      out.recovery_conflict && out.recovery_confirmation_hits == 0 &&
+                      out.template_action == TemplateAction::kNone,
+                  "live detector rivals suppress NanoTrack confirmation");
+    } else if (frame == 5) {
+      expect_true(!out.accepted && !out.recovery_conflict &&
+                      out.recovery_confirmation_hits == 1 &&
+                      out.tracking_phase == TrackingPhase::kSearching,
+                  "rival expiry starts a fresh NanoTrack confirmation window");
+    } else {
+      expect_true(out.accepted && out.reacquired && !out.recovery_conflict &&
+                      out.recovery_confirmation_hits == 2,
+                  "two fresh post-conflict NanoTrack hits can recover");
+    }
     if (frame > 4) {
       expect_true(out.detector_candidates_queued == 0,
-                  "detector rivals age out even while their identity conflict remains");
+                  "detector rivals age out before independent NanoTrack recovery");
     }
   }
 }
@@ -331,12 +343,18 @@ void test_same_class_crossing_replay() {
     const auto out = controller.finish_frame(
         plan, {reliable_for_plan(plan, distractor_after_crossing, frame, TemplateKind::kRecent)},
         std::nullopt);
-    expect_true(out.recovery_conflict && out.recovery_confirmation_hits == 0 &&
-                    out.tracking_phase == TrackingPhase::kSearching &&
+    expect_true(!out.accepted && out.tracking_phase == TrackingPhase::kSearching &&
                     !out.reacquired && !out.trusted_for_state_update &&
                     out.template_action == TemplateAction::kNone &&
                     out.control_source == ControlSource::kMotionSearch,
-                "repeated high-score distractor hits do not resolve a same-class crossing");
+                "same-class crossing cannot reacquire within the rival window");
+    if (step < 2) {
+      expect_true(out.recovery_conflict && out.recovery_confirmation_hits == 0,
+                  "live crossing rivals suppress verification hits");
+    } else {
+      expect_true(!out.recovery_conflict && out.recovery_confirmation_hits == 1,
+                  "expired crossing rivals require a fresh first hit");
+    }
   }
 }
 
@@ -510,9 +528,20 @@ void test_subtarget_recovery_identity_and_eligibility() {
       plan = conflicted.begin_frame(frame, frame * 20, false);
       out = conflicted.finish_frame(
           plan, {reliable_for_plan(plan, repeated_bbox, frame, TemplateKind::kRecent)}, std::nullopt);
-      expect_true(!out.accepted && out.recovery_conflict &&
-                      out.tracking_phase == TrackingPhase::kSearching,
-                  "repeated recent-only responses cannot erase the carrier conflict");
+      if (frame <= 5) {
+        expect_true(!out.accepted && out.recovery_conflict &&
+                        out.recovery_confirmation_hits == 0 &&
+                        out.tracking_phase == TrackingPhase::kSearching,
+                    "live carrier-part conflict suppresses confirmation");
+      } else if (frame == 6) {
+        expect_true(!out.accepted && !out.recovery_conflict &&
+                        out.recovery_confirmation_hits == 1,
+                    "expired carrier conflict restarts confirmation at one hit");
+      } else {
+        expect_true(out.accepted && out.reacquired && !out.recovery_conflict &&
+                        out.recovery_confirmation_hits == 2,
+                    "two post-conflict carrier observations can recover");
+      }
     }
   }
 

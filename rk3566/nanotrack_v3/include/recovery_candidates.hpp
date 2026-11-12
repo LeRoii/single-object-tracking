@@ -23,7 +23,6 @@ struct RecoveryCandidate {
   RecoveryCandidateKey key{};
   std::array<std::optional<RecoveryCandidateEvidence>, 3> evidence{};
   std::array<std::optional<RecoveryCandidateEvidence>, 2> verifications{};
-  bool identity_conflicted = false;
   // Geometry for associating a refreshed detector region with a live
   // tracker-verified subtarget. Only live detector evidence can seed offsets.
   std::optional<BBox> subtarget_carrier = std::nullopt;
@@ -73,6 +72,8 @@ class RecoveryCandidateTable {
 
   bool expired(FrameStamp evidence, std::int64_t max_age_ms,
                std::uint64_t max_age_frames = kConfirmationWindow) const noexcept;
+  bool temporally_consistent(const BBox& reference,
+                             const BBox& bbox) const noexcept;
 
   std::size_t detector_capacity_;
   std::int64_t gap_ms_;

@@ -59,8 +59,9 @@ int main() {
   table.observe(Source::kRecent, moved);
   table.expire(10, 400, 1);
   expect(table.observe(Source::kRecent, first) == recent && table.size() == 1 &&
-             table.conflicted() && !table.confirmed(*recent),
-         "passive rival expiry cannot restore an ambiguous identity");
+             !table.conflicted() && !table.confirmed(*recent) &&
+             table.find(*recent)->hits() == 1,
+         "rival expiry starts a fresh confirmation window for the surviving candidate");
   table.expire(11, 440, 2);
   expect(table.size() == 0 && !table.conflicted() && !table.find(*recent),
          "generation changes discard all candidates and overflow ambiguity");

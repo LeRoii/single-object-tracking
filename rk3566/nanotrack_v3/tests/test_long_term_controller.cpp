@@ -2045,6 +2045,37 @@ void test_atomic_search_reacquisition_and_template_probation() {
               "failed probation leaves no staged template or candidate for the next search");
   threshold_split.abort_frame();
 
+  ResolvedControllerFixture off_probe(config);
+  off_probe.initialize(initial, 0, 0, {240, 160});
+  reject_frame(off_probe, 1, 40);
+  plan = off_probe.begin_frame(2, 80, false);
+  output = off_probe.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kRecent, initial, 2)},
+      std::nullopt);
+  expect_true(!output.accepted && output.recovery_confirmation_hits == 1,
+              "first independent NanoTrack recovery hit awaits confirmation");
+  plan = off_probe.begin_frame(3, 120, false);
+  expect_true(plan.recovery_probe.has_value(),
+              "first NanoTrack hit becomes the next recovery probe");
+  const BBox evolved{43.5F, 27.5F, 25.0F, 25.0F};
+  expect_true(!off_probe.recovery_candidates_.geometry_consistent(
+                  plan.predicted_bbox, evolved),
+              "fixture is outside strict probe geometry");
+  output = off_probe.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kRecent, evolved, 3)},
+      std::nullopt);
+  expect_true(!output.recovery_conflict,
+              "temporally associated off-probe hit is not an identity conflict");
+  expect_true(output.recovery_confirmation_hits == 2,
+              "temporally associated off-probe hit preserves the tracklet");
+  expect_true(output.accepted && output.reacquired,
+              "second temporally associated NanoTrack hit commits recovery");
+  expect_true(std::string(output.recovery_reason) == "RECOVERY_STAGED",
+              std::string("off-probe recovery reason, actual=") +
+                  output.recovery_reason);
+
   ResolvedControllerFixture disagreement(config);
   disagreement.initialize(initial, 0, 0, {240, 160});
   reject_frame(disagreement, 1, 40);

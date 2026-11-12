@@ -1151,7 +1151,7 @@ LongTermController::confirm_recovery_candidate(
   };
   const bool carrier_disagreement = reliable_in_carrier(recent) && reliable_in_carrier(safe) &&
       !recovery_candidates_.geometry_consistent(recent->observation.bbox, safe->observation.bbox);
-  bool probe_conflict = carrier_disagreement;
+  const bool probe_conflict = carrier_disagreement;
   const auto observe = [&](RecoveryCandidateSource source,
                            const std::optional<EvaluatedObservation>& observation) {
     if (!observation) return std::optional<RecoveryCandidateKey>{};
@@ -1174,9 +1174,8 @@ LongTermController::confirm_recovery_candidate(
       if (evaluate(observation->observation, motion_plan).quality != QualityLevel::kReliable)
         return std::optional<RecoveryCandidateKey>{};
     }
-    probe_conflict = probe_conflict || !consistent_with_probe;
     return recovery_candidates_.observe(source, bbox, 0.0F, std::nullopt,
-        std::nullopt, consistent_with_probe && !carrier_disagreement,
+        std::nullopt, !carrier_disagreement,
         frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_));
   };
   const auto recent_key = observe(RecoveryCandidateSource::kRecent, recent);
