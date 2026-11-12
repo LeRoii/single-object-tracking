@@ -1,5 +1,20 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T15:48:10+08:00 2b08bc5 板端拒绝与冻结几何参考解耦
+
+- 收窄提交 `2b08bc5bd4bd5c69bab6de2888db53972cc88de3` 已部署到独立根
+  `/home/neardi/Project/SOT/occ-motion-trust-2b08bc5`，原生 RK3588 Debug 构建和 CTest
+  `22/22` PASS，两目标程序 exit 0；但 full evaluator 仍 **FAIL**：car001 错误重捕
+  `[84,102,127]`，car002 错误重捕 `[115,175,226]`，故该提交继续拒绝。
+- 逐帧证据确认：即使仅冻结运动模型，观测质量的几何门仍以被冻结的运动预测为参考；随着
+  NanoTrack 当前框继续运动，两者残差必然增长，最终由“主动冻结”自身制造 observation
+  rejection 和 SEARCH。这违反“禁止运动更新先于确认遮挡，但当前 NanoTrack 框仍继续输出”
+  的递进语义。
+- 后续修正只解开这一处因果耦合：`motion_updates_held_` 且尚未进入 loss/search 时，观测的
+  center/area/aspect 连续性改用上一已接受 `current_bbox_`，不再用有意冻结的 motion bbox；
+  响应质量门和后续 SUSPECTED/SEARCH 递进保持不变，真正进入搜索后仍使用运动预测几何。
+  单测通过人为拉开冻结预测与局部连续观测，确认不会发生自致拒绝。当前尚未提交或部署。
+
 ## 2026-11-12T15:43:51+08:00 d7ee7df 板端拒绝与运动信任边界收窄
 
 - 精确提交 `d7ee7df5c6f3ab9805e7f29d08cf73e13e819564` 已部署到 RK3588 独立根

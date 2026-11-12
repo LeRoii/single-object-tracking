@@ -2417,6 +2417,10 @@ void test_motion_updates_freeze_before_search() {
                   frozen.acceleration_x == 0.0F &&
                   frozen.acceleration_y == 0.0F,
               "motion retains clean direction and clears open-loop acceleration");
+  // Deliberately separate the frozen prediction from the locally continuous
+  // tracker observation. The freeze must not reject its own observation just
+  // because the two states are intentionally decoupled.
+  controller.motion_.velocity_x_ = 1000.0F;
 
   for (std::uint64_t id = 6; id <= 8; ++id) {
     const std::int64_t timestamp = id == 6 ? 240 : (id == 7 ? 320 : 360);

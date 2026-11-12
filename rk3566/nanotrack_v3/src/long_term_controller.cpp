@@ -624,10 +624,21 @@ LongTermController::EvaluatedObservation LongTermController::evaluate(
 
   EvaluatedObservation result;
   result.observation = observation;
+  // Once response degradation freezes motion corrections, the motion state is
+  // intentionally no longer colocated with accepted NanoTrack observations.
+  // Continue checking local observation continuity against the last accepted
+  // box; otherwise the deliberate freeze would manufacture an ever-growing
+  // residual and turn a still-valid tracker observation into a false loss.
+  const bool use_observation_continuity =
+      motion_updates_held_ && !loss_start_ms_ &&
+      (plan.mode == TrackingMode::kTracking ||
+       plan.mode == TrackingMode::kSuspected);
+  const BBox& geometry_reference =
+      use_observation_continuity ? current_bbox_ : plan.predicted_bbox;
   result.center_residual =
-      normalized_center_distance(observation.bbox, plan.predicted_bbox);
-  result.area_log_change = area_log_delta(observation.bbox, plan.predicted_bbox);
-  result.aspect_log_change = aspect_log_delta(observation.bbox, plan.predicted_bbox);
+      normalized_center_distance(observation.bbox, geometry_reference);
+  result.area_log_change = area_log_delta(observation.bbox, geometry_reference);
+  result.aspect_log_change = aspect_log_delta(observation.bbox, geometry_reference);
   result.center_gate = result.center_residual <= config_.max_center_distance * plan.search_scale;
   result.area_gate = result.area_log_change <= config_.max_area_log_change;
   result.aspect_gate = result.aspect_log_change <= config_.max_aspect_log_change;
