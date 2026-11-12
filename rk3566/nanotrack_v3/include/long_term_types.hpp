@@ -60,6 +60,16 @@ struct RecoveryCandidateKey {
 };
 
 enum class DetectorTargetMode { kFullObject, kSubtarget };
+enum class DetectorRequestPurpose { kNone, kSearchRecovery, kInitialization, kDisplayRefresh };
+enum class DisplayBoxSource {
+  kControllerFallback,
+  kTrackerPropagated,
+  kDetectorInitialized,
+  kDetectorConfirmed,
+  kSuspectedFrozen,
+  kSearchPredicted,
+  kReacquisitionBlend,
+};
 enum class DetectorBatchStatus {
   kNone,
   kAccepted,
@@ -190,6 +200,7 @@ struct DetectorRequest {
   BBox roi{};
   std::size_t max_candidates = 3;
   std::uint64_t generation = 0;
+  DetectorRequestPurpose purpose = DetectorRequestPurpose::kSearchRecovery;
 };
 
 struct DetectorTiming {
@@ -208,6 +219,7 @@ struct DetectorBatch {
   DetectorTiming timing{};
   std::uint64_t generation = 0;
   std::uint64_t request_id = 0;
+  DetectorRequestPurpose purpose = DetectorRequestPurpose::kSearchRecovery;
 };
 
 struct DetectorBlockingResult {
@@ -222,6 +234,8 @@ struct DetectorDiagnostics {
   bool batch_received = false;
   std::uint64_t request_frame_id = 0;
   std::uint64_t batch_frame_id = 0;
+  DetectorRequestPurpose request_purpose = DetectorRequestPurpose::kNone;
+  DetectorRequestPurpose batch_purpose = DetectorRequestPurpose::kNone;
   std::int64_t batch_age_ms = 0;
   std::size_t raw_candidate_count = 0;
   std::size_t filtered_candidate_count = 0;
@@ -240,6 +254,8 @@ const char* to_string(TemplateKind value);
 const char* to_string(TemplateAction value);
 const char* to_string(HypothesisSource value);
 const char* to_string(DetectorTargetMode value);
+const char* to_string(DetectorRequestPurpose value);
+const char* to_string(DisplayBoxSource value);
 const char* to_string(DetectorBatchStatus value);
 const char* to_string(TargetClassStatus value);
 const char* to_string(TargetClassReason value);

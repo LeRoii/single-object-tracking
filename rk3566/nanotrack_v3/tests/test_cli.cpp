@@ -218,6 +218,17 @@ int main() {
                   configured.controller_config ==
                       (config_dir / "visible-default.conf").string(),
               "config paths normalize relative and absolute locations");
+  const std::filesystem::path adaptive_config =
+      std::filesystem::path(NANOTRACK_SOURCE_DIR) / "config" /
+      "rk3588-adaptive-display-debug.conf";
+  const Options adaptive_options = parse_options(
+      {"nanotrack_v3", "--config", adaptive_config.string()});
+  expect_true(adaptive_options.interactive &&
+                  adaptive_options.detector_class_id == -1 &&
+                  adaptive_options.controller_config ==
+                      (adaptive_config.parent_path() /
+                       "visible-adaptive-display.conf").string(),
+              "RK3588 adaptive profile enables automatic class selection and its new controller profile");
   expect_true(configured.has_bbox && configured.bbox.x == 10.0F &&
                   configured.bbox.height == 40.0F &&
                   configured.max_frames == 120 &&

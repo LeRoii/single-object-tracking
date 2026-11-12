@@ -1,5 +1,6 @@
 #pragma once
 
+#include "adaptive_display_box.hpp"
 #include "detector_adapter.hpp"
 #include "long_term_controller.hpp"
 #include "short_term_tracker.hpp"
@@ -32,6 +33,7 @@ struct TargetClassInitializationResult {
   // Wall-clock duration of detect_blocking(), including old-request quiescing.
   float detector_ms = 0.0F;
   std::string detector_error;
+  BBox display_bbox{};
 };
 
 enum class TemplateSlotRevocationReason {
@@ -58,6 +60,7 @@ struct RuntimeFrameResult {
   float runtime_ms = 0.0F;
   bool tracker_skipped = false;
   TargetClassState target_class{};
+  AdaptiveDisplayDiagnostics adaptive_display{};
   // Set by the caller only for the paused initialization-frame presentation.
   std::optional<TargetClassInitializationResult> initialization;
 };
@@ -96,6 +99,7 @@ class LongTermRuntime {
   ShortTermTracker& tracker_;
   DetectorAdapter& detector_;
   LongTermController controller_;
+  AdaptiveDisplayBox adaptive_display_;
   TargetClassRuntimeConfig target_class_config_;
   TargetClassInitializationResult last_initialization_{};
   bool detector_configured_ = false;

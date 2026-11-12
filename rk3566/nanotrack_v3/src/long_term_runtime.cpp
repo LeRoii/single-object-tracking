@@ -28,6 +28,7 @@ LongTermRuntime::LongTermRuntime(const ControllerConfig& config,
     : tracker_(tracker),
       detector_(detector),
       controller_(config),
+      adaptive_display_(config),
       target_class_config_(target_class_config),
       detector_configured_(detector.available()) {}
 
@@ -63,7 +64,8 @@ TargetClassInitializationResult LongTermRuntime::initialize(
     // never borrows a controller recovery request or its eligibility generation.
     const DetectorRequest request{frame_id, timestamp_ms,
         BBox{0, 0, float(image.width), float(image.height)},
-        std::numeric_limits<std::size_t>::max()};
+        std::numeric_limits<std::size_t>::max(), 0,
+        DetectorRequestPurpose::kInitialization};
     std::optional<DetectorBlockingResult> detected;
     const auto detector_start = std::chrono::steady_clock::now();
     try {
@@ -93,6 +95,9 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   abandon_staged_recent(TemplateSlotRevocationReason::kReinitialized);
   controller_.initialize(initial_bbox, frame_id, timestamp_ms,
                          FrameSize{image.width, image.height}, result.target_class);
+  adaptive_display_.initialize(initial_bbox, result.target_class,
+                               FrameSize{image.width, image.height});
+  result.display_bbox = adaptive_display_.current();
   tracker_.initialize(image, initial_bbox);
   last_initialization_ = result;
   initialized_ = true;
@@ -147,11 +152,27 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.plan = controller_.begin_frame(frame_id, timestamp_ms,
                                         result.detector.ready);
 
+  std::optional<DetectorRequest> display_request;
   if (result.plan.request_detector && result.plan.detector_request) {
+    result.plan.detector_request->purpose = DetectorRequestPurpose::kSearchRecovery;
     result.detector.request_frame_id =
         result.plan.detector_request->frame_id;
+    result.detector.request_purpose = result.plan.detector_request->purpose;
     try {
       detector_.submit(image, *result.plan.detector_request);
+      result.detector.request_submitted = true;
+    } catch (const std::exception& error) {
+      result.detector.error = error.what();
+    }
+  } else if (adaptive_display_.should_request(result.plan.tracking_phase,
+                                              timestamp_ms,
+                                              result.detector.ready)) {
+    display_request = adaptive_display_.make_request(frame_id, timestamp_ms);
+    result.detector.request_frame_id = frame_id;
+    result.detector.request_purpose = display_request->purpose;
+    try {
+      detector_.submit(image, *display_request);
+      adaptive_display_.mark_request_submitted(timestamp_ms);
       result.detector.request_submitted = true;
     } catch (const std::exception& error) {
       result.detector.error = error.what();
@@ -168,6 +189,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     if (detector_batch) {
       result.detector.batch_received = true;
       result.detector.batch_frame_id = detector_batch->source_frame_id;
+      result.detector.batch_purpose = detector_batch->purpose;
       result.detector.batch_age_ms =
           timestamp_ms - detector_batch->source_timestamp_ms;
       result.detector.raw_candidate_count =
@@ -175,6 +197,16 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       result.detector.filtered_candidate_count =
           detector_batch->filtered_candidate_count;
       result.detector.timing = detector_batch->timing;
+    }
+  }
+
+  std::optional<DetectorBatch> recovery_batch;
+  std::optional<DetectorBatch> display_batch;
+  if (detector_batch) {
+    if (detector_batch->purpose == DetectorRequestPurpose::kDisplayRefresh) {
+      display_batch = detector_batch;
+    } else if (detector_batch->purpose == DetectorRequestPurpose::kSearchRecovery) {
+      recovery_batch = detector_batch;
     }
   }
 
@@ -192,7 +224,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   // already holds the pre-prediction checkpoint for the open frame.
   application_checkpoint.emplace(controller_);
   result.output =
-      controller_.finish_frame(result.plan, result.observations, detector_batch);
+      controller_.finish_frame(result.plan, result.observations, recovery_batch);
   const auto& transition = result.output.template_transition;
   const bool recovery_prepare = transition && transition->recovery &&
       transition->action == TemplateAction::kStageRecent;
@@ -224,9 +256,16 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       throw std::logic_error("template transition acknowledgement did not match its request");
     }
   }
+  if (display_batch) {
+    adaptive_display_.ingest(*display_batch, result.output, result.target_class);
+  }
+  result.output.display_bbox = adaptive_display_.update(
+      result.output, result.target_class, result.adaptive_display);
+  result.output.bbox = result.output.display_bbox;
   result.runtime_ms = std::chrono::duration<float, std::milli>(
                           std::chrono::steady_clock::now() - total_start)
                           .count();
+  adaptive_display_.observe_runtime(result.runtime_ms);
   result.template_slot_revocation = pending_template_slot_revocation_;
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
   application_checkpoint.reset();

@@ -585,7 +585,7 @@ def _is_current_reacquisition(row, frame_width, frame_height):
     transaction_id = row.get("template_transaction_id")
     bbox = row["tracking_bbox"]
     return (
-        row["schema_version"] == REQUIRED_TRACKING_SCHEMA
+        row["schema_version"] >= REQUIRED_TRACKING_SCHEMA
         and row["state"] == row.get("tracking_phase") == "TRACKING"
         and all(row.get(field) is True for field in (
             "observation_present", "accepted", "observation_valid",
@@ -695,7 +695,7 @@ def evaluate(contract, rows, scope):
     required_schema = int(contract.get("required_tracking_schema", REQUIRED_TRACKING_SCHEMA))
     schema_versions = sorted({int(row["schema_version"]) for row in rows})
     semantic_fields = ["tracking_phase", "observation_valid", "control_source"]
-    recent_safe = required_schema == REQUIRED_TRACKING_SCHEMA
+    recent_safe = required_schema >= REQUIRED_TRACKING_SCHEMA
     if recent_safe:
         semantic_fields.extend((
             "observation_present", "trusted_for_state_update", "motion_update_valid",
@@ -707,18 +707,20 @@ def evaluate(contract, rows, scope):
         row.get("tracking_box_source", "tracking") == "tracking" for row in rows
     )
     metadata = contract.get("tracking_session_metadata")
+    observed_schema = schema_versions[0] if len(schema_versions) == 1 else None
     schema_ok = (
-        schema_versions == [required_schema]
+        observed_schema is not None
+        and observed_schema >= required_schema
         and semantic_columns_present
         and explicit_tracking_boxes
-        and (metadata is None or metadata.get("schema_version") == required_schema)
+        and (metadata is None or metadata.get("schema_version") == observed_schema)
     )
     if schema_versions == [9]:
         schema_detail = "legacy schema 9 is diagnostic-only; schema {} semantics are required".format(
             required_schema
         )
     else:
-        schema_detail = "observed schema {}; required {} with semantic columns".format(
+        schema_detail = "observed schema {}; required >={} with semantic columns".format(
             schema_versions, required_schema
         )
 

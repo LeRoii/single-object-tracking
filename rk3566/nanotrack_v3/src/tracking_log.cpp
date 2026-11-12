@@ -293,6 +293,18 @@ void visit_observability_fields(const TrackingLogRow& row, Field field) {
   field("recovery_probe_generation", probe ? std::optional<std::uint64_t>(probe->generation) : std::nullopt);
   visit_box("recovery_probe_", probe ? std::optional<BBox>(row.recovery_probe_bbox) : std::nullopt, field);
   field("recovery_reason", row.recovery_reason);
+  field("detector_request_purpose", to_string(row.detector_request_purpose));
+  field("detector_batch_purpose", to_string(row.detector_batch_purpose));
+  field("display_box_source", to_string(row.display_box_source));
+  field("display_class_id", row.display_class_id
+      ? std::optional<std::uint64_t>(static_cast<std::uint64_t>(*row.display_class_id))
+      : std::nullopt);
+  field("display_correction_pending", row.display_correction_pending);
+  field("display_correction_applied", row.display_correction_applied);
+  field("display_confirmation_count", row.display_confirmation_count);
+  field("display_refresh_interval_ms", row.display_refresh_interval_ms);
+  field("display_refresh_paused", row.display_refresh_paused);
+  field("display_runtime_p95_ms", row.display_runtime_p95_ms);
 }
 
 template <typename Field>
@@ -796,7 +808,8 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
                                     bool detector_configured,
                                     bool detector_ready,
                                     DetectorTargetMode detector_target_mode,
-                                    const TargetClassState& target_class) {
+                                    const TargetClassState& target_class,
+                                    const std::optional<BBox>& display_bbox) {
   TrackingLogRow row;
   row.frame_id = frame_id;
   row.timestamp_ms = timestamp_ms;
@@ -812,9 +825,9 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.quality = QualityLevel::kReliable;
   row.control_valid = true;
   row.accepted = true;
-  row.bbox = bbox;
+  row.bbox = display_bbox.value_or(bbox);
   row.tracking_bbox = bbox;
-  row.display_bbox = bbox;
+  row.display_bbox = display_bbox.value_or(bbox);
   row.control_bbox = bbox;
   row.motion_predicted_bbox = bbox;
   row.anchor_present = true;
@@ -825,6 +838,10 @@ TrackingLogRow make_initial_log_row(std::uint64_t frame_id,
   row.detector_ready = detector_ready;
   row.detector_target_mode = detector_target_mode;
   row.target_class = target_class;
+  row.display_class_id = target_class.target_class_id;
+  row.display_box_source = target_class.selected_candidate
+      ? DisplayBoxSource::kDetectorInitialized
+      : DisplayBoxSource::kTrackerPropagated;
   row.detector_worker_status = !detector_configured
                                    ? "disabled"
                                    : (detector_ready ? "ready" : "busy");
@@ -907,7 +924,9 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.motion_predicted_bbox = result.plan.motion_predicted_bbox;
   row.detector_configured = result.detector.configured;
   row.detector_ready = result.detector.ready;
-  row.detector_requested = result.plan.request_detector;
+  row.detector_requested = result.detector.request_submitted;
+  row.detector_request_purpose = result.detector.request_purpose;
+  row.detector_batch_purpose = result.detector.batch_purpose;
   if (result.plan.detector_request) {
     row.detector_request_frame_id = result.plan.detector_request->frame_id;
   } else if (result.detector.request_submitted) {
@@ -958,6 +977,14 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
       output.detector_position_valid_count;
   row.detector_position_rejected_count =
       output.detector_position_rejected_count;
+  row.display_box_source = result.adaptive_display.source;
+  row.display_class_id = result.adaptive_display.class_id;
+  row.display_correction_pending = result.adaptive_display.correction_pending;
+  row.display_correction_applied = result.adaptive_display.correction_applied;
+  row.display_confirmation_count = result.adaptive_display.confirmation_count;
+  row.display_refresh_interval_ms = result.adaptive_display.refresh_interval_ms;
+  row.display_refresh_paused = result.adaptive_display.refresh_paused;
+  row.display_runtime_p95_ms = result.adaptive_display.runtime_p95_ms;
   row.occlusion_hold_triggered = output.occlusion_hold_triggered;
   row.occlusion_reference_source = output.occlusion_reference_source;
   row.occlusion_suspicion_active = output.occlusion_suspicion_active;

@@ -80,7 +80,7 @@ void test_recent_safe_telemetry() {
                                {0.8F, 0.7F, 5.0F, 8.0F, 0.1F}, TemplateKind::kRecent, 1});
   DebugTelemetry telemetry(1000);
   const auto events = telemetry.frame_events(frame, 10.0F, false);
-  expect_true(contains(events, "event=frame_observation schema_version=12 frame_id=17") &&
+  expect_true(contains(events, "event=frame_observation schema_version=13 frame_id=17") &&
                   contains(events, "tracking_phase=SUSPECTED") &&
                   contains(events, "observation_present=1 trusted_for_state_update=0 motion_update_valid=0") &&
                   contains(events, "rect0_source=RECENT_OBSERVATION") &&
@@ -91,7 +91,7 @@ void test_recent_safe_telemetry() {
   auto revocation = frame_result(18);
   revocation.template_slot_revocation = TemplateSlotRevocation{10, TemplateSlotRevocationReason::kFrameAborted};
   const auto revocation_events = telemetry.frame_events(revocation, 10.0F, false);
-  expect_true(contains(revocation_events, "event=frame_observation schema_version=12 frame_id=18") &&
+  expect_true(contains(revocation_events, "event=frame_observation schema_version=13 frame_id=18") &&
                   contains(revocation_events, "revoked_template_slot_id=10 template_slot_revocation_reason=FRAME_ABORTED"),
               "revocation is independently emitted outside heartbeat and transition cadence");
 }

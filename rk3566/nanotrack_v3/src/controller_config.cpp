@@ -101,6 +101,25 @@ void set_value(ControllerConfig& config,
   else if (key == "accepted_center_smoothing_alpha") config.accepted_center_smoothing_alpha = parse_float(key, value);
   else if (key == "accepted_center_max_correction_ratio") config.accepted_center_max_correction_ratio = parse_float(key, value);
   else if (key == "max_reacquisition_center_distance") config.max_reacquisition_center_distance = parse_float(key, value);
+  else if (key == "adaptive_display_enabled") config.adaptive_display_enabled = parse_bool(key, value);
+  else if (key == "display_detector_refresh_enabled") config.display_detector_refresh_enabled = parse_bool(key, value);
+  else if (key == "display_car_padding_x") config.display_car_padding_x = parse_float(key, value);
+  else if (key == "display_car_padding_y") config.display_car_padding_y = parse_float(key, value);
+  else if (key == "display_person_padding_x") config.display_person_padding_x = parse_float(key, value);
+  else if (key == "display_person_padding_y") config.display_person_padding_y = parse_float(key, value);
+  else if (key == "display_unknown_padding_x") config.display_unknown_padding_x = parse_float(key, value);
+  else if (key == "display_unknown_padding_y") config.display_unknown_padding_y = parse_float(key, value);
+  else if (key == "display_detector_blend_alpha") config.display_detector_blend_alpha = parse_float(key, value);
+  else if (key == "display_max_size_step_ratio") config.display_max_size_step_ratio = parse_float(key, value);
+  else if (key == "display_detection_consistency_iou") config.display_detection_consistency_iou = parse_float(key, value);
+  else if (key == "display_detection_confirmations") config.display_detection_confirmations = parse_int(key, value);
+  else if (key == "display_reacquisition_blend_frames") config.display_reacquisition_blend_frames = parse_int(key, value);
+  else if (key == "display_detector_min_interval_ms") config.display_detector_min_interval_ms = parse_integer(key, value);
+  else if (key == "display_detector_initial_interval_ms") config.display_detector_initial_interval_ms = parse_integer(key, value);
+  else if (key == "display_detector_max_interval_ms") config.display_detector_max_interval_ms = parse_integer(key, value);
+  else if (key == "display_runtime_p95_speedup_ms") config.display_runtime_p95_speedup_ms = parse_float(key, value);
+  else if (key == "display_runtime_p95_slowdown_ms") config.display_runtime_p95_slowdown_ms = parse_float(key, value);
+  else if (key == "display_runtime_p95_pause_ms") config.display_runtime_p95_pause_ms = parse_float(key, value);
   else if (key == "uncertain_ms") config.uncertain_ms = parse_integer(key, value);
   else if (key == "local_recovery_ms") config.local_recovery_ms = parse_integer(key, value);
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
@@ -280,6 +299,40 @@ void validate_controller_config(const ControllerConfig& config) {
       config.max_reacquisition_center_distance < 0.0F) {
     throw std::invalid_argument(
         "reacquisition center distance must be finite and non-negative");
+  }
+  const float display_ratios[] = {
+      config.display_car_padding_x, config.display_car_padding_y,
+      config.display_person_padding_x, config.display_person_padding_y,
+      config.display_unknown_padding_x, config.display_unknown_padding_y,
+      config.display_detector_blend_alpha, config.display_max_size_step_ratio,
+      config.display_detection_consistency_iou};
+  for (const float value : display_ratios) {
+    if (!std::isfinite(value) || value < 0.0F || value > 1.0F) {
+      throw std::invalid_argument("adaptive display ratios must be in [0,1]");
+    }
+  }
+  if (config.display_detector_blend_alpha <= 0.0F ||
+      config.display_max_size_step_ratio <= 0.0F ||
+      config.display_detection_consistency_iou <= 0.0F ||
+      config.display_detection_confirmations < 1 ||
+      config.display_detection_confirmations > 10 ||
+      config.display_reacquisition_blend_frames < 1 ||
+      config.display_reacquisition_blend_frames > 60) {
+    throw std::invalid_argument("adaptive display smoothing limits are invalid");
+  }
+  if (config.display_detector_min_interval_ms <= 0 ||
+      config.display_detector_initial_interval_ms < config.display_detector_min_interval_ms ||
+      config.display_detector_max_interval_ms < config.display_detector_initial_interval_ms) {
+    throw std::invalid_argument("adaptive display detector intervals are invalid");
+  }
+  if (!std::isfinite(config.display_runtime_p95_speedup_ms) ||
+      !std::isfinite(config.display_runtime_p95_slowdown_ms) ||
+      !std::isfinite(config.display_runtime_p95_pause_ms) ||
+      config.display_runtime_p95_speedup_ms <= 0.0F ||
+      config.display_runtime_p95_slowdown_ms <= config.display_runtime_p95_speedup_ms ||
+      config.display_runtime_p95_pause_ms <= config.display_runtime_p95_slowdown_ms ||
+      config.display_runtime_p95_pause_ms >= 33.3F) {
+    throw std::invalid_argument("adaptive display runtime P95 thresholds are invalid");
   }
   if (config.uncertain_ms <= 0 ||
       config.local_recovery_ms <= config.uncertain_ms ||
@@ -471,6 +524,22 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.accepted_center_smoothing_alpha << '|'
          << config.accepted_center_max_correction_ratio << '|'
          << config.max_reacquisition_center_distance << '|'
+         << config.adaptive_display_enabled << '|'
+         << config.display_detector_refresh_enabled << '|'
+         << config.display_car_padding_x << '|' << config.display_car_padding_y << '|'
+         << config.display_person_padding_x << '|' << config.display_person_padding_y << '|'
+         << config.display_unknown_padding_x << '|' << config.display_unknown_padding_y << '|'
+         << config.display_detector_blend_alpha << '|'
+         << config.display_max_size_step_ratio << '|'
+         << config.display_detection_consistency_iou << '|'
+         << config.display_detection_confirmations << '|'
+         << config.display_reacquisition_blend_frames << '|'
+         << config.display_detector_min_interval_ms << '|'
+         << config.display_detector_initial_interval_ms << '|'
+         << config.display_detector_max_interval_ms << '|'
+         << config.display_runtime_p95_speedup_ms << '|'
+         << config.display_runtime_p95_slowdown_ms << '|'
+         << config.display_runtime_p95_pause_ms << '|'
          << config.template_bridge_min_stable_frames << '|'
          << config.template_bridge_max_duration_ms << '|'
          << config.detector_candidate_max_center_ratio << '|'

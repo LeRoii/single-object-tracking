@@ -52,7 +52,7 @@ if grep -Eqi 'GTK|selectROI|imshow|cannot open display|RKNN:.*(error|unsupported
   exit 1
 fi
 
-python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-12}" <<'PY'
+python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-13}" <<'PY'
 import csv
 import hashlib
 import json
@@ -71,8 +71,8 @@ detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
 expected_rknn_target = sys.argv[9]
 EXPECTED_TRACKING_SCHEMA = int(sys.argv[10])
-if EXPECTED_TRACKING_SCHEMA not in {10, 11, 12}:
-    raise SystemExit("expected tracking schema must be 10, 11, or 12")
+if EXPECTED_TRACKING_SCHEMA not in {10, 11, 12, 13}:
+    raise SystemExit("expected tracking schema must be 10, 11, 12, or 13")
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
 for key, low, high in [
@@ -416,6 +416,13 @@ if EXPECTED_TRACKING_SCHEMA >= 11:
     required |= v11_fields
 if EXPECTED_TRACKING_SCHEMA >= 12:
     required.add("motion_update_valid")
+if EXPECTED_TRACKING_SCHEMA >= 13:
+    required |= {
+        "detector_request_purpose", "detector_batch_purpose", "display_box_source",
+        "display_class_id", "display_correction_pending", "display_correction_applied",
+        "display_confirmation_count", "display_refresh_interval_ms",
+        "display_refresh_paused", "display_runtime_p95_ms",
+    }
 missing = required - set(rows[0])
 if missing:
     raise SystemExit(f"CSV header is missing: {sorted(missing)}")
@@ -491,6 +498,19 @@ for index, row in enumerate(rows):
                 row["trusted_for_state_update"] == "1" and
                 row["tracking_phase"] == "TRACKING"):
             raise SystemExit(f"motion update without trusted tracking observation at row {index}")
+    if EXPECTED_TRACKING_SCHEMA >= 13:
+        if row["detector_request_purpose"] not in {"NONE", "SEARCH_RECOVERY", "INITIALIZATION", "DISPLAY_REFRESH"}:
+            raise SystemExit(f"invalid detector request purpose at row {index}")
+        if row["detector_batch_purpose"] not in {"NONE", "SEARCH_RECOVERY", "INITIALIZATION", "DISPLAY_REFRESH"}:
+            raise SystemExit(f"invalid detector batch purpose at row {index}")
+        if row["display_box_source"] not in {
+                "CONTROLLER_FALLBACK", "TRACKER_PROPAGATED", "DETECTOR_INITIALIZED",
+                "DETECTOR_CONFIRMED", "SUSPECTED_FROZEN", "SEARCH_PREDICTED",
+                "REACQUISITION_BLEND"}:
+            raise SystemExit(f"invalid display box source at row {index}")
+        for key in ("display_correction_pending", "display_correction_applied", "display_refresh_paused"):
+            if row[key] not in {"0", "1"}:
+                raise SystemExit(f"invalid {key} at row {index}")
     if row["control_source"] == "MOTION_SEARCH":
         if row["tracking_phase"] != "SEARCHING" or row["motion_control_authorized"] != "1" or row["motion_prediction_confident"] != "1":
             raise SystemExit(f"invalid motion-search control at row {index}")
