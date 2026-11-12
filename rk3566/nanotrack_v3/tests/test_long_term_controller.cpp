@@ -2433,6 +2433,11 @@ void test_motion_input_freeze_and_reanchor() {
   controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300});
   const auto observe = [&](std::uint64_t id, float offset, float margin) {
     const auto plan = controller.begin_frame(id, static_cast<std::int64_t>(id) * 50, false);
+    if (controller.motion_freeze_since_ms_) {
+      expect_true(plan.predicted_bbox.x == controller.current_bbox_.x &&
+                      plan.predicted_bbox.y == controller.current_bbox_.y,
+                  "frozen motion leaves NanoTrack centered on its accepted observation");
+    }
     BBox bbox = plan.predicted_bbox;
     bbox.x += offset;
     auto observation = reliable_observation(plan, TemplateKind::kRecent, bbox);

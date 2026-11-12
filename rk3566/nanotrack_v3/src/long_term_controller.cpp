@@ -337,6 +337,12 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   coast_probe_candidate_.reset();
   mode_ = timestamp_mode;
   BBox predicted = motion_predicted;
+  // Keep NanoTrack's next crop tied to the last accepted visual box while the
+  // independent motion state coasts. This does not correct motion derivatives.
+  if (motion_freeze_since_ms_ && mode_ == TrackingMode::kTracking &&
+      !motion_search_active_) {
+    predicted = current_bbox_;
+  }
   HypothesisSource source = HypothesisSource::kMotion;
   const bool recovery_uses_detector = config_.motion_search_enabled
       ? motion_search_active_
