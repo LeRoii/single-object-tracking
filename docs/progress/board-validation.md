@@ -1,5 +1,27 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T22:25:39+08:00 双窗口精简交互 Debug RK3588 验证
+
+- 分支 `codex/adaptive-display-box`，运行源码提交
+  `23f594c023492034d6d392686b7d4a89b233b9e0`，源码归档 SHA-256
+  `88dc420e27752b960fd8b5e8cc3a234545ad148de22800e15028c77e00af3649`；部署到独立目录
+  `/home/neardi/Project/SOT/adaptive-display-debug-23f594c`，未覆盖上一版运行或视频证据。
+- RK3588 原生 Debug 构建启用 RKNN、`BUILD_TESTING=ON` 和 `-Werror=switch`，包含
+  `src/main.cpp` 的完整可执行目标并通过 CTest `23/23 PASS`。新二进制
+  `build/nanotrack_v3` SHA-256 为
+  `5c0cbc2ccfdf7436a2e46b986ae857e20c869690f1ba8253c630da0ba5492a74`；runtime/controller
+  配置 SHA-256 仍分别为
+  `5d67b007ff13cbd617e6ac54485b45c4a89d52da38d3651f54f5e0d3b92dfaca`、
+  `3a949556b682011b7ebb40fb0353471b71af0677685e37a938f8af01d66928af`。
+- 在板端现有 X11 `DISPLAY=:0` 会话短启动交互程序，`xwininfo -root -tree` 实际观察到
+  `NanoTrack Display` 与 `NanoTrack Debug` 两个独立窗口，均为 1280x720，位置分别为
+  `+2+23`、`+1298+23`；无 HighGUI/X11 创建错误。固定 ROI 启动同时完成 tracker、RK3588
+  detector 加载及自动 car 类别建立，随后保持 PAUSE；短测由 timeout 结束，不计作算法视频回归。
+- **结论 / 边界**：双窗口显示和关键 detector 过滤已通过主机单测、RK3588 原生编译测试及
+  实际窗口创建检查。改动只在交互绘制层，不改变 `tracking_bbox`、`control_bbox`、CSV、检测器
+  调度、状态机或控制输出；因此本次未重复运行 271 帧 canonical evaluator，也不改变上一条
+  双车算法验收结论、人物板端验收边界或生产/吊舱状态。
+
 ## 2026-11-12T22:23:02+08:00 双窗口精简交互 Debug 主机实现
 
 - 分支 `codex/adaptive-display-box`，基线
