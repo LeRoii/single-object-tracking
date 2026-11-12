@@ -1,5 +1,42 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T15:06:46+08:00 search 反向趋势修正 RK3588 双目标验证
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，源码提交
+  `5fbcf8301ce52ad1c779541e30a35ad4153b2753`，基线
+  `59c79e74a1dfc150d6257734598459f886d3da49`。源码归档在主机与板端 SHA-256 均为
+  `6e73944baa06cf20ef24cca147da11c2a16f03be662c506bad1e7971d36609d5`，独立板端根为
+  `/home/neardi/Project/SOT/occ-motion-opposite-5fbcf83`。原生 Debug、RKNN runtime、
+  `-Werror=switch` 构建和 CTest `22/22` PASS；二进制 SHA-256
+  `8766a6122b2d621bfeb95d4e32db8122cb3566fa9bd57c82aa2f8285de72762e`。
+- 初版 `0a8304e9485dcb4b9754e37ca8a05300b03ad819` 对所有退化期都采用冻结趋势，car002
+  方向改善但 car001 重捕从185延迟到194，故拒绝；其独立根
+  `/home/neardi/Project/SOT/occ-motion-clean-0a8304e` 保留为失败证据。最终版只在进入 SEARCH
+  时当前速度与最后干净趋势点积为负才替换速度并清零加速度；方向一致的 car001 保留原运动
+  模型。
+- 固定 ROI `car_001=992,582,37,39`、`car_002=970,517,38,38` 各运行0--270帧，均
+  exit 0，AVI 均为1920x1080、30 FPS、271帧。非交互输出视频主框已改画
+  `control_bbox`；`display_bbox`、交互调试叠框及生产显示路径未修改。
+- car001 full evaluator **PASS**，重捕帧仍为185，visible/control/identity/prediction/
+  full-occlusion 全部门通过。CSV、AVI、metadata、evaluator JSON SHA-256 分别为
+  `f9161e18ee0fc6857459246262b59c2079025f51559e97595ede7091e8b08314`、
+  `edf20ddcf711e329047ba4d70ce1c18d188a11ba93b57f4deafe091f0062dd03`、
+  `575566a3b9e9645942d06342f4a65792c4cd9fc4bba46a6d5249e2c177c80ab6`、
+  `dd9859784dfa2e4a00e4bd0e0d841264159aa6e04d5e42ecb4186033967e869f`。
+- car002 在210帧仍是左下速度 `(-19.852020,+15.126831)`；遮挡物观测把216帧运动状态污染
+  为速度 `(+21.519398,-8.891993)`、加速度 `(+146.120041,-109.989998)`。最终版在222帧
+  SEARCH 切换为最后干净趋势 `(-15.818654,+16.426685)` 且加速度归零，并保持到234帧；
+  预测中心相对正式重现目标的偏差由旧版约56 px降至约21 px，235帧重捕不变。full evaluator
+  仍因既有213--216帧错误声明观测而 FAIL，但 visible/control/identity/prediction/reacquisition
+  门均 PASS。CSV、AVI、metadata、evaluator JSON SHA-256 分别为
+  `0a1d9288f555adb9561c98560f5de2e2d1f8ef0828b9295e18fbf75eceb80144`、
+  `78fe73d1628d2b9b23f91d368175d3e907a02e847c48665a4ffd41186ec04765`、
+  `63eb52962671321eb86e16bd4f159a22d2f6fe5ce08ede82a347ae74487b2eb7`、
+  `7fd391078f91e8120c7a7f953274341ec5dd8c318547fc2727c61df0dc136637`。
+- **边界 / Handoff**：本轮只修正进入 SEARCH 后采用反向污染趋势的问题，不修改阈值、配置、
+  模型、模板、遮挡状态机或重捕确认。car001 不低于 `b538667` 基线，car002 已改善但并未解决
+  213--216帧遮挡判定过晚；候选继续 HOLD，不构成正式生产 handoff 或真实吊舱验收。
+
 ## 2026-11-12T14:55:16+08:00 recent-safe v2 search 运动趋势修正（主机验证）
 
 - 分支 `codex/recent-safe-occlusion-recovery-v2`，基线
