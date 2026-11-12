@@ -2521,10 +2521,23 @@ void test_motion_input_freeze_and_reanchor() {
   recovery->motion.initialize(recovery->bbox, 1050, 400, 300);
   controller.pending_recovery_acceptance_ = recovery;
   controller.last_timestamp_ms_ = 1050;
-  controller.apply_recovery_acceptance();
+  controller.pending_template_transition_ = TemplateTransitionRequest{
+      1, TemplateAction::kStageRecent, recovery->bbox, true, 1};
+  ControllerOutput recovered_output;
+  recovered_output.timestamp_ms = 1050;
+  recovered_output.motion_input_frozen = true;
+  recovered_output.motion_update_valid = true;
+  recovered_output.template_transition = controller.pending_template_transition_;
+  expect_true(controller.publish_template_transition(
+                  recovered_output, TemplateTransitionResult::kApplied),
+              "confirmed recovery transition applies the reset");
   expect_true(!controller.motion_freeze_since_ms_ &&
                   !controller.motion_frozen_response_reference_ &&
-                  controller.motion_last_clean_trend_,
+                  controller.motion_last_clean_trend_ &&
+                  recovered_output.motion_freeze_cleared &&
+                  recovered_output.motion_freeze_age_ms == 50 &&
+                  !recovered_output.motion_input_frozen &&
+                  std::string(recovered_output.motion_gate_reason) == "REACQUIRED",
               "confirmed reacquisition starts with a fresh motion-input gate");
 }
 

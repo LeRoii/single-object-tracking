@@ -844,6 +844,7 @@ bool LongTermController::publish_template_transition(
       request.template_slot_id != pending_template_transition_->template_slot_id ||
       request.recovery != pending_template_transition_->recovery) return false;
   const bool applied = result == TemplateTransitionResult::kApplied;
+  const auto freeze_since = motion_freeze_since_ms_;
   if (!resolve_template_transition(request.transaction_id, applied)) return false;
 
   output.template_transition_result = result;
@@ -851,6 +852,13 @@ bool LongTermController::publish_template_transition(
   output.template_probation_active = recent_probation_;
   if (request.recovery && request.action == TemplateAction::kStageRecent) {
     if (applied) {
+      if (output.motion_input_frozen) {
+        output.motion_freeze_cleared = true;
+        output.motion_freeze_age_ms =
+            output.timestamp_ms - freeze_since.value_or(output.timestamp_ms);
+        output.motion_input_frozen = false;
+        output.motion_gate_reason = "REACQUIRED";
+      }
       output.mode = mode_;
       output.recovery_reason = "RECOVERY_STAGED";
       output.state_change_reason = "OBSERVATION_CONFIRMED";
@@ -1716,6 +1724,11 @@ void LongTermController::accept_observation(
   frozen_scale_reference_.reset();
   if (loss_start_ms_) response_baseline_.reset_after_recovery();
   if (reacquired || (!legacy_anchor_observations_ && loss_start_ms_)) {
+    if (motion_freeze_since_ms_) {
+      output.motion_freeze_cleared = true;
+      output.motion_freeze_age_ms = plan.timestamp_ms - *motion_freeze_since_ms_;
+      output.motion_gate_reason = "REACQUIRED";
+    }
     motion_.initialize(output.tracking_bbox, plan.timestamp_ms,
                        frame_size_.width, frame_size_.height);
     reset_motion_input_gate();
