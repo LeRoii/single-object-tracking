@@ -264,9 +264,10 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     prediction_checkpoint_.emplace(PredictionCheckpoint{
         motion_, shadow_motion_, tentative_control_, response_degraded_since_ms_,
         suspected_since_ms_, response_clean_since_ms_, motion_residual_history_,
+        motion_recent_residuals_,
         motion_freeze_since_ms_, motion_clean_since_ms_,
         motion_frozen_response_reference_, motion_last_clean_trend_,
-        motion_risk_streak_, mode_});
+        motion_risk_streak_, motion_response_drop_since_ms_, mode_});
     // MotionEstimator clips finite predictions while retaining the frozen size.
     // Internal prediction failures abort this frame; no output may authorize it.
     motion_predicted = predictor.predict(timestamp_ms);
@@ -690,11 +691,13 @@ void LongTermController::restore_prediction_checkpoint() noexcept {
   suspected_since_ms_ = checkpoint.suspected_since_ms;
   response_clean_since_ms_ = checkpoint.clean_since_ms;
   motion_residual_history_ = std::move(checkpoint.motion_residual_history);
+  motion_recent_residuals_ = std::move(checkpoint.motion_recent_residuals);
   motion_freeze_since_ms_ = checkpoint.motion_freeze_since_ms;
   motion_clean_since_ms_ = checkpoint.motion_clean_since_ms;
   motion_frozen_response_reference_ = checkpoint.motion_frozen_response_reference;
   motion_last_clean_trend_ = checkpoint.motion_last_clean_trend;
   motion_risk_streak_ = checkpoint.motion_risk_streak;
+  motion_response_drop_since_ms_ = checkpoint.motion_response_drop_since_ms;
   mode_ = checkpoint.mode;
   prediction_checkpoint_.reset();
 }
@@ -1051,6 +1054,10 @@ BBox LongTermController::constrain_tentative_control(
 void LongTermController::publish_tentative(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     ControllerOutput& output) {
+  motion_risk_streak_ = 0;
+  motion_response_drop_since_ms_.reset();
+  motion_recent_residuals_.clear();
+  motion_clean_since_ms_.reset();
   if (!shadow_motion_) {
     shadow_motion_.emplace(std::move(motion_));
     motion_ = prediction_checkpoint_.value().motion;
@@ -1544,11 +1551,13 @@ void LongTermController::apply_recovery_acceptance() noexcept {
 
 void LongTermController::reset_motion_input_gate() noexcept {
   motion_residual_history_.clear();
+  motion_recent_residuals_.clear();
   motion_freeze_since_ms_.reset();
   motion_clean_since_ms_.reset();
   motion_frozen_response_reference_.reset();
   motion_last_clean_trend_.reset();
   motion_risk_streak_ = 0;
+  motion_response_drop_since_ms_.reset();
 }
 
 bool LongTermController::motion_input_allows_correction(
@@ -1565,6 +1574,7 @@ bool LongTermController::motion_input_allows_correction(
       motion_residual_history_.erase(motion_residual_history_.begin());
     }
     motion_risk_streak_ = 0;
+    motion_response_drop_since_ms_.reset();
     return !motion_freeze_since_ms_;
   }
   const auto& metrics = selected.observation.metrics;
@@ -1607,6 +1617,26 @@ bool LongTermController::motion_input_allows_correction(
     const float median = sorted[sorted.size() / 2];
     innovation_outlier = selected.center_residual > 2.0F * median;
   }
+  if (drops == 0) motion_response_drop_since_ms_.reset();
+  else if (!motion_response_drop_since_ms_) {
+    motion_response_drop_since_ms_ = plan.timestamp_ms;
+  }
+  motion_recent_residuals_.push_back(selected.center_residual);
+  if (motion_recent_residuals_.size() > 3) {
+    motion_recent_residuals_.erase(motion_recent_residuals_.begin());
+  }
+  const bool innovation_rising = motion_recent_residuals_.size() == 3 &&
+      motion_recent_residuals_[0] < motion_recent_residuals_[1] &&
+      motion_recent_residuals_[1] < motion_recent_residuals_[2];
+  const float box_scale = std::sqrt(std::max(1.0F,
+      plan.predicted_bbox.width * plan.predicted_bbox.height));
+  const float elapsed_s = static_cast<float>(std::min(
+      plan.timestamp_ms - last_timestamp_ms_, config_.motion_max_dt_ms)) / 1000.0F;
+  const float predicted_travel =
+      std::hypot(plan.motion_velocity_x, plan.motion_velocity_y) * elapsed_s;
+  const bool innovation_exceeds_travel =
+      selected.center_residual * box_scale >
+      3.0F * std::max(predicted_travel, 0.01F * box_scale);
   if (drops > 0 && innovation_outlier) {
     ++motion_risk_streak_;
     output.motion_gate_reason = "RESPONSE_AND_INNOVATION_RISK";
@@ -1615,7 +1645,12 @@ bool LongTermController::motion_input_allows_correction(
     if (drops > 0) output.motion_gate_reason = "RESPONSE_RISK_ONLY";
     else if (innovation_outlier) output.motion_gate_reason = "INNOVATION_RISK_ONLY";
   }
-  if (motion_risk_streak_ >= 2 && motion_last_clean_trend_ && response.reference) {
+  if (motion_response_drop_since_ms_ &&
+      plan.timestamp_ms - *motion_response_drop_since_ms_ >=
+          config_.suspicion_enter_ms &&
+      motion_risk_streak_ >= 2 &&
+      innovation_rising && innovation_exceeds_travel &&
+      motion_last_clean_trend_ && response.reference) {
     motion_freeze_since_ms_ = plan.timestamp_ms;
     motion_frozen_response_reference_ = *response.reference;
     search_motion_reference_ = *motion_last_clean_trend_;
@@ -2446,6 +2481,10 @@ ControllerOutput LongTermController::finish_frame(
       response_baseline_.observe_trusted(selected->observation.metrics);
     }
   } else {
+    motion_risk_streak_ = 0;
+    motion_response_drop_since_ms_.reset();
+    motion_recent_residuals_.clear();
+    motion_clean_since_ms_.reset();
     response_baseline_.freeze();
     motion_.freeze_scale(current_bbox_.width, current_bbox_.height);
     output.tracking_bbox = motion_.current_bbox();

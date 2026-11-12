@@ -2432,7 +2432,7 @@ void test_motion_input_freeze_and_reanchor() {
   const ResponseMetrics healthy{0.98F, 0.96F, 20.0F, 30.0F, 0.60F};
   controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300});
   const auto observe = [&](std::uint64_t id, float offset, float margin) {
-    const auto plan = controller.begin_frame(id, static_cast<std::int64_t>(id) * 40, false);
+    const auto plan = controller.begin_frame(id, static_cast<std::int64_t>(id) * 50, false);
     BBox bbox = plan.predicted_bbox;
     bbox.x += offset;
     auto observation = reliable_observation(plan, TemplateKind::kRecent, bbox);
@@ -2454,11 +2454,15 @@ void test_motion_input_freeze_and_reanchor() {
   expect_true(clean_turn.accepted && clean_turn.motion_update_valid &&
                   !clean_turn.motion_input_frozen,
               "clean response permits a normal turn despite high innovation");
-  const auto risk = observe(7, 2.0F, 0.55F);
+  const auto risk = observe(7, 1.5F, 0.55F);
   expect_true(risk.accepted && risk.motion_update_valid &&
                   !risk.motion_input_frozen,
               "first sustained risk is recorded without freezing");
-  const auto frozen = observe(8, 2.5F, 0.55F);
+  const auto second_risk = observe(8, 2.0F, 0.55F);
+  expect_true(second_risk.accepted && second_risk.motion_update_valid &&
+                  !second_risk.motion_input_frozen,
+              "two response drops remain insufficient for motion freeze");
+  const auto frozen = observe(9, 2.5F, 0.55F);
   expect_true(frozen.accepted && frozen.tracking_phase == TrackingPhase::kTracking &&
                   frozen.control_valid && !frozen.motion_update_valid &&
                   !frozen.motion_correction_applied && frozen.motion_freeze_started &&
@@ -2468,9 +2472,9 @@ void test_motion_input_freeze_and_reanchor() {
                   std::to_string(controller.motion_risk_streak_) + " residual=" +
                   std::to_string(frozen.normalized_center_residual));
   const MotionSnapshot trusted = *controller.motion_last_clean_trend_;
-  for (std::uint64_t id = 9; id <= 14; ++id) {
+  for (std::uint64_t id = 10; id <= 15; ++id) {
     const auto held = observe(id, 0.5F, 0.55F);
-    const MotionSnapshot now = controller.motion_.snapshot(id * 40);
+    const MotionSnapshot now = controller.motion_.snapshot(id * 50);
     expect_true(held.accepted && !held.motion_update_valid &&
                     held.motion_input_frozen && now.acceleration_x == 0.0F &&
                     now.acceleration_y == 0.0F,
@@ -2478,40 +2482,40 @@ void test_motion_input_freeze_and_reanchor() {
     expect_near(now.velocity_x, trusted.velocity_x, 1e-5F,
                 "frozen motion retains the last clean horizontal trend");
   }
-  const auto first_clean = observe(15, 0.5F, healthy.peak_margin);
-  const auto second_clean = observe(16, 0.5F, healthy.peak_margin);
-  const auto reanchored = observe(17, 0.5F, healthy.peak_margin);
+  const auto first_clean = observe(16, 0.5F, healthy.peak_margin);
+  const auto second_clean = observe(17, 0.5F, healthy.peak_margin);
+  const auto reanchored = observe(18, 0.5F, healthy.peak_margin);
   expect_true(first_clean.motion_input_frozen && second_clean.motion_input_frozen &&
                   reanchored.motion_freeze_cleared && reanchored.motion_update_valid &&
                   !reanchored.motion_correction_applied && !reanchored.motion_input_frozen,
               "continuous clean evidence reanchors without beta correction");
-  const MotionSnapshot resumed = controller.motion_.snapshot(680);
+  const MotionSnapshot resumed = controller.motion_.snapshot(900);
   expect_near(resumed.velocity_x, trusted.velocity_x, 1e-5F,
               "reanchor preserves the pre-freeze velocity");
   expect_true(resumed.acceleration_x == 0.0F && resumed.acceleration_y == 0.0F,
               "reanchor clears acceleration");
-  const auto corrected = observe(18, 0.5F, healthy.peak_margin);
+  const auto corrected = observe(19, 0.5F, healthy.peak_margin);
   expect_true(corrected.motion_correction_applied,
               "ordinary correction resumes after reanchor");
-  controller.initialize({100, 80, 20, 20}, 20, 800, {400, 300});
+  controller.initialize({100, 80, 20, 20}, 20, 1000, {400, 300});
   expect_true(!controller.motion_freeze_since_ms_ &&
                   controller.motion_residual_history_.empty(),
               "reinitialization clears motion-gate state");
-  controller.motion_freeze_since_ms_ = 800;
-  const auto interrupted = controller.begin_frame(21, 840, false);
+  controller.motion_freeze_since_ms_ = 1000;
+  const auto interrupted = controller.begin_frame(21, 1050, false);
   (void)interrupted;
   controller.abort_frame();
   expect_true(!controller.motion_freeze_since_ms_ &&
                   !controller.motion_frozen_response_reference_,
               "frame interruption clears the motion-input freeze");
-  controller.motion_freeze_since_ms_ = 800;
+  controller.motion_freeze_since_ms_ = 1000;
   controller.motion_frozen_response_reference_ = ResponseReference{20, 30, 0.6F};
   auto recovery = std::make_shared<LongTermController::RecoveryAcceptance>(config);
   recovery->bbox = {102, 82, 20, 20};
   recovery->display_bbox = recovery->bbox;
-  recovery->motion.initialize(recovery->bbox, 840, 400, 300);
+  recovery->motion.initialize(recovery->bbox, 1050, 400, 300);
   controller.pending_recovery_acceptance_ = recovery;
-  controller.last_timestamp_ms_ = 840;
+  controller.last_timestamp_ms_ = 1050;
   controller.apply_recovery_acceptance();
   expect_true(!controller.motion_freeze_since_ms_ &&
                   !controller.motion_frozen_response_reference_ &&

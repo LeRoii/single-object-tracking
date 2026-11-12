@@ -388,11 +388,13 @@ class LongTermController {
     std::optional<std::int64_t> suspected_since_ms;
     std::optional<std::int64_t> clean_since_ms;
     std::vector<float> motion_residual_history;
+    std::vector<float> motion_recent_residuals;
     std::optional<std::int64_t> motion_freeze_since_ms;
     std::optional<std::int64_t> motion_clean_since_ms;
     std::optional<ResponseReference> motion_frozen_response_reference;
     std::optional<MotionSnapshot> motion_last_clean_trend;
     int motion_risk_streak;
+    std::optional<std::int64_t> motion_response_drop_since_ms;
     TrackingMode mode;
   };
 
@@ -421,11 +423,13 @@ class LongTermController {
   bool search_motion_reference_held_ = false;
   std::optional<std::int64_t> search_motion_clean_since_ms_;
   std::vector<float> motion_residual_history_;
+  std::vector<float> motion_recent_residuals_;
   std::optional<std::int64_t> motion_freeze_since_ms_;
   std::optional<std::int64_t> motion_clean_since_ms_;
   std::optional<ResponseReference> motion_frozen_response_reference_;
   std::optional<MotionSnapshot> motion_last_clean_trend_;
   int motion_risk_streak_ = 0;
+  std::optional<std::int64_t> motion_response_drop_since_ms_;
   std::int64_t last_trusted_timestamp_ms_ = 0;
   bool legacy_anchor_observations_ = false;
   bool recent_safe_observations_ = false;
