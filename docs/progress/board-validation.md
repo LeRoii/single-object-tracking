@@ -2196,3 +2196,52 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   状态的第 70 帧报告失败。此处不修改或放宽协调者批准的门禁，不宣称候选已达到 C012
   全部晋级条件；C012 继续作为默认效果基线。尚未实施阶段 2 重捕获候选关联、阶段 3
   持续搜索控制，也未完成 car001 新运行、生产交叉编译或人工吊舱验收。
+
+## 2026-11-12T13:38:53+08:00 recent-safe v2 三阶段 RK3588 双目标验证 HOLD
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`。阶段 2 候选关联提交
+  `d36ae22a200522314f7b8e0a4362e04e0cd97bc3`，恢复 probation 提交
+  `5ce180dd4e14b04e9328150fd87bc38ca58e0c33`、`b18bb8241e39fc0f13886564d6e843eb584f0d0f`，
+  阶段 3 持续有界搜索控制提交
+  `b53866785d4a50855f3c2abf08ccb89f2aa69b9d`。后续实验
+  `ffe8bd9a466b13de641a62b51928903e118759a7` 试图让持续单指标下降快速进入 SEARCH，
+  但板端双目标均出现多次正常段误 SEARCH/误重捕获，已由
+  `b8aa1006b66843a37f711e147ce4f92632279317` 明确撤销；当前分支树与已验证的
+  `b538667` 相同。未修改阈值、配置或 ROI 扰动策略。
+- 保留候选源码部署根为
+  `/home/neardi/Project/SOT/occ-recent-safe-v2-b538667`，`source.tar` SHA-256
+  `ed2f4f61014a4ef107eabe44d7a2d02b57ee2a42dc6a42f2582cedf2b36c8ed2`。
+  RK3588 原生 Debug CTest 22/22 通过；主机 RKNN-off CTest 22/22、C012 门禁单测 5/5
+  与 `git diff --check` 通过。板端 `build/nanotrack_v3` SHA-256 为
+  `c97945d117dc6d611f222477308dfe4a7a07d2067b0c306872c091d3b557c3c2`；配置 SHA-256
+  仍为 `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`
+  （`calibrated=false`）。视频、detector 和三份 tracker 模型哈希均与 RS001 相同，精确清单
+  位于板端 `provenance/final-inputs.sha256`。
+- 最终固定 A/B ROI 运行：`car_001=992,582,37,39`、`car_002=970,517,38,38`，各
+  0--270 帧。两次 runtime exit 0、schema v11 verifier PASS、AVI 1920x1080 共 271 帧；
+  两次均全程 `control_valid=1` 且无 `LOST`。car001 在 185 帧重捕获，186 帧只进入一帧
+  SUSPECTED，187--189 由 staged 承接并提交 recent，190--270 无 SEARCH。car002 在
+  60--80 无 SEARCH，第 70 帧为单帧 SUSPECTED 且 observation control 有效；后续搜索在
+  运动置信度衰减后仍保持有界 `MOTION_SEARCH` 控制。
+- car001 CSV/AVI/session metadata SHA-256 分别为
+  `82e23ad08e80d976ed072187ea1e0e2344a220595f2a925e3e33ce302792c89a`、
+  `4f40eeb1b35b5a23d4814213a6bdeabde6587d7b5ea4f72a481bf7d4a23c0a89`、
+  `e5db2fd2225e580c00a0ece936aa747780cd081ce6d2e5532809060e1cb39944`；car002 对应为
+  `2c03b7de9803922e83fc75ab46e09ba08211005c7f8ff6d09eebb607abda427e`、
+  `cde0c9267243483c1319b7c65454b761d1cb55575a7abdd54d3043b780b6eb75`、
+  `49dbc0385e5d8da53a34e2264f72a379520a1d5448c2a7882bb8416843a8c07b`。
+  大工件和完整日志保留在板端 `runs/car_001/`、`runs/car_002/`。
+- full evaluator：car001 **PASS**，有效观测 mean IoU `0.752494`，重捕获恰为 185，
+  evaluator JSON SHA-256
+  `7b945e043c0c9c5f6c485b5f20beb5f00e361f7aa77c12cd2a75a804a5a67c3e`；car002
+  可见框、连续控制、identity proxy、预测连续性和 235 帧重捕获均 PASS，但 213--216
+  完全遮挡仍声明观测，`full_occlusion_semantics` FAIL，JSON SHA-256
+  `886b4aead8f8595bd721c57ae155159969c8cea09ae51b7531d3757dc62101bf`。
+  现有 C012 双目标脚本另因 car002 第 70 帧有意为 `accepted=0` 的 SUSPECTED 状态而在该
+  单帧 FAIL；视觉框和控制未中断，但未经协调者批准不放宽该门禁。
+- **结论 / Handoff**：相对 RS001，car001 的永久身份冲突、恢复后立即回滚及搜索控制失效
+  已修复；car002 路牌段不再丢失，且后段可重捕获。候选仍为 **HOLD**，C012 保持正式效果
+  基线和默认部署。未解决项是 car002 完全遮挡的提前识别，以及 C012 门禁是否应允许
+  `SUSPECTED + observation control + accepted=0` 的单帧冻结语义；不得用已否决的单指标
+  快速升级规则解决。未启动生产交叉编译或人工吊舱验收，未修改协调者所有的
+  `STATUS.md` 或 `integration-contract.yaml`。
