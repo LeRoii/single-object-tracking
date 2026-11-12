@@ -1,5 +1,20 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T22:23:02+08:00 双窗口精简交互 Debug 主机实现
+
+- 分支 `codex/adaptive-display-box`，基线
+  `eae32e31e333d3f636294dfaa59ae9ad6c3fba1c`。交互模式拆分为两个同步窗口：
+  `NanoTrack Display` 只显示原始画面和白色 `display_bbox`，`NanoTrack Debug` 显示状态、
+  NanoTrack/运动诊断与绿色 `control_bbox`；正常、SUSPECTED 和 SEARCH 的有效控制框统一使用
+  绿色，具体控制来源仍由标签区分。ROI 重选继续在干净显示窗口完成，任一窗口关闭均安全退出。
+- detector 可视化只保留初始化选中框、通过类别/位置门且已进入候选队列的关键框、当前 active
+  candidate/probe 及 search hint；不再绘制全部原始拒绝框或对应拒绝文本。运行时 detector
+  诊断、CSV、控制器候选队列和日志未改变，本次只修改交互绘制选择。
+- 主机 RKNN-off 增量构建和 CTest `23/23 PASS`，其中 overlay 回归验证关键候选保留、类别不符、
+  stale、capacity、位置拒绝及无效框均不再进入画面；`git diff --check` PASS。
+- **边界 / 下一步**：主机 RKNN-off 不编译 `main.cpp` 的 RKNN/OpenCV 可执行目标，因此当前只构成
+  overlay 单测证据；需提交精确源码后在 RK3588 原生重建并启动交互模式，确认双窗口实际显示。
+
 ## 2026-11-12T22:02:57+08:00 自适应显示框 RK3588 双车验收
 
 - 分支 `codex/adaptive-display-box`，实施基线
