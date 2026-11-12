@@ -52,7 +52,7 @@ if grep -Eqi 'GTK|selectROI|imshow|cannot open display|RKNN:.*(error|unsupported
   exit 1
 fi
 
-python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-13}" <<'PY'
+python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-14}" <<'PY'
 import csv
 import hashlib
 import json
@@ -71,8 +71,8 @@ detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
 expected_rknn_target = sys.argv[9]
 EXPECTED_TRACKING_SCHEMA = int(sys.argv[10])
-if EXPECTED_TRACKING_SCHEMA not in {10, 11, 12, 13}:
-    raise SystemExit("expected tracking schema must be 10, 11, 12, or 13")
+if EXPECTED_TRACKING_SCHEMA not in {10, 11, 12, 13, 14}:
+    raise SystemExit("expected tracking schema must be 10, 11, 12, 13, or 14")
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
 for key, low, high in [
@@ -423,6 +423,12 @@ if EXPECTED_TRACKING_SCHEMA >= 13:
         "display_confirmation_count", "display_refresh_interval_ms",
         "display_refresh_paused", "display_runtime_p95_ms",
     }
+if EXPECTED_TRACKING_SCHEMA >= 14:
+    required |= {
+        "motion_correction_applied", "motion_input_frozen",
+        "motion_freeze_started", "motion_freeze_cleared",
+        "motion_freeze_age_ms", "motion_gate_reason",
+    }
 missing = required - set(rows[0])
 if missing:
     raise SystemExit(f"CSV header is missing: {sorted(missing)}")
@@ -498,6 +504,19 @@ for index, row in enumerate(rows):
                 row["trusted_for_state_update"] == "1" and
                 row["tracking_phase"] == "TRACKING"):
             raise SystemExit(f"motion update without trusted tracking observation at row {index}")
+    if EXPECTED_TRACKING_SCHEMA >= 14:
+        for key in ("motion_correction_applied", "motion_input_frozen",
+                    "motion_freeze_started", "motion_freeze_cleared"):
+            if row[key] not in {"0", "1"}:
+                raise SystemExit(f"invalid {key} at row {index}")
+        if row["motion_correction_applied"] == "1" and row["motion_update_valid"] != "1":
+            raise SystemExit(f"motion correction without update at row {index}")
+        if row["motion_freeze_started"] == "1" and (row["motion_input_frozen"] != "1" or row["motion_correction_applied"] != "0"):
+            raise SystemExit(f"freeze start conflicts with motion correction at row {index}")
+        if row["motion_freeze_cleared"] == "1" and (row["motion_input_frozen"] != "0" or row["motion_update_valid"] != "1"):
+            raise SystemExit(f"freeze clear lacks reanchor at row {index}")
+        if int(row["motion_freeze_age_ms"]) < 0 or not row["motion_gate_reason"]:
+            raise SystemExit(f"invalid motion freeze diagnostics at row {index}")
     if EXPECTED_TRACKING_SCHEMA >= 13:
         if row["detector_request_purpose"] not in {"NONE", "SEARCH_RECOVERY", "INITIALIZATION", "DISPLAY_REFRESH"}:
             raise SystemExit(f"invalid detector request purpose at row {index}")
@@ -726,6 +745,10 @@ if EXPECTED_TRACKING_SCHEMA >= 11:
         }
         if EXPECTED_TRACKING_SCHEMA >= 12:
             shared_fields.add("motion_update_valid")
+        if EXPECTED_TRACKING_SCHEMA >= 14:
+            shared_fields |= {"motion_correction_applied", "motion_input_frozen",
+                              "motion_freeze_started", "motion_freeze_cleared",
+                              "motion_freeze_age_ms", "motion_gate_reason"}
         for index, (row, frame) in enumerate(zip(rows, frame_json)):
             for key in shared_fields:
                 value = frame.get(key)

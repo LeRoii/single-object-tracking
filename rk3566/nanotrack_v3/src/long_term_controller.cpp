@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace nanotrack {
 namespace {
@@ -127,6 +128,8 @@ void LongTermController::initialize(const BBox& initial_bbox,
   display_bbox_ = initial_bbox;
   reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
+  reset_motion_input_gate();
+  motion_last_clean_trend_ = motion_.snapshot(timestamp_ms);
   mode_ = TrackingMode::kTracking;
   last_output_mode_ = mode_;
   last_output_phase_ = TrackingPhase::kTracking;
@@ -260,7 +263,10 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   try {
     prediction_checkpoint_.emplace(PredictionCheckpoint{
         motion_, shadow_motion_, tentative_control_, response_degraded_since_ms_,
-        suspected_since_ms_, response_clean_since_ms_, mode_});
+        suspected_since_ms_, response_clean_since_ms_, motion_residual_history_,
+        motion_freeze_since_ms_, motion_clean_since_ms_,
+        motion_frozen_response_reference_, motion_last_clean_trend_,
+        motion_risk_streak_, mode_});
     // MotionEstimator clips finite predictions while retaining the frozen size.
     // Internal prediction failures abort this frame; no output may authorize it.
     motion_predicted = predictor.predict(timestamp_ms);
@@ -280,6 +286,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     shadow_motion_.reset();
     tentative_control_.reset();
     clear_suspicion();
+    reset_motion_input_gate();
     mode_ = mode_for_timestamp(timestamp_ms);
     throw;
   }
@@ -485,6 +492,7 @@ void LongTermController::abort_frame() noexcept {
   cancel_probation();
   frame_open_ = false;
   restore_prediction_checkpoint();
+  reset_motion_input_gate();
   if (active_plan_.mode == TrackingMode::kOcclusionHold) {
     hold_remaining_frames_ = 0;
     occlusion_coast_age_frames_ = 0;
@@ -681,12 +689,25 @@ void LongTermController::restore_prediction_checkpoint() noexcept {
   response_degraded_since_ms_ = checkpoint.degraded_since_ms;
   suspected_since_ms_ = checkpoint.suspected_since_ms;
   response_clean_since_ms_ = checkpoint.clean_since_ms;
+  motion_residual_history_ = std::move(checkpoint.motion_residual_history);
+  motion_freeze_since_ms_ = checkpoint.motion_freeze_since_ms;
+  motion_clean_since_ms_ = checkpoint.motion_clean_since_ms;
+  motion_frozen_response_reference_ = checkpoint.motion_frozen_response_reference;
+  motion_last_clean_trend_ = checkpoint.motion_last_clean_trend;
+  motion_risk_streak_ = checkpoint.motion_risk_streak;
   mode_ = checkpoint.mode;
   prediction_checkpoint_.reset();
 }
 
 void LongTermController::complete_frame(const SearchPlan& plan,
                                         ControllerOutput& output) {
+  output.motion_input_frozen = motion_freeze_since_ms_.has_value();
+  if (motion_freeze_since_ms_) {
+    output.motion_freeze_age_ms = plan.timestamp_ms - *motion_freeze_since_ms_;
+    if (!output.accepted && std::string(output.motion_gate_reason) == "NONE") {
+      output.motion_gate_reason = "FROZEN_NO_ACCEPTED_OBSERVATION";
+    }
+  }
   finalize_output_semantics(output);
   if (output.tracking_phase != TrackingPhase::kSuspected) tentative_control_.reset();
   if (output.tracking_phase == TrackingPhase::kSuspected) {
@@ -1506,6 +1527,8 @@ void LongTermController::apply_recovery_acceptance() noexcept {
   frozen_scale_reference_.reset();
   occlusion_suspicion_frames_ = 0;
   response_baseline_.reset_after_recovery();
+  reset_motion_input_gate();
+  motion_last_clean_trend_ = motion_.snapshot(last_timestamp_ms_);
   search_motion_reference_ = motion_.snapshot(last_timestamp_ms_);
   search_motion_reference_held_ = false;
   search_motion_clean_since_ms_.reset();
@@ -1519,9 +1542,104 @@ void LongTermController::apply_recovery_acceptance() noexcept {
   consecutive_unreliable_frames_ = 0;
 }
 
+void LongTermController::reset_motion_input_gate() noexcept {
+  motion_residual_history_.clear();
+  motion_freeze_since_ms_.reset();
+  motion_clean_since_ms_.reset();
+  motion_frozen_response_reference_.reset();
+  motion_last_clean_trend_.reset();
+  motion_risk_streak_ = 0;
+}
+
+bool LongTermController::motion_input_allows_correction(
+    const SearchPlan& plan, const EvaluatedObservation& selected,
+    const ResponseBaselineEvaluation& response, ControllerOutput& output) {
+  if (selected.observation.template_kind != TemplateKind::kRecent) {
+    motion_risk_streak_ = 0;
+    return !motion_freeze_since_ms_;
+  }
+  if (!response.reference && !motion_frozen_response_reference_) {
+    motion_residual_history_.push_back(selected.center_residual);
+    if (motion_residual_history_.size() >
+        static_cast<std::size_t>(config_.occlusion_reference_window)) {
+      motion_residual_history_.erase(motion_residual_history_.begin());
+    }
+    motion_risk_streak_ = 0;
+    return !motion_freeze_since_ms_;
+  }
+  const auto& metrics = selected.observation.metrics;
+  const ResponseReference& reference = motion_frozen_response_reference_
+      ? *motion_frozen_response_reference_ : *response.reference;
+  const bool psr_drop = reference.psr > 0.0F &&
+      metrics.psr <= reference.psr * (1.0F - config_.response_psr_drop_ratio);
+  const bool apce_drop = reference.apce > 0.0F &&
+      metrics.apce <= reference.apce * (1.0F - config_.response_apce_drop_ratio);
+  const bool margin_drop = metrics.peak_margin < reference.peak_margin &&
+      reference.peak_margin - metrics.peak_margin >= config_.occlusion_peak_margin_drop;
+  const int drops = static_cast<int>(psr_drop) + static_cast<int>(apce_drop) +
+                    static_cast<int>(margin_drop);
+  if (motion_freeze_since_ms_) {
+    if (drops != 0) {
+      motion_clean_since_ms_.reset();
+      output.motion_gate_reason = "FROZEN_RESPONSE_DEGRADED";
+    } else {
+      if (!motion_clean_since_ms_) motion_clean_since_ms_ = plan.timestamp_ms;
+      output.motion_gate_reason = "FROZEN_CLEAN_PENDING";
+      if (plan.timestamp_ms - *motion_clean_since_ms_ >= config_.suspicion_clear_ms) {
+        output.motion_freeze_age_ms = plan.timestamp_ms - *motion_freeze_since_ms_;
+        motion_.reanchor_preserving_velocity(output.tracking_bbox,
+            *motion_last_clean_trend_, plan.timestamp_ms);
+        reset_motion_input_gate();
+        motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
+        output.motion_update_valid = true;
+        output.motion_freeze_cleared = true;
+        output.motion_gate_reason = "REANCHORED";
+      }
+    }
+    return false;
+  }
+  bool innovation_outlier = false;
+  if (motion_residual_history_.size() >=
+      static_cast<std::size_t>(config_.occlusion_min_reference_samples)) {
+    std::vector<float> sorted(motion_residual_history_.begin(),
+                              motion_residual_history_.end());
+    std::sort(sorted.begin(), sorted.end());
+    const float median = sorted[sorted.size() / 2];
+    innovation_outlier = selected.center_residual > 2.0F * median;
+  }
+  if (drops > 0 && innovation_outlier) {
+    ++motion_risk_streak_;
+    output.motion_gate_reason = "RESPONSE_AND_INNOVATION_RISK";
+  } else {
+    motion_risk_streak_ = 0;
+    if (drops > 0) output.motion_gate_reason = "RESPONSE_RISK_ONLY";
+    else if (innovation_outlier) output.motion_gate_reason = "INNOVATION_RISK_ONLY";
+  }
+  if (motion_risk_streak_ >= 2 && motion_last_clean_trend_ && response.reference) {
+    motion_freeze_since_ms_ = plan.timestamp_ms;
+    motion_frozen_response_reference_ = *response.reference;
+    search_motion_reference_ = *motion_last_clean_trend_;
+    search_motion_reference_held_ = true;
+    search_motion_clean_since_ms_.reset();
+    motion_.hold_trusted_trend(*motion_last_clean_trend_);
+    output.motion_freeze_started = true;
+    output.motion_gate_reason = "FREEZE_PERSISTENT_RESPONSE_AND_INNOVATION";
+    return false;
+  }
+  if (drops == 0) {
+    motion_residual_history_.push_back(selected.center_residual);
+    if (motion_residual_history_.size() >
+        static_cast<std::size_t>(config_.occlusion_reference_window)) {
+      motion_residual_history_.erase(motion_residual_history_.begin());
+    }
+  }
+  return true;
+}
+
 void LongTermController::accept_observation(
     const SearchPlan& plan, const EvaluatedObservation& selected,
-    AcceptedObservationPath acceptance_path, ControllerOutput& output) {
+    AcceptedObservationPath acceptance_path, ControllerOutput& output,
+    const ResponseBaselineEvaluation& response) {
   const bool reacquired =
       acceptance_path != AcceptedObservationPath::kDirect &&
       acceptance_path != AcceptedObservationPath::kShortConfirmation;
@@ -1559,6 +1677,8 @@ void LongTermController::accept_observation(
   if (reacquired || (!legacy_anchor_observations_ && loss_start_ms_)) {
     motion_.initialize(output.tracking_bbox, plan.timestamp_ms,
                        frame_size_.width, frame_size_.height);
+    reset_motion_input_gate();
+    motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
     output.motion_update_valid = true;
     occlusion_evidence_.reset();
     occlusion_suspicion_frames_ = 0;
@@ -1566,8 +1686,15 @@ void LongTermController::accept_observation(
         output.tracking_bbox, output.tracking_bbox,
         selected.observation.metrics, true, false, false});
   } else {
-    motion_.correct(output.tracking_bbox, plan.timestamp_ms);
-    output.motion_update_valid = true;
+    if (motion_input_allows_correction(plan, selected, response, output)) {
+      motion_.correct(output.tracking_bbox, plan.timestamp_ms);
+      output.motion_update_valid = true;
+      output.motion_correction_applied = true;
+      if (!response.psr_drop && !response.apce_drop &&
+          !response.peak_margin_drop) {
+        motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
+      }
+    }
   }
   motion_.end_search();
   motion_search_active_ = false;
@@ -2096,7 +2223,7 @@ ControllerOutput LongTermController::finish_frame(
                output.occlusion_probe_cross_gate.value_or(false)) {
       accept_observation(plan, *selected,
                          AcceptedObservationPath::kOcclusionProbeRecovery,
-                         output);
+                         output, response);
       output.motion_control_authorized = false;
       output.occlusion_hold_remaining_frames = 0;
       output.occlusion_probe_confirmation_hits = 2;
@@ -2295,7 +2422,7 @@ ControllerOutput LongTermController::finish_frame(
   if (accepted && acceptance_path == AcceptedObservationPath::kSearchReacquisition) {
     defer_recovery_acceptance(plan, *selected, output);
   } else if (accepted) {
-    accept_observation(plan, *selected, acceptance_path, output);
+    accept_observation(plan, *selected, acceptance_path, output, response);
     const bool response_degraded = response.psr_drop || response.apce_drop ||
                                    response.peak_margin_drop;
     if (response_degraded) {
