@@ -1,5 +1,39 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T16:06:25+08:00 恢复版 2d31bfe RK3588 精确确认
+
+- 分支 `codex/recent-safe-occlusion-recovery-v2`，工作树
+  `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking`，基线
+  `49027b1a7f6ab6da2f81d0693ae4a6b420463cb7`，源码提交
+  `2d31bfee11e381a345ffba958beccd7eadd39289`。该提交恢复已验证的 `5fbcf83` search 趋势行为，
+  不再采用本轮四个已拒绝的分级运动冻结实现；schema v12 与 `motion_update_valid` 可观测字段
+  保留。主机 CTest `22/22`、evaluator 单测 `23/23`、`git diff --check` 均 PASS。
+- 源码归档 `/tmp/occ-restored-2d31bfe.tar.gz` 与板端同名文件 SHA-256 均为
+  `b070320cfa355dab7fb1eac7692674414361c2acd678450fa1fdef4fd2027aa4`；独立板端根
+  `/home/neardi/Project/SOT/occ-restored-2d31bfe`。RK3588 原生 Debug 构建和 CTest `22/22`
+  PASS；`build/nanotrack_v3` SHA-256
+  `9a30f2305060cd4d1d7aae7e2e41e23b7cd5c3dda011316234d6a43c34e4c240`。配置/模型 manifest
+  SHA-256 分别为 `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`、
+  `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`。
+- 固定 ROI `car_001=992,582,37,39`、`car_002=970,517,38,38` 各运行 0--270 帧并 exit 0；
+  schema v12 verifier 均 PASS，AVI 均为 `1920x1080`、271 帧。car001 full evaluator **PASS**，
+  visible mean IoU `0.751326`、唯一重捕 `[185]`，所有门通过。CSV/AVI/metadata/evaluator JSON
+  SHA-256 分别为 `20dabd22713d37e8e38fbecf2bf3bdd4530eab91a0b02164c3d51542e81d0b1e`、
+  `edf20ddcf711e329047ba4d70ce1c18d188a11ba93b57f4deafe091f0062dd03`、
+  `96a846da68118a5dcc1703dcd3c46766501f7e0cdc2641d456ea4d890634e929`、
+  `90d706c80eac5dea5c5b1921eec249049e6d5dfa5f26aba2dd1a5715422a6c41`。
+- car002 visible mean IoU `0.798100`，唯一重捕 `[235]`；visible、prediction continuity、
+  reacquisition、continuous control、identity proxy 均 PASS，只有已知 213--216 帧
+  `full_occlusion_semantics` FAIL，因此 full verdict 仍为 **FAIL**。CSV/AVI/metadata/evaluator JSON
+  SHA-256 分别为 `943ca28e792ad2a12a350af0ef5f840c740253ad941cc7086b44350d0b962a41`、
+  `78fe73d1628d2b9b23f91d368175d3e907a02e847c48665a4ffd41186ec04765`、
+  `2a5ebdf9d6edf7a89609cc10fa0e127e489d53912dd98cb4d1ff3e3d7bdce441`、
+  `14187890856aa0909328e9f0450a642278aef09631a536354a0e2dd555dfab3d`。
+- **结论 / Handoff**：最新 HEAD 已恢复到最后验证过的不退化行为，四个实验版本继续作为拒绝
+  证据保留，不进入 handoff。用户提出的“运动更新停止早于确认遮挡”原则仍合理，但当前 response
+  单指标不能可靠区分遮挡与正常强形变；在增加独立遮挡证据并覆盖多场景验证前，不再针对该单一
+  视频调冻结阈值。当前候选仍 HOLD，不构成正式生产或真实吊舱验收。
+
 ## 2026-11-12T15:59:24+08:00 49027b1 板端拒绝，恢复最后通过候选
 
 - SUSPECTED 分级提交 `49027b1a7f6ab6da2f81d0693ae4a6b420463cb7` 已部署到独立根
