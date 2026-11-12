@@ -1603,11 +1603,7 @@ void LongTermController::accept_observation(
   if (uses_unified_recovery() && reacquired) invalidate_unified_recovery();
   mode_ = TrackingMode::kTracking;
   output.mode = mode_;
-  if (output.motion_update_valid) {
-    ++stable_frames_;
-  } else {
-    stable_frames_ = 0;
-  }
+  ++stable_frames_;
   consecutive_unreliable_frames_ = 0;
   // As in ordinary recovery, an old staged recent template cannot be
   // committed using evidence from a different tracking episode.
@@ -2323,12 +2319,9 @@ ControllerOutput LongTermController::finish_frame(
                                    response.peak_margin_drop;
     accept_observation(plan, *selected, acceptance_path, response_degraded,
                        output);
-    if (ordinary_recent && !recent_probation_ &&
-        output.motion_update_valid) {
+    if (ordinary_recent && !recent_probation_) {
       response_baseline_.resume_tracking();
       response_baseline_.observe_trusted(selected->observation.metrics);
-    } else if (!output.motion_update_valid) {
-      response_baseline_.freeze();
     }
   } else {
     response_baseline_.freeze();
@@ -2384,9 +2377,7 @@ ControllerOutput LongTermController::finish_frame(
     // The committed heads ran this frame. Retire the abandoned staged slot
     // before a subsequent frame can request a new stage.
   } else if (recent_probation_) {
-    if (accepted && !output.motion_update_valid) {
-      probation_reliable_frames_ = 0;
-    } else if (accepted && probation_templates_agree &&
+    if (accepted && probation_templates_agree &&
         output.quality == QualityLevel::kReliable && !output.reacquired &&
         !force_confirmation) {
       ++probation_reliable_frames_;
@@ -2401,8 +2392,7 @@ ControllerOutput LongTermController::finish_frame(
     } else {
       output.template_action = TemplateAction::kRollbackRecent;
     }
-  } else if (accepted && output.motion_update_valid && !output.reacquired &&
-             !force_confirmation &&
+  } else if (accepted && !output.reacquired && !force_confirmation &&
              stable_frames_ >= config_.stable_frames_for_update &&
              plan.timestamp_ms - last_recent_update_ms_ >=
                  config_.recent_update_interval_ms) {
