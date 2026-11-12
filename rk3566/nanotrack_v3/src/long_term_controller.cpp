@@ -1025,7 +1025,7 @@ void LongTermController::publish_tentative(
   response_baseline_.freeze();
 
   const auto& bbox = recent.observation.bbox;
-  output.selected_template = TemplateKind::kRecent;
+  output.selected_template = recent.observation.template_kind;
   output.selected_observation_bbox = bbox;
   output.selected_metrics = recent.observation.metrics;
   output.quality = recent.quality;
@@ -1042,7 +1042,7 @@ void LongTermController::publish_tentative(
   output.control_valid = trusted_control_live(plan.timestamp_ms);
   mode_ = mode_for_timestamp(plan.timestamp_ms);
   output.mode = mode_;
-  if (recent_probation_) {
+  if (recent_probation_ && !recovery_probation_) {
     output.template_action = TemplateAction::kRollbackRecent;
   }
 }
@@ -1958,18 +1958,15 @@ ControllerOutput LongTermController::finish_frame(
       // gate. Keep it authoritative while recent proves it can follow the same
       // object; one divergent recent response must not discard the confirmed
       // recovery immediately.
-      if (staged && staged->quality == QualityLevel::kReliable) {
+      if (staged) {
         selected = staged;
-        disposition = RecentDisposition::kDirect;
+        disposition = assess_recent(plan, *staged, response);
       }
     } else if (recent && probation_geometry_allows_acceptance) {
       disposition = assess_recent(plan, *recent, response);
     }
-    if (recovery_probation_ && disposition != RecentDisposition::kDirect) {
-      disposition = RecentDisposition::kSearch;
-    }
     if (disposition == RecentDisposition::kTentative) {
-      publish_tentative(plan, *recent, output);
+      publish_tentative(plan, *selected, output);
       complete_frame(plan, output);
       return output;
     }

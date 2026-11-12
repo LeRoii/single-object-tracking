@@ -2044,6 +2044,28 @@ void test_atomic_search_reacquisition_and_template_probation() {
                   plan.template_run_mode == TemplateRunMode::kStagedAndRecent &&
                   !plan.recovery_probe,
               "recovery probation keeps recent and staged heads active");
+  recent_shifted.x += 8;
+  auto staged_dip = reliable_observation(
+      plan, TemplateKind::kStaged, plan.predicted_bbox, 5);
+  staged_dip.metrics.peak_margin = 0.01F;
+  output = threshold_split.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kRecent, recent_shifted, 5),
+       staged_dip},
+      std::nullopt);
+  expect_true(output.tracking_phase == TrackingPhase::kSuspected &&
+                  output.selected_template == TemplateKind::kStaged &&
+                  output.observation_present && !output.accepted &&
+                  output.control_valid,
+              "an isolated staged response dip remains tentative");
+  expect_true(output.template_action == TemplateAction::kNone,
+              "a tentative staged response does not request rollback");
+  expect_true(output.template_probation_active,
+              "a tentative staged response preserves recovery probation");
+  plan = threshold_split.begin_frame(6, 240, false);
+  expect_true(plan.template_run_mode == TemplateRunMode::kStagedAndRecent,
+              "tentative staged control retains staged mode, actual=" +
+                  std::to_string(static_cast<int>(plan.template_run_mode)));
   threshold_split.abort_frame();
 
   ResolvedControllerFixture off_probe(config);
