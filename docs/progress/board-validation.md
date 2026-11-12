@@ -1,5 +1,24 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T15:53:46+08:00 3f3d7be 板端拒绝与 SUSPECTED 分级边界校正
+
+- 几何解耦提交 `3f3d7be753096ad3de6e2d27082f73b7054eeb50` 已部署到独立根
+  `/home/neardi/Project/SOT/occ-motion-trust-3f3d7be`；原生 RK3588 Debug 构建/CTest
+  `22/22` 与两目标程序均成功，但 full evaluator 仍 **FAIL**：car001 错误重捕
+  `[84,102,127]`，car002 错误重捕 `[110]`。局部连续性允许 NanoTrack 框继续输出，却也会在
+  单指标波动触发的长冻结期间逐渐接受错误目标，因此该提交拒绝，不作为候选。
+- 三次失败共同说明：把任一单项 response 相对下降直接解释为“完全正常跟踪结束”过于敏感；
+  这不是用户所述旧策略本身，而是本轮对其触发边界的错误映射。现有状态机已经提供所需递进：
+  `TRACKING accepted` → `SUSPECTED tentative` → `SEARCHING`。SUSPECTED 框仍对外输出并可控制，
+  但已不被接受为可信状态更新，正好是“禁止运动更新早于确认丢失”的阶段。
+- 后续实现撤销所有“accepted 单指标下降即冻结”逻辑及冻结几何特例，改为首次发布
+  SUSPECTED tentative 时冻结 motion/shadow motion 的开环加速度和尺度速度、保留此前速度；
+  SEARCH 继续使用该未被 tentative 框污染的趋势。既有 `suspicion_clear_ms` 清洁迟滞通过后，
+  第一帧重新 accepted 时以当前框重新初始化运动模型。该设计不新增阈值，也不根据视频帧号或
+  方向做决策。
+- 单测覆盖 tentative 期间 observation/control 连续、`motion_update_valid=false`、速度保留、
+  加速度清零，以及原有清洁迟滞通过后重建运动状态。当前尚未提交或部署；旧三组失败证据均保留。
+
 ## 2026-11-12T15:48:10+08:00 2b08bc5 板端拒绝与冻结几何参考解耦
 
 - 收窄提交 `2b08bc5bd4bd5c69bab6de2888db53972cc88de3` 已部署到独立根

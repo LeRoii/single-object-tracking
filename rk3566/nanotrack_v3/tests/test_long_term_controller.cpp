@@ -2265,10 +2265,10 @@ void test_recent_safe_tentative_tracking() {
       const auto saved = controller->motion_.snapshot(120);
       expect_true(saved.bbox.x == trusted.bbox.x &&
                       saved.velocity_x == trusted.velocity_x &&
-                      saved.acceleration_x == trusted.acceleration_x &&
+                      saved.acceleration_x == 0.0F &&
                       controller->stable_frames_ == 3 &&
                       controller->response_baseline_.evaluate(healthy).reference->psr == 20,
-                  "tentative frames leave motion, response history and stable count untouched");
+                  "tentative frames preserve motion velocity, freeze acceleration, and leave other trusted state untouched");
     }
   }
 
@@ -2395,62 +2395,41 @@ void test_motion_updates_freeze_before_search() {
   expect_true(clean.velocity_x < 0.0F && clean.velocity_y > 0.0F,
               "fixture retains the clean left-down trend");
 
-  auto plan = controller.begin_frame(5, 200, false);
-  BBox contaminated = plan.predicted_bbox;
-  contaminated.x += 4.0F;
-  contaminated.y -= 4.0F;
-  auto degraded = reliable_observation(plan, TemplateKind::kRecent, contaminated);
-  degraded.metrics = healthy;
-  degraded.metrics.peak_margin = 0.30F;
-  const auto accepted_degraded =
-      controller.finish_frame(plan, {degraded}, std::nullopt);
-  const MotionSnapshot frozen = controller.motion_.snapshot(200);
-  expect_true(accepted_degraded.accepted &&
-                  accepted_degraded.motion_update_valid == false &&
-                  controller.motion_updates_held_,
-              "an accepted response drop freezes motion updates before search");
-  expect_true(accepted_degraded.tracking_bbox.x == contaminated.x &&
-                  accepted_degraded.tracking_bbox.y == contaminated.y &&
-                  accepted_degraded.control_valid,
-              "the degraded tracking observation still drives output and control");
+  for (std::uint64_t id = 5; id <= 7; ++id) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto degraded = reliable_observation(
+        plan, TemplateKind::kRecent, plan.predicted_bbox);
+    degraded.metrics = healthy;
+    degraded.metrics.peak_margin = 0.01F;
+    const auto tentative =
+        controller.finish_frame(plan, {degraded}, std::nullopt);
+    expect_true(!tentative.accepted && tentative.observation_present &&
+                    tentative.control_valid && !tentative.motion_update_valid &&
+                    tentative.tracking_phase == TrackingPhase::kSuspected,
+                "degraded observations keep control while motion updates are forbidden");
+  }
+  expect_true(controller.motion_updates_held_ &&
+                  controller.shadow_motion_.has_value(),
+              "sustained tentative tracking holds the clean motion state");
+  const MotionSnapshot frozen = controller.shadow_motion_->snapshot(280);
   expect_true(frozen.velocity_x < 0.0F && frozen.velocity_y > 0.0F &&
                   frozen.acceleration_x == 0.0F &&
                   frozen.acceleration_y == 0.0F,
-              "motion retains clean direction and clears open-loop acceleration");
-  // Deliberately separate the frozen prediction from the locally continuous
-  // tracker observation. The freeze must not reject its own observation just
-  // because the two states are intentionally decoupled.
-  controller.motion_.velocity_x_ = 1000.0F;
+              "the pre-search hold preserves velocity and clears acceleration");
 
-  for (std::uint64_t id = 6; id <= 8; ++id) {
-    const std::int64_t timestamp = id == 6 ? 240 : (id == 7 ? 320 : 360);
-    plan = controller.begin_frame(id, timestamp, false);
+  ControllerOutput recovered;
+  for (std::uint64_t id = 8; id <= 11; ++id) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
     auto clean_observation = reliable_observation(
-        plan, TemplateKind::kRecent,
-        {contaminated.x - 2.0F * static_cast<float>(id - 5),
-         contaminated.y + 2.0F * static_cast<float>(id - 5), 20, 20});
+        plan, TemplateKind::kRecent, plan.predicted_bbox);
     clean_observation.metrics = healthy;
-    const auto clean_output =
-        controller.finish_frame(plan, {clean_observation}, std::nullopt);
-    expect_true(clean_output.accepted &&
-                    clean_output.motion_update_valid == (id == 8),
-                "motion resumes only after a continuous clean interval");
+    recovered = controller.finish_frame(
+        plan, {clean_observation}, std::nullopt);
   }
-  expect_true(!controller.motion_updates_held_ &&
-                  !controller.motion_resume_sample_.has_value(),
-              "clean confirmation releases the motion-update hold");
-
-  plan = controller.begin_frame(9, 400, false);
-  auto collapsed = rejected_observation(plan, TemplateKind::kRecent,
-                                        plan.predicted_bbox);
-  collapsed.metrics.raw_score = 0.10F;
-  const auto searching = controller.finish_frame(plan, {collapsed}, std::nullopt);
-  expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
-                  searching.motion_velocity_x < 0.0F &&
-                  searching.motion_velocity_y > 0.0F &&
-                  searching.motion_acceleration_x == 0.0F &&
-                  searching.motion_acceleration_y == 0.0F,
-              "later search starts from the frozen clean motion state");
+  expect_true(recovered.accepted && recovered.motion_update_valid &&
+                  !controller.motion_updates_held_ &&
+                  !controller.shadow_motion_.has_value(),
+              "the existing clean-observation hysteresis releases and reinitializes motion");
 }
 
 void test_recent_safe_transient_and_probation() {

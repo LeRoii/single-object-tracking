@@ -136,7 +136,6 @@ void LongTermController::initialize(const BBox& initial_bbox,
   response_baseline_.reset_after_recovery();
   clear_suspicion();
   motion_updates_held_ = false;
-  motion_resume_sample_.reset();
   last_trusted_timestamp_ms_ = timestamp_ms;
   legacy_anchor_observations_ = false;
   recent_safe_observations_ = false;
@@ -624,21 +623,10 @@ LongTermController::EvaluatedObservation LongTermController::evaluate(
 
   EvaluatedObservation result;
   result.observation = observation;
-  // Once response degradation freezes motion corrections, the motion state is
-  // intentionally no longer colocated with accepted NanoTrack observations.
-  // Continue checking local observation continuity against the last accepted
-  // box; otherwise the deliberate freeze would manufacture an ever-growing
-  // residual and turn a still-valid tracker observation into a false loss.
-  const bool use_observation_continuity =
-      motion_updates_held_ && !loss_start_ms_ &&
-      (plan.mode == TrackingMode::kTracking ||
-       plan.mode == TrackingMode::kSuspected);
-  const BBox& geometry_reference =
-      use_observation_continuity ? current_bbox_ : plan.predicted_bbox;
   result.center_residual =
-      normalized_center_distance(observation.bbox, geometry_reference);
-  result.area_log_change = area_log_delta(observation.bbox, geometry_reference);
-  result.aspect_log_change = aspect_log_delta(observation.bbox, geometry_reference);
+      normalized_center_distance(observation.bbox, plan.predicted_bbox);
+  result.area_log_change = area_log_delta(observation.bbox, plan.predicted_bbox);
+  result.aspect_log_change = aspect_log_delta(observation.bbox, plan.predicted_bbox);
   result.center_gate = result.center_residual <= config_.max_center_distance * plan.search_scale;
   result.area_gate = result.area_log_change <= config_.max_area_log_change;
   result.aspect_gate = result.aspect_log_change <= config_.max_aspect_log_change;
@@ -1043,6 +1031,11 @@ void LongTermController::publish_tentative(
   if (!shadow_motion_) {
     shadow_motion_.emplace(std::move(motion_));
     motion_ = prediction_checkpoint_.value().motion;
+  }
+  if (!motion_updates_held_) {
+    motion_.freeze_open_loop_dynamics();
+    shadow_motion_->freeze_open_loop_dynamics();
+    motion_updates_held_ = true;
   }
   response_baseline_.freeze();
 
@@ -1517,7 +1510,6 @@ void LongTermController::apply_recovery_acceptance() noexcept {
   occlusion_suspicion_frames_ = 0;
   response_baseline_.reset_after_recovery();
   motion_updates_held_ = false;
-  motion_resume_sample_.reset();
   confirmations_.clear();
   active_detector_candidate_.reset();
   detector_candidates_.clear();
@@ -1530,8 +1522,7 @@ void LongTermController::apply_recovery_acceptance() noexcept {
 
 void LongTermController::accept_observation(
     const SearchPlan& plan, const EvaluatedObservation& selected,
-    AcceptedObservationPath acceptance_path, bool response_degraded,
-    ControllerOutput& output) {
+    AcceptedObservationPath acceptance_path, ControllerOutput& output) {
   const bool reacquired =
       acceptance_path != AcceptedObservationPath::kDirect &&
       acceptance_path != AcceptedObservationPath::kShortConfirmation;
@@ -1571,31 +1562,16 @@ void LongTermController::accept_observation(
                        frame_size_.width, frame_size_.height);
     output.motion_update_valid = true;
     motion_updates_held_ = false;
-    motion_resume_sample_.reset();
     occlusion_evidence_.reset();
     occlusion_suspicion_frames_ = 0;
     occlusion_decision_ = occlusion_evidence_.observe(OcclusionEvidenceInput{
         output.tracking_bbox, output.tracking_bbox,
         selected.observation.metrics, true, false, false});
-  } else if (response_degraded) {
-    if (!motion_updates_held_) motion_.freeze_open_loop_dynamics();
-    motion_updates_held_ = true;
-    motion_resume_sample_.reset();
   } else if (motion_updates_held_) {
-    if (!motion_resume_sample_) {
-      motion_resume_sample_ = MotionResumeSample{
-          output.tracking_bbox, plan.timestamp_ms};
-    } else if (plan.timestamp_ms - motion_resume_sample_->timestamp_ms >=
-               config_.suspicion_clear_ms) {
-      motion_.initialize(motion_resume_sample_->bbox,
-                         motion_resume_sample_->timestamp_ms,
-                         frame_size_.width, frame_size_.height);
-      motion_.predict(plan.timestamp_ms);
-      motion_.correct(output.tracking_bbox, plan.timestamp_ms);
-      output.motion_update_valid = true;
-      motion_updates_held_ = false;
-      motion_resume_sample_.reset();
-    }
+    motion_.initialize(output.tracking_bbox, plan.timestamp_ms,
+                       frame_size_.width, frame_size_.height);
+    output.motion_update_valid = true;
+    motion_updates_held_ = false;
   } else {
     motion_.correct(output.tracking_bbox, plan.timestamp_ms);
     output.motion_update_valid = true;
@@ -2127,7 +2103,7 @@ ControllerOutput LongTermController::finish_frame(
                output.occlusion_probe_cross_gate.value_or(false)) {
       accept_observation(plan, *selected,
                          AcceptedObservationPath::kOcclusionProbeRecovery,
-                         false, output);
+                         output);
       output.motion_control_authorized = false;
       output.occlusion_hold_remaining_frames = 0;
       output.occlusion_probe_confirmation_hits = 2;
@@ -2326,10 +2302,7 @@ ControllerOutput LongTermController::finish_frame(
   if (accepted && acceptance_path == AcceptedObservationPath::kSearchReacquisition) {
     defer_recovery_acceptance(plan, *selected, output);
   } else if (accepted) {
-    const bool response_degraded = response.psr_drop || response.apce_drop ||
-                                   response.peak_margin_drop;
-    accept_observation(plan, *selected, acceptance_path, response_degraded,
-                       output);
+    accept_observation(plan, *selected, acceptance_path, output);
     if (ordinary_recent && !recent_probation_) {
       response_baseline_.resume_tracking();
       response_baseline_.observe_trusted(selected->observation.metrics);
