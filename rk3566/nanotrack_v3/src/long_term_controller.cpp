@@ -185,6 +185,9 @@ TrackingMode LongTermController::mode_for_timestamp(
   if (elapsed < config_.assisted_recovery_ms) {
     return TrackingMode::kAssistedRecovery;
   }
+  if (config_.motion_search_enabled) {
+    return TrackingMode::kAssistedRecovery;
+  }
   return TrackingMode::kLost;
 }
 
@@ -859,9 +862,7 @@ bool LongTermController::trusted_control_live(std::int64_t timestamp_ms) const {
 
 bool LongTermController::search_control_live(std::int64_t timestamp_ms) const {
   return config_.motion_search_enabled && motion_search_active_ &&
-         mode_for_timestamp(timestamp_ms) != TrackingMode::kLost &&
-         motion_.prediction_confident(timestamp_ms) &&
-         (legacy_anchor_observations_ || trusted_control_live(timestamp_ms));
+         mode_for_timestamp(timestamp_ms) != TrackingMode::kLost;
 }
 
 LongTermController::RecentDisposition LongTermController::assess_recent(
@@ -1039,7 +1040,8 @@ void LongTermController::publish_tentative(
       plan, bbox, output.control_bbox, false, output);
   output.bbox = output.display_bbox;
   output.observation_present = true;
-  output.control_valid = trusted_control_live(plan.timestamp_ms);
+  output.control_valid = config_.motion_search_enabled ||
+                         trusted_control_live(plan.timestamp_ms);
   mode_ = mode_for_timestamp(plan.timestamp_ms);
   output.mode = mode_;
   if (recent_probation_ && !recovery_probation_) {

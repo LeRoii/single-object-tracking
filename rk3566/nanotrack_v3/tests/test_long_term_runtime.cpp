@@ -660,10 +660,10 @@ void test_runtime_rolls_back_finished_frames(const nanotrack::ImageView& image) 
   expired_tracker.reject_commit = true;
   const auto expired_commit = expired_runtime.process_frame(image, 4, 160);
   expect_true(expired_stage.output.reacquired && !expired_commit.output.accepted &&
-                  !expired_commit.output.control_valid &&
-                  expired_commit.output.control_source == ControlSource::kNone &&
+                  expired_commit.output.control_valid &&
+                  expired_commit.output.control_source == ControlSource::kMotionSearch &&
                   expired_commit.output.template_transition_result == TemplateTransitionResult::kTrackerRejected,
-              "failed recovery commit cannot create a fresh motion authorization window");
+              "failed recovery commit resumes bounded search without accepting observation control");
 }
 
 void test_runtime_reports_unlogged_slot_revocations(const nanotrack::ImageView& image) {

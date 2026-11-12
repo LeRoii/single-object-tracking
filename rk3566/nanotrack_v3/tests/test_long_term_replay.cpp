@@ -111,21 +111,20 @@ void test_stable_size_occlusion_replay() {
                   tentative.template_action == TemplateAction::kNone,
               "stable-size high-score degradation publishes the recent box without learning");
   bool entered_suspected = false;
-  bool expired = false;
   bool searched = false;
   for (int step = 0; step < 6; ++step) {
     const auto out = track(occluded, degraded);
     entered_suspected |= out.mode == TrackingMode::kSuspected;
-    expired |= !out.control_valid;
     searched |= out.tracking_phase == TrackingPhase::kSearching;
     expect_true(!out.accepted && !out.trusted_for_state_update &&
                     out.template_action == TemplateAction::kNone &&
-                    (!expired || (!out.control_valid && out.control_source == ControlSource::kNone)) &&
-                    (!searched || !out.observation_present),
-                "sustained degradation freezes learning and never renews expired control");
+                    out.control_valid &&
+                    (!searched || (!out.observation_present &&
+                                    out.control_source == ControlSource::kMotionSearch)),
+                "sustained degradation freezes learning while bounded control continues");
   }
-  expect_true(entered_suspected && expired && searched,
-              "sustained stable-size occlusion enters suspicion and search and revokes control");
+  expect_true(entered_suspected && searched,
+              "sustained stable-size occlusion enters suspicion and bounded search");
 }
 
 void test_viewpoint_and_turn_replay() {
@@ -203,8 +202,10 @@ void test_recent_safe_recovery_replay() {
               "agreeing templates count as one hit and leave motion control untouched");
   plan = tracker_only.begin_frame(3, 120, true);
   out = tracker_only.finish_frame(plan, {}, std::nullopt);
-  expect_true(!out.accepted && !out.control_valid && !plan.request_detector,
-              "one missing hit expires motion authorization from the last trusted time");
+  expect_true(!out.accepted && out.control_valid &&
+                  out.control_source == ControlSource::kMotionSearch &&
+                  !plan.request_detector,
+              "one missing hit keeps search control without accepting a candidate");
   plan = tracker_only.begin_frame(4, 160, true);
   auto weak_safe = reliable_for_plan(plan, other, 4, TemplateKind::kSafe);
   weak_safe.metrics.psr = 2.0F;
@@ -393,8 +394,9 @@ void test_delayed_detector_recovery_replay() {
                   out.detector_candidate_diagnostics[0].projected_bbox &&
                   std::fabs(out.detector_candidate_diagnostics[0].projected_bbox->x -
                             expected_x) < 0.001F &&
-                  !out.accepted && !out.control_valid && !out.search_hint,
-              "delayed far detection projects from the request frame without authorizing control");
+                  !out.accepted && out.control_valid &&
+                  out.control_source == ControlSource::kMotionSearch && !out.search_hint,
+              "delayed far detection projects without authorizing observation control");
 
   plan = controller.begin_frame(6, 170, true);
   const BBox probe_bbox = plan.predicted_bbox;
@@ -403,8 +405,10 @@ void test_delayed_detector_recovery_replay() {
               "next frame probes the projected far detector region at normal request cadence");
   out = controller.finish_frame(
       plan, {reliable_for_plan(plan, probe_bbox, 6, TemplateKind::kRecent)}, std::nullopt);
-  expect_true(!out.accepted && !out.control_valid && out.recovery_confirmation_hits == 1,
-              "far detector still requires two NanoTrack hits before control can resume");
+  expect_true(!out.accepted && out.control_valid &&
+                  out.control_source == ControlSource::kMotionSearch &&
+                  out.recovery_confirmation_hits == 1,
+              "far detector still requires two NanoTrack hits before observation control");
   plan = controller.begin_frame(7, 200, true);
   out = controller.finish_frame(
       plan, {reliable_for_plan(plan, probe_bbox, 7, TemplateKind::kRecent)}, std::nullopt);
@@ -649,8 +653,9 @@ int main() {
   expect_true(output.control_valid && output.motion_control_authorized,
               "candidate replay continues motion control across recovery modes");
   output = step(motion_search, 5, 281, std::nullopt);
-  expect_true(!output.control_valid && !output.motion_control_authorized,
-              "candidate replay fails closed after time confidence expires");
+  expect_true(output.control_valid && output.motion_control_authorized &&
+                  !output.motion_prediction_confident,
+              "candidate replay keeps bounded control after confidence decays");
   output = step(motion_search, 6, 320, initial, TemplateKind::kRecent);
   expect_true(!output.accepted && !output.reacquired,
               "candidate replay first visual return stays shadow-only");

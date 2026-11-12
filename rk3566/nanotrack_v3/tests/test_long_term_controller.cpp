@@ -1721,19 +1721,20 @@ void test_time_based_motion_search_control() {
               "continued search remains authorized without repeating invalidation");
 
   plan = controller.begin_frame(5, 301, false);
-  expect_true(!plan.motion_control_authorized,
-              "search plan fails closed one millisecond after confidence expiry");
+  expect_true(plan.motion_control_authorized && !plan.motion_prediction_confident,
+              "search stays authorized after prediction confidence decays");
   output = controller.finish_frame(plan, {}, std::nullopt);
-  expect_true(!output.control_valid && !output.motion_control_authorized &&
+  expect_true(output.control_valid && output.motion_control_authorized &&
                   output.tracking_phase == TrackingPhase::kSearching &&
-                  output.control_source == ControlSource::kNone,
-              "expired prediction stays search state but cannot drive control");
+                  output.control_source == ControlSource::kMotionSearch,
+              "decayed prediction continues bounded search control");
 
   plan = controller.begin_frame(6, 334, false);
   output = controller.finish_frame(
       plan, reliable_pair(plan, plan.predicted_bbox, 6), std::nullopt);
-  expect_true(!output.accepted && !output.control_valid,
-              "first visual return remains confirmation-only after expiry");
+  expect_true(!output.accepted && output.control_valid &&
+                  output.control_source == ControlSource::kMotionSearch,
+              "first visual return remains confirmation-only while search control continues");
   plan = controller.begin_frame(7, 367, false);
   output = controller.finish_frame(
       plan, reliable_pair(plan, plan.predicted_bbox, 7), std::nullopt);
@@ -2283,12 +2284,13 @@ void test_recent_safe_tentative_tracking() {
 
   for (std::uint64_t id : {7U, 8U, 9U}) {
     const auto out = track(expires, id, shifted, degraded);
-    expect_true(out.control_valid == (id == 7),
-                "control expires from the last trusted frame, including time spent suspected");
+    expect_true(out.control_valid,
+                "tentative and search states keep bounded control active");
     if (id == 8) {
       expect_true(out.tracking_phase == TrackingPhase::kSuspected &&
-                      out.observation_present && out.control_source == ControlSource::kNone,
-                  "expired tentative control keeps publishing the recent observation");
+                      out.observation_present &&
+                      out.control_source == ControlSource::kObservation,
+                  "tentative control keeps publishing and driving from recent observation");
     }
     if (id == 9) {
       expect_true(out.tracking_phase == TrackingPhase::kSearching &&
@@ -2298,8 +2300,8 @@ void test_recent_safe_tentative_tracking() {
   }
   const auto search_plan = expires.begin_frame(10, 400, false);
   expect_true(search_plan.template_run_mode == TemplateRunMode::kRecentAndSafe &&
-                  !search_plan.motion_control_authorized,
-              "search runs recent and safe while expired control remains revoked");
+                  search_plan.motion_control_authorized,
+              "search runs recent and safe with bounded motion control");
 
   const auto suspect_plan = collapses.begin_frame(7, 280, false);
   expect_true(suspect_plan.template_run_mode == TemplateRunMode::kRecentAndSafe,
