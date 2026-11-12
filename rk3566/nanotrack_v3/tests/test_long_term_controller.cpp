@@ -2265,10 +2265,10 @@ void test_recent_safe_tentative_tracking() {
       const auto saved = controller->motion_.snapshot(120);
       expect_true(saved.bbox.x == trusted.bbox.x &&
                       saved.velocity_x == trusted.velocity_x &&
-                      saved.acceleration_x == 0.0F &&
+                      saved.acceleration_x == trusted.acceleration_x &&
                       controller->stable_frames_ == 3 &&
                       controller->response_baseline_.evaluate(healthy).reference->psr == 20,
-                  "tentative frames preserve motion velocity, freeze acceleration, and leave other trusted state untouched");
+                  "tentative frames leave motion, response history and stable count untouched");
     }
   }
 
@@ -2366,7 +2366,7 @@ void test_recent_safe_single_metric_dip_is_tentative() {
               "one healthy frame clears an isolated pre-entry response dip");
 }
 
-void test_motion_updates_freeze_before_search() {
+void test_search_uses_last_clean_response_motion_trend() {
   using namespace nanotrack;
   ControllerConfig config;
   config.motion_search_enabled = true;
@@ -2391,45 +2391,35 @@ void test_motion_updates_freeze_before_search() {
     expect_true(controller.finish_frame(plan, {observation}, std::nullopt).accepted,
                 "clean left-down observations establish a search trend");
   }
-  const MotionSnapshot clean = controller.motion_.snapshot(160);
+  const MotionSnapshot clean = *controller.search_motion_reference_;
   expect_true(clean.velocity_x < 0.0F && clean.velocity_y > 0.0F,
               "fixture retains the clean left-down trend");
 
-  for (std::uint64_t id = 5; id <= 7; ++id) {
-    const auto plan = controller.begin_frame(id, id * 40, false);
-    auto degraded = reliable_observation(
-        plan, TemplateKind::kRecent, plan.predicted_bbox);
-    degraded.metrics = healthy;
-    degraded.metrics.peak_margin = 0.01F;
-    const auto tentative =
-        controller.finish_frame(plan, {degraded}, std::nullopt);
-    expect_true(!tentative.accepted && tentative.observation_present &&
-                    tentative.control_valid && !tentative.motion_update_valid &&
-                    tentative.tracking_phase == TrackingPhase::kSuspected,
-                "degraded observations keep control while motion updates are forbidden");
-  }
-  expect_true(controller.motion_updates_held_ &&
-                  controller.shadow_motion_.has_value(),
-              "sustained tentative tracking holds the clean motion state");
-  const MotionSnapshot frozen = controller.shadow_motion_->snapshot(280);
-  expect_true(frozen.velocity_x < 0.0F && frozen.velocity_y > 0.0F &&
-                  frozen.acceleration_x == 0.0F &&
-                  frozen.acceleration_y == 0.0F,
-              "the pre-search hold preserves velocity and clears acceleration");
+  auto plan = controller.begin_frame(5, 200, false);
+  BBox reversed = plan.predicted_bbox;
+  reversed.x += 4.0F;
+  reversed.y -= 4.0F;
+  auto degraded = reliable_observation(plan, TemplateKind::kRecent, reversed);
+  degraded.metrics = healthy;
+  degraded.metrics.peak_margin = 0.30F;
+  const auto accepted_degraded =
+      controller.finish_frame(plan, {degraded}, std::nullopt);
+  expect_true(accepted_degraded.accepted &&
+                  accepted_degraded.motion_update_valid &&
+                  controller.search_motion_reference_held_,
+              "a relative response drop freezes only the search-motion reference");
 
-  ControllerOutput recovered;
-  for (std::uint64_t id = 8; id <= 11; ++id) {
-    const auto plan = controller.begin_frame(id, id * 40, false);
-    auto clean_observation = reliable_observation(
-        plan, TemplateKind::kRecent, plan.predicted_bbox);
-    clean_observation.metrics = healthy;
-    recovered = controller.finish_frame(
-        plan, {clean_observation}, std::nullopt);
-  }
-  expect_true(recovered.accepted && recovered.motion_update_valid &&
-                  !controller.motion_updates_held_ &&
-                  !controller.shadow_motion_.has_value(),
-              "the existing clean-observation hysteresis releases and reinitializes motion");
+  plan = controller.begin_frame(6, 240, false);
+  auto collapsed = rejected_observation(plan, TemplateKind::kRecent,
+                                        plan.predicted_bbox);
+  collapsed.metrics.raw_score = 0.10F;
+  const auto searching = controller.finish_frame(plan, {collapsed}, std::nullopt);
+  expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
+                  searching.motion_velocity_x < 0.0F &&
+                  searching.motion_velocity_y > 0.0F &&
+                  searching.motion_acceleration_x == 0.0F &&
+                  searching.motion_acceleration_y == 0.0F,
+              "search starts from the clean trend without extrapolating acceleration");
 }
 
 void test_recent_safe_transient_and_probation() {
@@ -2637,7 +2627,7 @@ void test_recent_safe_rolling_scale() {
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
-  test_motion_updates_freeze_before_search();
+  test_search_uses_last_clean_response_motion_trend();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();
   test_production_observation_preserves_collapse();

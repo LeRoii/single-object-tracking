@@ -1,5 +1,26 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T15:59:24+08:00 49027b1 板端拒绝，恢复最后通过候选
+
+- SUSPECTED 分级提交 `49027b1a7f6ab6da2f81d0693ae4a6b420463cb7` 已部署到独立根
+  `/home/neardi/Project/SOT/occ-motion-suspected-49027b1`；源码归档 SHA-256
+  `1a713edccd21d13ca30cff20b2178dac4fb74cc10b870b8ee86294fe046e16c6`。原生构建、CTest
+  `22/22`、两目标运行与 schema v12 verifier 均 PASS，但 full evaluator 仍非双目标通过。
+- car002 明显改善：唯一重捕为234帧，visible/control/identity/prediction/reacquisition 均 PASS，
+  只保留已知213--216帧 full-occlusion semantics FAIL；但 car001 出现错误重捕
+  `[80,101,212]` 并发生大范围身份/可见框失败。car001 的早期强形变/遮挡依赖原运动加速度
+  穿越，SUSPECTED 时无差别清零加速度会破坏它，因此 `49027b1` 仍低于 C012/`5fbcf83`
+  基线并被拒绝。
+- 四次真实板端失败表明，在当前观测量下，仅靠同一组 response 指标无法通用地区分“正常强
+  形变/临时遮挡但应继续运动估计”和“稳定尺寸遮挡即将污染运动”；继续调该视频阈值会产生
+  过拟合。分支最新源码恢复最后一个双目标已验证不退化的 `5fbcf83` 行为：继续更新当前运动，
+  只冻结 search 专用干净趋势；进入 SEARCH 时仅在当前趋势反向时采用干净趋势并清零加速度。
+  schema v12 的 `motion_update_valid` 可观测字段保留，但恢复版中所有 accepted TRACKING 观测均
+  为 true。失败根目录和报告全部保留。
+- **边界 / 下一步**：恢复版本不是对旧策略的最终否定；若继续实现，需增加独立于当前单指标
+  波动的遮挡证据或跨场景数据，而不是继续调 `occ_video_1`。恢复提交仍需主机回归与一次精确
+  RK3588 确认；在确认前不宣称最新 HEAD 已回到基线。
+
 ## 2026-11-12T15:53:46+08:00 3f3d7be 板端拒绝与 SUSPECTED 分级边界校正
 
 - 几何解耦提交 `3f3d7be753096ad3de6e2d27082f73b7054eeb50` 已部署到独立根
