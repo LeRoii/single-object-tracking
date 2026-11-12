@@ -1,5 +1,18 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-12T21:59:27+08:00 evaluator 对 additive schema v13 的兼容修正
+
+- 分支 `codex/adaptive-display-box`，基线为本分支实现提交
+  `59769e89df45e6e39a69306dadae7a6294e7e911`，结果为包含本条记录的同一提交。首次 RK3588
+  双车运行已证明 schema v13 保留 schema v12 全部语义列，但 canonical evaluator 仍以
+  `schema_version == 12` 判断当前重捕，导致实际 185/235 帧声明被列为 invalid schema。
+- evaluator 改为接受单一、版本号不低于契约最低版本且语义列完整的 additive schema；session
+  metadata 必须与实际行版本一致，旧 schema 9 及缺列版本仍拒绝。新增 v13 继承 v12 重捕语义
+  的回归，`python3 -m unittest tests.test_evaluate_occ_video_1` 结果 `24/24 PASS`，
+  `git diff --check` PASS。
+- **边界 / 下一步**：该修正只改变验收工具的向后兼容版本判断，不改变任何跟踪、显示或控制
+  运行时；需把精确新提交同步到 RK3588 后重新执行两车 full evaluator，再记录最终门禁。
+
 ## 2026-11-12T21:52:12+08:00 车/人自适应显示框主机实现
 
 - 分支 `codex/adaptive-display-box`，工作树

@@ -633,6 +633,15 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         report = evaluator.evaluate(contract, passing_rows(), "full")
         self.assertFalse(report["gates"]["tracking_schema"]["passed"])
 
+    def test_additive_schema13_preserves_schema12_recovery_semantics(self):
+        contract = synthetic_contract(schema=12)
+        contract["tracking_session_metadata"] = {"schema_version": 13}
+        rows = passing_rows(schema=13)
+        report = evaluator.evaluate(contract, rows, "full")
+        self.assertTrue(report["gates"]["tracking_schema"]["passed"])
+        self.assertTrue(report["gates"]["reacquisition"]["passed"])
+        self.assertEqual(report["reacquisition"]["frames"], [7])
+
     def test_current_recovery_counts_only_trusted_tracking_with_applied_recovery_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "rows.csv")
