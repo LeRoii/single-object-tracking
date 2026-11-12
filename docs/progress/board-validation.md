@@ -2128,3 +2128,35 @@ request ID 隔离与初始化帧不重复写出已观察。板端仅有 `girl_da
   两个 run 的 `evaluator-original-e027006/`。准确命令、原始及更新后的哈希见
   [RS001 评估记录](../evaluation/occ-video-1/recent-safe-candidate.json)。
 - **Handoff**：保持 RS001 **HOLD**。本次仅对保留 CSV 重新评分，新增推理运行 0 次。
+
+## 2026-11-12T09:56:47+08:00 latest HEAD RK3588 双目标视频运行与回传
+
+- 分支 `codex/occ-video-1-tracking`，运行源码提交与任务基线均为
+  `3ec5d56c72567b4e3eb6cab89cda149f51ce77f3`。源码通过 `git archive` 部署，归档在
+  主机与板端核验的 SHA-256 均为
+  `5d523e03c7d13a70b4065e9f450f8c79f1b0627d2f7a652610a8a68ba7114cc1`；独立板端根为
+  `/home/neardi/Project/SOT/occ-latest-3ec5d56`，未覆盖 C012 或 RS001。
+- 实际板为 `LKD3588`、Linux 6.1.84 aarch64，RKNN API
+  `2.1.0 (967d001cc8@2024-08-07T19:28:19)`、driver `0.9.8`。原生 Debug 构建启用
+  `ENABLE_RKNN_RUNTIME=ON`、`BUILD_TESTING=ON` 和 `-Werror=switch`，CTest 22/22 通过；
+  新 `build/nanotrack_v3` SHA-256 为
+  `8b30b04ce84dcfe4b4209a9aff7cf94a21697b78c35d2422fb2cee9396aebd38`。
+- 输入仍为 `data/occ_video_1/1.mp4`，SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；控制器配置
+  `visible-recent-safe-v1.conf` SHA-256
+  `7b038eed1dd052de5879bedbf465a2ded3cc79d5a6f0b662e39d9fd06fc15c34`
+  （`calibrated=false`）。tracker manifest 和 RK3588 detector SHA-256 分别为
+  `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`、
+  `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`。
+- `car_001=992,582,37,39` 与 `car_002=967,513,42,42` 分别独立运行 0--270 帧，
+  runtime 均 exit 0；schema v11 `verify_board.sh` 均 PASS，CSV 均为 271 数据行，输出视频
+  均经 `ffprobe` 确认为 1920x1080、30/1 fps、271 帧。板端完整结果保留在
+  `runs/car_001/` 与 `runs/car_002/`。
+- 两段视频已回传至 `/home/u20/occ-video-1-latest-3ec5d56-results/`，并在 u20 端重新
+  解码计数和复核哈希。`car_001-3ec5d56.avi` SHA-256 为
+  `7d0438ea9da9dc08f5f7effa5d0084668c9c97091b8e818e4e2a5e11eb5aa1fd`；
+  `car_002-3ec5d56.avi` SHA-256 为
+  `dee808467725707228f5eda6045f21aa8388425bc3099855189acab28fc0e0ef`。
+- **证据边界**：本次按用户要求完成最新程序的两目标单次运行、结构校验和视频交付，未执行
+  full evaluator，也不改变 RS001 HOLD、`calibrated=false`、正式 handoff 门槛或人工吊舱
+  验收状态；未修改 `STATUS.md` 或 `integration-contract.yaml`。
