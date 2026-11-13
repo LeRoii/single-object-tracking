@@ -71,6 +71,9 @@ struct ControllerConfig {
   std::int64_t suspicion_clear_ms = 100;
   float response_psr_drop_ratio = 0.25F;
   float response_apce_drop_ratio = 0.30F;
+  // Optional car-only early partial-visibility gate. Zero disables both.
+  float recent_visibility_height_ratio = 0.0F;
+  float recent_visibility_center_residual = 0.0F;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;

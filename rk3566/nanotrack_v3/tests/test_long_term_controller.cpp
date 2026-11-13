@@ -2406,6 +2406,38 @@ void test_sustained_dual_response_loss_stops_trusted_observations() {
               "sustained PSR and APCE loss blocks a trusted update before short history catches it");
 }
 
+void test_car_partial_visibility_needs_shrink_and_motion() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.recent_visibility_height_ratio = 0.98F;
+  config.recent_visibility_center_residual = 0.04F;
+  config.stable_frames_for_update = 99;
+  const BBox initial{70, 50, 30, 30};
+  const auto run = [&](int class_id, const BBox& box, bool decoded) {
+    ResolvedControllerFixture controller(config);
+    controller.initialize(initial, 0, 0, {320, 240},
+                          make_fixed_target_class(class_id, false));
+    const auto plan = controller.begin_frame(1, 40, false);
+    auto observation = reliable_observation(plan, TemplateKind::kRecent, box);
+    if (decoded) observation.decoded_bbox = box;
+    return controller.finish_frame(plan, {observation}, std::nullopt);
+  };
+  const BBox shrink_only{70, 50, 30, 29};
+  const BBox motion_only{72, 50, 30, 30};
+  const BBox combined{72, 50, 30, 29};
+  expect_true(run(2, shrink_only, true).accepted &&
+                  run(2, motion_only, true).accepted,
+              "height noise or center motion alone cannot suppress a car observation");
+  const auto partial = run(2, combined, true);
+  expect_true(!partial.accepted && partial.observation_present &&
+                  partial.tracking_phase == TrackingPhase::kSuspected &&
+                  !partial.trusted_for_state_update,
+              "car raw height shrink with center deviation is provisional");
+  expect_true(run(0, combined, true).accepted &&
+                  run(2, combined, false).accepted,
+              "other classes and observations without decoded geometry retain their contract");
+}
+
 void test_search_uses_last_clean_response_motion_trend() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2814,6 +2846,7 @@ int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();
+  test_car_partial_visibility_needs_shrink_and_motion();
   test_search_uses_last_clean_response_motion_trend();
   test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();

@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:43:16+08:00 早期部分可见轿车几何门禁主机候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `b04cdc7`。在 recent-safe 普通跟踪中新增可关闭的轿车原始框几何判据：原始 decoded 高度相对当前可信跟踪高度 `≤0.98`，且归一化中心残差 `≥0.04` 时，把该帧作为 provisional/SUSPECTED，禁止更新可信跟踪状态与模板；仅 `target_class_id=2`、具有 decoded 框且配置双参数启用时生效。`visible-adaptive-display.conf` 两参数 `recent_visibility_height_ratio=0.98`、`recent_visibility_center_residual=0.04`，SHA-256 `63007d32b58c7e4aa920762f4d73f3532ef8ee544e50101c0684914d9b470acc`。参数进入解析、校验与配置身份；其他配置默认关闭。该候选不消费 detector 显示框作为 tracking/控制恢复证据。
+- 新控制器测试检查单独高度噪声、单独中心运动不触发，双条件使轿车观测 provisional，其他类别或缺少 decoded 框保持原有行为。实际运行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/visibility-host-build.log` 和 `/tmp/nt-dual-gt-evidence/visibility-host-ctest.log`。下一步 RK3588 原生编译和双目标八组真值复测，重点观察 car002 第 211/212 帧、可见真值帧及 car001 重捕是否出现副作用。
+- **证据边界 / Handoff**：阈值由这组真值视频的离线诊断提出，尚未有板端反事实结果或跨场景标定；不批准 handoff。
+
 ## 2026-11-14T01:40:58+08:00 双时窗响应门禁板端复测
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；源码测试提交 `d34d0b9` 基于 `267e5b8`。源码包 `/home/neardi/Project/SOT/nt-dual-gt-dual-response-d34d0b9.tar` 主机/板端 SHA-256 `2e22e9238c4e7b2ebd8e2024050e9d676feeb802f38c0f20021b7bddb80b50a2`，隔离根 `/home/neardi/Project/SOT/dual-gt-dual-response-d34d0b9`。RK3588 原生编译及 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `849be5048b8085806d87f1741782a58be2ede88ed625f917357f5d95655ee0ee`，控制器配置 SHA-256 `1378c58fadd4a23b97bcc473ab06f69387d4402b8d3e44bc493f22065aed0b33`，headless 配置 SHA-256 `f5c2e7e63ccf2e0674eeb5d20c98e31f4779eb0ba78cc9257bdc704022240ffb`，同视频/RKNN/detector/manifest/labels 身份。

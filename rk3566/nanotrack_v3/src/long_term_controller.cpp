@@ -950,8 +950,15 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   const bool response_weak = metrics.psr < config_.reliable_psr ||
                              metrics.apce < config_.reliable_apce ||
                              metrics.peak_margin < config_.reliable_peak_margin;
+  const bool partial_visibility = target_class_.target_class_id == 2 &&
+      config_.recent_visibility_height_ratio > 0.0F &&
+      observation.decoded_bbox &&
+      observation.decoded_bbox->height <=
+          current_bbox_.height * config_.recent_visibility_height_ratio &&
+      recent.center_residual >= config_.recent_visibility_center_residual;
   const bool degraded = isolated_response_dip || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
+                        partial_visibility ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
     response_clean_since_ms_.reset();

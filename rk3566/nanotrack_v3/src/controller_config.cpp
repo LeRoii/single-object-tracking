@@ -128,6 +128,8 @@ void set_value(ControllerConfig& config,
   else if (key == "suspicion_clear_ms") config.suspicion_clear_ms = parse_integer(key, value);
   else if (key == "response_psr_drop_ratio") config.response_psr_drop_ratio = parse_float(key, value);
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
+  else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
+  else if (key == "recent_visibility_center_residual") config.recent_visibility_center_residual = parse_float(key, value);
   else if (key == "occlusion_hold_frames") config.occlusion_hold_frames = parse_int(key, value);
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
@@ -356,6 +358,15 @@ void validate_controller_config(const ControllerConfig& config) {
   if (!in_unit_interval(config.response_apce_drop_ratio) ||
       config.response_apce_drop_ratio == 0.0F) {
     throw std::invalid_argument("response_apce_drop_ratio must be in (0,1]");
+  }
+  const bool visibility_disabled = config.recent_visibility_height_ratio == 0.0F &&
+                                   config.recent_visibility_center_residual == 0.0F;
+  const bool visibility_enabled = config.recent_visibility_height_ratio > 0.0F &&
+                                  config.recent_visibility_height_ratio <= 1.0F &&
+                                  config.recent_visibility_center_residual > 0.0F &&
+                                  config.recent_visibility_center_residual <= 1.0F;
+  if (!visibility_disabled && !visibility_enabled) {
+    throw std::invalid_argument("recent visibility gate must be disabled or have two unit-interval thresholds");
   }
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
@@ -588,7 +599,9 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.suspicion_enter_ms << '|'
          << config.suspicion_clear_ms << '|'
          << config.response_psr_drop_ratio << '|'
-         << config.response_apce_drop_ratio;
+         << config.response_apce_drop_ratio << '|'
+         << config.recent_visibility_height_ratio << '|'
+         << config.recent_visibility_center_residual;
   return stream.str();
 }
 
