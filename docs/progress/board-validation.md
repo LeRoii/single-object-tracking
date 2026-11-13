@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T00:53:53+08:00 可疑帧重置模板计数板端否决
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；测试提交 `3c5324a` 基于 `78baddc`。源码包 `/home/neardi/Project/SOT/nt-dual-gt-stability-3c5324a.tar` 在主机和板端 SHA-256 `a3bbd9db1039a0b6e8bead8e093eecdff4105dbacd2302461ca617a823bb231d`，隔离根 `/home/neardi/Project/SOT/dual-gt-stability-3c5324a`。原生编译、`ctest --test-dir build --output-on-failure` 为 `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `5c46aecca655f3d61dc7a940f30f66d2b12466535ba9d60132461a03691bdfe2`。控制器配置与上条相同 SHA-256 `d6f9600a0a461c59bb1895711bb91c50c37d73b25eed64204dd1eb4225ff9853`，`runs/headless-eval.conf` SHA-256 `f30422ecb2e49d46020bbd6e3c698683f55003619c7220f2be41aba0bf858334`；视频、RKNN 模型、manifest、labels 与上条同身份。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3 runs/headless-eval.conf runs/matrix`；八组 CSV/AVI/session/log 留在板端 `runs/matrix/`，32 文件清单 `runs/matrix/checksums.sha256` SHA-256 `fc92c69bdc526574fda9464cfdb19a321c7c5f0466fd47b1958183a9e0fbcb18`；八个 AVI 的 ffprobe 输出均为 1920×1080、271 帧。小型文本证据包 `runs/stability-matrix-text.tar.gz` 主机/板端 SHA-256 `b46a33096805f2cc2b6854ac820b1f74ac66b89d01dc92881297430709d0966d`，主机评分 `/tmp/nt-dual-gt-evidence/stability-center.json` SHA-256 `43e40575b06b02a4b0dd39157e7f2d80173c02b7cd05cc75cdfb41057d4f5ff9`。
+- 与 `78baddc` 同协议比较，car001 标准/人工/左上/右下四组重捕帧从 `185/192/194/191` 变为 `197/187/194/195`；原本通过的标准框变为失败，跨初始框 tracking/display 中心距离 P95 由 `3.51/3.85 px` 恶化至 `24.34/22.34 px`。car002 右下框的 15 个无框帧仍误报 14 帧；该变更虽推迟该组 recent 模板的 stage `228→237`，却未改善主要问题。car001 第 49 帧的早期 SUSPECTED 也将遮挡前模板 stage 整体推迟一帧，改变第 162～166 帧的模板状态，说明全局清零有明显副作用。
+- **裁决 / Handoff**：撤回 `3c5324a` 的 `publish_tentative` 清零和相应测试期望，保留本条原始板端证据；继续以方向保护的 `78baddc` 行为为基线。两目标两路中心和遮挡语义尚未同时通过正式门禁，不批准 handoff。下一步定位 car001 重捕期与 car002 部分可见期的具体身份/几何判别问题。
+
 ## 2026-11-14T00:45:26+08:00 方向保护板端复测与遮挡后模板稳定性候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，本轮基线 `78baddcb79d4ee456203c76e249f353a456f0a99`。该提交源码包 `/home/neardi/Project/SOT/nt-dual-gt-direction-78baddc.tar` SHA-256 `81d8ba6078f4e1a5f98af0c23a97443fe1c2a08d8888de334216c88461853141`；板端根 `/home/neardi/Project/SOT/dual-gt-direction-78baddc`。RK3588 原生编译及 CTest `23/23 PASS`，`build/nanotrack_v3` SHA-256 `1ab8a7ed287be7be6930af41dd4674bd6c9851d1a6c03b1c163ba2c708b4ad24`。控制器配置 `d6f9600a0a461c59bb1895711bb91c50c37d73b25eed64204dd1eb4225ff9853`，headless 配置 `2eff9fe55e38f0d46b0b68049153d5ff28c8ee46abf7d9675d43b9d3a161b3a4`。视频、三个 NanoTrack RKNN、detector/manifest/labels 沿用前述已核对身份；板端 Linux 6.1.84、RKNN API 2.1.0、driver 0.9.8。
