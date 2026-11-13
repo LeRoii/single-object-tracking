@@ -167,7 +167,12 @@ void MotionEstimator::begin_search(std::int64_t timestamp_ms) {
     throw std::invalid_argument(
         "motion search must start at the latest prediction timestamp");
   }
-  if (!search_start_ms_) search_start_ms_ = timestamp_ms;
+  if (!search_start_ms_) {
+    search_start_ms_ = timestamp_ms;
+    // Acceleration learned from the last visual correction is unreliable
+    // once observations disappear. Coast at the last bounded velocity.
+    freeze_open_loop_dynamics();
+  }
 }
 
 void MotionEstimator::begin_search(

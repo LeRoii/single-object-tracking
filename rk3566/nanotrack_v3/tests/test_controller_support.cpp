@@ -844,6 +844,26 @@ int main() {
                   bounded_motion.snapshot(sample_time + 67).search_age_ms == -1,
               "ending search removes motion-control confidence");
 
+  MotionEstimator coasting_motion(motion_config);
+  coasting_motion.initialize(BBox{10, 20, 10, 10}, 0, 100, 80);
+  coasting_motion.predict(100);
+  coasting_motion.correct(BBox{20, 20, 10, 10}, 100);
+  coasting_motion.predict(200);
+  coasting_motion.correct(BBox{20, 20, 10, 10}, 200);
+  const auto before_coast = coasting_motion.snapshot(200);
+  expect_true(std::fabs(before_coast.acceleration_x) > 1.0F,
+              "search coast fixture has a learned acceleration");
+  coasting_motion.begin_search(200);
+  const auto coast_start = coasting_motion.snapshot(200);
+  expect_near(coast_start.velocity_x, before_coast.velocity_x, 1e-6F,
+              "search start preserves last bounded velocity");
+  expect_near(coast_start.acceleration_x, 0.0F, 1e-6F,
+              "search start clears unobserved acceleration");
+  const auto coast_prediction = coasting_motion.predict(300);
+  expect_near(coast_prediction.x,
+              coast_start.bbox.x + 0.1F * coast_start.velocity_x, 1e-4F,
+              "search predicts constant velocity after observation loss");
+
   MotionEstimator frozen_motion(motion_config);
   frozen_motion.initialize(BBox{40, 30, 20, 20}, 0, 200, 160);
   frozen_motion.predict(100);

@@ -1,5 +1,38 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T00:15:30+08:00 轮询时机板端实测与搜索匀速预测候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`。
+  轮询时机提交 `9e93f9dd9dec35c34ddebf5f88443c7588db7046` 的源码包
+  `/home/neardi/Project/SOT/nt-dual-gt-poll-after-9e93f9d.tar` 主机/板端
+  SHA-256 都为 `f1fcb0521392c72ea669c2a9ad73ddb1836659e4eca24b84ec9928e45001b44c`。
+  RK3588 隔离根 `/home/neardi/Project/SOT/dual-gt-poll-after-9e93f9d`，
+  原生 RKNN 编译与 CTest `23/23 PASS`；`build/nanotrack_v3` SHA-256
+  `5d21eec75f2b95a6878e1970459b413338491c82c0beebd4668dd46c8b767fc4`。
+  显示控制器配置 SHA-256
+  `d6f9600a0a461c59bb1895711bb91c50c37d73b25eed64204dd1eb4225ff9853`，
+  `runs/headless-eval.conf` SHA-256
+  `8487250b6b156922dc47899d1b80cacf6299cd53f6b660623d94724938504259`。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3
+  runs/headless-eval.conf runs/matrix`，保留 `runs/matrix/<场景>/` 的
+  CSV/AVI/session/log；32 文件清单 `runs/matrix/checksums.sha256` SHA-256
+  `bb1a84539b89f1e1c58476f7d56a1b890e5c2af6cc6448db6fd30bd3e173f8cd`。
+  八个 AVI 经 ffprobe 均为 1920×1080/271 帧，主机真值评分
+  `/tmp/nt-dual-gt-evidence/poll-after-center.json`。与上一轮最终 `alpha1`
+  对照，八组 tracking 中心均值、重捕帧、正式门禁均未改善；
+  car001 重捕仍为 `185/192/194/193`，car002 标准/真值框仍为 `235/235`，
+  car001/car002 tracking 跨初始框中心距离 P95 仍为 `3.51/10.62 px`。
+  因此同帧消费能力已由单元测试证明，当前板端视频尚无跟踪改善证据。
+- 新一轮候选以 `9e93f9d` 为基线：`MotionEstimator::begin_search` 首次进入
+  无观测搜索时清除加速度和尺度速度，保持最后已限幅速度做匀速预测，
+  避免最后一帧的噪声加速度在开环搜索中持续放大。`test_controller_support`
+  增加带非零已学习加速度的测试，核验入搜索后的匀速外推。主机实际运行
+  `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4` 与
+  `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，
+  RKNN-off `23/23 PASS`；RK3588 原生与双目标八组测试尚待同提交复验。
+- **证据边界 / Handoff**：无观测匀速预测仍需确认不会损害快速转弯目标、
+  遮挡期身份门禁及 car002 无框帧；不批准正式 handoff。
+
 ## 2026-11-14T00:08:27+08:00 Detector 轮询时机主机候选
 
 - `codex/dual-gt-init-consistency`、工作树 `/home/u20/single-object-tracking`，
