@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:57:03+08:00 uncertain_ms=100 参数筛查否决
+
+- 沿用 `codex/dual-gt-init-consistency@7cbf58d` RK3588 原生二进制 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`，仅板端 `runs/uncertain100-controller.conf` 将 `uncertain_ms=200→100`，配置 SHA-256 `f6c934ee0f20132e384cd4bcdb5c19be5d34b7563fd390a50ba90a7559ba8055`，headless 配置 SHA-256 `a5b3e28effb486177300487bc86b68745e89e764b5f3949513c88d5f866ac5b9`；源码默认配置不变。输入视频、GT、RKNN/detector 身份同上一八组。
+- 实际命令 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3 runs/headless-uncertain100.conf runs/uncertain100-matrix`，八组 CSV/AVI/session/log 留在板端，32 文件清单 SHA-256 `cf3148d95b7bd7fb5c9b71240e97ffa7fc73e5a7337f849539911b32ad0af685`；八个 AVI 经 ffprobe 均为 1920×1080、271 帧。小型文本包 `runs/uncertain100-text.tar.gz` 主机/板端 SHA-256 `4a642e173e661cb0656cc7f0f924094a3cceee9fb41f973183da738e277b7245`。用 `scripts/evaluate_occ_initialization_consistency.py` 和同样八个 ROI 评分，`/tmp/nt-dual-gt-evidence/uncertain100-center.json` SHA-256 `3081be617760d7400aa7faee2fb75121721f2dc36676ae3c0296fec0bf0bbc7f`。
+- car002 四组第 217～219 帧改为 SEARCHING/MOTION_SEARCH，但第 213～216 帧仍未满足完全遮挡语义。car001 标准框重捕 `185→193`，正式唯一 PASS 丢失；car002 左上出现额外第 144 帧重捕，右下重捕 `233→259`、可见帧 tracking 中心均值 `2.92→7.08 px`，car002 跨框 tracking 中心 P95 `6.21→46.09 px`。**否决**全局 `uncertain_ms=100`，保持源码配置 200 ms；本次不产生代码或 handoff。
+
 ## 2026-11-14T01:51:06+08:00 早期部分可见轿车门禁 RK3588 八组复测
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；源码提交 `7cbf58dca735ad653747b5c7994fad09140987a9`，基线 `b04cdc7`。精确源码包 `/home/neardi/Project/SOT/nt-dual-gt-visibility-7cbf58d.tar` SHA-256 `e5fc4f45ef41befaf165f2c7849f2afc277337aba79f3b6973cf2f3df8c7367b`；隔离根 `/home/neardi/Project/SOT/dual-gt-visibility-7cbf58d`。RK3588 原生构建及 CTest `23/23 PASS`，`build/nanotrack_v3` SHA-256 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`；控制器配置 SHA-256 `63007d32b58c7e4aa920762f4d73f3532ef8ee544e50101c0684914d9b470acc`，headless 配置 SHA-256 `5fdb1c5eadfec175545c5c36b0af15c66571ab673ead03da7a4f3d455e130219`。视频、GT、tracker、detector 输入身份沿用上一精确矩阵。
