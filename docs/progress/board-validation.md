@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:05:14+08:00 连续可信帧 14 的模板试验候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `c16ddf6`，保留已在板端量测的轿车 display 中心改动。重新应用 `3c5324a` 中“可疑帧清零模板连续可信计数”，同时仅在本轮测试配置 `visible-adaptive-display.conf` 把 `stable_frames_for_update=15→14`，新配置 SHA-256 `1378c58fadd4a23b97bcc473ab06f69387d4402b8d3e44bc493f22065aed0b33`。上一轮 car001 第 49 帧可疑响应后至第 63 帧 stage 有 14 个可信帧；该组合旨在保留该 stage 时序，同时让 car002 第 222 帧可疑响应后的更新等待至目标重新完全可见。它仍只是实验假设，不代表 14 具备跨场景标定。
+- 实际运行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/stable14-host-build.log` 和 `/tmp/nt-dual-gt-evidence/stable14-host-ctest.log`。下一步在 RK3588 上用同模型、视频、八组初始框原生编译并核对 tracking 与 display 中心、模板 stage 时序、重捕及无框误观测；若 car001 再退化立即撤回。
+- **证据边界 / Handoff**：参数与逻辑组合尚未经过板端测试，不批准 handoff。
+
 ## 2026-11-14T01:04:21+08:00 显示中心候选板端复测
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；测试提交 `7f95652` 基于 `ff44961`。源码包 `/home/neardi/Project/SOT/nt-dual-gt-display-center-7f95652.tar` 主机/板端 SHA-256 `96cda00f1533c19accfcecd4425cd26dd6677ef169cac934e9b209b3e7b933fa`，板端隔离根 `/home/neardi/Project/SOT/dual-gt-display-center-7f95652`。原生编译和 CTest `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `57cc0cf06efd9ac0fd306293823a8d46a66a87eb77292594b05bd0c1a267992d`；控制器配置 SHA-256 `d6f9600a0a461c59bb1895711bb91c50c37d73b25eed64204dd1eb4225ff9853`，headless 配置 SHA-256 `69b153d18c4dfd5b0cdf5b741287be3acd69cb6fcf6b8d6b8dbd9f767b4f23f6`。视频、RKNN、detector、manifest、labels 与前述同身份。

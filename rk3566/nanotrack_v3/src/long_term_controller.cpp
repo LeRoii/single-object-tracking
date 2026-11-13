@@ -1068,6 +1068,9 @@ BBox LongTermController::constrain_tentative_control(
 void LongTermController::publish_tentative(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     ControllerOutput& output) {
+  // A provisional response breaks the run of trusted frames needed before
+  // extracting a new recent template, even when it never starts full search.
+  stable_frames_ = 0;
   motion_risk_streak_ = 0;
   motion_response_drop_since_ms_.reset();
   motion_recent_residuals_.clear();

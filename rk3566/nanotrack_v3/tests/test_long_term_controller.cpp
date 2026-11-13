@@ -2266,9 +2266,9 @@ void test_recent_safe_tentative_tracking() {
       expect_true(saved.bbox.x == trusted.bbox.x &&
                       saved.velocity_x == trusted.velocity_x &&
                       saved.acceleration_x == trusted.acceleration_x &&
-                      controller->stable_frames_ == 3 &&
+                      controller->stable_frames_ == 0 &&
                       controller->response_baseline_.evaluate(healthy).reference->psr == 20,
-                  "tentative frames leave motion, response history and stable count untouched");
+                  "tentative frames preserve trusted motion and response history but reset template stability");
     }
   }
 
@@ -2278,6 +2278,8 @@ void test_recent_safe_tentative_tracking() {
                     out.mode == (id == 9 ? TrackingMode::kTracking : TrackingMode::kSuspected),
                 "clean recent must meet the clear gate even when safe is weak");
   }
+  expect_true(clears.stable_frames_ == 1,
+              "stable template history restarts after tentative recovery clears");
   expect_true(clears.begin_frame(10, 400, false).template_run_mode ==
                   TemplateRunMode::kRecentOnly,
               "clear returns to the single recent head");
@@ -2582,7 +2584,7 @@ void test_recent_safe_transient_and_probation() {
     auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
     recent.metrics = metrics;
     std::vector<TrackerObservation> observations{recent};
-    if (id == 6 || id == 7 || id == 11 || id == 12) {
+    if (id == 9 || id == 10 || id == 14 || id == 15) {
       expect_true(plan.template_run_mode == TemplateRunMode::kStagedAndRecent,
                   "probation requests only staged and recent heads");
       auto staged = recent;
@@ -2599,31 +2601,36 @@ void test_recent_safe_transient_and_probation() {
               "an isolated degraded sample freezes learning before the enter duration");
   const auto clears = track(5, healthy);
   expect_true(clears.accepted && clears.mode == TrackingMode::kTracking &&
-                  clears.template_action == TemplateAction::kStageRecent,
-              "a single clean observation clears the pending entry and can stage");
-  expect_true(track(6, stronger).template_action == TemplateAction::kNone &&
-                  track(7, stronger).template_action == TemplateAction::kCommitRecent &&
+                  clears.template_action == TemplateAction::kNone &&
+                  controller.stable_frames_ == 1,
+              "one clean observation clears the pending entry but cannot stage");
+  expect_true(track(6, healthy).template_action == TemplateAction::kNone &&
+                  track(7, healthy).template_action == TemplateAction::kNone &&
+                  track(8, healthy).template_action == TemplateAction::kStageRecent,
+              "recent staging requires four consecutive trusted frames after a tentative sample");
+  expect_true(track(9, stronger).template_action == TemplateAction::kNone &&
+                  track(10, stronger).template_action == TemplateAction::kCommitRecent &&
                   controller.response_baseline_.evaluate(healthy).reference->psr == 20,
               "staged probation leaves the trusted response baseline untouched");
 
   auto multi_metric_collapse = healthy;
   multi_metric_collapse.raw_score = 0.6F;
   multi_metric_collapse.peak_margin = 0.01F;
-  const auto searching = track(8, multi_metric_collapse);
+  const auto searching = track(11, multi_metric_collapse);
   expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
                   searching.mode != TrackingMode::kSuspected,
               "multiple absolute response failures enter search without softening");
-  expect_true(!track(9, healthy).accepted && track(10, healthy).accepted &&
+  expect_true(!track(12, healthy).accepted && track(13, healthy).accepted &&
                   !controller.response_baseline_.evaluate(healthy).reference,
               "recovery from short search also requires a fresh response baseline");
-  expect_true(track(11, healthy).template_action == TemplateAction::kNone &&
-                  track(12, healthy).template_action == TemplateAction::kCommitRecent,
+  expect_true(track(14, healthy).template_action == TemplateAction::kNone &&
+                  track(15, healthy).template_action == TemplateAction::kCommitRecent,
               "recovery probation uses staged/recent and commits once after two clean frames");
-  track(13, healthy);
-  track(14, healthy);
+  track(16, healthy);
+  track(17, healthy);
   expect_true(!controller.response_baseline_.evaluate(healthy).reference,
               "recovery and probation hits cannot count as ordinary baseline samples");
-  track(15, healthy);
+  track(18, healthy);
   expect_true(controller.response_baseline_.evaluate(healthy).reference.has_value(),
               "response gating resumes after a fresh ordinary minimum");
 }
