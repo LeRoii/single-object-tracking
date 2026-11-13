@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T00:56:37+08:00 轿车显示中心与跟踪中心一致候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `ff44961`。基于已保存的 `78baddc` 八组 CSV 离线构造显示中心与 tracking 中心相同、仍保留原 display 宽高的评分包 `/tmp/nt-dual-gt-evidence/display-center-probe/0.0/report.json` SHA-256 `68a6b0205011bbdf9ab4feb3f0bcb3e0fe8b160865fc8211aaaee33cda2faf7c`。四组 car001 显示中心均值由 `5.21/5.26/5.42/5.75` 降至与 tracking 相同的 `4.39/4.56/4.48/5.02 px`；car002 三组均值改善，右下组由 `3.41` 升至 `3.61 px`，但该组 P95 更差。离线 CSV 重写只是局部几何上限，不等于板端时序运行证据。
+- 新候选 `AdaptiveDisplayBox` 对轿车 `class_id=2` 只从 detector 取显示框宽高，中心跟随 tracking；人物等其他类别沿用既有变换。初始化时若 detector 框有偏心，也用 tracking 中心放置其宽高。新增单测用偏心 detector 框核验初始化和两次确认更新均不改变轿车显示中心。实际运行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`。下一步按同一八组板端原生测试核对 display 与 tracking 中心、显示宽高、正式门禁和 detector 刷新时序。
+- **证据边界 / Handoff**：该候选目前只有主机单测和离线几何模拟；tracking 重捕及 car002 无框语义不由本改动修复，正式 handoff 仍未批准。
+
 ## 2026-11-14T00:53:53+08:00 可疑帧重置模板计数板端否决
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；测试提交 `3c5324a` 基于 `78baddc`。源码包 `/home/neardi/Project/SOT/nt-dual-gt-stability-3c5324a.tar` 在主机和板端 SHA-256 `a3bbd9db1039a0b6e8bead8e093eecdff4105dbacd2302461ca617a823bb231d`，隔离根 `/home/neardi/Project/SOT/dual-gt-stability-3c5324a`。原生编译、`ctest --test-dir build --output-on-failure` 为 `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `5c46aecca655f3d61dc7a940f30f66d2b12466535ba9d60132461a03691bdfe2`。控制器配置与上条相同 SHA-256 `d6f9600a0a461c59bb1895711bb91c50c37d73b25eed64204dd1eb4225ff9853`，`runs/headless-eval.conf` SHA-256 `f30422ecb2e49d46020bbd6e3c698683f55003619c7220f2be41aba0bf858334`；视频、RKNN 模型、manifest、labels 与上条同身份。

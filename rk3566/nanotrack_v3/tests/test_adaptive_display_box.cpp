@@ -157,6 +157,37 @@ void test_confirmed_detector_box_has_no_extra_margin() {
               "confirmed detector correction targets the unpadded detector box");
 }
 
+void test_car_detector_changes_size_without_shifting_center() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_detector_blend_alpha = 1.0F;
+  value.display_max_size_step_ratio = 1.0F;
+  value.display_center_smoothing_alpha = 1.0F;
+  AdaptiveDisplayBox display(value);
+  const BBox tracked{90, 85, 20, 20};
+  TargetClassState target = established(2, BBox{75, 80, 40, 30});
+  display.initialize(tracked, target, FrameSize{200, 200});
+  expect_true(close(center_x(display.current()), center_x(tracked)) &&
+                  close(display.current().width, 40.0F),
+              "car detector initialization supplies size while tracker supplies center");
+  target.selected_candidate.reset();
+  ControllerOutput output = tracking_output(tracked);
+  DetectorBatch batch;
+  batch.purpose = DetectorRequestPurpose::kDisplayRefresh;
+  batch.candidates = {DetectorCandidate{BBox{75, 80, 40, 30}, 0.9F, 2}};
+  AdaptiveDisplayDiagnostics diagnostics;
+  batch.source_frame_id = 1;
+  display.ingest(batch, output, target);
+  display.update(output, target, diagnostics);
+  batch.source_frame_id = 2;
+  display.ingest(batch, output, target);
+  const BBox confirmed = display.update(output, target, diagnostics);
+  expect_true(diagnostics.correction_applied &&
+                  close(center_x(confirmed), center_x(tracked)) &&
+                  close(confirmed.width, 40.0F),
+              "confirmed detector refresh cannot offset the car display center");
+}
+
 void test_adaptive_cadence() {
   using namespace nanotrack;
   AdaptiveDisplayBox display(config());
@@ -248,6 +279,7 @@ int main() {
   test_detector_envelope_and_initialization();
   test_confirmation_and_search_freeze();
   test_confirmed_detector_box_has_no_extra_margin();
+  test_car_detector_changes_size_without_shifting_center();
   test_adaptive_cadence();
   test_reacquisition_rebases_display_scale();
   test_display_center_is_independent_of_tracking_smoothing();

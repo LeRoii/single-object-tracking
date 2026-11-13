@@ -58,6 +58,13 @@ void AdaptiveDisplayBox::initialize(const BBox& tracking_bbox,
     envelope = padded(target_class.selected_candidate->clipped_bbox,
                       target_class.target_class_id);
   }
+  if (target_class.target_class_id == 2) {
+    envelope = clip_bbox(
+        BBox{center_x(tracking_bbox) - 0.5F * envelope.width,
+             center_y(tracking_bbox) - 0.5F * envelope.height,
+             envelope.width, envelope.height},
+        frame_size.width, frame_size.height);
+  }
   display_bbox_ = clip_bbox(envelope, frame_size.width, frame_size.height);
   last_trusted_bbox_ = display_bbox_;
   set_transform(tracking_bbox, display_bbox_, 1.0F);
@@ -124,6 +131,12 @@ void AdaptiveDisplayBox::set_transform(const BBox& tracking_bbox,
                   std::max(1.0F, tracking_bbox.width);
   next.offset_y = (center_y(envelope) - center_y(tracking_bbox)) /
                   std::max(1.0F, tracking_bbox.height);
+  // The detector supplies the display envelope for cars. Its center can
+  // shift with occlusion or a neighboring car, so keep the tracker center.
+  if (class_id_ == 2) {
+    next.offset_x = 0.0F;
+    next.offset_y = 0.0F;
+  }
   next.width_ratio = envelope.width / std::max(1.0F, tracking_bbox.width);
   next.height_ratio = envelope.height / std::max(1.0F, tracking_bbox.height);
   transform_.offset_x += alpha * (next.offset_x - transform_.offset_x);
