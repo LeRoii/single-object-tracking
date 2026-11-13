@@ -1,5 +1,42 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T00:23:04+08:00 匀速搜索回退与方向反转保护候选
+
+- `codex/dual-gt-init-consistency@8d43554` 的源码包
+  `/home/neardi/Project/SOT/nt-dual-gt-coast-8d43554.tar` 主机/板端
+  SHA-256 `e33fbdb858981244ea3f82c009fb6404c5cc298320807295af1a50ffe7b24667`，
+  工作树 `/home/u20/single-object-tracking`，板端隔离根
+  `/home/neardi/Project/SOT/dual-gt-coast-8d43554`。RK3588 原生编译与
+  CTest `23/23 PASS`，`build/nanotrack_v3` SHA-256
+  `b4499b5794baf83d88be614e61bfc2628cc6ca5146dcbbb400608db5bdb2a4b6`。
+  控制器配置 SHA-256 与上条相同
+  `d6f9600a0a461c59bb1895711bb91c50c37d73b25eed64204dd1eb4225ff9853`，
+  `runs/headless-eval.conf` SHA-256
+  `2db756b777fe4fb916e4f374e29f245eb276fde75f7aaa491f4bc3412c42d199`；
+  视频、三个 NanoTrack RKNN、detector/manifest/labels 沿用前述已核对身份。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3
+  runs/headless-eval.conf runs/matrix`，八组 CSV/AVI/session/log 留在
+  `runs/matrix/<场景>/`；32 文件清单 SHA-256
+  `0c5d79d43a0f6c81d4e96a04c752bc10c24bc2e3a722e19f424f896899a0ee63`。
+  八个 AVI 经 ffprobe 均为 1920×1080/271 帧，主机真值评分
+  `/tmp/nt-dual-gt-evidence/coast-center.json`。car001 四组重捕从旧版
+  `185/192/194/193` 变为 `192/192/186/191`；右下框跟踪中心均值
+  `5.73→5.18 px`，但原本通过的标准框晚重捕而失败，左上框可见框门禁
+  新失败，跨初始框 tracking 中心距离 P95 `3.51→6.73 px`。
+  car002 四组的跟踪中心均值、遮挡误观测及正式门禁未改善。因此撤回
+  `MotionEstimator::begin_search` 的无条件匀速外推改动及相应测试。
+- 新候选基于本条源代码继续修正：仅当搜索当前速度与最后接受的趋势
+  点积为负时，恢复最后接受的速度，并清除其加速度；不再要求已触发
+  单独 motion freeze。car001 右下框在第 165 帧的已接受速度 y 分量
+  `+15.58 px/s`，搜索前翻转为负，而标准框没有方向反转；该条件旨在
+  只处理这类开环反向。`test_long_term_controller` 新增无 motion freeze 的
+  反向回退测试，主机实际运行
+  `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、
+  `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，
+  RKNN-off `23/23 PASS`。板端原生及两目标八组复测待完成。
+- **证据边界 / Handoff**：方向反转保护仍只是主机候选，尚不能声称改善
+  RK3588 目标中心或通过正式门禁；不批准正式 handoff。
+
 ## 2026-11-14T00:15:30+08:00 轮询时机板端实测与搜索匀速预测候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`。

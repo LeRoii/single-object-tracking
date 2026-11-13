@@ -2422,6 +2422,28 @@ void test_search_uses_last_clean_response_motion_trend() {
               "search starts from the clean trend without extrapolating acceleration");
 }
 
+void test_search_rejects_unverified_velocity_reversal() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  ResolvedControllerFixture controller(config);
+  controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300});
+  auto plan = controller.begin_frame(1, 40, false);
+  controller.search_motion_reference_->velocity_x = 0.0F;
+  controller.search_motion_reference_->velocity_y = 10.0F;
+  controller.search_motion_reference_held_ = false;
+  controller.motion_.velocity_x_ = 0.0F;
+  controller.motion_.velocity_y_ = -10.0F;
+  auto lost = rejected_observation(plan, TemplateKind::kRecent,
+                                   plan.predicted_bbox);
+  lost.metrics.raw_score = 0.10F;
+  const auto searching = controller.finish_frame(plan, {lost}, std::nullopt);
+  expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
+                  searching.motion_velocity_y == 10.0F &&
+                  searching.motion_acceleration_y == 0.0F,
+              "search restores last accepted direction after open-loop reversal");
+}
+
 void test_motion_input_freeze_and_reanchor() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2747,6 +2769,7 @@ int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
   test_search_uses_last_clean_response_motion_trend();
+  test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();

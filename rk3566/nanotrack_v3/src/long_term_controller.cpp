@@ -2540,8 +2540,10 @@ ControllerOutput LongTermController::finish_frame(
           ? current_motion.velocity_x * search_motion_reference_->velocity_x +
                 current_motion.velocity_y * search_motion_reference_->velocity_y
           : 0.0F;
-      if (search_motion_reference_held_ && search_motion_reference_ &&
-          trend_dot < 0.0F) {
+      // A noisy final acceleration can reverse the open-loop velocity before
+      // search begins. The last accepted trend is safer than extrapolating
+      // that reversal, even if no separate motion freeze was triggered.
+      if (search_motion_reference_ && trend_dot < 0.0F) {
         motion_.begin_search(plan.timestamp_ms, *search_motion_reference_);
       } else {
         motion_.begin_search(plan.timestamp_ms);
