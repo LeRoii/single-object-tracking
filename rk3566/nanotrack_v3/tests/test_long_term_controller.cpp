@@ -2186,6 +2186,40 @@ void test_conflicted_recovery_needs_matching_detector_evidence() {
   }
   expect_true(output.accepted && output.reacquired,
               "conflict-free tracker recovery retains its two-hit path");
+
+  ResolvedControllerFixture refresh(config);
+  refresh.initialize(target, 0, 0, {240, 160}, make_fixed_target_class(2, true));
+  reject_frame(refresh, 1, 40);
+  plan = refresh.begin_frame(2, 80, false);
+  refresh.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, target, 2)},
+      std::nullopt);
+  refresh.recovery_conflict_seen_ = true;
+  refresh.last_detector_request_ms_ = 80;
+  plan = refresh.begin_frame(3, 120, true);
+  expect_true(plan.request_detector && refresh.conflict_detector_refresh_sent_,
+              "first post-conflict tracker hit expedites one detector request");
+  refresh.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, target, 3)},
+      std::nullopt);
+  plan = refresh.begin_frame(4, 160, true);
+  expect_true(!plan.request_detector,
+              "the conflict refresh cannot bypass the interval twice");
+  refresh.abort_frame();
+
+  ResolvedControllerFixture no_conflict_refresh(config);
+  no_conflict_refresh.initialize(target, 0, 0, {240, 160},
+                                 make_fixed_target_class(2, true));
+  reject_frame(no_conflict_refresh, 1, 40);
+  plan = no_conflict_refresh.begin_frame(2, 80, false);
+  no_conflict_refresh.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, target, 2)},
+      std::nullopt);
+  no_conflict_refresh.last_detector_request_ms_ = 80;
+  plan = no_conflict_refresh.begin_frame(3, 120, true);
+  expect_true(!plan.request_detector,
+              "conflict-free tracker hit cannot bypass detector cadence");
+  no_conflict_refresh.abort_frame();
 }
 
 void test_recovery_probation_cleanup() {

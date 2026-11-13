@@ -146,6 +146,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   recent_safe_observations_ = false;
   loss_start_ms_.reset();
   recovery_conflict_seen_ = false;
+  conflict_detector_refresh_sent_ = false;
   last_detector_request_ms_.reset();
   last_detector_request_frame_.reset();
   last_detector_request_motion_bbox_.reset();
@@ -465,7 +466,13 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.detector_probe_index = active.locked ? active.locked_probe_index
                                               : active.next_probe - 1;
   }
-  const bool interval_ready =
+  const auto* conflict_probe = recovery_candidates_.select_probe();
+  const bool conflict_refresh_ready =
+      config_.recovery_conflict_requires_detector && recovery_conflict_seen_ &&
+      !conflict_detector_refresh_sent_ && conflict_probe &&
+      conflict_probe->hits() > 0 &&
+      !conflict_probe->from(RecoveryCandidateSource::kDetector);
+  const bool interval_ready = conflict_refresh_ready ||
       !last_detector_request_ms_ ||
       timestamp_ms - *last_detector_request_ms_ >= config_.detector_interval_ms;
   if (detector_ready && recovery_uses_detector && interval_ready &&
@@ -481,6 +488,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     last_detector_request_ms_ = timestamp_ms;
     last_detector_request_frame_ = frame_id;
     last_detector_request_motion_bbox_ = motion_predicted;
+    if (conflict_refresh_ready) conflict_detector_refresh_sent_ = true;
   }
   active_plan_ = plan;
   frame_open_ = true;
@@ -1561,6 +1569,7 @@ void LongTermController::apply_recovery_acceptance() noexcept {
   motion_search_active_ = false;
   loss_start_ms_.reset();
   recovery_conflict_seen_ = false;
+  conflict_detector_refresh_sent_ = false;
   hold_used_for_loss_ = false;
   hold_remaining_frames_ = 0;
   occlusion_coast_age_frames_ = 0;
@@ -1779,6 +1788,7 @@ void LongTermController::accept_observation(
   display_bbox_ = output.display_bbox;
   loss_start_ms_.reset();
   recovery_conflict_seen_ = false;
+  conflict_detector_refresh_sent_ = false;
   confirmations_.clear();
   active_detector_candidate_.reset();
   detector_candidates_.clear();
@@ -2369,6 +2379,7 @@ ControllerOutput LongTermController::finish_frame(
     hold_used_for_loss_ = true;
     loss_start_ms_ = plan.timestamp_ms;
     recovery_conflict_seen_ = false;
+    conflict_detector_refresh_sent_ = false;
     ++detector_eligibility_generation_;
     confirmations_.clear();
     coast_probe_candidate_.reset();
@@ -2547,6 +2558,7 @@ ControllerOutput LongTermController::finish_frame(
     const bool starting_search = !loss_start_ms_;
     if (starting_search) loss_start_ms_ = plan.timestamp_ms;
     if (starting_search) recovery_conflict_seen_ = false;
+    if (starting_search) conflict_detector_refresh_sent_ = false;
     mode_ = mode_for_timestamp(plan.timestamp_ms);
     output.mode = mode_;
     if (starting_search && uses_unified_recovery()) {

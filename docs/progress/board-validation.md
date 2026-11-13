@@ -1,5 +1,18 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T04:19:49+08:00 冲突后首个可信候选触发一次提前 detector 请求
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `4669b7be5bbf89c624362646f8ebac5f9395bc3e`。板端 car001 标准框的冲突到 183 帧，184 帧已有 tracker 候选一击，但 400 ms 定时 detector 下次在 189 帧请求、190 帧到达，造成 192 帧才完成 NanoTrack 两击重捕。新增每次丢失最多一次的定向提前请求：仅当已发生身份冲突、候选有至少一击且该候选尚无 detector 证据时，允许越过常规定时；仍须原有 class/generation/stale 门禁与同候选 NanoTrack 两击确认。未改变 detector 显示用途或直接控制权限，配置 SHA-256 仍为 `5d3214646bd3b0e6d38213482178aa44a0deb301d6f303c8b5eaa7f5517d3a3b`。
+- 主机实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/conflict-refresh-host-build.log`、`/tmp/nt-dual-gt-evidence/conflict-refresh-host-ctest.log`。测试核验冲突后有一击时可提前请求、不可连续越过间隔、无冲突时不提前。首次测试夹具未建立目标类别，按安全设计拒绝 detector 请求；补全固定车类初始化后通过。
+- **证据边界 / Handoff**：提前请求可能改变 detector 竞争身份与恢复路径，必须在 RK3588 用精确提交完成 car001 标准/右下、car002 标准/真值四组；只有中心一致性、重捕时机、身份与遮挡语义都不退化，才扩八组。正式 handoff HOLD。
+
+## 2026-11-14T04:18:00+08:00 身份冲突后同候选佐证的四组板端筛查
+
+- 精确源码 `codex/dual-gt-init-consistency@4669b7be5bbf89c624362646f8ebac5f9395bc3e`，源码包 `/home/neardi/Project/SOT/nt-dual-gt-conflict-detector-4669b7b.tar` 主机/板端 SHA-256 `599040638f953d8f562eb20b266ee17b3f8792de26b31b73ea3ae692ee87c437`，隔离根 `/home/neardi/Project/SOT/dual-gt-conflict-detector-4669b7b`。RK3588 原生 CTest `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `800944e5718d12c3507c1431c0a5295fddc2dc8107e6ee26638bdcd7f7fd65d8`，控制器配置 SHA-256 `5d3214646bd3b0e6d38213482178aa44a0deb301d6f303c8b5eaa7f5517d3a3b`，headless SHA-256 `77a6f09404cb76962a77d8e103feb0b3483475e5c2a6169547bebe35c39b4a91`；视频、双目标 GT、官方 tracker 与 detector 身份同 7cbf58d 基线。
+- 执行 car001 标准/右下、car002 标准/真值四组 `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...`，四 AVI 均 1920×1080×271。16 文件清单 `runs/screen-checksums.sha256` SHA-256 `2306d11277a40b6799fbe4ae4021c7647031688ea9f73a474c4b6ed459276d66`；文本包 `runs/screen-text.tar.gz` 主机/板端 SHA-256 `3badfa3ced7ae547c78913ff99b95c4881f51ffb6031377c5ffb41a9f3b6c3d3`，评分 `/tmp/nt-dual-gt-evidence/conflict-detector-4669b7b-screen-center.json` SHA-256 `1874a177ad362ca4d62ad83d00664a6062aa02525b964098fecea03d98160c2d`。
+- car001 标准/右下 tracking 中心均值 `4.39/5.02 px`、display `4.44/5.05 px`，重捕 `192/191`，跨框 tracking/display 中心 P95 `2.88/2.16 px`；标准框 185–190 帧不再输出偏右 staged，而在 192 帧经 detector 同候选佐证重捕，但晚于正式重捕时限。car002 标准/真值 tracking 均值 `2.59/2.00 px`、重捕 `235/233`，基本保持基线路径，完全遮挡语义仍失败。四组正式门禁 `0/4 PASS`；这是中心一致性有改善但时效和遮挡门禁未过的中间候选，不能晋级。
+- **裁决 / Handoff**：保留候选源码和板端证据用于定向缩短冲突后 detector 等待；没有批准正式 handoff。后续须证明提前请求不会重现先前 300 ms 全局加速时的同类车误重捕，再做八组矩阵。
+
 ## 2026-11-14T04:13:33+08:00 身份冲突后同一候选的 detector 佐证门禁候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `5e74e958ebd0b00574776bc4b7c2634c5716aaea`。对已验证八组板端 CSV 和双目标 GT 逐帧核对：car001 标准/人工/左上/右下框在重捕前分别有 `178–183`、`178–182`、`178–180,190–192`、`188` 帧身份冲突；car002 四组在重捕前没有。car001 标准框第 185 帧纯 tracker 候选重捕，中心误差 `9.2 px`，随后 staged 偏框；另三框经 detector 候选在 191–194 帧重捕。car002 四组 tracker-only 重捕中心更贴近真值，不能一律要求 detector。
