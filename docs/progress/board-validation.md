@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:46:30+08:00 安全模板正常跟踪响应的板端诊断候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `027e28b8daba1b0ff74e8b3f345f9e43c32118f5`。在 `NanoTrackV3::infer` 增加仅由环境变量 `NT_DIAGNOSTIC_SAFE_HEAD=1` 激活的正常 TRACKING safe head 原始响应采集；控制器仍选择 recent，tracking/control/display 选择策略不变。未设置变量时仍只运行 recent；这只是比较模板几何的诊断候选。
+- 实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/safe-head-diagnostic-host-build.log`、`/tmp/nt-dual-gt-evidence/safe-head-diagnostic-host-ctest.log`。控制器配置 `rk3566/nanotrack_v3/config/visible-adaptive-display.conf` SHA-256 `63007d32b58c7e4aa920762f4d73f3532ef8ee544e50101c0684914d9b470acc`，未改。
+- **证据边界 / Handoff**：需以精确提交在 RK3588 原生构建，并以两目标四种代表性初始框逐帧对照 recent/safe 中心与 GT；若 safe 无稳定优势，撤回诊断源码；正式 handoff HOLD。
+
 ## 2026-11-14T03:42:44+08:00 冻结 g5000 权重的 RK3588 双目标反事实筛查否决
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，当前源码 `8f102f06fec817130b770faf57e47af99ccc3089`；板端复用 `/home/neardi/Project/SOT/dual-gt-visibility-7cbf58d/build/nanotrack_v3`，二进制 SHA-256 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`。上游冻结 g5000 checkpoint `artifacts/nanotrack_conservative_three_stage/run/stage1/candidate_stage1_g00005000_e001_s02500.pth` SHA-256 `40ebbe4296938bf5d53c8605ab05e729b306fc0bce65921a57ab6613030410d1`；导出源 `/home/u20/single-object-tracking/repos/siamtrackers/NanoTrack@248663fde6bf7c40190cf10ee396d5662919ecd3`、配置 `models/config/configv3.yaml` SHA-256 `60ea9dc886dcdd0451e60b404490a39d19495480185ca7b6299b72b74d746f87`。
