@@ -1,5 +1,13 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:22:35+08:00 搜索 detector 间隔 200ms 否决与响应基线定位
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，源代码/二进制仍为已测 `47ccfc8`，板端根 `/home/neardi/Project/SOT/dual-gt-stable14-47ccfc8`，二进制 SHA-256 `9d833901e044cd1b06db8d18e691d7aa60bcbd31c68ad46663c6a68502c0b4c2`；同视频与 RKNN/manifest/labels。只在板端从已提交配置派生 `runs/detector-200.conf`，把 `detector_interval_ms=400→200`，配置 SHA-256 `8608c4270cd5a1b2745a5e249097cdeaca3ba71fa21d3d04c2dce981aadd5204`，`runs/headless-detector-200.conf` SHA-256 `95fab9c7695610a54478f3e31ee24c777dd3bb69dd666ea3d2b1b3af1cd277f7`，没有改动 Git 源码。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3 runs/headless-detector-200.conf runs/detector-200-matrix`；八组 CSV/AVI/session/log 留在板端 `runs/detector-200-matrix/`，32 文件清单 SHA-256 `0589ecc59acc67ec00121c0e8d50843526961cf39364b1c8e3e50a38ab203be5`。小型文本包 `runs/detector-200-text.tar.gz` 主机/板端 SHA-256 `f94f8de3139fd74d91e66097ae3b091d00eb8306b688164a68b0dd97702cfcd3`；评分 `/tmp/nt-dual-gt-evidence/detector200-center.json` SHA-256 `f9bd9a9bdcc237312b8160b074e8c08982e5dbe1bcf87108c9f910fb2a569b64`。
+- car001 左上框重捕 `194→188` 且正式门禁 PASS，但标准框重捕 `185→186`、tracking 中心均值 `4.39→4.83 px`、平均 IoU `0.751→0.708`；人工框仍在 192，右下仍在 191。car001 跨初始框 tracking 中心 P95 `3.51→13.32 px`，明显违背一致性目标；car002 四组中心及无框误观测无改善。**否决全局 200ms 间隔**，保留 400ms 的已提交配置。日志显示 car001 人工/左上框的正确 detector 候选通常在第 190 帧进入并经两次 NanoTrack 验证，而更早频率也可能让标准框在第 186 帧使用高度偏小的 detector 候选；不能仅用重捕提前判定改善。
+- car002 右下框第 211～229 帧主要仍处于 TRACKING，15 个无框帧误报 14 帧。第 216 帧近期响应 PSR/APCE `5.21/13.78`，参考 `7.30/18.32`，两项尚未同时越过相对下降门槛；参考在连续弱响应期间快速下降，到第 222 帧已为 `5.16/13.39`，仅短暂进入 SUSPECTED 并立即清除。与 car002 标准框第 217～221 帧进入 SUSPECTED 的时序相对照，下一步筛查更长的可信响应参考窗口，检查能否减少无框误观测且不损害 car001。
+- **证据边界 / Handoff**：200ms 频率仅为板端参数筛查，已否决；响应参考窗口仍是待证假设。正式门禁维持 1/8，不批准 handoff。
+
 ## 2026-11-14T01:13:46+08:00 14 帧模板组合板端结果与重复性
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，源码测试提交 `47ccfc8fe0ea2d677154d6483d52573f5555c1b3`，基线 `c16ddf6`；源码包 `/home/neardi/Project/SOT/nt-dual-gt-stable14-47ccfc8.tar` 主机/板端 SHA-256 `d7fcbaf0007f976811efa44b9ba25c627333381c7b8bdf20acaab28ffae7c03d`，板端隔离根 `/home/neardi/Project/SOT/dual-gt-stable14-47ccfc8`。RK3588 原生编译、CTest `23/23 PASS`，`build/nanotrack_v3` SHA-256 `9d833901e044cd1b06db8d18e691d7aa60bcbd31c68ad46663c6a68502c0b4c2`。控制器配置 SHA-256 `1378c58fadd4a23b97bcc473ab06f69387d4402b8d3e44bc493f22065aed0b33`，`runs/headless-eval.conf` SHA-256 `c15132f193e4c541565202f8c5f14c8f4ea265ae2264221519bfd4dcbfcdaca4`；视频、三个 NanoTrack RKNN、detector/manifest/labels 与前述核对身份相同，板端 Linux 6.1.84、RKNN API 2.1.0、driver 0.9.8。
