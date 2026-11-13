@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:16:06+08:00 真正冻结早搜加速度后的板端四组否决
+
+- 修复后精确源码 `codex/dual-gt-init-consistency@a1b368e2966251cf326816780163bdd1916762e9`，包 `/home/neardi/Project/SOT/nt-dual-gt-early-freeze-a1b368e.tar` 主机/板端 SHA-256 `b96eb2ec6557f58a0ee0fd652ad80ac3b4f26c6b86ef3a75aa44000a1bdda089`，隔离根 `/home/neardi/Project/SOT/dual-gt-early-freeze-a1b368e`。RK3588 原生构建及 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `cc257ac03e078489fca588d95de91bc32c9701c44910a174f8d5b893669eee31`，控制器配置 SHA-256 `0d9d4479ec2e6a273ce79d2b269833aadfab7926fada11c7f02b03dd76785f66`，headless SHA-256 `ca4d32355a163c49cccb0752bf37850429ce361d81a31be63b57ab68cc2d2839`；视频、GT、模型、板端环境同前述精确矩阵。
+- 执行四组 `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...`，car001 标准/右下与 car002 标准/真值框。16 文件清单 `runs/screen-checksums.sha256` SHA-256 `9368c01ac30de5bc4d081b4897faa8b6310363f26f12a34d16ffcc846f7ebf86`，四 AVI 均 1920×1080、271 帧；文本包 `runs/screen-text.tar.gz` 主机/板端 SHA-256 `acc5afacd0f31fd28388729be19833071518aef76ddff246a16f83a95575553c`，评分 `/tmp/nt-dual-gt-evidence/early-freeze-a1b368e-screen-center.json` SHA-256 `9fd5ca684c60cca453dd9c796fbda7a3a042c7afe343e66b73ebd1027303ac10`。
+- car001 重捕 187/198、tracking 中心均值 4.16/5.82 px、跨两框 tracking/display 中心 P95 17.61/15.91 px；car002 重捕 253/253、均值 3.03/2.45 px、跨两框 P95 10.32/9.87 px。冻结加速度较未执行的早搜 600 ms 候选有改善，但仍显著差于 7cbf58d 基线八组的 car001/car002 跨框 P95 3.51/6.21 px，重捕也晚。两组 car002 语义 PASS 不能抵消中心一致性退化。
+- **裁决 / Handoff**：四组筛查已经触发否决，无需重复完整八组；撤回 07bdb37/a1b368e 的早搜与冻结源码/配置/单测，保留原始板端输出，正式 handoff HOLD。下一步沿原 400 ms、非提前搜索基线，单独寻找可见段中心偏移与 car002 完全遮挡的更可靠证据。
+
 ## 2026-11-14T03:11:25+08:00 冻结加速度触发标志修复及前次四组证据
 
 - `07bdb37d1571eb07b26e2409a68067ae21f4d443` 精确源码包 `/home/neardi/Project/SOT/nt-dual-gt-early-freeze-07bdb37.tar` 主机/板端 SHA-256 `a31a361493e49cf0fc1bea4a47fb3cc9c2310f881ea5aa8fd66145ff784c2bd3`，板端隔离根 `/home/neardi/Project/SOT/dual-gt-early-freeze-07bdb37`。RK3588 原生构建及 CTest `23/23 PASS`；二进制 SHA-256 `37f07eb33d64be6e9b9c1b4ef7f6581c341f08182d3ec890f717d60a966e2816`，控制器配置 SHA-256 `0d9d4479ec2e6a273ce79d2b269833aadfab7926fada11c7f02b03dd76785f66`，headless SHA-256 `37ff6a51c5292c1dc07e229b53fe5820caee9e7524468b53ae2ff377d1f1094c`。视频、GT、模型与板端环境同前述精确矩阵。

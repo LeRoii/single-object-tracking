@@ -263,8 +263,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   try {
     prediction_checkpoint_.emplace(PredictionCheckpoint{
         motion_, shadow_motion_, tentative_control_, response_degraded_since_ms_,
-        suspected_since_ms_, response_clean_since_ms_, recent_visibility_streak_,
-        recent_visibility_last_frame_, motion_residual_history_,
+        suspected_since_ms_, response_clean_since_ms_, motion_residual_history_,
         motion_recent_residuals_,
         motion_freeze_since_ms_, motion_clean_since_ms_,
         motion_frozen_response_reference_, motion_last_clean_trend_,
@@ -679,8 +678,6 @@ void LongTermController::clear_suspicion() noexcept {
   response_degraded_since_ms_.reset();
   suspected_since_ms_.reset();
   response_clean_since_ms_.reset();
-  recent_visibility_streak_ = 0;
-  recent_visibility_last_frame_ = 0;
 }
 
 void LongTermController::promote_shadow_prediction() noexcept {
@@ -699,8 +696,6 @@ void LongTermController::restore_prediction_checkpoint() noexcept {
   response_degraded_since_ms_ = checkpoint.degraded_since_ms;
   suspected_since_ms_ = checkpoint.suspected_since_ms;
   response_clean_since_ms_ = checkpoint.clean_since_ms;
-  recent_visibility_streak_ = checkpoint.recent_visibility_streak;
-  recent_visibility_last_frame_ = checkpoint.recent_visibility_last_frame;
   motion_residual_history_ = std::move(checkpoint.motion_residual_history);
   motion_recent_residuals_ = std::move(checkpoint.motion_recent_residuals);
   motion_freeze_since_ms_ = checkpoint.motion_freeze_since_ms;
@@ -961,20 +956,6 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
       observation.decoded_bbox->height <=
           current_bbox_.height * config_.recent_visibility_height_ratio &&
       recent.center_residual >= config_.recent_visibility_center_residual;
-  if (partial_visibility) {
-    recent_visibility_streak_ = recent_visibility_streak_ > 0 &&
-        recent_visibility_last_frame_ + 1 == plan.frame_id
-        ? recent_visibility_streak_ + 1 : 1;
-    recent_visibility_last_frame_ = plan.frame_id;
-  } else {
-    recent_visibility_streak_ = 0;
-    recent_visibility_last_frame_ = 0;
-  }
-  if (config_.recent_visibility_search_consecutive_frames > 0 &&
-      recent_visibility_streak_ >= static_cast<std::size_t>(
-          config_.recent_visibility_search_consecutive_frames)) {
-    return RecentDisposition::kSearch;
-  }
   const bool degraded = isolated_response_dip || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
                         partial_visibility ||
@@ -2183,7 +2164,6 @@ ControllerOutput LongTermController::finish_frame(
           config_.template_agreement_iou;
   std::optional<EvaluatedObservation> selected;
   bool force_confirmation = false;
-  bool visibility_search_triggered = false;
   if (ordinary_recent) {
     selected = recent;
     const auto& other = staged ? staged : safe;
@@ -2213,9 +2193,6 @@ ControllerOutput LongTermController::finish_frame(
       return output;
     }
     if (disposition == RecentDisposition::kSearch && selected) {
-      visibility_search_triggered = config_.recent_visibility_search_consecutive_frames > 0 &&
-          recent_visibility_streak_ >= static_cast<std::size_t>(
-              config_.recent_visibility_search_consecutive_frames);
       selected->quality = QualityLevel::kRejected;
     }
     promote_shadow_prediction();
@@ -2581,11 +2558,6 @@ ControllerOutput LongTermController::finish_frame(
         motion_.begin_search(plan.timestamp_ms, *search_motion_reference_);
       } else {
         motion_.begin_search(plan.timestamp_ms);
-      }
-      if (visibility_search_triggered) {
-        // Partial visibility can corrupt the last acceleration estimate.
-        // Preserve the last velocity while preventing its open-loop reversal.
-        motion_.freeze_open_loop_dynamics();
       }
       motion_search_active_ = true;
     }

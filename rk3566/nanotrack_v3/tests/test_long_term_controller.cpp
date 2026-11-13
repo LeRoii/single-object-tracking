@@ -2436,48 +2436,6 @@ void test_car_partial_visibility_needs_shrink_and_motion() {
   expect_true(run(0, combined, true).accepted &&
                   run(2, combined, false).accepted,
               "other classes and observations without decoded geometry retain their contract");
-
-  ControllerConfig sustained_config = config;
-  sustained_config.motion_search_enabled = true;
-  sustained_config.recent_visibility_search_consecutive_frames = 3;
-  ResolvedControllerFixture sustained(sustained_config);
-  sustained.initialize(initial, 0, 0, {320, 240},
-                       make_fixed_target_class(2, false));
-  for (std::uint64_t frame = 1; frame <= 3; ++frame) {
-    if (frame == 3) {
-      sustained.motion_.acceleration_y_ = 40.0F;
-      if (sustained.shadow_motion_) {
-        sustained.shadow_motion_->acceleration_y_ = 40.0F;
-      }
-    }
-    const auto plan = sustained.begin_frame(frame, frame * 40, false);
-    const BBox box{70.0F + 2.0F * static_cast<float>(frame), 50, 30, 29};
-    auto observation = reliable_observation(plan, TemplateKind::kRecent, box, frame);
-    observation.decoded_bbox = box;
-    const auto output = sustained.finish_frame(plan, {observation}, std::nullopt);
-    expect_true(!output.accepted && !output.trusted_for_state_update &&
-                    output.tracking_phase == (frame == 3
-                        ? TrackingPhase::kSearching : TrackingPhase::kSuspected),
-                "three continuous visibility losses enter search only on the third frame");
-    if (frame == 3) {
-      expect_near(sustained.motion_.acceleration_y_, 0.0F, 1e-6F,
-                  "early visibility search clears an unreliable acceleration");
-    }
-  }
-
-  ResolvedControllerFixture interrupted(sustained_config);
-  interrupted.initialize(initial, 0, 0, {320, 240},
-                         make_fixed_target_class(2, false));
-  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
-    const auto plan = interrupted.begin_frame(frame, frame * 40, false);
-    const BBox box = frame == 2 ? initial :
-        BBox{70.0F + 2.0F * static_cast<float>(frame), 50, 30, 29};
-    auto observation = reliable_observation(plan, TemplateKind::kRecent, box, frame);
-    observation.decoded_bbox = box;
-    const auto output = interrupted.finish_frame(plan, {observation}, std::nullopt);
-    expect_true(output.tracking_phase != TrackingPhase::kSearching,
-                "a clean geometry frame breaks the consecutive visibility search count");
-  }
 }
 
 void test_search_uses_last_clean_response_motion_trend() {
