@@ -1,5 +1,13 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:40:58+08:00 双时窗响应门禁板端复测
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；源码测试提交 `d34d0b9` 基于 `267e5b8`。源码包 `/home/neardi/Project/SOT/nt-dual-gt-dual-response-d34d0b9.tar` 主机/板端 SHA-256 `2e22e9238c4e7b2ebd8e2024050e9d676feeb802f38c0f20021b7bddb80b50a2`，隔离根 `/home/neardi/Project/SOT/dual-gt-dual-response-d34d0b9`。RK3588 原生编译及 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `849be5048b8085806d87f1741782a58be2ede88ed625f917357f5d95655ee0ee`，控制器配置 SHA-256 `1378c58fadd4a23b97bcc473ab06f69387d4402b8d3e44bc493f22065aed0b33`，headless 配置 SHA-256 `f5c2e7e63ccf2e0674eeb5d20c98e31f4779eb0ba78cc9257bdc704022240ffb`，同视频/RKNN/detector/manifest/labels 身份。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3 runs/headless-eval.conf runs/matrix`，八组 CSV/AVI/session/log 留在板端 `runs/matrix/`，32 文件清单 SHA-256 `b7e29503f8bbac935752b15ba3a04d2730d716bb61751703e638931ccb4859dc`，八个 AVI 经 ffprobe 均 1920×1080、271 帧。小型文本包 `runs/dual-response-text.tar.gz` 主机/板端 SHA-256 `91d24db90431cc3898eee235bd40bc10634e4da736b2f10288bc31c965612875`，主机评分 `/tmp/nt-dual-gt-evidence/dual-response-center.json` SHA-256 `efa2ebf6e5fc620f7c84feb16924114e59cf124827fe75eadd2e64882e61b840`。
+- car001 四组 AVI 哈希与 `47ccfc8` 基线相同，重捕 `185/192/194/191`、中心误差与跨框一致性不变，避免了全局长窗口的回归。car002 标准/真值/左上三组 AVI 同基线；右下无框误观测 `14→2`（仅第 211、212 帧）、第 235 帧经两次验证重捕，但可见帧 tracking 中心均值 `3.05→3.17 px`、P95 `9.62→8.25 px`、最大 `10.61→23.62 px`（第 233 帧仍在搜索），car002 跨框 tracking 中心 P95 `7.13→7.67 px`。正式门禁仍仅 car001 标准框 1/8 PASS；car002 四组均有部分遮挡无框误观测。
+- 初步独立几何线索：car002 四组第 211～212 帧的原始 tracker 高度相对上一可信高度缩小，同时中心残差上升；在当前八组 CSV 上，原始高度/可信高度 `≤0.98` 且归一化中心残差 `≥0.04` 可标出这两个无框帧，car001 四组可见帧未命中。但这只是当前视频的离线筛查，尚未证明能安全加入控制器；下一候选需以车类、原始框、双条件门禁实现并做负例/板端复测。
+- **证据边界 / Handoff**：双时窗改善 car002 遮挡语义，但中心最大误差和正式门禁仍不达标；不批准 handoff。
+
 ## 2026-11-14T01:32:37+08:00 双时窗 PSR/APCE 候选主机实现
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `267e5b8`。`ResponseBaseline` 继续用配置的短窗口（板端当前 8 帧）评估原有响应/运动门禁，同时保存 3 倍长度的可信样本窗口；长窗口满样本后，只有 PSR 与 APCE 相对长参考 **同时** 下降才触发额外的 SUSPECTED 观测隔离。冻结、恢复、重捕清理同时作用于两份样本；没有使用 GT 帧号或 detector 输出直接授权跟踪/控制。新增基线单测覆盖短窗口已适应弱响应而长窗口仍可识别双指标下降、单指标下降不触发、冻结与重捕清理；控制器单测覆盖 24 次健康、6 次温和下降、单指标负例和双指标观测隔离。
