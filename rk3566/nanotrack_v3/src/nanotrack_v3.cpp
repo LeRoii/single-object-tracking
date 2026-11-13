@@ -70,7 +70,7 @@ void NanoTrackV3::validate_model_interfaces() {
   config_.output_size = output_size;
   config_.stride = 16;
   config_.penalty_k = 0.138F;
-  config_.window_influence = 0.300F;
+  config_.window_influence = 0.455F;
   config_.learning_rate = 0.348F;
 }
 

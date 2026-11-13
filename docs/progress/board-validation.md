@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:25:41+08:00 NanoTrack 窗口权重 0.30 板端否决
+
+- 精确源码 `codex/dual-gt-init-consistency@2e6a0cdca6847c21b1bab979ce66df0cee877d2a`，包 `/home/neardi/Project/SOT/nt-dual-gt-window030-2e6a0cd.tar` 主机/板端 SHA-256 `79a56c94ffa2402d473fe2126cabd9206e23ba9cb852d9143e19e15d70f68282`，隔离根 `/home/neardi/Project/SOT/dual-gt-window030-2e6a0cd`。RK3588 原生构建及 CTest `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `5417ee1826447dd5b592373ac8a29387a0ef2818037260083301c0cf2d788de5`，控制器配置 SHA-256 `63007d32b58c7e4aa920762f4d73f3532ef8ee544e50101c0684914d9b470acc`，headless SHA-256 `0a8ff85069a15eeeb14692a1d8fa74da19fb8e55710a899298c263a229b9e616`；视频、GT、模型和板端环境同前述精确矩阵。
+- 执行四组 `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...`，car001 标准/右下与 car002 标准/真值。16 文件清单 `runs/screen-checksums.sha256` SHA-256 `c01db02d914937097f8542a2044127a405fbb53b61591bedc4ba38bd296e66f9`，四 AVI 均 1920×1080、271 帧；文本包 `runs/screen-text.tar.gz` 主机/板端 SHA-256 `071ec441fbee1c8c40815feeac0d62897172dcfccf04b564a84736dd87d32b22`，评分 `/tmp/nt-dual-gt-evidence/window030-2e6a0cd-screen-center.json` SHA-256 `1e1677acde63fd74f04097d30b86f3a6353af20850052695bec3d5ee5ab1cf62`。
+- car001 标准/右下 tracking 中心均值 `202.96/161.07 px`，分别 3/4 次重捕，跨框中心 P95 `601.66 px`；car002 标准/真值均值 `105.01/25.97 px`，分别 2/3 次重捕，标准框 15 个无框帧误观测 12 帧，跨框中心 P95 `184.90 px`。四组正式门禁全部 FAIL。**裁决 / Handoff**：Hann 权重 0.30 破坏目标身份和中心一致性，撤回该变更，保留板端证据；不据此推定其他权重可用，正式 handoff HOLD。
+
 ## 2026-11-14T03:21:28+08:00 NanoTrack 响应窗口 0.30 主机筛查候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `ecb997fea5b45a4094d9b56e68cc13c0171bb73b`。保持此前八组最佳的恢复/显示逻辑，只将 NanoTrack 解码的 Hann 窗口权重从 `0.455→0.300`（默认和 RKNN 运行实例同步），检验较弱中心先验能否改善运动段的原始中心偏移和不同初始框的收敛；不使用 detector 中心修正 `tracking_bbox`，`display_bbox` 的 detector 信息仍仅供外观尺寸。
