@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:06:08+08:00 提前可见性搜索时冻结开环加速度的主机候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `9f7dec02227e9a9b5a4b0ddb79839170276bcf67`。恢复已测的连续三帧可见性搜索与 600 ms 最小重捕年龄；仅在该几何搜索触发时调用运动预测器 `freeze_open_loop_dynamics()`，保留当前速度、清除加速度。先前 car001 右下框第 171 帧后预测纵向速度反向，提前搜索到第 190 帧的中心 `y≈809`，真值 `y≈848`；旧正常搜索中心 `y≈827`。该候选检验开环加速度反向是否是早搜后的中心漂移主因；运行时不使用真值帧号或位置。配置 SHA-256 `0d9d4479ec2e6a273ce79d2b269833aadfab7926fada11c7f02b03dd76785f66`。
+- 实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/early-freeze-host-build.log`、`/tmp/nt-dual-gt-evidence/early-freeze-host-ctest.log`。
+- **证据边界 / Handoff**：尚无板端推理结论。须 RK3588 精确源码原生构建、双目标八组真值评分；正式 handoff 保持 HOLD。
+
 ## 2026-11-14T03:04:05+08:00 提前搜索但延后 detector 探针的板端否决
 
 - 精确源码 `codex/dual-gt-init-consistency@f53a235ccc22751a8a455c437cef5745d17cfd77`，包 `/home/neardi/Project/SOT/nt-dual-gt-probe-wait-f53a235.tar` 主机/板端 SHA-256 `029e2676a48fada4a7e9788681b1c7a437ce5c3e5be432cc09ff82b1f06ff9cc`，隔离根 `/home/neardi/Project/SOT/dual-gt-probe-wait-f53a235`。RK3588 原生构建及 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `5b035ad3c30338cf7ea8758028305afff76fb99754edff765b97156c1e1542df`，控制器配置 SHA-256 `02c1d19fe98902bb6d63564b276fd23d679960336099abf57cf32733350d882d`，headless 配置 SHA-256 `560ec4cc319bfb3a66938d3015d30c93d3744dd52c3a0b612908aabde1162ad8`。视频、GT、tracker、detector/manifest/labels 和板端环境同前述精确矩阵。
