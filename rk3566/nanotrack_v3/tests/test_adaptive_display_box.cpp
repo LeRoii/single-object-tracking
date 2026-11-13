@@ -224,12 +224,21 @@ void test_display_center_is_independent_of_tracking_smoothing() {
   expect_true(close(value.accepted_center_smoothing_alpha, 0.35F),
               "display-only tuning does not change tracker center smoothing");
 
-  ControllerOutput searching = tracking_output(moved);
+  ControllerOutput suspected = tracking_output(moved);
+  suspected.tracking_phase = TrackingPhase::kSuspected;
+  suspected.accepted = false;
+  suspected.control_bbox = BBox{120, 80, 20, 20};
+  const BBox suspected_box = display.update(suspected, TargetClassState{}, diagnostics);
+  expect_true(close(center_x(suspected_box), 125.2F),
+              "visible suspected output follows the faster display center setting");
+
+  AdaptiveDisplayBox search_display(value);
+  search_display.initialize(original, TargetClassState{}, FrameSize{200, 200});
+  search_display.update(tracking_output(original), TargetClassState{}, diagnostics);
+  ControllerOutput searching = suspected;
   searching.tracking_phase = TrackingPhase::kSearching;
-  searching.accepted = false;
-  searching.control_bbox = BBox{120, 80, 20, 20};
-  const BBox predicted = display.update(searching, TargetClassState{}, diagnostics);
-  expect_true(close(center_x(predicted), 114.4F),
+  const BBox predicted = search_display.update(searching, TargetClassState{}, diagnostics);
+  expect_true(close(center_x(predicted), 104.0F),
               "search prediction retains the original 35 percent center smoothing");
 }
 

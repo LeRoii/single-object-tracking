@@ -45,6 +45,7 @@ def read_run(path, roi, truth, contract):
     full = evaluator.evaluate(contract, parsed, "full")
     boxes = {kind: [box(row, kind) for row in rows] for kind in BOX_KINDS}
     visible = [frame for frame, item in truth.items() if item["observable"]]
+    no_bbox = [frame for frame, item in truth.items() if item["bbox"] is None]
     strata = {"all_visible": visible,
               "fast_motion_48_58": [frame for frame in visible if 48 <= frame <= 58],
               "late_visible_230_270": [frame for frame in visible if 230 <= frame <= 270]}
@@ -65,6 +66,14 @@ def read_run(path, roi, truth, contract):
         "failed_gates": [name for name, gate in full["gates"].items()
                          if gate["applicable"] and not gate["passed"]],
         "reacquisition_frames": full["reacquisition"]["frames"],
+        "confirmed_no_bbox": {
+            "frames": len(no_bbox),
+            "false_observation_frames": [frame for frame in no_bbox
+                                         if parsed[frame].get("observation_valid") is True],
+            "false_observation_control_frames": [frame for frame in no_bbox
+                                                 if parsed[frame].get("control_source") == "OBSERVATION"
+                                                 and parsed[frame]["control_valid"]],
+        },
         "metrics": metrics,
     }
 
@@ -113,7 +122,8 @@ def main():
         print(name, result["full_evaluator_verdict"], result["failed_gates"],
               "reacq", result["reacquisition_frames"],
               "tracking", round(metrics["tracking"]["all_visible"]["mean_iou"], 3),
-              "display", round(metrics["display"]["all_visible"]["mean_iou"], 3))
+              "display", round(metrics["display"]["all_visible"]["mean_iou"], 3),
+              "no_bbox_false_obs", len(result["confirmed_no_bbox"]["false_observation_frames"]))
     for name, result in report["pairs"].items():
         print(name, "tracking_pair", round(result["tracking"]["mean_iou"], 3),
               "display_pair", round(result["display"]["mean_iou"], 3))

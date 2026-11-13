@@ -1,5 +1,45 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T23:32:00+08:00 搜索期显示隔离板端复测与怀疑期回归
+
+- 本轮被测源码 `codex/dual-gt-init-consistency@2dbffbb6cbe4817a06a2c903b3c34fc9512662c6`，
+  基线为前一候选 `e1e1a535c6acfa925ea234e7007f96fac3a5cbd3`，工作树
+  `/home/u20/single-object-tracking`。源码包 `/home/neardi/Project/SOT/nt-dual-gt-final-source.tar`
+  主机/板端 SHA-256 `7707bb20b6fecef9fd7a3552604751821aaad6e59085eaa14b35c6e25bd88605`。
+  RK3588 隔离根 `/home/neardi/Project/SOT/dual-gt-2dbffbb` 原生 RKNN 编译、
+  CTest `23/23 PASS`；`build/nanotrack_v3` SHA-256
+  `4f72c2e069e118c667236e0d8c4254fc9510c065e51403d2218a2961269cacf8`。
+  实测 Linux `6.1.84`、RKNN API `2.1.0`、driver `0.9.8`。
+- 输入 `data/occ_video_1/1.mp4` SHA-256 仍为
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；
+  板端重算 NanoTrack template/search/head RKNN 及 VisDrone9 detector/manifest/labels
+  均与下条 `e1e1a53` 记录的六个 SHA-256 完全相同。
+  `rk3566/nanotrack_v3/config/visible-adaptive-display.conf` SHA-256
+  `2adf4b35587215c18fcaf86221dd36f4c44fbf25910572a7a53c486235943d5e`；
+  `runs/headless-eval.conf` SHA-256
+  `7190b79337e35fe317606b0489d9295a300aa8d0782240c972c5bbb980cad48a`。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3
+  runs/headless-eval.conf runs/final`，沿用下条八个 ROI 与两目标真值。八个 CSV 各
+  271 数据行，八个 AVI 经 ffprobe 均为 1920×1080/271 帧；全部 32 个 CSV/AVI/
+  session/log 留在 `runs/final/<场景>/`，`runs/final/checksums.sha256` 的 SHA-256
+  为 `c474042f5704cc06ab81d3543102f094d4fd36efa2813441edc37bf43596b43b`。
+  主机逐帧评分 `/tmp/nt-dual-gt-evidence/final-2dbffbb.json`。
+- car001 四组显示均值 IoU 为 `0.740/0.737/0.731/0.708`，car002 为
+  `0.707/0.714/0.722/0.715`（顺序同矩阵）；跟踪与控制框相对 `e1e1a53`
+  逐帧完全相同。完整门禁仍仅 car001 标准框 PASS；其余 car001 第
+  `192/194/193` 帧重捕，car002 四组均有遮挡语义失败。car002 在 15 个正式
+  no-bbox 帧上，四组分别有 `3/2/6/14` 帧仍报告 `observation_valid=true`；
+  该数量已加入 `scripts/evaluate_occ_initialization_consistency.py` 的诊断字段，
+  不把这些帧算普通 IoU。
+- 可见帧回归：把 SUSPECTED 与 SEARCHING 都保留旧 `.35` 时，car001 标准框和
+  用户框最差显示 IoU 从上条 `.80` 的 `0.537/0.602` 降到 `0.400/0.420`，
+  主要发生在第 49 帧目标快速运动且 SUSPECTED 的阶段。故本条后的源码改为
+  TRACKING/SUSPECTED 用 `.80`，仅 SEARCHING 用旧 `.35`；主机 RKNN-off
+  重构建及 CTest `23/23 PASS`，板端复测待完成。
+- **证据边界 / Handoff**：显示中心改动不修复 tracker 的初始尺度继承、晚重捕或
+  car002 遮挡期误观测。当前仍为新分支候选，正式 handoff 不批准，
+  不合入 `main`/`Debug`。
+
 ## 2026-11-13T23:23:00+08:00 双目标多初始框 RK3588 对照与搜索行为隔离
 
 - 候选源码 `codex/dual-gt-init-consistency@e1e1a535c6acfa925ea234e7007f96fac3a5cbd3`，
