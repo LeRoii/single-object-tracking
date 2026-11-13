@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T05:04:21+08:00 保留远距竞争身份并阻止其牵引搜索探针的候选
+
+- 基于 `codex/dual-gt-init-consistency@c6af7ff6bafda5ba075c37501f8526e8382964fa`，工作树 `/home/u20/single-object-tracking`，在 `RecoveryCandidateTable` 新增距可信运动中心的探针选择：detector 起源候选若超出 `detector_candidate_max_center_ratio`，仍保留在身份候选表并参加冲突判定，但不让它决定 NanoTrack 下一帧裁剪；确认阶段亦不得提交该远距 detector 身份。运动预测不可信时保持原选择。默认关闭的 `recovery_confident_detector_proximity_gate` 仅在当前可见配置启用，配置 SHA-256 `d0e4f9ad7c46ee2d6e00a30653257c95ee4ab263d51d9863dbb27958a03759d2`；正式 detector 间隔仍 400 ms，display detector 的视觉修饰不参与 tracking/control 授权。
+- 动机来自上一 330 ms 对照：错车 detector 候选距运动中心 `0.037～0.039` 帧对角线，高于既有 `0.02` 限值，但前一候选仍让它连续占用搜索探针，最终将正确重捕延迟到 193 帧。本改动与已否决的“直接过滤 detector 候选”不同，保留远距竞争者作为冲突反证。实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`，日志 `/tmp/nt-dual-gt-evidence/probe-proximity-host-build.log`、`/tmp/nt-dual-gt-evidence/probe-proximity-host-ctest.log`；单测核验远距候选不被探测但仍在表中造成身份冲突，近距候选可探测，远距两击不能提交。
+- **证据边界 / Handoff**：主机测试不能证明 RK3588 上能改善两个目标；先在 400 ms 上检验 car001 标准/右下、car002 标准/真值不退化，再用 330 ms 失败场景核验错车是否消失且 car001 不晚于重捕时限；满足后扩八框矩阵。正式 handoff HOLD。本条与候选代码同提交。
+
 ## 2026-11-14T05:01:11+08:00 远距确认门禁板端否决并撤回
 
 - 精确源码 `codex/dual-gt-init-consistency@71a14162df472da8e9c784f77781a5031e40be07`，源码包 `/home/neardi/Project/SOT/nt-dual-gt-confirm-gate-71a1416.tar` 主机/板端 SHA-256 `3b1dfbb4c2a829858a4daa206eeeb636cc5227b9d6f64749a641c49cd64b98cd`，RK3588 隔离根 `/home/neardi/Project/SOT/dual-gt-confirm-gate-71a1416`。原生 CTest `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `727c498ab2223cab37d65d310c046ed938cdca4ed985a66daa4e758ee52d943a`，400 ms headless 配置 SHA-256 `817bae74744ed3f93f6737d6ec66f8df000281560727157706532698e746d43e`，控制器配置 SHA-256 `af4721bb6dafe4fb63c4f7172a5ba3437b20f82a8dcbc3471125b7edd242336a`；视频、GT、三 NanoTrack RKNN、detector/manifest/labels、Linux/RKNN API/driver 身份同上一八框矩阵。

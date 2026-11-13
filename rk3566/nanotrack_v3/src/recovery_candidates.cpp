@@ -357,6 +357,35 @@ const RecoveryCandidate* RecoveryCandidateTable::select_probe() const noexcept {
   return best;
 }
 
+const RecoveryCandidate* RecoveryCandidateTable::select_probe_near(
+    const BBox& motion_bbox, float max_center_distance_px) const noexcept {
+  const auto eligible = [&](const RecoveryCandidate& candidate) {
+    if (candidate.key.source != RecoveryCandidateSource::kDetector) return true;
+    const auto& bbox = candidate.preferred_evidence().bbox;
+    const float dx = bbox.x + 0.5F * bbox.width -
+                     motion_bbox.x - 0.5F * motion_bbox.width;
+    const float dy = bbox.y + 0.5F * bbox.height -
+                     motion_bbox.y - 0.5F * motion_bbox.height;
+    return std::hypot(dx, dy) <= max_center_distance_px;
+  };
+  if (focused_detector_) {
+    const auto* focused = find(*focused_detector_);
+    if (focused && !focused->subtarget_probes_exhausted && eligible(*focused))
+      return focused;
+  }
+  const RecoveryCandidate* best = nullptr;
+  for (const auto& candidate : entries_) {
+    if (!eligible(candidate) ||
+        (candidate.subtarget_probes_exhausted &&
+         !candidate.from(RecoveryCandidateSource::kRecent) &&
+         !candidate.from(RecoveryCandidateSource::kSafe))) {
+      continue;
+    }
+    if (!best || preferred(candidate, *best)) best = &candidate;
+  }
+  return best;
+}
+
 bool RecoveryCandidateTable::focus_detector(RecoveryCandidateKey key) noexcept {
   const auto* candidate = find(key);
   if (!frame_ || unrepresented_conflict_ || !candidate ||

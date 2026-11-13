@@ -148,6 +148,22 @@ int main() {
   }
 
   {
+  ControllerConfig proximity_config = config;
+  proximity_config.detector_max_candidates = 3;
+  RecoveryCandidateTable proximity(proximity_config);
+  proximity.expire(26, 1080, 4);
+  const auto far = proximity.observe(Source::kDetector, other, 0.95F);
+  expect(far && !proximity.select_probe_near(first, 5.0F) &&
+             proximity.find(*far),
+         "distant detector stays represented without steering the tracker crop");
+  const auto near = proximity.observe(Source::kDetector, moved, 0.70F);
+  expect(near && proximity.select_probe_near(first, 5.0F) &&
+             proximity.select_probe_near(first, 5.0F)->key == *near &&
+             proximity.find(*far) && proximity.conflicted(),
+         "near detector can be probed while the distant rival still vetoes identity");
+  }
+
+  {
   ControllerConfig supported_config = config;
   supported_config.recovery_conflict_requires_detector = true;
   RecoveryCandidateTable supported(supported_config);

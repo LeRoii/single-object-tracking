@@ -126,6 +126,9 @@ struct ControllerConfig {
   // After an identity conflict, require independent detector evidence on the
   // same NanoTrack-confirmed recovery candidate. Default preserves behavior.
   bool recovery_conflict_requires_detector = false;
+  // Under confident motion, keep distant detector identities as rivals but
+  // do not use them as search probes or authorize their confirmation.
+  bool recovery_confident_detector_proximity_gate = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   std::int64_t motion_search_confidence_ms = 1000;
   float motion_max_speed_diagonals_per_s = 100.0F;
