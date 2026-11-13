@@ -1,5 +1,89 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T23:56:00+08:00 双路中心真值评分及显示重捕渐变对照
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，
+  算法源码基线 `23a43db95c4bb8b3c6ba4090f077fd696d36d951`，新分支从
+  `main@b80226577954febe22c5eff168125f77a6cdc724` 开始。源码包
+  `/home/neardi/Project/SOT/nt-dual-gt-final-v3-source.tar` 主机/板端 SHA-256
+  `b5ae7f07b447fb4465e46120f11db82d34490e493eb15b72b6ed8613ed5b0d99`。
+  板端隔离根 `/home/neardi/Project/SOT/dual-gt-23a43db` 原生编译与 CTest
+  `23/23 PASS`，`build/nanotrack_v3` SHA-256
+  `f2b2da43e7a56b5fbc7c39bdd297b125f184d849ee02ee8ed65d189cba31fa02`；
+  本次配置/评分改动在主机 RKNN-off 重构建与 CTest 亦为 `23/23 PASS`，
+  中心指标单元测试 `2/2 PASS`。板端 Linux `6.1.84`、RKNN API `2.1.0`、
+  driver `0.9.8`。
+- 输入仍是上一条逐项记录 SHA-256 的 `data/occ_video_1/1.mp4`、三个 NanoTrack
+  RKNN、VisDrone9 detector/manifest/labels 与两目标正式真值。板端原配置
+  `rk3566/nanotrack_v3/config/visible-adaptive-display.conf` SHA-256
+  `2adf4b35587215c18fcaf86221dd36f4c44fbf25910572a7a53c486235943d5e`，
+  `runs/headless-eval.conf` SHA-256
+  `dade127e93ab5a6b2f939397209603e663fbcb4df38d62cdcf0051e1de5ff659`。
+  实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3
+  runs/headless-eval.conf runs/final`，八场景结果在 `runs/final/<场景>/`，
+  `runs/final/checksums.sha256` 覆盖 32 个 CSV/AVI/session/log，清单 SHA-256
+  `447b7da068db1cb4e65dfc3c989effa9f352669792f79f9bc6e725ef72ff3752`。
+  八个 AVI 经 ffprobe 均为 1920×1080/271 帧；主机 JSON
+  `/tmp/nt-dual-gt-evidence/final-23a-center.json`。
+- `scripts/evaluate_occ_initialization_consistency.py` 同时记录 tracking/display/control
+  可见帧中心误差（像素，平均/P95/最大及最差帧）与多初始框同帧最大成对中心距离；
+  对应单元测试在 `tests/test_evaluate_occ_initialization_consistency.py`。
+  原配置 car001 四组 tracking 平均中心误差 `4.39/4.56/4.48/5.73 px`，
+  display `5.41/5.53/5.71/6.86 px`；四组最大成对中心距离 P95
+  tracking `3.51 px`、display `18.53 px`。car002 四组 tracking
+  `2.49/2.05/2.52/3.61 px`，display `4.06/3.98/3.43/3.55 px`；
+  最大成对中心距离 P95 tracking `10.62 px`、display `6.65 px`。
+- 只把 `display_reacquisition_blend_frames=5` 改为 `1`，板端隔离控制器配置
+  `runs/blend1-controller.conf` SHA-256
+  `42f06ce988467d0aa78f4e3fc5b4491030cbd78c693a1b7e15c25808358e8a99`，
+  headless 配置 `runs/blend1-headless.conf` SHA-256
+  `341e7dcaddcdc4e7cacf88d7526c2973c6e617b86fd77c42a495062fb3841638`；
+  同命令换成 `runs/blend1-headless.conf runs/blend1` 复测八组，
+  `runs/blend1/checksums.sha256` SHA-256
+  `e1eaf5677e902ca4561f56855e8f18ce3a1a6652ec50f2d75028da69b35ce827`，
+  八个 AVI 经 ffprobe 均为 1920×1080/271 帧；主机 JSON
+  `/tmp/nt-dual-gt-evidence/blend1-center.json`。car001 display 最大成对中心
+  距离 P95 `18.53→3.71 px`，car002 `6.65→5.39 px`；tracking 轨迹、
+  重捕帧与失败门禁未变。
+- 再以渐变 1 帧配置为基线，把 `display_center_smoothing_alpha=0.80→1.00`；
+  板端 `runs/alpha1-controller.conf` SHA-256
+  `d6f9600a0a461c59bb1895711bb91c50c37d73b25eed64204dd1eb4225ff9853`，
+  `runs/alpha1-headless.conf` SHA-256
+  `34892aa163b5101b10d9a797a97c3adeed8aa2c660555c08719a9d84c69dacc5`。
+  同命令换成 `runs/alpha1-headless.conf runs/alpha1` 复测八组，
+  `runs/alpha1/checksums.sha256` 覆盖 32 个 CSV/AVI/session/log，SHA-256
+  `5f511edbc5570f1a6c24eb15c21b8657e7c772575301cb47ef473bdd81a08d20`；
+  主机评分 `/tmp/nt-dual-gt-evidence/alpha1-center.json`。八组 display 中心
+  平均误差均下降：car001 `5.49/5.50/5.65/6.58→5.21/5.24/5.44/6.31 px`，
+  car002 `3.95/3.90/3.38/3.48→3.83/3.78/3.31/3.32 px`。
+  display 最大成对中心距离 P95 car001 `3.71→3.85 px`、car002
+  `5.39→5.85 px`，属轻微一致性代价；八组 tracking/control 框、状态、重捕、
+  observation_valid 逐帧相同。两项显示改动均已写入本分支显示配置，最终主机配置
+  SHA-256 与 `runs/alpha1-controller.conf` 相同。
+- 另做四组 car001 的未采纳搜索参数筛查：只把
+  `search_probe_interval_ms=100→33` 的隔离配置 SHA-256
+  `8bfce3c6378f7145c44e5ab9a0ec368c5b61171a44d86e036b9ea396a2f65d4d`，
+  headless SHA-256 `aded48547d05128e7f709ad11325344a8bebb28c3984d0cdcf96067da897ed09`；
+  输出 `runs/probe33/<场景>/` 的 16 文件清单 SHA-256
+  `d61b6201c153a1ab5533a4de2d99de28c6fa0cab6d915800f2a34d2b26af45ea`，
+  主机评分 `/tmp/nt-dual-gt-evidence/probe33-car001.json`。右下框重捕
+  `193→205` 帧、tracking 均值中心误差 `5.73→8.35 px`、四组最大成对
+  中心距离 P95 `3.51→43.05 px`，故拒绝。
+  另在 display 渐变 1 帧基础上把 `suspicion_enter_ms=100→33`、
+  `uncertain_ms=200→100`，隔离配置/headless SHA-256 分别为
+  `a33e6a6dbfd7e4180078acc307a723736984279e1032b86e25bd304b`、
+  `76e1c17e1c720a6ad4fad3e6bb86da76f411ffccf349c2ee7d2a4054e1700381`；
+  `runs/early-suspicion/<场景>/` 的 16 文件清单 SHA-256
+  `c963928c8bed5862ce101e19094c1e3cb13493314de855182bdb69a2c6d1db28`，
+  主机评分 `/tmp/nt-dual-gt-evidence/early-suspicion-car001.json`。标准/左上框
+  第 `70/76` 帧误重捕且平均中心误差 `52.38/54.72 px`，故拒绝。
+- **证据边界 / Handoff**：car001 右下初始框第 192 帧 tracking 中心误差
+  `44.16 px`，第 193 帧才重捕；car002 第 233 帧跨初始框 tracking 中心
+  最大距离 `26.64 px`，15 个 no-bbox 帧仍有 `3/2/6/14` 次误观测。
+  完整评估仅 car001 标准框 PASS；其余七组未通过正式门禁。此分支只保留
+  改善显示中心一致性的候选，不批准正式 handoff，不合入 `main`/`Debug`；
+  下一步继续验证跟踪中心偏移的搜索探测与遮挡语义。
+
 ## 2026-11-13T23:32:00+08:00 搜索期显示隔离板端复测与怀疑期回归
 
 - 本轮被测源码 `codex/dual-gt-init-consistency@2dbffbb6cbe4817a06a2c903b3c34fc9512662c6`，

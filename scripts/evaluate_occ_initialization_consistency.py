@@ -6,6 +6,7 @@ import csv
 import hashlib
 import itertools
 import json
+import math
 import statistics
 from pathlib import Path
 
@@ -17,7 +18,7 @@ BOX_KINDS = ("tracking", "display", "control")
 
 def box(row, kind):
     values = [float(row[f"{kind}_{key}"]) for key in ("x", "y", "width", "height")]
-    if values[2] <= 0 or values[3] <= 0:
+    if not all(math.isfinite(value) for value in values) or values[2] <= 0 or values[3] <= 0:
         raise ValueError(f"invalid {kind} box on frame {row['frame_id']}")
     return values
 
@@ -29,6 +30,29 @@ def summary(values):
         "min_iou": min(values),
         "p10_iou": sorted(values)[max(0, int(len(values) * 0.1) - 1)],
         "below_0_50": sum(value < 0.5 for value in values),
+    }
+
+
+def center(box_value):
+    return (box_value[0] + 0.5 * box_value[2],
+            box_value[1] + 0.5 * box_value[3])
+
+
+def center_distance(first, second):
+    return math.dist(center(first), center(second))
+
+
+def center_summary(boxes, reference, frames):
+    errors = [(frame, center_distance(boxes[frame], reference[frame]))
+              for frame in frames]
+    ordered = sorted(error for _, error in errors)
+    worst_frame, worst_error = max(errors, key=lambda item: item[1])
+    return {
+        "frames": len(errors),
+        "mean_px": statistics.mean(ordered),
+        "p95_px": ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)],
+        "max_px": worst_error,
+        "max_frame": worst_frame,
     }
 
 
@@ -54,10 +78,11 @@ def read_run(path, roi, truth, contract):
         metrics[kind] = {}
         for stratum, frames in strata.items():
             if frames:
-                metrics[kind][stratum] = summary([
+                metrics[kind][stratum] = {"iou": summary([
                     evaluator._iou(boxes[kind][frame], truth[frame]["bbox"])
                     for frame in frames
-                ])
+                ]), "center_error": center_summary(
+                    boxes[kind], {frame: truth[frame]["bbox"] for frame in frames}, frames)}
     return rows, boxes, {
         "csv": str(path.resolve()),
         "csv_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -88,7 +113,7 @@ def main():
     contracts = {}
     truths = {}
     runs = {}
-    report = {"schema_version": 1, "runs": {}, "pairs": {}}
+    report = {"schema_version": 2, "runs": {}, "pairs": {}, "targets": {}}
     for target, label, roi_text, path_text in args.run:
         if target not in evaluator.CANONICAL_IDENTITIES or (target, label) in runs:
             parser.error(f"invalid or repeated target/label: {target}/{label}")
@@ -110,23 +135,49 @@ def main():
         for first, second in itertools.combinations(labels, 2):
             key = f"{target}/{first}__{second}"
             report["pairs"][key] = {
-                kind: summary([evaluator._iou(runs[target, first][kind][frame],
-                                               runs[target, second][kind][frame])
-                               for frame in visible])
+                kind: {"iou": summary([evaluator._iou(runs[target, first][kind][frame],
+                                                       runs[target, second][kind][frame])
+                                       for frame in visible]),
+                       "center_spread": center_summary(runs[target, first][kind],
+                                                       runs[target, second][kind], visible)}
                 for kind in BOX_KINDS
             }
+        if len(labels) >= 2:
+            report["targets"][target] = {}
+            for kind in BOX_KINDS:
+                pairs = list(itertools.combinations(labels, 2))
+                worst_by_frame = {
+                    frame: max(center_distance(runs[target, first][kind][frame],
+                                               runs[target, second][kind][frame])
+                               for first, second in pairs)
+                    for frame in visible
+                }
+                ordered = sorted(worst_by_frame.values())
+                worst_frame = max(worst_by_frame, key=worst_by_frame.get)
+                report["targets"][target][kind] = {
+                    "visible_frames": len(visible),
+                    "max_pairwise_center_spread_mean_px": statistics.mean(ordered),
+                    "max_pairwise_center_spread_p95_px": ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)],
+                    "max_pairwise_center_spread_max_px": worst_by_frame[worst_frame],
+                    "max_pairwise_center_spread_max_frame": worst_frame,
+                }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     for name, result in report["runs"].items():
         metrics = result["metrics"]
         print(name, result["full_evaluator_verdict"], result["failed_gates"],
               "reacq", result["reacquisition_frames"],
-              "tracking", round(metrics["tracking"]["all_visible"]["mean_iou"], 3),
-              "display", round(metrics["display"]["all_visible"]["mean_iou"], 3),
+              "tracking_iou", round(metrics["tracking"]["all_visible"]["iou"]["mean_iou"], 3),
+              "tracking_center", round(metrics["tracking"]["all_visible"]["center_error"]["mean_px"], 2),
+              "display_iou", round(metrics["display"]["all_visible"]["iou"]["mean_iou"], 3),
+              "display_center", round(metrics["display"]["all_visible"]["center_error"]["mean_px"], 2),
               "no_bbox_false_obs", len(result["confirmed_no_bbox"]["false_observation_frames"]))
     for name, result in report["pairs"].items():
-        print(name, "tracking_pair", round(result["tracking"]["mean_iou"], 3),
-              "display_pair", round(result["display"]["mean_iou"], 3))
+        print(name, "tracking_pair_center", round(result["tracking"]["center_spread"]["mean_px"], 2),
+              "display_pair_center", round(result["display"]["center_spread"]["mean_px"], 2))
+    for target, metrics in report["targets"].items():
+        print(target, "tracking_spread_p95", round(metrics["tracking"]["max_pairwise_center_spread_p95_px"], 2),
+              "display_spread_p95", round(metrics["display"]["max_pairwise_center_spread_p95_px"], 2))
 
 
 if __name__ == "__main__":
