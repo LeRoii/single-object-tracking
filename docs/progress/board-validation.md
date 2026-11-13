@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T05:25:33+08:00 八个初始模板的外观可分性诊断
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；分析基线 `2a9a8d656ad638dd476086641cf05780c3274c32`。继续使用下方经哈希核验的 `occ_video_1/1.mp4`、两目标真值与精确板端 `9f84efe` 八框 CSV。主机执行 `python3 /tmp/nt-dual-gt-evidence/initial-appearance-separation.py > /tmp/nt-dual-gt-evidence/initial-appearance-separation.json`；脚本 SHA-256 `72c4f14f68cf84c2ed39661c9c6edf6deff3b522715b6bc438e887778fa1b2fe`，报告 SHA-256 `c1dff1276dccfa2892fe929c1544e76ceac7e8ee11cf310efa37b17f6905e41c`。脚本取八组第 0 帧实际初始化框图块，缩放至 32×32，分别与第 240～270 帧两目标的真值图块计算归一化 RGB/灰度/梯度相关系数；“正 margin”仅表示同目标相似度大于另一辆已确认轿车。
+- RGB 相关的正 margin 帧数：car001 标准/人工/左上/右下 `13/30/13/29`（每组 31 帧），平均 margin `−0.025/+0.146/−0.003/+0.134`；car002 标准/真值/左上/右下 `26/28/26/15`，平均 `+0.068/+0.080/+0.056/+0.002`。梯度相关在 car001 四框仅 `0/6/4/3` 帧正 margin，但 car002 四框为 `31/28/24/31`。几像素的初始化变化足以改变这项朴素外观量对两辆白车的排序；一种固定像素相关规则不能同时稳定处理两目标八框。
+- **证据边界 / Handoff**：这是仅含两辆指定轿车、使用后段真值图块的离线可分性上界，不包含 detector 全部候选、遮挡期虚假观测，也不是 RKNN tracker 的真实特征或板端推理结果；不能把相关系数当作身份验证器直接部署。结合下方原始 NanoTrack 中心偏差，请协调者将八框实际初始化 ROI、CSV 和本诊断交模型/外观评估 owner，用跨框和负样本门槛检验模板鲁棒性。当前代码与正式板端 handoff 均保持 HOLD；下一步需提出有运行时输入可用、且可经八框及无框帧验证的模板或外观候选。本记录提交后以实际 commit 为结果身份。
+
 ## 2026-11-14T05:23:11+08:00 原图边界梯度中心修正的离线否决
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；分析基线 `cd61638cc7474f792be8854377e651f0c03c5e08`，有效板端算法/八框轨迹仍为 `9f84efecd57d611a239cc71c99ab2e4295025dbc`。输入 `data/occ_video_1/1.mp4` SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；八框 CSV 位于 `/tmp/nt-dual-gt-evidence/handoff-9f84efe/<label>/frames.csv`，其中 car001/car002 标准框 SHA-256 分别 `7bcd85d31b9e5840eb4bb56e2d9d7e82eb4b143f9e056c9056fa05e9e9aa3be4`、`23a6e3876ffdc34a863dc5896e2262b851cf7dc84e5d024a7076086c7f82abf4`；其余六框及板端输入、模型、二进制身份见下方 `9f84efe` 八框记录。
