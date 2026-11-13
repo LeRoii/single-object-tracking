@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T05:31:06+08:00 完整车体图像分割中心的两帧筛查
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；筛查基线 `ee450c14e020577b5ba97aee3003722a045c6c1c`。输入沿用下方已核对身份的 canonical 视频/GT 和 `9f84efe` 八框板端 CSV；主机 OpenCV `4.5.5`。执行 `g++ -std=c++17 /tmp/nt-dual-gt-evidence/grabcut-probe.cpp -o /tmp/nt-dual-gt-evidence/grabcut-probe $(pkg-config --cflags --libs opencv4)`，原型源码/二进制 SHA-256 `222596af594cba6f3165af691741667bef34489392e46b72182550dfca8018e2`/`8b1aec3da9c2c5ebaed668595600ac15edbdeef2055d6fbd8ee02246bb32063d`；再运行 `python3 /tmp/nt-dual-gt-evidence/grabcut-screen.py > /tmp/nt-dual-gt-evidence/grabcut-screen.json`，脚本/报告 SHA-256 `d50222bfdc38a3c2b355821ba8041c9df7504153e7b6441f569a73dfc205fbe8`/`0fe73a215a4d2b09edddf61f19d59f1c4ad3f2c61357d0b76ae57160e9e954bd`。
+- 仅筛后段第 245、260 帧，两目标各四初始框。GrabCut 使用 tracking 框外扩 7 px 作前景初始矩形，选取邻近连通域的包围框，不使用真值调参。car001 第 260 帧四框原中心误差 `5.57/7.96/5.35/5.27 px`（标准/人工/左上/右下），分割后均 `10.40 px`；第 245 帧分割后均 `6.96 px`，只在标准/右下略好。car002 第 260 帧四框原 `10.61/5.90/5.66/8.44 px`，分割后 `2.06/2.50/3.20/2.06 px`；第 245 帧也均改善。分割轮廓的几何中心与人工完整目标框中心并非总一致，同一规则在 car001 上退化。
+- **证据边界 / Handoff**：这只是主机两帧离线筛查，不是 271 帧、遮挡期、RK3588 时延或真实闭环的证明；原型未进入代码分支。不能因为 car002 局部收益把分割结果用于 `tracking_bbox` 或 `display_bbox` 的中心。正式八框结果仍为 `2/8 PASS`、handoff HOLD。下一步需要模型/模板级、同时经两目标八框可见和遮挡段验证的定位方案。本记录提交后以实际 commit 为结果身份。
+
 ## 2026-11-14T05:28:32+08:00 初始裁剪聚合与真实模板更新时序核对
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；分析基线 `ea3ecc3c99ebde6fdd69202993823b715daa52be`，输入仍为下方哈希绑定的 `occ_video_1` 双目标、`9f84efe` 八框板端 CSV 与同源视频解码图像。主机运行 `python3 /tmp/nt-dual-gt-evidence/init-jitter-aggregate.py > /tmp/nt-dual-gt-evidence/init-jitter-aggregate.json`；脚本/结果 SHA-256 `90bd1f09026986310634b311e1f359afe1228e6d54ce52e344a24df301da6fae`/`8ccda2126dc8faf9078867ecb8105710b7ef94ebef782f5e3744f815d17af2c1`。再运行相同脚本的 ±1 px 版本 `/tmp/nt-dual-gt-evidence/init-jitter-radius1.py`，脚本/结果 SHA-256 `c4e44b77d5ec07ebe799e8f1030c2b8cbe47dd59918cc3cdb92427ebb3eb1b98`/`ee41bffe4cad00c0585088a8196eb11d9f64632c4a40a2e9ae10364af2d5fe5a`。两种离线反事实都把第 0 帧实际 ROI 的 3×3 平移图块特征平均，只用第 240～270 帧两车真值图块事后核对相似度。
