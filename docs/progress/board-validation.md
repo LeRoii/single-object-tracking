@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T05:28:32+08:00 初始裁剪聚合与真实模板更新时序核对
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；分析基线 `ea3ecc3c99ebde6fdd69202993823b715daa52be`，输入仍为下方哈希绑定的 `occ_video_1` 双目标、`9f84efe` 八框板端 CSV 与同源视频解码图像。主机运行 `python3 /tmp/nt-dual-gt-evidence/init-jitter-aggregate.py > /tmp/nt-dual-gt-evidence/init-jitter-aggregate.json`；脚本/结果 SHA-256 `90bd1f09026986310634b311e1f359afe1228e6d54ce52e344a24df301da6fae`/`8ccda2126dc8faf9078867ecb8105710b7ef94ebef782f5e3744f815d17af2c1`。再运行相同脚本的 ±1 px 版本 `/tmp/nt-dual-gt-evidence/init-jitter-radius1.py`，脚本/结果 SHA-256 `c4e44b77d5ec07ebe799e8f1030c2b8cbe47dd59918cc3cdb92427ebb3eb1b98`/`ee41bffe4cad00c0585088a8196eb11d9f64632c4a40a2e9ae10364af2d5fe5a`。两种离线反事实都把第 0 帧实际 ROI 的 3×3 平移图块特征平均，只用第 240～270 帧两车真值图块事后核对相似度。
+- RGB 正 margin 帧数在 ±3 px 聚合后，car001 标准/人工/左上/右下从 `13/30/13/29` 变为 `28/30/25/30`，但 car002 标准/真值/左上/右下从 `26/28/26/15` 变为 `8/23/17/3`；±1 px 聚合时 car001 `17/30/18/30`、car002 `23/28/24/11`。没有一个统一小扰动平均方案在两目标八框都改善，这只是像素级代理，不等于 RKNN 特征平均的真实效果，故没有新增初始化推理开销或修改生产跟踪器。
+- 主机执行 `python3 /tmp/nt-dual-gt-evidence/template-timeline.py > /tmp/nt-dual-gt-evidence/template-timeline.json`，脚本/报告 SHA-256 `4a760bba9646cb5869782801f7f4ea3c7bfe994ff36e6e8a4bac0da11966e9c1`/`a3d545302128cc7c76a9d359fa9deebefe4700528c135121bac6412611fb33a2`。八框均在第 30/33、63/66、约 96～100、约 129～133 帧阶段/提交 recent 模板，此后还有恢复及稳定段提交；car001 恢复后的提交在 191/194 帧，后段又在 224/227、257/260 等帧阶段/提交。第 240～253 与 258～270 帧 car001 标准框中心均误差 `7.19→7.88 px`、car002 标准框 `6.99→8.74 px`，其他框的变化方向相同。后段误差不能仅归因于初始化时的单张像素模板；实际 recent 模板已多次更新且偏差没有随近期提交消失。
+- **裁决 / Handoff**：维持当前算法、模型、400 ms 配置与 `2/8` 正式八框结论；不把初始化裁剪聚合或静态像素相似度升级为板端候选。后续模型/模板研究必须覆盖恢复后 recent 特征、同类负样本和追踪框中心；display detector 框仍只用于视觉外观。正式 handoff HOLD，本条提交后以实际 commit 为结果身份。
+
 ## 2026-11-14T05:25:33+08:00 八个初始模板的外观可分性诊断
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；分析基线 `2a9a8d656ad638dd476086641cf05780c3274c32`。继续使用下方经哈希核验的 `occ_video_1/1.mp4`、两目标真值与精确板端 `9f84efe` 八框 CSV。主机执行 `python3 /tmp/nt-dual-gt-evidence/initial-appearance-separation.py > /tmp/nt-dual-gt-evidence/initial-appearance-separation.json`；脚本 SHA-256 `72c4f14f68cf84c2ed39661c9c6edf6deff3b522715b6bc438e887778fa1b2fe`，报告 SHA-256 `c1dff1276dccfa2892fe929c1544e76ceac7e8ee11cf310efa37b17f6905e41c`。脚本取八组第 0 帧实际初始化框图块，缩放至 32×32，分别与第 240～270 帧两目标的真值图块计算归一化 RGB/灰度/梯度相关系数；“正 margin”仅表示同目标相似度大于另一辆已确认轿车。
