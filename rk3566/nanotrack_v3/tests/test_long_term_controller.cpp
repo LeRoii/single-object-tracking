@@ -2204,34 +2204,6 @@ void test_recovery_probation_cleanup() {
 
 namespace {
 
-void test_recent_safe_center_blend_requires_agreement() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.recent_safe_center_blend_alpha = 0.5F;
-  config.stable_frames_for_update = 50;
-  ResolvedControllerFixture controller(config);
-  controller.initialize({70, 50, 30, 30}, 0, 0, {320, 240});
-  auto plan = controller.begin_frame(1, 40, false);
-  expect_true(plan.template_run_mode == TemplateRunMode::kRecentAndSafe,
-              "enabled center blend requests both committed templates");
-  auto output = controller.finish_frame(
-      plan, {reliable_observation(plan, TemplateKind::kRecent, {70, 50, 30, 30}),
-             reliable_observation(plan, TemplateKind::kSafe, {74, 50, 30, 30})},
-      std::nullopt);
-  expect_true(output.accepted && output.selected_template == TemplateKind::kRecent,
-              "an agreeing safe head does not replace recent identity");
-  expect_near(output.tracking_bbox.x, 72.0F, 0.01F,
-              "agreeing templates blend their centers in tracking output");
-
-  plan = controller.begin_frame(2, 80, false);
-  output = controller.finish_frame(
-      plan, {reliable_observation(plan, TemplateKind::kRecent, {72, 50, 30, 30}),
-             reliable_observation(plan, TemplateKind::kSafe, {90, 50, 30, 30})},
-      std::nullopt);
-  expect_near(output.tracking_bbox.x, 72.0F, 0.01F,
-              "distant safe response cannot move the tracking center");
-}
-
 void test_recent_safe_tentative_tracking() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2871,7 +2843,6 @@ void test_recent_safe_rolling_scale() {
 }  // namespace
 
 int main() {
-  test_recent_safe_center_blend_requires_agreement();
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();

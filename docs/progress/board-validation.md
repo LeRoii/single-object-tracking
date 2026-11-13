@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T04:00:13+08:00 双模板中心融合的四组板端否决与撤回
+
+- 精确源码 `codex/dual-gt-init-consistency@9bb08b6c8217d026f8023dc2a63a7ab406888284`，源码包 `/home/neardi/Project/SOT/nt-dual-gt-safe-blend-9bb08b6.tar` 主机/板端 SHA-256 `c541ddad201ddcb0e4424f4c633528bcaf95671538c3b8989a4155d9780c3f4b`，隔离根 `/home/neardi/Project/SOT/dual-gt-safe-blend-9bb08b6`。RK3588 原生 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `79374a4994cff738e326a6bae29f6fda42da675f6b18c346c769f257287cc1a6`，控制器配置 SHA-256 `b56419b8daffae18afeffb2d40e9957899d82586ee027e74aef5c01b065da621`，headless 配置 SHA-256 `6bb93a9cc4af0e25c547cda80f85c3168e0edaa5620b08ae4ce387267dd7dd9f`；视频、GT、模型、detector 及环境同基线矩阵。
+- 执行 car001 标准/右下、car002 标准/真值四组 `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...`。16 文件清单 `runs/screen-checksums.sha256` SHA-256 `dbf8f665b27779fc8b740448c3e9a41a61d04485630d438558b4d8713b8cb912`，四 AVI 均 1920×1080×271；文本包 `runs/screen-text.tar.gz` 主机/板端 SHA-256 `5e0acf6bcb81b3771bc3d8be77886a91501a5f8947b7523b5e95903832b2bdbf`，评分 `/tmp/nt-dual-gt-evidence/safe-blend-9bb08b6-screen-center.json` SHA-256 `5a70bb2962eb978eb125a4852f957a899194d5947226d39126f1dbbb30688123`。
+- car001 标准/右下 tracking 中心均值 `32.93/5.09 px`，重捕 `186/192`，跨初始框 tracking/display 中心 P95 `135.85/133.08 px`；标准框重捕后偏离累积，真实目标身份代理和可见框门禁失败。car002 标准/真值中心均值 `2.10/1.77 px`，跨初始框 P95 `3.42 px`，但完全遮挡语义仍失败。四组正式门禁 `0/4 PASS`。离线冻结轨迹对融合的微小收益没有覆盖实际反馈：一旦微调中心影响下一帧裁剪，遮挡后的恢复路径可分叉。
+- **裁决 / Handoff**：撤回 `9bb08b6` 融合代码、配置、测试以及 `c3ce34a` 的诊断环境开关，保留所有板端输出和上述两条实验记录；恢复 `027e28b` 的当前算法文件与 `63007d32b58c7e4aa920762f4d73f3532ef8ee544e50101c0684914d9b470acc` 控制器配置。两目标/两路中心的一致性目标仍未达到，正式 handoff HOLD。后续研究重捕阶段的身份与模板轨迹分叉，不继续用微小中心修补推断长期效果。
+
 ## 2026-11-14T03:54:58+08:00 可信双模板近邻中心融合候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `c3ce34ad1f4b8eff368f41fa7fe22e93f1d80101`。诊断显示四组 recent/safe 配对帧 safe 平均中心改善仅 0.22–0.51 px，但偶有远处误响应；只在正常 TRACKING、无模板 probation、两响应均 reliable、中心距不超过 recent 框对角线 15%、框 IoU 至少 0.75 时，按 `recent_safe_center_blend_alpha=0.50` 融合中心，尺寸与 selected_template 仍属 recent。其他配置默认 0 禁用。`visible-adaptive-display.conf` SHA-256 `b56419b8daffae18afeffb2d40e9957899d82586ee027e74aef5c01b065da621`。
