@@ -1,5 +1,63 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T21:44:16+08:00 重捕后显示框缩放 RK3588 三目标复测
+
+- 被测源码 `codex/recovery-local-arbitration-debug-video@c829e8aa9055714f3abc3ed817854e2725002854`，
+  独立板端根 `/home/neardi/Project/SOT/display-rebase-c829e8a`；主机与 RK3588 的
+  `source.tar` SHA-256 均为 `1a79700ca659d920d03ad91200ddc635c8317c289ad2e3ffef01a74caa1e9911`。
+  板端原生 RKNN、`-Werror=switch` 构建及 CTest `23/23 PASS`，
+  `build/nanotrack_v3` SHA-256 为
+  `35f764601e25a090d921b1e7366ce163e2437094e0ac4c2e50bbd3139a9341ee`。
+  本轮日志实测 Linux `6.1.84`、RKNN API `2.1.0`、RKNPU driver `0.9.8`。
+- 运行配置 `runs/headless-eval.conf` SHA-256
+  `845d99d2f9d470d842057874016bb252402574746c5cb305125e426d9ad7d132`；
+  输入 `data/occ_video_1/1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`。
+  `models/template_backbone.rknn`、`search_backbone.rknn`、`head.rknn` 在本次板端
+  复算的 SHA-256 依次为 `eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55`、
+  `d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee`、
+  `4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5`；
+  VisDrone9 RK3588 detector `/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn`
+  为 `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`。
+- 在部署根分别执行
+  `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video runs/<scenario>/output.avi --output-boxes runs/<scenario>/frames.csv --session-metadata runs/<scenario>/session.json`，
+  其中 `user_roi=993,585,36,36`、`car_001=992,582,37,39`、
+  `car_002=970,517,38,38`。三次均 exit 0，CSV 271 数据行、AVI 1920×1080 共 271 帧；
+  runtime P95 分别 `9.628`、`10.002`、`9.432 ms`。CSV SHA-256 依次为
+  `38e782b3286ef2de6612bc2ba2d8f7ddbdbcaf89c9dfd32b7f17ae61479ea936`、
+  `2662ebff0437ffb24a86dccf2dbe06877a1fbfa3920f8fc0ed268537aa736247`、
+  `c2f672fa5de7c1480a5d235b4d044874769ad7b67940bedd8fdbdb7e62b83fde`；
+  AVI SHA-256 依次为
+  `14ed94f1ce0c5799bbd8cc6e8baeef4a319c313310c914d52c9c1583c8ad93e6`、
+  `edf20ddcf711e329047ba4d70ce1c18d188a11ba93b57f4deafe091f0062dd03`、
+  `4b263ce94b6be8ee8b8f9183c32ff523353ae2d4ab31d06bfa04a2569cae8dc9`。
+- 对父提交 `5793986` 的同 ROI CSV：car001、car002 的状态、接受/重捕标志、模板动作、
+  跟踪框及控制框每帧完全一致。显示框在 car001 第 190 帧由 `63.6×72.0` 收至
+  `55.6×63.9`，car002 第 240 帧由 `70.5×73.5` 收至 `54.8×61.6`。
+  用户 ROI 在第 197 帧由 `62.6×72.9` 收至 `54.3×63.5`；重捕帧独立运行中由
+  193 变为 192，控制轨迹从该帧开始不逐帧相同，不能将其计为严格隔离性对照。
+  因显示模块在控制器输出之后运行，该一帧提前不是显示框重置对同帧控制器的直接输入；
+  异步调度差异仅为推断，尚未单独归因。
+- 重捕后 21 帧显示框与相应可见真值的平均 IoU：用户 ROI `0.537→0.662`，
+  car001 `0.525→0.621`，car002 `0.615→0.760`；跟踪框未因此变为显示框。
+  full evaluator：car001 **PASS**（185 帧重捕）；用户 ROI **FAIL**（192 帧仍晚于
+  182--189 窗口）；car002 **FAIL**（沿袭 213--216 帧完全遮挡语义），其余门通过。
+  evaluator JSON 位于主机 `/tmp/display-rebase-evidence/<scenario>/eval.json`，三份
+  SHA-256 依次为 `f531a1609ee6513d1505f3056cc794cb56fe73d19f53e9833ff79f60f7e10f1d`、
+  `6861b4d4ae608175798831cb3da9ea440f8f91b4e70b3fc0b42b83376401b2b5`、
+  `de69da3d32d834ab266da21e9a64d6889e9960bcb36e3543c4f25d13441ccba3`。
+- 交互模式在独立 Xvfb 中执行
+  `DISPLAY=:99 ./build/nanotrack_v3 --config rk3566/nanotrack_v3/config/rk3588-adaptive-display-debug.conf --bbox 993,585,36,36 --max-frames 200 --output-video runs/interactive_display/debug.avi --output-boxes runs/interactive_display/frames.csv --session-metadata runs/interactive_display/session.json`；
+  实际显示至第 200 帧后按 Q 正常退出。板端 `NanoTrack Display` 窗口截图
+  `/tmp/display-rebase-window-frame200.png` SHA-256
+  `8c4dda386eafedbdc5e6f4c426d997ab64fb64b2c1c9a63aa992d688fb4fec27`，
+  主机副本同名；Debug AVI 1920×1080 共 201 帧，SHA-256
+  `7298ae96dd953d26f3644e04fe8ce7f97701d62e8fde14e00a3039559110ec44`，保留在板端
+  `runs/interactive_display/`。
+- **证据边界 / Handoff**：这是 RK3588 视频与虚拟显示器上的显示框修复验证；真实吊舱
+  显示效果待人工观察。候选继续保持本地分支，未获用户确认前不合入 `main` 或 `Debug`；
+  请求协调对话消费本源码提交及上述板端证据时保留已知失败项。
+
 ## 2026-11-13T21:37:35+08:00 重捕后显示框重复放大修正：主机验证
 
 - 分支 `codex/recovery-local-arbitration-debug-video`，工作树
