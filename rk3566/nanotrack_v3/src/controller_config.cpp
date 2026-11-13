@@ -130,9 +130,6 @@ void set_value(ControllerConfig& config,
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
   else if (key == "recent_visibility_center_residual") config.recent_visibility_center_residual = parse_float(key, value);
-  else if (key == "recent_visibility_search_height_ratio") config.recent_visibility_search_height_ratio = parse_float(key, value);
-  else if (key == "recent_visibility_search_center_residual") config.recent_visibility_search_center_residual = parse_float(key, value);
-  else if (key == "recent_visibility_search_consecutive_frames") config.recent_visibility_search_consecutive_frames = parse_int(key, value);
   else if (key == "occlusion_hold_frames") config.occlusion_hold_frames = parse_int(key, value);
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
@@ -177,7 +174,6 @@ void set_value(ControllerConfig& config,
   else if (key == "motion_search_enabled") config.motion_search_enabled = parse_bool(key, value);
   else if (key == "recovery_conflict_requires_detector") config.recovery_conflict_requires_detector = parse_bool(key, value);
   else if (key == "search_reacquisition_min_age_ms") config.search_reacquisition_min_age_ms = parse_integer(key, value);
-  else if (key == "recovery_confirm_min_raw_score") config.recovery_confirm_min_raw_score = parse_float(key, value);
   else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
   else if (key == "motion_max_speed_diagonals_per_s") config.motion_max_speed_diagonals_per_s = parse_float(key, value);
   else if (key == "motion_max_acceleration_diagonals_per_s2") config.motion_max_acceleration_diagonals_per_s2 = parse_float(key, value);
@@ -372,25 +368,6 @@ void validate_controller_config(const ControllerConfig& config) {
                                   config.recent_visibility_center_residual <= 1.0F;
   if (!visibility_disabled && !visibility_enabled) {
     throw std::invalid_argument("recent visibility gate must be disabled or have two unit-interval thresholds");
-  }
-  const bool visibility_search_disabled =
-      config.recent_visibility_search_height_ratio == 0.0F &&
-      config.recent_visibility_search_center_residual == 0.0F &&
-      config.recent_visibility_search_consecutive_frames == 0;
-  const bool visibility_search_enabled =
-      config.recent_visibility_search_height_ratio > 0.0F &&
-      config.recent_visibility_search_height_ratio <= 1.0F &&
-      config.recent_visibility_search_center_residual > 0.0F &&
-      config.recent_visibility_search_center_residual <= 1.0F &&
-      config.recent_visibility_search_consecutive_frames >= 2 &&
-      config.recent_visibility_search_consecutive_frames <= 10;
-  if (!visibility_search_disabled && !visibility_search_enabled) {
-    throw std::invalid_argument("recent visibility search gate requires two unit-interval thresholds and 2-10 consecutive frames");
-  }
-  if (!std::isfinite(config.recovery_confirm_min_raw_score) ||
-      config.recovery_confirm_min_raw_score < 0.0F ||
-      config.recovery_confirm_min_raw_score > 1.0F) {
-    throw std::invalid_argument("recovery confirmation raw score must be in [0,1]");
   }
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
@@ -614,7 +591,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.search_reacquisition_requires_detector << '|'
          << config.recovery_conflict_requires_detector << '|'
          << config.search_reacquisition_min_age_ms << '|'
-         << config.recovery_confirm_min_raw_score << '|'
          << config.motion_search_confidence_ms << '|'
          << config.motion_max_speed_diagonals_per_s << '|'
          << config.motion_max_acceleration_diagonals_per_s2 << '|'
@@ -627,10 +603,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.response_psr_drop_ratio << '|'
          << config.response_apce_drop_ratio << '|'
          << config.recent_visibility_height_ratio << '|'
-         << config.recent_visibility_center_residual << '|'
-         << config.recent_visibility_search_height_ratio << '|'
-         << config.recent_visibility_search_center_residual << '|'
-         << config.recent_visibility_search_consecutive_frames;
+         << config.recent_visibility_center_residual;
   return stream.str();
 }
 

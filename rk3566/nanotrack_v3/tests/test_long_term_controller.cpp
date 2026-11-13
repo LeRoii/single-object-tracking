@@ -2222,35 +2222,6 @@ void test_conflicted_recovery_needs_matching_detector_evidence() {
   no_conflict_refresh.abort_frame();
 }
 
-void test_recovery_confirmation_requires_current_strong_score() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.motion_search_enabled = true;
-  config.max_center_distance = 10.0F;
-  config.recovery_confirm_min_raw_score = 0.90F;
-  const BBox target{40, 30, 20, 20};
-  ResolvedControllerFixture controller(config);
-  controller.initialize(target, 0, 0, {240, 160});
-  reject_frame(controller, 1, 40);
-  ControllerOutput output;
-  for (std::uint64_t frame : {2U, 3U}) {
-    const auto plan = controller.begin_frame(frame, frame * 40, false);
-    auto observation = reliable_observation(plan, TemplateKind::kRecent,
-                                            target, frame);
-    observation.metrics.raw_score = 0.88F;
-    output = controller.finish_frame(plan, {observation}, std::nullopt);
-  }
-  expect_true(!output.accepted && !output.reacquired &&
-                  output.recovery_confirmation_hits >= 2,
-              "low-score tracker hits remain identity evidence without authorizing recovery");
-  const auto plan = controller.begin_frame(4, 160, false);
-  auto observation = reliable_observation(plan, TemplateKind::kRecent, target, 4);
-  observation.metrics.raw_score = 0.95F;
-  output = controller.finish_frame(plan, {observation}, std::nullopt);
-  expect_true(output.accepted && output.reacquired,
-              "a fresh strong tracker response may confirm the retained candidate");
-}
-
 void test_recovery_probation_cleanup() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2549,56 +2520,6 @@ void test_car_partial_visibility_needs_shrink_and_motion() {
   expect_true(run(0, combined, true).accepted &&
                   run(2, combined, false).accepted,
               "other classes and observations without decoded geometry retain their contract");
-}
-
-void test_strong_car_visibility_requires_consecutive_evidence() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.motion_search_enabled = true;
-  config.recent_visibility_height_ratio = 0.98F;
-  config.recent_visibility_center_residual = 0.04F;
-  config.recent_visibility_search_height_ratio = 0.95F;
-  config.recent_visibility_search_center_residual = 0.15F;
-  config.recent_visibility_search_consecutive_frames = 2;
-  config.stable_frames_for_update = 99;
-  const BBox initial{70, 50, 30, 30};
-  const BBox strong{78, 50, 30, 28};
-  const auto run = [&](int class_id, bool clean_middle) {
-    ResolvedControllerFixture controller(config);
-    controller.initialize(initial, 0, 0, {320, 240},
-                          make_fixed_target_class(class_id, false));
-    const auto frame = [&](std::uint64_t id, const BBox& box) {
-      const auto plan = controller.begin_frame(id, static_cast<std::int64_t>(id) * 40,
-                                               false);
-      auto observation = reliable_observation(plan, TemplateKind::kRecent, box);
-      observation.decoded_bbox = box;
-      return controller.finish_frame(plan, {observation}, std::nullopt);
-    };
-    const auto first = frame(1, strong);
-    if (class_id == 2) {
-      expect_true(first.tracking_phase == TrackingPhase::kSuspected &&
-                      first.observation_present && !first.accepted,
-                  "one strong visibility sample remains provisional");
-    }
-    if (clean_middle) {
-      const auto clean = frame(2, initial);
-      expect_true(clean.tracking_phase != TrackingPhase::kSearching,
-                  "clean observation does not start search");
-      const auto after_gap = frame(3, strong);
-      expect_true(after_gap.tracking_phase == TrackingPhase::kSuspected,
-                  "clean frame resets the strong visibility count");
-      return after_gap;
-    }
-    return frame(2, strong);
-  };
-  const auto search = run(2, false);
-  expect_true(search.tracking_phase == TrackingPhase::kSearching &&
-                  !search.observation_present && !search.accepted,
-              "two consecutive strong car visibility samples enter search");
-  run(2, true);
-  const auto other_class = run(0, false);
-  expect_true(other_class.tracking_phase != TrackingPhase::kSearching,
-              "non-car observations do not use the visibility search gate");
 }
 
 void test_search_uses_last_clean_response_motion_trend() {
@@ -3010,7 +2931,6 @@ int main() {
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();
   test_car_partial_visibility_needs_shrink_and_motion();
-  test_strong_car_visibility_requires_consecutive_evidence();
   test_search_uses_last_clean_response_motion_trend();
   test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();
@@ -3039,7 +2959,6 @@ int main() {
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_conflicted_recovery_needs_matching_detector_evidence();
-  test_recovery_confirmation_requires_current_strong_score();
   test_recovery_probation_cleanup();
 
   const auto expect_enum_name = [](auto value, const char* expected) {

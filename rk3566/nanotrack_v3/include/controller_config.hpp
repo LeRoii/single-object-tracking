@@ -74,11 +74,6 @@ struct ControllerConfig {
   // Optional car-only early partial-visibility gate. Zero disables both.
   float recent_visibility_height_ratio = 0.0F;
   float recent_visibility_center_residual = 0.0F;
-  // Sustained stronger evidence may enter search before the uncertainty timer.
-  // All three zero values disable this gate.
-  float recent_visibility_search_height_ratio = 0.0F;
-  float recent_visibility_search_center_residual = 0.0F;
-  int recent_visibility_search_consecutive_frames = 0;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;
@@ -132,7 +127,6 @@ struct ControllerConfig {
   // same NanoTrack-confirmed recovery candidate. Default preserves behavior.
   bool recovery_conflict_requires_detector = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
-  float recovery_confirm_min_raw_score = 0.0F;
   std::int64_t motion_search_confidence_ms = 1000;
   float motion_max_speed_diagonals_per_s = 100.0F;
   float motion_max_acceleration_diagonals_per_s2 = 1000.0F;
