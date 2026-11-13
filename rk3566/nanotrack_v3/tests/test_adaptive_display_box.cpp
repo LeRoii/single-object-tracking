@@ -56,20 +56,20 @@ nanotrack::ControllerOutput tracking_output(const nanotrack::BBox& bbox) {
   return output;
 }
 
-void test_class_padding_and_initialization() {
+void test_detector_envelope_and_initialization() {
   using namespace nanotrack;
   const BBox roi{80, 80, 20, 20};
   AdaptiveDisplayBox car(config());
   car.initialize(roi, established(2, BBox{70, 75, 40, 30}), FrameSize{200, 200});
-  expect_true(close(car.current().x, 67.6F) && close(car.current().y, 72.6F) &&
-                  close(car.current().width, 44.8F) && close(car.current().height, 34.8F),
-              "car initialization expands to the padded full-object detector box");
+  expect_true(close(car.current().x, 70.0F) && close(car.current().y, 75.0F) &&
+                  close(car.current().width, 40.0F) && close(car.current().height, 30.0F),
+              "car initialization uses the detector full-object box without added margins");
 
   AdaptiveDisplayBox person(config());
   person.initialize(roi, established(0, BBox{2, 4, 20, 80}), FrameSize{200, 200});
-  expect_true(close(person.current().x, 0.0F) && close(person.current().width, 24.0F) &&
-                  close(person.current().height, 88.8F),
-              "person padding is independent by axis and clipped to the frame");
+  expect_true(close(person.current().x, 2.0F) && close(person.current().y, 4.0F) &&
+                  close(person.current().width, 20.0F) && close(person.current().height, 80.0F),
+              "person initialization uses the detector box without added margins");
 
   AdaptiveDisplayBox fallback(config());
   fallback.initialize(roi, TargetClassState{}, FrameSize{200, 200});
@@ -129,6 +129,34 @@ void test_confirmation_and_search_freeze() {
               "search follows the predicted center while freezing trusted dimensions");
 }
 
+void test_confirmed_detector_box_has_no_extra_margin() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_detector_blend_alpha = 1.0F;
+  value.display_max_size_step_ratio = 1.0F;
+  value.accepted_center_smoothing_alpha = 1.0F;
+  AdaptiveDisplayBox display(value);
+  TargetClassState target = established(2, BBox{80, 80, 40, 30});
+  target.selected_candidate.reset();
+  const BBox tracked{90, 85, 20, 20};
+  display.initialize(tracked, target, FrameSize{200, 200});
+  ControllerOutput output = tracking_output(tracked);
+  DetectorBatch batch;
+  batch.purpose = DetectorRequestPurpose::kDisplayRefresh;
+  batch.candidates = {DetectorCandidate{BBox{80, 80, 40, 30}, 0.9F, 2}};
+  AdaptiveDisplayDiagnostics diagnostics;
+  batch.source_frame_id = 1;
+  display.ingest(batch, output, target);
+  display.update(output, target, diagnostics);
+  batch.source_frame_id = 2;
+  display.ingest(batch, output, target);
+  const BBox confirmed = display.update(output, target, diagnostics);
+  expect_true(diagnostics.correction_applied && close(confirmed.x, 80.0F) &&
+                  close(confirmed.y, 80.0F) && close(confirmed.width, 40.0F) &&
+                  close(confirmed.height, 30.0F),
+              "confirmed detector correction targets the unpadded detector box");
+}
+
 void test_adaptive_cadence() {
   using namespace nanotrack;
   AdaptiveDisplayBox display(config());
@@ -180,8 +208,9 @@ void test_reacquisition_rebases_display_scale() {
 }  // namespace
 
 int main() {
-  test_class_padding_and_initialization();
+  test_detector_envelope_and_initialization();
   test_confirmation_and_search_freeze();
+  test_confirmed_detector_box_has_no_extra_margin();
   test_adaptive_cadence();
   test_reacquisition_rebases_display_scale();
   if (failures != 0) return 1;

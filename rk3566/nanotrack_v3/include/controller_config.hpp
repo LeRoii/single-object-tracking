@@ -44,12 +44,12 @@ struct ControllerConfig {
 
   bool adaptive_display_enabled = false;
   bool display_detector_refresh_enabled = false;
-  float display_car_padding_x = 0.06F;
-  float display_car_padding_y = 0.08F;
-  float display_person_padding_x = 0.10F;
-  float display_person_padding_y = 0.06F;
-  float display_unknown_padding_x = 0.08F;
-  float display_unknown_padding_y = 0.08F;
+  float display_car_padding_x = 0.0F;
+  float display_car_padding_y = 0.0F;
+  float display_person_padding_x = 0.0F;
+  float display_person_padding_y = 0.0F;
+  float display_unknown_padding_x = 0.0F;
+  float display_unknown_padding_y = 0.0F;
   float display_detector_blend_alpha = 0.20F;
   float display_max_size_step_ratio = 0.05F;
   float display_detection_consistency_iou = 0.50F;

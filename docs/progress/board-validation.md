@@ -1,5 +1,26 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T22:12:14+08:00 显示框使用检测器原框：主机验证
+
+- 分支 `codex/recovery-local-arbitration-debug-video`，工作树
+  `/home/u20/.codex/worktrees/recovery-local-arbitration-debug-video/single-object-tracking`，
+  修改基线 `7cc966a6d45d592eff5def5d8eba30ddc50a1caf`；源码结果提交以本条
+  Git 历史为准。按用户要求，默认配置和 RK3588 可见光配置中的车、人、未知类别
+  水平/垂直显示留量均改为 `0`。初始化采用裁剪后的 detector 原框；跟踪期已确认的
+  detector 原框作为显示包络目标。帧间传播、两次检测确认、渐进纠正、尺寸步长限制、
+  SEARCH 冻结及重捕过渡保持现有语义，因此显示框不是每帧直接复制异步检测结果。
+- `rk3566/nanotrack_v3/config/visible-adaptive-display.conf` SHA-256 从
+  `3a949556b682011b7ebb40fb0353471b71af0677685e37a938f8af01d66928af`
+  变为 `faf968acfb86c280b913567eaf74dd40580a7264d752b12546a712e688b335a7`；
+  交互入口配置 `rk3588-adaptive-display-debug.conf` 仍为
+  `5d67b007ff13cbd617e6ac54485b45c4a89d52da38d3651f54f5e0d3b92dfaca`，
+  其 `controller_config=visible-adaptive-display.conf` 引用新参数。新增单测检查车/人
+  初始化和两次确认后的目标框没有人工外扩。
+- 实际执行 `cmake --build /tmp/nt-display-rebase-build -- -j4`、
+  `ctest --test-dir /tmp/nt-display-rebase-build --output-on-failure`、
+  `git diff --check`；主机 `23/23 PASS`。此阶段只有源码和主机结果，RK3588 新部署与
+  固定 ROI 视频对照待完成。模型、输入视频与上一条 RK3588 记录相同，未重新转换。
+
 ## 2026-11-13T21:44:16+08:00 重捕后显示框缩放 RK3588 三目标复测
 
 - 被测源码 `codex/recovery-local-arbitration-debug-video@c829e8aa9055714f3abc3ed817854e2725002854`，
