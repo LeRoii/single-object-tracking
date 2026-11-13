@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:37:03+08:00 半像素解码中心修正的八组板端否决
+
+- 精确源码 `codex/dual-gt-init-consistency@7d7a40aaf520b208fc3456e31487999f1c135759`，包 `/home/neardi/Project/SOT/nt-dual-gt-pixel-edge-7d7a40a.tar` 主机/板端 SHA-256 `64b907c127b7b1d5cb055e10522e369de2ed720e88e8eacf97cc281e8bee7388`，隔离根 `/home/neardi/Project/SOT/dual-gt-pixel-edge-7d7a40a`。RK3588 原生构建及 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `243820e7418a353dc8a52360437989add733242842b5e6e58ef9aeb92948a1be`，控制器配置 SHA-256 `63007d32b58c7e4aa920762f4d73f3532ef8ee544e50101c0684914d9b470acc`，headless SHA-256 `58615f65dcce0ddf03295bf1da2e1d9783c1cc0cfd58c3be93afcb7d7b24dd99`；视频、GT、模型和板端环境同前述基线矩阵。
+- 执行八组人工初始框变体 `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...`。32 文件清单 `runs/screen-checksums.sha256` SHA-256 `664d409ef1052554e9614876b0f1316e02f1fc7676c419d283e2f0d36990327c`，八 AVI 均 1920×1080、271 帧；文本包 `runs/screen-text.tar.gz` 主机/板端 SHA-256 `211335f086aa97d80df1ec1dfee1a8dc3e0ec71193c8794d8fd396b77c9f0564`，评分 `/tmp/nt-dual-gt-evidence/pixel-edge-7d7a40a-center.json` SHA-256 `e06b57f2a79aa8a1ddc4abc10ff0feded884d1928e50e06a591e8409a6bdd704`。
+- car001 标准/右下中心均值从基线 4.39/5.02 改为 3.89/4.26 px，重捕 185/186；但人工框第 155/187 帧两次重捕、左上框第 186/204/239 帧三次重捕，二者中心均值 6.22/14.26 px，四框 tracking/display 中心 P95 `45.74/45.85 px`，明显差于基线 `3.51/3.65 px`。car002 四框中心均值 `2.69/2.25/2.35/3.11 px`，跨框 tracking/display P95 `6.34/6.34 px`，完全遮挡语义仍失败，右下另有预测连续性失败；正式八组 `0/8 PASS`。car001 标准/右下可见框失败集中在 185–190 帧：重捕后 staged 模板偏右，recent 模板随后靠近真值，但 probation 输出仍优先 staged。
+- **裁决 / Handoff**：半像素解码修正不能在四种初始框上保持身份一致，撤回 `7d7a40a` 的源码变更，保留八组原始板端输出与评分；正式 handoff HOLD。后续应分别检验模型/模板对初始框微扰的稳定性与 probation 选择策略，不能仅凭两组改善认定全目标达标。
+
 ## 2026-11-14T03:28:58+08:00 NanoTrack 裁剪像素中心到框边界中心的坐标候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `89a9e101f5752c6c5b74744bf5609e1a627adc22`。`NanoTrackV3::infer` 以 `bbox.x+(width−1)/2` 定位像素裁剪中心，而通用 `BBox` 与 `decode_head` 使用 `bbox.x+width/2` 作为框边界中心。仅在 `run_head` 进入解码器前把参考中心加 `0.5 px`，保持裁剪与 RKNN 输入不变；检验零位移时的半像素坐标偏差是否累积成可见中心误差。当前是数学假设，不能从代码差异直接推断板端效果。
