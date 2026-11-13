@@ -1262,17 +1262,9 @@ LongTermController::confirm_recovery_candidate(
     if (output.recovery_conflict || !key || !recovery_candidates_.confirmed(*key))
       return false;
     const auto* candidate = recovery_candidates_.find(*key);
-    if (!candidate) return false;
-    if (config_.recovery_confident_confirmation_proximity_gate &&
-        plan.motion_prediction_confident &&
-        candidate->key.source == RecoveryCandidateSource::kDetector &&
-        frame_normalized_center_distance(candidate->preferred_evidence().bbox,
-                                         plan.motion_predicted_bbox, frame_size_) >
-            config_.detector_candidate_max_center_ratio) {
-      return false;
-    }
-    return !config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
-           candidate->has_detector_supported_hit();
+    return candidate &&
+        (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
+         candidate->has_detector_supported_hit());
   };
   const bool recent_confirmed = can_confirm(recent_key);
   const bool safe_confirmed = can_confirm(safe_key);
