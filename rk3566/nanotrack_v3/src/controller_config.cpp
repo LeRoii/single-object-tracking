@@ -172,6 +172,7 @@ void set_value(ControllerConfig& config,
   else if (key == "motion_beta") config.motion_beta = parse_float(key, value);
   else if (key == "motion_max_dt_ms") config.motion_max_dt_ms = parse_integer(key, value);
   else if (key == "motion_search_enabled") config.motion_search_enabled = parse_bool(key, value);
+  else if (key == "recovery_conflict_requires_detector") config.recovery_conflict_requires_detector = parse_bool(key, value);
   else if (key == "search_reacquisition_min_age_ms") config.search_reacquisition_min_age_ms = parse_integer(key, value);
   else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
   else if (key == "motion_max_speed_diagonals_per_s") config.motion_max_speed_diagonals_per_s = parse_float(key, value);
@@ -588,6 +589,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.motion_max_dt_ms << '|'
          << config.motion_search_enabled << '|'
          << config.search_reacquisition_requires_detector << '|'
+         << config.recovery_conflict_requires_detector << '|'
          << config.search_reacquisition_min_age_ms << '|'
          << config.motion_search_confidence_ms << '|'
          << config.motion_max_speed_diagonals_per_s << '|'

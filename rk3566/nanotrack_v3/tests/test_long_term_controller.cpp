@@ -2118,6 +2118,8 @@ void test_atomic_search_reacquisition_and_template_probation() {
   expect_true(!output.accepted && output.control_valid && output.recovery_conflict &&
                   output.template_action == TemplateAction::kNone,
               "reliable recent/safe disagreement keeps both hypotheses out of control");
+  expect_true(disagreement.recovery_conflict_seen_,
+              "identity conflict persists as evidence for this loss episode");
 
   ResolvedControllerFixture expired(config);
   expired.initialize(initial, 0, 0, {240, 160});
@@ -2136,6 +2138,54 @@ void test_atomic_search_reacquisition_and_template_probation() {
       std::nullopt);
   expect_true(!output.accepted && !output.reacquired,
               "second hit outside confirmation window cannot commit");
+}
+
+void test_conflicted_recovery_needs_matching_detector_evidence() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.max_center_distance = 10.0F;
+  config.recovery_conflict_requires_detector = true;
+  const BBox target{40, 30, 20, 20};
+
+  ResolvedControllerFixture conflicted(config);
+  conflicted.initialize(target, 0, 0, {240, 160});
+  reject_frame(conflicted, 1, 40);
+  conflicted.recovery_conflict_seen_ = true;
+  ControllerOutput output;
+  for (std::uint64_t frame : {2U, 3U}) {
+    const auto plan = conflicted.begin_frame(frame, frame * 40, false);
+    output = conflicted.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, target, frame)},
+        std::nullopt);
+  }
+  expect_true(!output.accepted && output.recovery_confirmation_hits >= 2 &&
+                  !output.reacquired,
+              "two tracker hits after identity conflict cannot alone authorize recovery");
+  auto plan = conflicted.begin_frame(4, 160, false);
+  const auto detector_key = conflicted.recovery_candidates_.observe(
+      RecoveryCandidateSource::kDetector, target, 0.8F,
+      plan.timestamp_ms, 2, false, 0.0F);
+  expect_true(detector_key.has_value(),
+              "matching detector evidence joins the live tracker hypothesis");
+  output = conflicted.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, target, 4)},
+      std::nullopt);
+  expect_true(output.accepted && output.reacquired &&
+                  output.selected_template == TemplateKind::kRecent,
+              "same-candidate detector evidence allows NanoTrack-verified recovery");
+
+  ResolvedControllerFixture clean(config);
+  clean.initialize(target, 0, 0, {240, 160});
+  reject_frame(clean, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    plan = clean.begin_frame(frame, frame * 40, false);
+    output = clean.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, target, frame)},
+        std::nullopt);
+  }
+  expect_true(output.accepted && output.reacquired,
+              "conflict-free tracker recovery retains its two-hit path");
 }
 
 void test_recovery_probation_cleanup() {
@@ -2874,6 +2924,7 @@ int main() {
   test_unified_recovery_candidate_cleanup();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
+  test_conflicted_recovery_needs_matching_detector_evidence();
   test_recovery_probation_cleanup();
 
   const auto expect_enum_name = [](auto value, const char* expected) {

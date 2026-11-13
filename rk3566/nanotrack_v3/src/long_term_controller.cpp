@@ -145,6 +145,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   legacy_anchor_observations_ = false;
   recent_safe_observations_ = false;
   loss_start_ms_.reset();
+  recovery_conflict_seen_ = false;
   last_detector_request_ms_.reset();
   last_detector_request_frame_.reset();
   last_detector_request_motion_bbox_.reset();
@@ -769,6 +770,7 @@ void LongTermController::complete_frame(const SearchPlan& plan,
     last_output_mode_ = output.mode;
     last_output_phase_ = output.tracking_phase;
   }
+  if (output.recovery_conflict) recovery_conflict_seen_ = true;
   prediction_checkpoint_.reset();
   last_frame_id_ = plan.frame_id;
   last_timestamp_ms_ = plan.timestamp_ms;
@@ -1248,10 +1250,16 @@ LongTermController::confirm_recovery_candidate(
   const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
   if (probe_conflict) recovery_candidates_.mark_identity_conflict();
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
-  const bool recent_confirmed = !output.recovery_conflict && recent_key &&
-      recovery_candidates_.confirmed(*recent_key);
-  const bool safe_confirmed = !output.recovery_conflict && safe_key &&
-      recovery_candidates_.confirmed(*safe_key);
+  const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
+    if (output.recovery_conflict || !key || !recovery_candidates_.confirmed(*key))
+      return false;
+    const auto* candidate = recovery_candidates_.find(*key);
+    return candidate &&
+        (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
+         candidate->from(RecoveryCandidateSource::kDetector).has_value());
+  };
+  const bool recent_confirmed = can_confirm(recent_key);
+  const bool safe_confirmed = can_confirm(safe_key);
   const auto* candidate = recent_confirmed ? recovery_candidates_.find(*recent_key) :
       safe_confirmed ? recovery_candidates_.find(*safe_key) : recovery_candidates_.select_probe();
   if (candidate) {
@@ -1552,6 +1560,7 @@ void LongTermController::apply_recovery_acceptance() noexcept {
   last_trusted_timestamp_ms_ = last_timestamp_ms_;
   motion_search_active_ = false;
   loss_start_ms_.reset();
+  recovery_conflict_seen_ = false;
   hold_used_for_loss_ = false;
   hold_remaining_frames_ = 0;
   occlusion_coast_age_frames_ = 0;
@@ -1769,6 +1778,7 @@ void LongTermController::accept_observation(
   last_trusted_timestamp_ms_ = plan.timestamp_ms;
   display_bbox_ = output.display_bbox;
   loss_start_ms_.reset();
+  recovery_conflict_seen_ = false;
   confirmations_.clear();
   active_detector_candidate_.reset();
   detector_candidates_.clear();
@@ -2358,6 +2368,7 @@ ControllerOutput LongTermController::finish_frame(
     hold_remaining_frames_ = budget - 1;
     hold_used_for_loss_ = true;
     loss_start_ms_ = plan.timestamp_ms;
+    recovery_conflict_seen_ = false;
     ++detector_eligibility_generation_;
     confirmations_.clear();
     coast_probe_candidate_.reset();
@@ -2535,6 +2546,7 @@ ControllerOutput LongTermController::finish_frame(
     ++consecutive_unreliable_frames_;
     const bool starting_search = !loss_start_ms_;
     if (starting_search) loss_start_ms_ = plan.timestamp_ms;
+    if (starting_search) recovery_conflict_seen_ = false;
     mode_ = mode_for_timestamp(plan.timestamp_ms);
     output.mode = mode_;
     if (starting_search && uses_unified_recovery()) {

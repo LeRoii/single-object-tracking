@@ -468,6 +468,7 @@ class LongTermController {
   bool recovery_probation_ = false;
   bool rollback_pending_ = false;
   bool resume_search_after_rollback_ = false;
+  bool recovery_conflict_seen_ = false;
   int probation_reliable_frames_ = 0;
   int consecutive_unreliable_frames_ = 0;
   std::size_t hold_remaining_frames_ = 0;

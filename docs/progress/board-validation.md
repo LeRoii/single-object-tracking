@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T04:13:33+08:00 身份冲突后同一候选的 detector 佐证门禁候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `5e74e958ebd0b00574776bc4b7c2634c5716aaea`。对已验证八组板端 CSV 和双目标 GT 逐帧核对：car001 标准/人工/左上/右下框在重捕前分别有 `178–183`、`178–182`、`178–180,190–192`、`188` 帧身份冲突；car002 四组在重捕前没有。car001 标准框第 185 帧纯 tracker 候选重捕，中心误差 `9.2 px`，随后 staged 偏框；另三框经 detector 候选在 191–194 帧重捕。car002 四组 tracker-only 重捕中心更贴近真值，不能一律要求 detector。
+- 新增默认关闭的 `recovery_conflict_requires_detector`，只在本次丢失已经观察到身份冲突时，要求**同一个** tracker 两击确认候选具有 detector 证据后才准许重捕；无冲突路径仍按既有两击确认。detector 证据自身不授权 tracking/control，仍由 NanoTrack 两击确认。`visible-adaptive-display.conf` 启用，SHA-256 `5d3214646bd3b0e6d38213482178aa44a0deb301d6f303c8b5eaa7f5517d3a3b`；该门禁不消费 display 的 detector 框。
+- 实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/conflict-detector-host-build.log`、`/tmp/nt-dual-gt-evidence/conflict-detector-host-ctest.log`。测试验证冲突被本次丢失记住、冲突后仅 tracker 两击不能授权、同候选 detector 佐证加 NanoTrack 确认可以授权、无冲突两击路径保留。
+- **证据边界 / Handoff**：目标是消除 car001 过早且偏框的 tracker-only 重捕，同时保留 car002 的无冲突重捕；必须以精确源码在 RK3588 原生运行四组代表框并比较两路中心、跨框 P95、重捕和遮挡语义，再决定是否扩八组。现阶段正式 handoff HOLD。
+
 ## 2026-11-14T04:07:45+08:00 恢复 probation 严格双模板 IoU 门禁的四组板端否决
 
 - 精确源码 `codex/dual-gt-init-consistency@4b46dd3ac230c847d4d0d9d246528b771f8fedb0`，源码包 `/home/neardi/Project/SOT/nt-dual-gt-probation-iou-4b46dd3.tar` 主机/板端 SHA-256 `1d11da318aa4460e8f972236ba9bd9564a8ef922977fe650dbe2629fa9f39591`，隔离根 `/home/neardi/Project/SOT/dual-gt-probation-iou-4b46dd3`。RK3588 原生 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `c948a95f9e96ce8dac86b96836fa22ce2c2d9041faeb7d6e207a258faa00149d`，控制器配置 SHA-256 `f20007d44e7a06045d1a2a3edbb79cbc8cdf18c8f334907d8589f4e3fa04c4db`，headless 配置 SHA-256 `35cce3fb3da04ee3fbdba14f8efdd48c71b3f722e68c5ce5bf0525f5c51d0cd5`；视频、GT、模型、detector 及环境同基线矩阵。
