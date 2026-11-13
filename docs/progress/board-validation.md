@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:29:22+08:00 24 帧响应参考窗口否决与双时窗判别候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，源代码/二进制仍为已测 `47ccfc8`，板端根 `/home/neardi/Project/SOT/dual-gt-stable14-47ccfc8`，二进制 SHA-256 `9d833901e044cd1b06db8d18e691d7aa60bcbd31c68ad46663c6a68502c0b4c2`，同视频与 RKNN/manifest/labels。只在板端派生 `runs/reference-24.conf` 将 `occlusion_reference_window=8→24`，配置 SHA-256 `42a9778a600e349eccb6981267707d8f14e08f116cc73706dac83dd8688c9193`，`runs/headless-reference-24.conf` SHA-256 `51b43a949458ffaaa70ad6bf319498374abc072a55880df0e616dbcbaa4662b0`，未改 Git 源码。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3 runs/headless-reference-24.conf runs/reference-24-matrix`；八组 CSV/AVI/session/log 留在板端，32 文件清单 SHA-256 `bd379649548bc3699865974c46efa1334bed74bee0ab11022e0af6244bb44074`。小型文本包 `runs/reference-24-text.tar.gz` 主机/板端 SHA-256 `eb0451911b526741849f46ac81d14ade3fefc36ec49932b7bf6d584e19df07fb`，评分 `/tmp/nt-dual-gt-evidence/reference24-center.json` SHA-256 `54ece8f7efe42c27ccaa28996906cf07411070adf70cb652d3bc2f3bfbbe1f2a`。
+- car002 右下无框误观测 `14→2`，在第 234 帧重捕；但 car001 标准框 `185→195`，右下框变为第 `199/231` 帧两次重捕，tracking 中心均值 `5.02→11.98 px`，跨初始框 tracking 中心 P95 `3.51→38.70 px`，正式门禁 0/8。**否决全局 24 帧参考窗口**，保留 8 帧配置。逐帧对照显示，car001 右下在第 62 帧，PSR `6.11` 相对 24 帧参考 `8.28` 下降约 26%，而 APCE `18.54` 相对参考 `18.90` 基本不变；长窗口配合 peak-margin 跌落将这一正常可见帧判为 SUSPECTED，使模板 stage 从第 63 帧偏移。car002 右下第 217 帧的 PSR/APCE `4.76/12.89` 相对长参考 `7.94/18.71` 则同时下降，值得作为更具体的持续遮挡信号。下一候选考虑保留原 8 帧响应/运动门禁，另以长参考的 PSR 与 APCE **双指标同时下降**辅助判断；必须做主机负例和同八组板端测试。
+- **证据边界 / Handoff**：双时窗只是依据当前两目标日志形成的假设，不能用真值帧号写入运行时规则。正式门禁未通过，不批准 handoff。
+
 ## 2026-11-14T01:22:35+08:00 搜索 detector 间隔 200ms 否决与响应基线定位
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，源代码/二进制仍为已测 `47ccfc8`，板端根 `/home/neardi/Project/SOT/dual-gt-stable14-47ccfc8`，二进制 SHA-256 `9d833901e044cd1b06db8d18e691d7aa60bcbd31c68ad46663c6a68502c0b4c2`；同视频与 RKNN/manifest/labels。只在板端从已提交配置派生 `runs/detector-200.conf`，把 `detector_interval_ms=400→200`，配置 SHA-256 `8608c4270cd5a1b2745a5e249097cdeaca3ba71fa21d3d04c2dce981aadd5204`，`runs/headless-detector-200.conf` SHA-256 `95fab9c7695610a54478f3e31ee24c777dd3bb69dd666ea3d2b1b3af1cd277f7`，没有改动 Git 源码。
