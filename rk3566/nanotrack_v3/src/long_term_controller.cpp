@@ -1931,11 +1931,20 @@ LongTermController::ingest_detector_batch(
            result.diagnostics[second.diagnostic_index].candidate.confidence;
   });
   if (unified) {
-    // The table deduplicates before applying its capacity. Every distinct
-    // eligible detection can contribute ambiguity, even across overflow.
-    std::vector<std::optional<RecoveryCandidateKey>> keys;
-    keys.reserve(positioned.size());
-    for (const auto& item : positioned) {
+    // A near detection with a clear spatial lead gets a short NanoTrack
+    // verification window. The closest other detections remain alternatives;
+    // distant overflow cannot veto that verification without tracker evidence.
+    const bool dominant_near_detector = plan.motion_prediction_confident &&
+        positioned.size() > 1 &&
+        positioned.front().center_ratio <= config_.detector_candidate_max_center_ratio &&
+        positioned[1].center_ratio - positioned[0].center_ratio >
+            config_.detector_candidate_max_center_ratio;
+    const std::size_t considered = dominant_near_detector
+        ? std::min(positioned.size(), config_.detector_max_candidates)
+        : positioned.size();
+    std::vector<std::optional<RecoveryCandidateKey>> keys(positioned.size());
+    for (std::size_t index = 0; index < considered; ++index) {
+      const auto& item = positioned[index];
       auto& diagnostic = result.diagnostics[item.diagnostic_index];
       DetectorCandidate candidate = diagnostic.candidate;
       candidate.bbox = *diagnostic.projected_bbox;
@@ -1947,11 +1956,13 @@ LongTermController::ingest_detector_batch(
                              candidate.bbox.y + 0.5F * candidate.bbox.height,
                              current_bbox_, frame_size_);
       }
-      const auto key = recovery_candidates_.observe(
+      keys[index] = recovery_candidates_.observe(
           RecoveryCandidateSource::kDetector, probe, candidate.confidence,
           batch->source_timestamp_ms, candidate.class_id, false, item.center_ratio,
           subtarget_region);
-      keys.push_back(key);
+    }
+    if (dominant_near_detector && keys.front()) {
+      recovery_candidates_.focus_detector(*keys.front());
     }
     for (std::size_t index = 0; index < positioned.size(); ++index) {
       auto& diagnostic = result.diagnostics[positioned[index].diagnostic_index];
