@@ -85,11 +85,10 @@ RecoveryCandidateTable::RecoveryCandidateTable(const ControllerConfig& config)
       gap_ms_(config.motion_max_dt_ms),
       detector_stale_ms_(config.detector_stale_ms),
       detector_window_frames_(config.detector_target_mode == DetectorTargetMode::kSubtarget
-          ? std::max<std::uint64_t>(kConfirmationWindow +
-                                        (config.recovery_conflict_requires_detector ? 1 : 0),
+          ? std::max<std::uint64_t>(kConfirmationWindow,
                                     config.detector_subtarget_max_probes + 1)
-          : kConfirmationWindow +
-                (config.recovery_conflict_requires_detector ? 1 : 0)),
+          : kConfirmationWindow),
+      conflict_detector_handoff_(config.recovery_conflict_requires_detector),
       min_iou_(config.detector_confirmation_iou),
       max_center_distance_(config.detector_confirmation_center_distance),
       max_area_log_change_(config.detector_confirmation_max_area_log_change),
@@ -134,8 +133,21 @@ void RecoveryCandidateTable::expire(std::uint64_t frame_id,
       if (item && expired({item->frame_id, item->timestamp_ms},
                           detector ? detector_stale_ms_ : gap_ms_,
                           detector ? detector_window_frames_ : kConfirmationWindow)) {
+        if (detector && conflict_detector_handoff_ &&
+            !expired({item->frame_id, item->timestamp_ms}, detector_stale_ms_,
+                     std::numeric_limits<std::uint64_t>::max()) &&
+            (candidate.from(RecoveryCandidateSource::kRecent) ||
+             candidate.from(RecoveryCandidateSource::kSafe))) {
+          candidate.detector_handoff_timestamp_ms = item->timestamp_ms;
+        }
         item.reset();
       }
+    }
+    if (candidate.detector_handoff_timestamp_ms &&
+        static_cast<std::uint64_t>(frame_->timestamp_ms) -
+                static_cast<std::uint64_t>(*candidate.detector_handoff_timestamp_ms) >
+            static_cast<std::uint64_t>(detector_stale_ms_)) {
+      candidate.detector_handoff_timestamp_ms.reset();
     }
     for (auto& hit : candidate.verifications) {
       if (hit && expired({hit->frame_id, hit->timestamp_ms}, gap_ms_)) hit.reset();
@@ -288,6 +300,7 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
     }
     if (detector && subtarget_region) entry->subtarget_carrier = subtarget_region;
     source_evidence = evidence;
+    if (detector) entry->detector_handoff_timestamp_ms.reset();
   }
   if (!detector && tracker_verified) {
     auto& hits = entry->verifications;
@@ -299,7 +312,8 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
       hits[0] = hits[1];
       hits[1] = evidence;
     }
-    if (entry->from(RecoveryCandidateSource::kDetector)) {
+    if (entry->from(RecoveryCandidateSource::kDetector) ||
+        entry->detector_handoff_timestamp_ms) {
       entry->detector_supported_hit_frame = frame_->frame_id;
     }
   }
@@ -313,6 +327,7 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
     for (auto& candidate : entries_) {
       candidate.verifications = {};
       candidate.detector_supported_hit_frame.reset();
+      candidate.detector_handoff_timestamp_ms.reset();
     }
   }
   return entry->key;
@@ -355,6 +370,7 @@ bool RecoveryCandidateTable::focus_detector(RecoveryCandidateKey key) noexcept {
   for (auto& entry : entries_) {
     entry.verifications = {};
     entry.detector_supported_hit_frame.reset();
+    entry.detector_handoff_timestamp_ms.reset();
   }
   return true;
 }
@@ -399,6 +415,7 @@ void RecoveryCandidateTable::mark_identity_conflict() noexcept {
   for (auto& candidate : entries_) {
     candidate.verifications = {};
     candidate.detector_supported_hit_frame.reset();
+    candidate.detector_handoff_timestamp_ms.reset();
   }
 }
 

@@ -154,17 +154,22 @@ int main() {
   supported.expire(30, 1200, 5);
   const auto candidate = supported.observe(Source::kDetector, first, 0.90F,
                                             1200, 2, false);
-  for (std::uint64_t frame = 31; frame <= 33; ++frame) {
+  for (std::uint64_t frame = 31; frame <= 32; ++frame) {
     supported.expire(frame, 1200 + static_cast<std::int64_t>(frame - 30) * 40, 5);
   }
-  expect(candidate && supported.find(*candidate) &&
-             supported.find(*candidate)->from(Source::kDetector),
-         "fresh detector survives the async handoff frame before first tracker hit");
+  expect(candidate && supported.observe(Source::kRecent, first, 0.90F,
+                                         std::nullopt, std::nullopt, false) == candidate,
+         "matching unverified tracker evidence associates the detector candidate");
+  supported.expire(33, 1320, 5);
+  expect(supported.find(*candidate) &&
+             !supported.find(*candidate)->from(Source::kDetector) &&
+             supported.find(*candidate)->detector_handoff_timestamp_ms,
+         "detector-only rivals expire while the matched candidate keeps a fresh handoff");
   expect(supported.observe(Source::kRecent, first) == candidate &&
              supported.find(*candidate)->has_detector_supported_hit(),
          "first NanoTrack hit binds the still-fresh detector to this identity");
   supported.expire(34, 1360, 5);
-  expect(!supported.find(*candidate)->from(Source::kDetector) &&
+  expect(!supported.find(*candidate)->detector_handoff_timestamp_ms &&
              supported.find(*candidate)->has_detector_supported_hit(),
          "detector expiry between two tracker hits preserves only the bound hit");
   expect(supported.observe(Source::kRecent, moved) == candidate &&
