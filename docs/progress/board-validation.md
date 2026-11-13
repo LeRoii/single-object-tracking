@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T05:18:31+08:00 稳定可见后段中心误差归因与模型侧 Handoff
+
+- 在精确板端运行 `9f84efecd57d611a239cc71c99ab2e4295025dbc` 的八个 CSV 上，主机执行 `python3 /tmp/nt-dual-gt-evidence/analyze-late-center-sources.py > /tmp/nt-dual-gt-evidence/late-center-sources.json`；脚本 SHA-256 `80de59ddcdad3c0a2700e23c417e7202642da12f0afb5e7a7796a006039b42cf`，报告 SHA-256 `cd411b68e52eb7a5ec2cbbad7128f27c96e4dff823164d3e24f30b0c1ac878e7`。脚本通过 `scripts/evaluate_occ_video_1.py` 严格加载两目标匹配 GT，取第 240～270 帧的 31 个可观测框，逐帧比较 tracking、display、NanoTrack recent 原始中心与真值。
+- 八框 `tracking_bbox` 中心均与当帧 NanoTrack recent 原始中心逐帧重合（每组 `31/31`，误差小于 0.001 px）；display 与 tracking 中心最大差约 0.0001 px。car001 标准/人工/左上/右下后段 tracking 中心距真值均值 `7.39/8.74/7.18/7.37 px`，有方向一致的左上偏移：平均 dx `−4.37/−5.93/−3.90/−4.34 px`、dy `−5.88/−6.37/−5.97/−5.88 px`。car002 四框后段 dx/dy 方向和量值不相同（例如标准 `−5.01,+6.00 px`、真值框 `−3.97,+2.13 px`），不能对所有目标加一组固定中心偏移。此区段的误差已直接来自 tracker 原始输出，不能靠调整 display detector 视觉框或当前控制器平滑解决。
+- **证据边界 / Handoff**：上述是同一视频的八框板端回放分析，尚未证明哪种新 tracker 权重、外观验证器或模型侧改动可改善它，也不能单凭本数据训练后再用它宣称泛化。请协调对话将“car001 后段原始 NanoTrack 中心持续偏左上、car002 方向依 ROI 不同”的精确 CSV 和报告交给 NanoTrack 微调/模型评估 owner；若提供新冻结模型，须按契约先核对 checkpoint、ONNX、RKNN、配置和哈希，再由板端任务用两目标八框重跑。当前算法分支与板端正式 handoff 均保持 HOLD。
+
 ## 2026-11-14T05:15:50+08:00 car002 恢复前中心分叉与最短等待时间反事实
 
 - 沿用已完成八框验证的精确源码 `codex/dual-gt-init-consistency@9f84efecd57d611a239cc71c99ab2e4295025dbc`、RK3588 隔离根 `/home/neardi/Project/SOT/dual-gt-handoff-9f84efe`、二进制 SHA-256 `41d83ef0d772833b29400a35cacb8825a1a402f24ea7dbfe9279ac09b062343b`、视频/GT/模型/驱动身份，仅修改板端隔离配置，不改仓库 400 ms 正式配置。原八框 CSV 对真值逐帧核对：car002 右下框第 230～232 帧 motion 中心距可观测真值 `22.7/23.5/24.9 px`，recent/safe 原始中心约 `5.6/5.4`、`4.7/4.4`、`5.0/3.9 px`；但原配置第 232 帧才允许首次可信候选命中，第 233 帧两击重捕。四框进入 SUSPECTED 的第 211 帧速度、加速度不同，至第 232 帧开环预测中心最大分叉约 `34.8 px`；用第 211 帧中心和速度在 Python 中离线作零加速度外推，反而使标准框第 232 帧预测中心误差约 `6.4→18.8 px`、真值框约 `10.3→12.9 px`，不能据此改动运动模型。
