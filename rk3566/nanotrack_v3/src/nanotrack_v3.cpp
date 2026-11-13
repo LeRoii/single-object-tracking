@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -218,15 +217,8 @@ std::vector<TrackerObservation> NanoTrackV3::infer(const ImageView& image,
   const std::uint64_t token = search_token_ + 1;
   std::vector<TrackerObservation> observations;
   heads = {};
-  // Board-only diagnostic: observe the safe head during ordinary tracking.
-  // The controller still selects the recent head, so this probe does not
-  // substitute an unverified safe response into tracking or control output.
-  const char* safe_probe = std::getenv("NT_DIAGNOSTIC_SAFE_HEAD");
-  const TemplateRunMode run_mode = safe_probe && safe_probe[0] == '1' &&
-      plan.template_run_mode == TemplateRunMode::kRecentOnly
-      ? TemplateRunMode::kRecentAndSafe : plan.template_run_mode;
   run_template_heads(
-      templates_, run_mode,
+      templates_, plan.template_run_mode,
       [&](const RecentSafeTemplates::Feature& feature) {
         return run_head(feature, search_feature, reference_state,
                         effective_scale_z);

@@ -74,6 +74,8 @@ struct ControllerConfig {
   // Optional car-only early partial-visibility gate. Zero disables both.
   float recent_visibility_height_ratio = 0.0F;
   float recent_visibility_center_residual = 0.0F;
+  // Disabled by default; blend agreeing recent/safe centers in tracking.
+  float recent_safe_center_blend_alpha = 0.0F;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;

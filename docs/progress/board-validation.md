@@ -1,5 +1,17 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:54:58+08:00 可信双模板近邻中心融合候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `c3ce34ad1f4b8eff368f41fa7fe22e93f1d80101`。诊断显示四组 recent/safe 配对帧 safe 平均中心改善仅 0.22–0.51 px，但偶有远处误响应；只在正常 TRACKING、无模板 probation、两响应均 reliable、中心距不超过 recent 框对角线 15%、框 IoU 至少 0.75 时，按 `recent_safe_center_blend_alpha=0.50` 融合中心，尺寸与 selected_template 仍属 recent。其他配置默认 0 禁用。`visible-adaptive-display.conf` SHA-256 `b56419b8daffae18afeffb2d40e9957899d82586ee027e74aef5c01b065da621`。
+- 主机执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/safe-center-blend-host-build.log`、`/tmp/nt-dual-gt-evidence/safe-center-blend-host-ctest.log`。新增可靠近邻可融合与远离 safe 不得牵引中心的控制器测试。
+- **证据边界 / Handoff**：离线融合只基于冻结轨迹估算，改变中心后会反馈到下一帧裁剪，必须在 RK3588 原生实际运行至少四组筛查，再决定是否扩为八组；正式 handoff HOLD。
+
+## 2026-11-14T03:53:36+08:00 正常跟踪 safe head 诊断结论
+
+- 精确源码 `codex/dual-gt-init-consistency@c3ce34ad1f4b8eff368f41fa7fe22e93f1d80101`，源码包 `/home/neardi/Project/SOT/nt-dual-gt-safe-head-c3ce34a.tar` 主机/板端 SHA-256 `4118ac8a768c3ce49356923fcd09f68c3a99ce325199a7724f419f567f772dd9`，隔离根 `/home/neardi/Project/SOT/dual-gt-safe-head-c3ce34a`。RK3588 原生 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `88d821e6610d25b88083e8bae6f598a43ff6a4a9db8aa53e8f65e0dc817cb440`，headless 配置 SHA-256 `5fdb1c5eadfec175545c5c36b0af15c66571ab673ead03da7a4f3d455e130219`；模型/视频/GT/detector 及环境同 7cbf58d 基线。
+- 执行 car001 标准/右下、car002 标准/真值四组 `NT_DIAGNOSTIC_SAFE_HEAD=1 ./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...`。四 AVI 均 1920×1080×271，16 文件清单 `runs/safe-probe-checksums.sha256` SHA-256 `d89d2b47ef9afe97324d207c8bb6919eab6bc86e8269581f89822c47de9886d2`；文本包 `runs/safe-probe-text-v2.tar.gz` 主机/板端 SHA-256 `fd7e596db71a4660af5991a6a7101f9a5585ea65df24c5fa1b6f867a9a9401e1`，评分 `/tmp/nt-dual-gt-evidence/safe-head-c3ce34a-center.json` SHA-256 `98fb7c3bec5e66eb899a44286da43199d83ebf6d805926d814b8727d51bb3168`。
+- car001 标准/右下与 car002 标准/真值的可见配对帧数 `233/233/229/227`，safe 相对 recent 平均中心误差 `−0.413/−0.352/−0.509/−0.218 px`；safe 优胜超过 0.5 px 的帧数 `69/125/95/79`，recent 优胜 `25/35/18/52`。car001 标准框第 166 帧 safe 中心误差 53.79 px（recent 7.48 px），不能直接切换 safe。四组 tracking 框逐帧与基线相同；car001 右下第 71 帧额外 head 改变了异步 detector 显示刷新时序，其余 display 相同。**裁决 / Handoff**：撤下诊断环境变量候选，保留原始证据，研究仅在双模板近邻且可信时的中心融合；正式 handoff HOLD。
+
 ## 2026-11-14T03:46:30+08:00 安全模板正常跟踪响应的板端诊断候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `027e28b8daba1b0ff74e8b3f345f9e43c32118f5`。在 `NanoTrackV3::infer` 增加仅由环境变量 `NT_DIAGNOSTIC_SAFE_HEAD=1` 激活的正常 TRACKING safe head 原始响应采集；控制器仍选择 recent，tracking/control/display 选择策略不变。未设置变量时仍只运行 recent；这只是比较模板几何的诊断候选。

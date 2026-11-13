@@ -396,7 +396,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   } else if (mode_ == TrackingMode::kTracking && !motion_search_active_) {
     plan.tracking_phase = TrackingPhase::kTracking;
     plan.template_run_mode = recent_probation_ ? TemplateRunMode::kStagedAndRecent
-                                               : TemplateRunMode::kRecentOnly;
+        : config_.recent_safe_center_blend_alpha > 0.0F
+            ? TemplateRunMode::kRecentAndSafe : TemplateRunMode::kRecentOnly;
   } else {
     plan.tracking_phase = TrackingPhase::kSearching;
     plan.template_run_mode = TemplateRunMode::kRecentAndSafe;
@@ -2165,6 +2166,32 @@ ControllerOutput LongTermController::finish_frame(
   std::optional<EvaluatedObservation> selected;
   bool force_confirmation = false;
   if (ordinary_recent) {
+    if (!recent_probation_ && plan.mode == TrackingMode::kTracking &&
+        config_.recent_safe_center_blend_alpha > 0.0F && recent && safe &&
+        recent->quality == QualityLevel::kReliable &&
+        safe->quality == QualityLevel::kReliable) {
+      const BBox& recent_box = recent->observation.bbox;
+      const BBox& safe_box = safe->observation.bbox;
+      const float recent_diagonal =
+          std::hypot(recent_box.width, recent_box.height);
+      const float center_distance = std::hypot(
+          (recent_box.x + 0.5F * recent_box.width) -
+              (safe_box.x + 0.5F * safe_box.width),
+          (recent_box.y + 0.5F * recent_box.height) -
+              (safe_box.y + 0.5F * safe_box.height));
+      // A distant safe response can belong to another object. Keep the
+      // recent box unless both templates agree within a small target fraction.
+      if (center_distance <= 0.15F * recent_diagonal &&
+          bbox_iou(recent_box, safe_box) >= 0.75F) {
+        const float alpha = config_.recent_safe_center_blend_alpha;
+        recent->observation.bbox.x += alpha * (
+            (safe_box.x + 0.5F * safe_box.width) -
+            (recent_box.x + 0.5F * recent_box.width));
+        recent->observation.bbox.y += alpha * (
+            (safe_box.y + 0.5F * safe_box.height) -
+            (recent_box.y + 0.5F * recent_box.height));
+      }
+    }
     selected = recent;
     const auto& other = staged ? staged : safe;
     if (recent && other) {
