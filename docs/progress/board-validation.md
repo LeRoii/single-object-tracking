@@ -1,5 +1,13 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:13:46+08:00 14 帧模板组合板端结果与重复性
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，源码测试提交 `47ccfc8fe0ea2d677154d6483d52573f5555c1b3`，基线 `c16ddf6`；源码包 `/home/neardi/Project/SOT/nt-dual-gt-stable14-47ccfc8.tar` 主机/板端 SHA-256 `d7fcbaf0007f976811efa44b9ba25c627333381c7b8bdf20acaab28ffae7c03d`，板端隔离根 `/home/neardi/Project/SOT/dual-gt-stable14-47ccfc8`。RK3588 原生编译、CTest `23/23 PASS`，`build/nanotrack_v3` SHA-256 `9d833901e044cd1b06db8d18e691d7aa60bcbd31c68ad46663c6a68502c0b4c2`。控制器配置 SHA-256 `1378c58fadd4a23b97bcc473ab06f69387d4402b8d3e44bc493f22065aed0b33`，`runs/headless-eval.conf` SHA-256 `c15132f193e4c541565202f8c5f14c8f4ea265ae2264221519bfd4dcbfcdaca4`；视频、三个 NanoTrack RKNN、detector/manifest/labels 与前述核对身份相同，板端 Linux 6.1.84、RKNN API 2.1.0、driver 0.9.8。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3 runs/headless-eval.conf runs/matrix`；八组 CSV/AVI/session/log 留在板端 `runs/matrix/`，32 文件清单 SHA-256 `f0697c09e62ff740d6ecd54bbb3cac9c73613a4181a5e49bd4750bb8d55a28d2`，八个 AVI 经 ffprobe 均 1920×1080、271 帧。小型文本包 `runs/stable14-matrix-text.tar.gz` 主机/板端 SHA-256 `36a3475f6a989758dbb3e900523b3c39781433dcf49ed112b3098472aa7dad74`，主机评分 `/tmp/nt-dual-gt-evidence/stable14-center.json` SHA-256 `d37979b84999808b1e5f35b7354c71394dc54d8f4f720167b2892ce9c79c57fd`。
+- 对比 `7f95652` 显示候选，同样配置/模型/初始框下 car001 四组 AVI 哈希完全相同，tracking/display 中心与重捕帧仍为 `185/192/194/191`，正式门禁仅标准框 PASS。car002 标准/真值框 AVI 哈希也相同；左上框 tracking 中心均值/P95 `2.52/8.34→2.17/6.16 px`，无框误观测 `6→2`，但单帧最大中心误差 `9.31→12.37 px`。右下框 tracking 中心均值/P95 `3.61/13.43→3.05/9.62 px`，最大 `15.72→10.61 px`，跨初始框 tracking/display 中心距离 P95 `10.62→7.13 px`；recent stage 从 228 推迟到 236 帧。car002 右下 15 个无框帧仍误报观测 14 帧且未重捕，正式门禁仍 FAIL；标准/真值/左上组也因遮挡语义等未全通过。轿车 display 中心仍基本跟随 tracking，未用外观修正掩盖 tracking 漂移。
+- 用相同二进制、配置和 ROI 再运行 car001 右下与 car002 右下，输出位于 `runs/repeat/`，八文件清单 SHA-256 `9a3abc3754ad0a688315cd673a12f77b34312b5e7efe861bc456c6dd2b1168bf`。两组重复 AVI 与各自矩阵 AVI SHA-256 相同；逐帧比较 tracking/display 的 `x/y/width/height`、tracking phase、template action、state reason，在各 271 帧上差异数均为 0；CSV 原始哈希因运行时遥测字段而不同。
+- **证据边界 / Handoff**：这是截至此轮中心一致性更好的板端候选，但正式门禁仍仅 1/8 通过，尤其 car002 部分遮挡无框帧误观测及 car001 非标准初始框晚重捕未解决；不批准正式 handoff。下一步需要针对这两个不同的失效原因改进身份/遮挡判别与重捕时机，不能仅凭均值改善宣布达标。
+
 ## 2026-11-14T01:05:14+08:00 连续可信帧 14 的模板试验候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `c16ddf6`，保留已在板端量测的轿车 display 中心改动。重新应用 `3c5324a` 中“可疑帧清零模板连续可信计数”，同时仅在本轮测试配置 `visible-adaptive-display.conf` 把 `stable_frames_for_update=15→14`，新配置 SHA-256 `1378c58fadd4a23b97bcc473ab06f69387d4402b8d3e44bc493f22065aed0b33`。上一轮 car001 第 49 帧可疑响应后至第 63 帧 stage 有 14 个可信帧；该组合旨在保留该 stage 时序，同时让 car002 第 222 帧可疑响应后的更新等待至目标重新完全可见。它仍只是实验假设，不代表 14 具备跨场景标定。
