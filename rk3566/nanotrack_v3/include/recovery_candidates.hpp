@@ -23,6 +23,10 @@ struct RecoveryCandidate {
   RecoveryCandidateKey key{};
   std::array<std::optional<RecoveryCandidateEvidence>, 3> evidence{};
   std::array<std::optional<RecoveryCandidateEvidence>, 2> verifications{};
+  // A detector must still be fresh when one of the current NanoTrack hits
+  // occurs. Keep that association through the second hit even if the detector
+  // metadata ages out between the two frames.
+  std::optional<std::uint64_t> detector_supported_hit_frame = std::nullopt;
   // Geometry for associating a refreshed detector region with a live
   // tracker-verified subtarget. Only live detector evidence can seed offsets.
   std::optional<BBox> subtarget_carrier = std::nullopt;
@@ -34,6 +38,7 @@ struct RecoveryCandidate {
   const std::optional<RecoveryCandidateEvidence>& from(
       RecoveryCandidateSource source) const;
   std::size_t hits() const;
+  bool has_detector_supported_hit() const;
 };
 
 class RecoveryCandidateTable {

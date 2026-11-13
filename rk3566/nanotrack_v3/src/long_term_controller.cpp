@@ -1264,7 +1264,7 @@ LongTermController::confirm_recovery_candidate(
     const auto* candidate = recovery_candidates_.find(*key);
     return candidate &&
         (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
-         candidate->from(RecoveryCandidateSource::kDetector).has_value());
+         candidate->has_detector_supported_hit());
   };
   const bool recent_confirmed = can_confirm(recent_key);
   const bool safe_confirmed = can_confirm(safe_key);

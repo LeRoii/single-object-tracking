@@ -146,5 +146,41 @@ int main() {
   expect(table.conflicted() && !table.confirmed(*disputed),
          "two tracker-verified identities still block a focused recovery");
   }
+
+  {
+  ControllerConfig supported_config = config;
+  supported_config.recovery_conflict_requires_detector = true;
+  RecoveryCandidateTable supported(supported_config);
+  supported.expire(30, 1200, 5);
+  const auto candidate = supported.observe(Source::kDetector, first, 0.90F,
+                                            1200, 2, false);
+  for (std::uint64_t frame = 31; frame <= 33; ++frame) {
+    supported.expire(frame, 1200 + static_cast<std::int64_t>(frame - 30) * 40, 5);
+  }
+  expect(candidate && supported.find(*candidate) &&
+             supported.find(*candidate)->from(Source::kDetector),
+         "fresh detector survives the async handoff frame before first tracker hit");
+  expect(supported.observe(Source::kRecent, first) == candidate &&
+             supported.find(*candidate)->has_detector_supported_hit(),
+         "first NanoTrack hit binds the still-fresh detector to this identity");
+  supported.expire(34, 1360, 5);
+  expect(!supported.find(*candidate)->from(Source::kDetector) &&
+             supported.find(*candidate)->has_detector_supported_hit(),
+         "detector expiry between two tracker hits preserves only the bound hit");
+  expect(supported.observe(Source::kRecent, moved) == candidate &&
+             supported.confirmed(*candidate) &&
+             supported.find(*candidate)->has_detector_supported_hit(),
+         "second NanoTrack hit confirms the supported identity after detector expiry");
+  supported.mark_identity_conflict();
+  expect(!supported.find(*candidate)->has_detector_supported_hit(),
+         "a later identity conflict clears the detector binding and hits");
+
+  supported.clear();
+  supported.expire(40, 1600, 6);
+  const auto stale = supported.observe(Source::kDetector, first, 0.90F,
+                                       1440, 2, false);
+  expect(!stale && supported.size() == 0,
+         "detector older than the time limit cannot seed a supported hit");
+  }
   return failures == 0 ? 0 : 1;
 }

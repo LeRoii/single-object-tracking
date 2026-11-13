@@ -72,14 +72,24 @@ std::size_t RecoveryCandidate::hits() const {
       [](const auto& item) { return item.has_value(); }));
 }
 
+bool RecoveryCandidate::has_detector_supported_hit() const {
+  return detector_supported_hit_frame &&
+      std::any_of(verifications.begin(), verifications.end(),
+                  [&](const auto& hit) {
+                    return hit && hit->frame_id == *detector_supported_hit_frame;
+                  });
+}
+
 RecoveryCandidateTable::RecoveryCandidateTable(const ControllerConfig& config)
     : detector_capacity_(config.detector_max_candidates),
       gap_ms_(config.motion_max_dt_ms),
       detector_stale_ms_(config.detector_stale_ms),
       detector_window_frames_(config.detector_target_mode == DetectorTargetMode::kSubtarget
-          ? std::max<std::uint64_t>(kConfirmationWindow,
+          ? std::max<std::uint64_t>(kConfirmationWindow +
+                                        (config.recovery_conflict_requires_detector ? 1 : 0),
                                     config.detector_subtarget_max_probes + 1)
-          : kConfirmationWindow),
+          : kConfirmationWindow +
+                (config.recovery_conflict_requires_detector ? 1 : 0)),
       min_iou_(config.detector_confirmation_iou),
       max_center_distance_(config.detector_confirmation_center_distance),
       max_area_log_change_(config.detector_confirmation_max_area_log_change),
@@ -282,9 +292,15 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   if (!detector && tracker_verified) {
     auto& hits = entry->verifications;
     if (!hits[1] || hits[1]->frame_id != frame_->frame_id) {
-      if (hits[1] && !temporally_consistent(hits[1]->bbox, bbox)) hits = {};
+      if (hits[1] && !temporally_consistent(hits[1]->bbox, bbox)) {
+        hits = {};
+        entry->detector_supported_hit_frame.reset();
+      }
       hits[0] = hits[1];
       hits[1] = evidence;
+    }
+    if (entry->from(RecoveryCandidateSource::kDetector)) {
+      entry->detector_supported_hit_frame = frame_->frame_id;
     }
   }
   if (focused_detector_ && std::any_of(entries_.begin(), entries_.end(),
@@ -294,7 +310,10 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
           })) {
     mark_identity_conflict();
   } else if (conflicted()) {
-    for (auto& candidate : entries_) candidate.verifications = {};
+    for (auto& candidate : entries_) {
+      candidate.verifications = {};
+      candidate.detector_supported_hit_frame.reset();
+    }
   }
   return entry->key;
 }
@@ -333,7 +352,10 @@ bool RecoveryCandidateTable::focus_detector(RecoveryCandidateKey key) noexcept {
   focused_detector_ = key;
   // A detector only proposes an identity. Confirmation starts with fresh
   // NanoTrack observations made after the detector batch was received.
-  for (auto& entry : entries_) entry.verifications = {};
+  for (auto& entry : entries_) {
+    entry.verifications = {};
+    entry.detector_supported_hit_frame.reset();
+  }
   return true;
 }
 
@@ -374,7 +396,10 @@ void RecoveryCandidateTable::mark_identity_conflict() noexcept {
   // permanently poison an otherwise continuous NanoTrack tracklet after a
   // spatially distinct rival expires.
   if (frame_) unrepresented_conflict_ = *frame_;
-  for (auto& candidate : entries_) candidate.verifications = {};
+  for (auto& candidate : entries_) {
+    candidate.verifications = {};
+    candidate.detector_supported_hit_frame.reset();
+  }
 }
 
 std::size_t RecoveryCandidateTable::detector_count() const noexcept {
