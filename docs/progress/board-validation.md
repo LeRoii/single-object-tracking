@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:28:58+08:00 NanoTrack 裁剪像素中心到框边界中心的坐标候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `89a9e101f5752c6c5b74744bf5609e1a627adc22`。`NanoTrackV3::infer` 以 `bbox.x+(width−1)/2` 定位像素裁剪中心，而通用 `BBox` 与 `decode_head` 使用 `bbox.x+width/2` 作为框边界中心。仅在 `run_head` 进入解码器前把参考中心加 `0.5 px`，保持裁剪与 RKNN 输入不变；检验零位移时的半像素坐标偏差是否累积成可见中心误差。当前是数学假设，不能从代码差异直接推断板端效果。
+- 实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/pixel-edge-center-host-build.log`、`/tmp/nt-dual-gt-evidence/pixel-edge-center-host-ctest.log`。
+- **证据边界 / Handoff**：须在 RK3588 以精确提交测试 car001 标准/右下、car002 标准/真值初始框；同时比较 tracking/display 中心、IoU、重捕、身份与遮挡语义。板端证明前保持 HOLD。
+
 ## 2026-11-14T03:25:41+08:00 NanoTrack 窗口权重 0.30 板端否决
 
 - 精确源码 `codex/dual-gt-init-consistency@2e6a0cdca6847c21b1bab979ce66df0cee877d2a`，包 `/home/neardi/Project/SOT/nt-dual-gt-window030-2e6a0cd.tar` 主机/板端 SHA-256 `79a56c94ffa2402d473fe2126cabd9206e23ba9cb852d9143e19e15d70f68282`，隔离根 `/home/neardi/Project/SOT/dual-gt-window030-2e6a0cd`。RK3588 原生构建及 CTest `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `5417ee1826447dd5b592373ac8a29387a0ef2818037260083301c0cf2d788de5`，控制器配置 SHA-256 `63007d32b58c7e4aa920762f4d73f3532ef8ee544e50101c0684914d9b470acc`，headless SHA-256 `0a8ff85069a15eeeb14692a1d8fa74da19fb8e55710a899298c263a229b9e616`；视频、GT、模型和板端环境同前述精确矩阵。

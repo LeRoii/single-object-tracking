@@ -156,7 +156,13 @@ std::optional<DecodeResult> NanoTrackV3::run_head(
   if (head_outputs.size() != 2) {
     throw std::runtime_error("head returned an unexpected output count");
   }
-  return try_decode_head(head_outputs[0], head_outputs[1], reference_state,
+  // Cropping uses pixel-center coordinates, while BBox and decode_head use
+  // edge coordinates. Convert at the boundary so a zero displacement keeps
+  // the same box center as the search plan.
+  TrackerState decode_state = reference_state;
+  decode_state.center_x += 0.5F;
+  decode_state.center_y += 0.5F;
+  return try_decode_head(head_outputs[0], head_outputs[1], decode_state,
                          config_, scale_z, frame_width_, frame_height_);
 }
 
