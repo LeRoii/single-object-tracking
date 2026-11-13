@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:04:21+08:00 显示中心候选板端复测
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；测试提交 `7f95652` 基于 `ff44961`。源码包 `/home/neardi/Project/SOT/nt-dual-gt-display-center-7f95652.tar` 主机/板端 SHA-256 `96cda00f1533c19accfcecd4425cd26dd6677ef169cac934e9b209b3e7b933fa`，板端隔离根 `/home/neardi/Project/SOT/dual-gt-display-center-7f95652`。原生编译和 CTest `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `57cc0cf06efd9ac0fd306293823a8d46a66a87eb77292594b05bd0c1a267992d`；控制器配置 SHA-256 `d6f9600a0a461c59bb1895711bb91c50c37d73b25eed64204dd1eb4225ff9853`，headless 配置 SHA-256 `69b153d18c4dfd5b0cdf5b741287be3acd69cb6fcf6b8d6b8dbd9f767b4f23f6`。视频、RKNN、detector、manifest、labels 与前述同身份。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3 runs/headless-eval.conf runs/matrix`；八组 CSV/AVI/session/log 留在板端 `runs/matrix/`，32 文件清单 SHA-256 `4ede66a040019ffe4c44240386cbb4521029dd4f47501b280da3790eec8a0f2c`；八个 AVI 经 ffprobe 均为 1920×1080、271 帧。小型文本包 `runs/display-matrix-text.tar.gz` 主机/板端 SHA-256 `ebc5d25a15c74901e4ad546879551cf0c9519c01eedfe6863f4ab83c3f282877`，主机评分 `/tmp/nt-dual-gt-evidence/display-center.json` SHA-256 `8f7054ebe80cf600bedfe1537237c29d552fbbac9feab7fe6cdde891cc1db465`。
+- 相对 `78baddc` 同协议，car001 四组 display 中心均值 `5.21/5.26/5.42/5.75→4.43/4.65/4.49/5.05 px`（标准/人工/左上/右下），tracking 轨迹、重捕帧、正式门禁不变。car002 四组 display 均值 `3.83/3.80/3.31/3.41→2.47/2.07/2.52/3.61 px`（标准/真值/左上/右下）；右下 P95 `5.35→13.43 px`，car002 跨初始框 display 中心距离 P95 `5.94→10.62 px`，暴露原 tracking 后段漂移。car002 无框帧误观测和正式门禁均未改善。
+- **证据边界 / Handoff**：轿车 display 中心改动已在板端证明，但 car002 右下尾部一致性变差；整体目标未达标，暂不批准 handoff。下一轮继续修正 tracking/template 的后段漂移，不使用 display 外观改善冒充 tracking 精度。
+
 ## 2026-11-14T00:56:37+08:00 轿车显示中心与跟踪中心一致候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `ff44961`。基于已保存的 `78baddc` 八组 CSV 离线构造显示中心与 tracking 中心相同、仍保留原 display 宽高的评分包 `/tmp/nt-dual-gt-evidence/display-center-probe/0.0/report.json` SHA-256 `68a6b0205011bbdf9ab4feb3f0bcb3e0fe8b160865fc8211aaaee33cda2faf7c`。四组 car001 显示中心均值由 `5.21/5.26/5.42/5.75` 降至与 tracking 相同的 `4.39/4.56/4.48/5.02 px`；car002 三组均值改善，右下组由 `3.41` 升至 `3.61 px`，但该组 P95 更差。离线 CSV 重写只是局部几何上限，不等于板端时序运行证据。
