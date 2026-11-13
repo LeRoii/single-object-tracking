@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T02:25:37+08:00 连续几何可见性下降触发搜索的主机候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `d2c0c22`。基于已核对的八组 CSV，car002 四种初始框从第 211 帧连续 10 帧符合“原始 decoded 高度相对可信框 `≤0.98` 且归一化中心残差 `≥0.04`”；car001 可见段没有连续三帧命中，右下框 168～172 部分/完全遮挡段有连续命中。新增可关闭的 `recent_visibility_search_consecutive_frames`，只对已有轿车双条件门禁连续命中计数，当前可见配置取 3；第 3 帧转 SEARCHING/MOTION_SEARCH，干净帧或帧间隔重置，初始化、异常回滚和清除可疑状态同步清理计数。`visible-adaptive-display.conf` SHA-256 `b490332d497a8d8bc1f7e6f1c088a0187b8e8c95bdd9641959311f7e6b1f23c4`，其他配置默认关闭；不以 GT 帧号或 detector 显示框作为运行时判据。
+- 新测试覆盖三次连续双条件命中才搜索、干净帧打断计数；既有单条件/其他类别/缺 decoded 框负例保留。实际运行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/visibility-streak-host-build.log`、`/tmp/nt-dual-gt-evidence/visibility-streak-host-ctest.log`。
+- **证据边界 / Handoff**：只是依据当前双目标真值提出的板端反事实候选。需 RK3588 原生八组复测验证 car002 213～216 完全遮挡是否进入搜索，以及 car001 右下提前搜索、两目标重捕和中心是否退化；未批准 handoff。
+
 ## 2026-11-14T02:21:58+08:00 可信运动位置门禁板端否决并撤回
 
 - `codex/dual-gt-init-consistency@f3765aa8c1ce38489f003c928dbe46f6ac548612` 精确源码包 `/home/neardi/Project/SOT/nt-dual-gt-position-gate-f3765aa.tar` 主机/板端 SHA-256 `a7dac31c288405ea997f6efdf8e1d937723b91b00c8596c3ca1a960e4ed45b5c`；隔离根 `/home/neardi/Project/SOT/dual-gt-position-gate-f3765aa`。RK3588 原生编译及 CTest `23/23 PASS`，`build/nanotrack_v3` SHA-256 `2a6d91cb3ff2af86ce84538b11ffeac0a47e8a46d1e69b48ea0cec1cf6bc54d2`。控制器配置 SHA-256 `b6738adf133c258da17aa849b6c04213e3379f6529fd580f24a199c718b66be0`，headless 配置 SHA-256 `e3c221eaa055dbe6d832f151dc33c0e4330c1e7addacfeda2b8089bbb9dae3f6`；视频、GT、tracker、detector 身份同前述精确矩阵。
