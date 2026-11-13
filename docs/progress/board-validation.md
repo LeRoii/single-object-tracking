@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T02:01:22+08:00 car001 重捕最短等待时间筛查无收益
+
+- 沿用 `codex/dual-gt-init-consistency@7cbf58d` RK3588 二进制 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`，仅在板端 `runs/minage200-controller.conf` 把 `search_reacquisition_min_age_ms=400→200`，SHA-256 `b4427fd16a7ebecc90ed73be4b0276ffe268024cc3cf63639f094abc62ca4191`；headless 配置 SHA-256 `37a9dd8abb30863e9c1c6e29422f7e3bb0c139154d0228d4966dc3a4d3ac6f1e`。源码默认配置保持不变，输入身份与上一八组一致。
+- 实际以四个 car001 ROI `992,582,37,39`、`993,585,36,36`、`990,580,39,41`、`994,584,35,37` 分别执行 `./build/nanotrack_v3 --config runs/headless-minage200.conf --bbox ROI --output-video ... --output-boxes ... --session-metadata ...`，输出保留在 `runs/minage200-car001/`，16 文件清单 SHA-256 `d4897a7d23f1a7d8a821b746823f482dc98db8c3d5a79f34bb187f21b4a7789f`；四个 AVI 经 ffprobe 均 1920×1080、271 帧。小型文本包 `runs/minage200-car001-text.tar.gz` 主机/板端 SHA-256 `8164e3937537b944eabbf9ff52c0410fc77fa059a3d156c116a442fd65ef3400`。同一初始化一致性脚本评分 `/tmp/nt-dual-gt-evidence/minage200-car001-center.json` SHA-256 `547da9018fc964fda1f5a310751e4ed0d718b4efa1a3c63077901792fc91751a`。
+- 四组重捕仍为 `185/192/194/191`，tracking/display 中心、跨初始框 P95 与原 400 ms 配置相同；尽管标准框 CSV/AVI 哈希改变，评分无收益。**否决**缩短最短等待时间，保持 400 ms；car001 其余三组重捕时序仍需解决，不批准 handoff。
+
 ## 2026-11-14T01:57:03+08:00 uncertain_ms=100 参数筛查否决
 
 - 沿用 `codex/dual-gt-init-consistency@7cbf58d` RK3588 原生二进制 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`，仅板端 `runs/uncertain100-controller.conf` 将 `uncertain_ms=200→100`，配置 SHA-256 `f6c934ee0f20132e384cd4bcdb5c19be5d34b7563fd390a50ba90a7559ba8055`，headless 配置 SHA-256 `a5b3e28effb486177300487bc86b68745e89e764b5f3949513c88d5f866ac5b9`；源码默认配置不变。输入视频、GT、RKNN/detector 身份同上一八组。
