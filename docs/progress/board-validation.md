@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T02:44:01+08:00 保留 detector 身份竞争证据的探针位置门禁主机候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `112ed22c3e059392424d3e9c71b35be972076325`。逐帧对照已保留八组 CSV 与双目标真值：正常可见 TRACKING 帧的 `tracking_bbox` 中心与 NanoTrack 原始中心几乎一致，`display_bbox` 中心亦随 tracking 中心；主要偏差来自遮挡后的错误或延迟重捕，而非显示框尺寸处理。
+- 新增默认关闭的 `unified_confident_detector_probe_gate`，仅在 `visible-adaptive-display.conf` 开启。运动预测可信时，距离预测超过现有 `detector_candidate_max_center_ratio=0.02` 的纯 detector 候选仍留在统一候选表中作为竞争身份，暂不引导 NanoTrack 探针；与远处 detector 合并的近期/安全候选也不能确认。近处 detector 候选仍可探测。配置 SHA-256 `bb8c4758f6a0e6943445130c1aa7241aa5c9f228a881480aa2dabf573a863bfc`。
+- 主机 RKNN-off 实际运行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，`23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/confident-rivals-host-ctest.log`。新增单测核对远处同类候选仍在表中否决近期误确认、不能牵引探针，近处候选仍可供验证。
+- **证据边界 / Handoff**：这是依据两目标真值和先前板端反例形成的主机候选，尚无此提交的板端推理结果。需精确源码包在 RK3588 原生构建、完成 300/400 ms 初始框矩阵并评分；正式 handoff 保持 HOLD。
+
 ## 2026-11-14T02:37:46+08:00 连续可见性搜索候选板端否决并撤回
 
 - `codex/dual-gt-init-consistency@e1830f8aa2ef37478ff9583bba1f16490dafa5a1` 精确源码包 `/home/neardi/Project/SOT/nt-dual-gt-visibility-streak-e1830f8.tar` 主机/板端 SHA-256 `d22a6d53dc7faa4614b8395177fa3f75154b21a1a85de802d5638789ecae7e3c`；隔离根 `/home/neardi/Project/SOT/dual-gt-visibility-streak-e1830f8`。RK3588 原生构建和 CTest `23/23 PASS`，二进制 `build/nanotrack_v3` SHA-256 `7dfe9c810edc89b10cc4579ef9dcc9815ae35fe33f6e274ef9013c57cd7cf89b`，控制器配置 SHA-256 `b490332d497a8d8bc1f7e6f1c088a0187b8e8c95bdd9641959311f7e6b1f23c4`，headless 配置 SHA-256 `bf593394d9eb134976dbfaf8030c3a5ebd18e9fc9ab724ece4c0ca9495c4ae8e`；视频、GT、模型、detector 身份同前述精确矩阵。

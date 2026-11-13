@@ -366,10 +366,25 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     source = HypothesisSource::kDetector;
   }
   SearchPlan plan;
+  const MotionSnapshot motion_snapshot = predictor.snapshot(timestamp_ms);
   const bool can_plan_probe = unified && loss_start_ms_ &&
       (config_.detector_target_mode != DetectorTargetMode::kSubtarget ||
        search_reacquisition_eligible(timestamp_ms));
   const RecoveryCandidate* probe = can_plan_probe ? recovery_candidates_.select_probe() : nullptr;
+  if (probe && config_.unified_confident_detector_probe_gate &&
+      motion_snapshot.prediction_confident &&
+      probe->from(RecoveryCandidateSource::kDetector) &&
+      !probe->from(RecoveryCandidateSource::kRecent) &&
+      !probe->from(RecoveryCandidateSource::kSafe) &&
+      frame_normalized_center_distance(
+          probe->subtarget_carrier.value_or(
+              probe->from(RecoveryCandidateSource::kDetector)->bbox),
+          motion_predicted, frame_size_) >
+          config_.detector_candidate_max_center_ratio) {
+    // Retain this rival in the candidate table so it can still veto an
+    // incompatible tracker hit; only its NanoTrack crop is withheld.
+    probe = nullptr;
+  }
   if (probe) {
     predicted = probe->preferred_evidence().bbox;
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
@@ -408,7 +423,6 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.control_source = plan.motion_control_authorized
                             ? ControlSource::kMotionSearch
                             : ControlSource::kNone;
-  const MotionSnapshot motion_snapshot = predictor.snapshot(timestamp_ms);
   plan.motion_search_age_ms = motion_snapshot.search_age_ms;
   plan.motion_prediction_confident =
       motion_snapshot.prediction_confident;
@@ -1248,9 +1262,22 @@ LongTermController::confirm_recovery_candidate(
   const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
   if (probe_conflict) recovery_candidates_.mark_identity_conflict();
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
+  const auto detector_confirmation_near_motion = [&](RecoveryCandidateKey key) {
+    if (!config_.unified_confident_detector_probe_gate ||
+        !plan.motion_prediction_confident) return true;
+    const auto* entry = recovery_candidates_.find(key);
+    if (!entry || !entry->from(RecoveryCandidateSource::kDetector)) return true;
+    const BBox& region = entry->subtarget_carrier.value_or(
+        entry->from(RecoveryCandidateSource::kDetector)->bbox);
+    return frame_normalized_center_distance(
+        region, plan.motion_predicted_bbox, frame_size_) <=
+        config_.detector_candidate_max_center_ratio;
+  };
   const bool recent_confirmed = !output.recovery_conflict && recent_key &&
+      detector_confirmation_near_motion(*recent_key) &&
       recovery_candidates_.confirmed(*recent_key);
   const bool safe_confirmed = !output.recovery_conflict && safe_key &&
+      detector_confirmation_near_motion(*safe_key) &&
       recovery_candidates_.confirmed(*safe_key);
   const auto* candidate = recent_confirmed ? recovery_candidates_.find(*recent_key) :
       safe_confirmed ? recovery_candidates_.find(*safe_key) : recovery_candidates_.select_probe();

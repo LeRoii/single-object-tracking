@@ -1861,6 +1861,58 @@ void test_unified_recovery_candidate_cleanup() {
               "a stale completion cannot carry either candidate or detector history through the frame");
 }
 
+void test_distant_detector_rivals_do_not_become_probes() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kSubtarget;
+  config.detector_candidate_max_center_ratio = 0.02F;
+  config.unified_confident_detector_probe_gate = true;
+  const BBox initial{40, 30, 20, 20};
+  const FrameSize frame_size{400, 240};
+
+  ResolvedControllerFixture rivals(config);
+  rivals.initialize(initial, 0, 0, frame_size, make_fixed_target_class(2, true));
+  reject_frame(rivals, 1, 40);
+  auto plan = rivals.begin_frame(2, 80, true);
+  expect_true(plan.detector_request.has_value() && plan.motion_prediction_confident,
+              "rival fixture has a confident search and detector request");
+  DetectorBatch far_batch{2, 80,
+                          {{BBox{100, 30, 20, 20}, 0.90F, 2},
+                           {BBox{170, 30, 20, 20}, 0.95F, 2}}};
+  far_batch.generation = plan.detector_request->generation;
+  auto output = rivals.finish_frame(plan, {}, far_batch);
+  expect_true(output.detector_candidates_queued == 2 &&
+                  rivals.recovery_candidates_.size() == 2,
+              "distant detections remain represented as competing identities");
+  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
+    plan = rivals.begin_frame(frame, frame * 40, false);
+    expect_true(plan.hypothesis_source == HypothesisSource::kMotion &&
+                    !plan.detector_candidate_region,
+                "a distant detector rival cannot steer the NanoTrack crop");
+    output = rivals.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, initial, frame)},
+        std::nullopt);
+    expect_true(output.recovery_conflict && !output.accepted && !output.reacquired,
+                "live distant rivals veto a recent-only false confirmation");
+  }
+
+  ResolvedControllerFixture near(config);
+  near.initialize(initial, 0, 0, frame_size, make_fixed_target_class(2, true));
+  reject_frame(near, 1, 40);
+  plan = near.begin_frame(2, 80, true);
+  DetectorBatch near_batch{2, 80,
+                           {{BBox{44, 30, 20, 20}, 0.80F, 2},
+                            {BBox{100, 30, 20, 20}, 0.95F, 2}}};
+  near_batch.generation = plan.detector_request->generation;
+  near.finish_frame(plan, {}, near_batch);
+  plan = near.begin_frame(3, 120, false);
+  expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                  plan.detector_candidate_center_ratio.value_or(1.0F) <= 0.02F,
+              "a near detector candidate remains available for tracker verification");
+  near.abort_frame();
+}
+
 void test_subtarget_probe_abort_does_not_advance_cursor() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2872,6 +2924,7 @@ int main() {
   test_target_class_gate();
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
+  test_distant_detector_rivals_do_not_become_probes();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_recovery_probation_cleanup();
