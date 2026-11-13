@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:21:28+08:00 NanoTrack 响应窗口 0.30 主机筛查候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `ecb997fea5b45a4094d9b56e68cc13c0171bb73b`。保持此前八组最佳的恢复/显示逻辑，只将 NanoTrack 解码的 Hann 窗口权重从 `0.455→0.300`（默认和 RKNN 运行实例同步），检验较弱中心先验能否改善运动段的原始中心偏移和不同初始框的收敛；不使用 detector 中心修正 `tracking_bbox`，`display_bbox` 的 detector 信息仍仅供外观尺寸。
+- 实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/window030-host-build.log`、`/tmp/nt-dual-gt-evidence/window030-host-ctest.log`。
+- **证据边界 / Handoff**：尚无 RK3588 推理结果。先筛 car001 标准/右下与 car002 标准/真值框，只有中心、重捕、遮挡语义均不退化才扩展八组；正式 handoff HOLD。
+
 ## 2026-11-14T03:19:53+08:00 detector 初始框统一化的板端反事实否决
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，当前源码 `9f64c5df6bb3112fe23836a12a0b5f4818210e7b`，板端复用已测基线根 `/home/neardi/Project/SOT/dual-gt-visibility-7cbf58d`、二进制 SHA-256 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`，配置/视频/GT/模型/板端环境同基线矩阵。四种人工 ROI 对每个目标都匹配相同的初始化 detector 候选；car001 候选 `994.000916,581.063293,35.289490,39.486084` 接近真值，car002 候选 `973.034729,520.489929,34.091492,31.423828` 比真值 `966.99936,512.99946,42,42.00012` 明显偏小。

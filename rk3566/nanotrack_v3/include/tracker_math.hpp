@@ -24,7 +24,7 @@ struct TrackerConfig {
   int stride = 16;
   int output_size = 15;
   float penalty_k = 0.138F;
-  float window_influence = 0.455F;
+  float window_influence = 0.300F;
   float learning_rate = 0.348F;
 };
 
