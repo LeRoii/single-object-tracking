@@ -1,5 +1,59 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T22:19:33+08:00 detector 原框零边距 RK3588 复测
+
+- 被测源码 `codex/recovery-local-arbitration-debug-video@429ca9bc109d48f03b945bf861f16f0ff7c4cde5`，
+  独立板端根 `/home/neardi/Project/SOT/display-detector-exact-429ca9b`；主机与板端
+  `source.tar` SHA-256 均为 `097838dd7999b64fba9d77c9470acaedac6b386c3209b2028b0e791e8f4ce72f`。
+  板端原生 RKNN、`-Werror=switch` 构建和 CTest `23/23 PASS`；
+  `build/nanotrack_v3` SHA-256 为
+  `4695f896dca661d53c5b1c468fe38d41e2e0c8e34a47980172bde85ef09d2485`。
+  实测 Linux `6.1.84`、RKNN API `2.1.0`、RKNPU driver `0.9.8`。
+- 实际输入 `data/occ_video_1/1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；
+  `runs/headless-eval.conf` SHA-256
+  `4bdd01e3fcb3761c517cc887d65b46c55e89d0ef453ca792b8a60371d01cb7d9`，
+  所引用 `visible-adaptive-display.conf` SHA-256 为
+  `faf968acfb86c280b913567eaf74dd40580a7264d752b12546a712e688b335a7`。
+  本次板端复算 NanoTrack template/search/head RKNN SHA-256 依次为
+  `eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55`、
+  `d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee`、
+  `4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5`；
+  detector `/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/yolov8n-visdrone9-rk3588-fp16.rknn`
+  维持 `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`。
+- 在板端部署根对 `user_roi=993,585,36,36`、`car_001=992,582,37,39`、
+  `car_002=970,517,38,38` 分别执行
+  `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video runs/<scenario>/output.avi --output-boxes runs/<scenario>/frames.csv --session-metadata runs/<scenario>/session.json`。
+  三次均 exit 0，CSV 各 271 数据行、AVI 各 1920×1080/271 帧；runtime P95 依次为
+  `11.016`、`9.672`、`9.823 ms`。三次初始化 `display_bbox` 均与唯一匹配的 detector
+  `clipped_bbox` 四坐标完全相等（最大绝对差 `0`）。
+- 对上一版 `c829e8a` 的三组相同 ROI 逐帧比较，状态、接受/重捕标志、模板动作、跟踪框、
+  控制框均无差异。重捕后 21 帧显示框平均 IoU：用户 ROI `0.661→0.720`，
+  car001 `0.621→0.710`，car002 `0.760→0.791`。full evaluator 仍为 car001 **PASS**
+  （185 帧重捕）、用户 ROI **FAIL**（192 帧晚于 182--189）、car002 **FAIL**
+  （213--216 帧完全遮挡语义），没有借显示改动宣称算法门禁改善。
+- `runs/user_roi/`、`runs/car_001/`、`runs/car_002/` 的 CSV SHA-256 依次为
+  `f90e6a9aae185dbf0e5c6fbeaf78f1e56a147acbdde268b1bb88c9a503f047eb`、
+  `9926c0688495716f3e6aa0ec86cf4b87c1f569000cda4637876c6d752b78ea5f`、
+  `f8ea15ff8e4ee52194cb43d241d86a4f88ccde2e6561498b4d5f5a9f1`；AVI 对应为
+  `14ed94f1ce0c5799bbd8cc6e8baeef4a319c313310c914d52c9c1583c8ad93e6`、
+  `edf20ddcf711e329047ba4d70ce1c18d188a11ba93b57f4deafe091f0062dd03`、
+  `4b263ce94b6be8ee8b8f9183c32ff523353ae2d4ab31d06bfa04a2569cae8dc9`。
+  主机评价 JSON `/tmp/display-detector-exact-evidence/<scenario>/eval.json` 的 SHA-256
+  按上述顺序为 `107642c0726a413b878d6513296e570422c562beb067a7e45c6c6a29babbb7d1`、
+  `46cc20aa5435015b715dd94f16e57e6e484f0d6fb2e6941822538e38d9f1be36`、
+  `39e30cd2b2d3b05bf6b60954b75db654fe8e6cdfb4eee4c6924acd300f7a824e`。
+- 交互模式在 Xvfb 中用同一用户 ROI 跑至第 200 帧后按 Q 正常退出；板端
+  `runs/interactive_display/debug.avi` 1920×1080/201 帧，SHA-256
+  `7298ae96dd953d26f3644e04fe8ce7f97701d62e8fde14e00a3039559110ec44`。
+  `NanoTrack Display` 窗口截图 `/tmp/display-detector-exact-frame200.png` SHA-256
+  `7f629ee82d49b13dadf11a8f0be7dec109ae2c16ac7e8d907d5558fa0d4bd0d4`，
+  同名副本已保留在主机 `/tmp/`。
+- **证据边界 / Handoff**：显示检测为低频、两次确认后渐进纠正，故中间帧仍由 tracker
+  传播并平滑；本轮保证不再给 detector 框附加人工边距，不代表逐帧原样显示每次异步
+  检测。真实吊舱效果待人工测试。候选保持本地分支，按用户既定规则待确认后才合入
+  `main`/`Debug`，不推送远端功能分支。
+
 ## 2026-11-13T22:12:14+08:00 显示框使用检测器原框：主机验证
 
 - 分支 `codex/recovery-local-arbitration-debug-video`，工作树
