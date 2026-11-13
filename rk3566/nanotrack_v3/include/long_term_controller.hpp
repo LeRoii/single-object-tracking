@@ -387,6 +387,8 @@ class LongTermController {
     std::optional<std::int64_t> degraded_since_ms;
     std::optional<std::int64_t> suspected_since_ms;
     std::optional<std::int64_t> clean_since_ms;
+    std::size_t recent_visibility_streak;
+    std::uint64_t recent_visibility_last_frame;
     std::vector<float> motion_residual_history;
     std::vector<float> motion_recent_residuals;
     std::optional<std::int64_t> motion_freeze_since_ms;
@@ -419,6 +421,8 @@ class LongTermController {
   std::optional<std::int64_t> response_degraded_since_ms_;
   std::optional<std::int64_t> suspected_since_ms_;
   std::optional<std::int64_t> response_clean_since_ms_;
+  std::size_t recent_visibility_streak_ = 0;
+  std::uint64_t recent_visibility_last_frame_ = 0;
   std::optional<MotionSnapshot> search_motion_reference_;
   bool search_motion_reference_held_ = false;
   std::optional<std::int64_t> search_motion_clean_since_ms_;

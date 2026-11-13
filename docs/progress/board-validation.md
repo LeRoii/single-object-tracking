@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T02:57:29+08:00 提前搜索但延后探针的主机候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `1a7bd72e80c19cd4084f495b06b08dfe39bd0d4b`。恢复已测的“轿车连续三帧高度缩小且中心残差增大即提前 SEARCHING”候选，并把可见配置的 `search_reacquisition_min_age_ms` 设为 600；新增默认关闭的 `search_probe_requires_reacquisition_age`，只在可见配置启用，使全目标模式在确认等待期间也不把 detector 候选作为 NanoTrack 探针。此前 600 ms 反例在等待期间仍探测遮挡中的同类车；本候选针对该差异。配置 SHA-256 `02c1d19fe98902bb6d63564b276fd23d679960336099abf57cf32733350d882d`。
+- 新增单测确保 detector 候选在等待期间可以入表，但不能移动 NanoTrack 探针；已有连续可见性搜索负例随源码恢复。实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/early-probe-wait-host-build.log`、`/tmp/nt-dual-gt-evidence/early-probe-wait-host-ctest.log`。
+- **证据边界 / Handoff**：尚无该源码的 RK3588 推理结果；必须完成精确源码板端构建与双目标八组真值评价，若误重捕或中心退化则撤回。正式 handoff 保持 HOLD。
+
 ## 2026-11-14T02:53:58+08:00 保留竞争身份但限制远处探针的板端否决
 
 - 精确源码 `codex/dual-gt-init-consistency@f1e0bffef970f3167da3ba026e876bd6661f5fae`，包 `/home/neardi/Project/SOT/nt-dual-gt-rival-f1e0bff.tar` 主机/板端 SHA-256 `a75b8a48813a38eb6d65daae49f8656b0c81c618848e997cdb0585af3efbc658`，隔离根 `/home/neardi/Project/SOT/dual-gt-rival-f1e0bff`。RK3588 原生构建及 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `8f8bd403708b8fb4e7ce7675e1a0c81674b053cd4543c9301053d468f24063d7`，控制器配置 SHA-256 `bb8c4758f6a0e6943445130c1aa7241aa5c9f228a881480aa2dabf573a863bfc`，headless 配置 SHA-256 `f5177478d9dca4ea0a3eb4abaabd2ee1ead14c764f4596c40325a09e54773705`。视频、GT、tracker、detector/manifest/labels 和板端环境同前述精确矩阵。
