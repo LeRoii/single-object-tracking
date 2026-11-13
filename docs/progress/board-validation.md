@@ -1,5 +1,37 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T23:00:00+08:00 双真值初始框一致性候选：主机阶段
+
+- 新分支 `codex/dual-gt-init-consistency`，工作树 `/home/u20/single-object-tracking`，
+  修改基线 `main@b80226577954febe22c5eff168125f77a6cdc724`；本条所在提交为代码候选。
+  开始时工作区干净。`STATUS.md` 的协调基线 `e0b59f4` 较旧，本轮没有改动它或
+  `integration-contract.yaml`。统一视频 `data/occ_video_1/1.mp4` 的本机 SHA-256
+  复核为 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；
+  两目标真值由 `scripts/evaluate_occ_video_1.py` 严格校验并排除不可观测框。
+- 从已留存的 `429ca9b` 板端 CSV 复核：car001 的 `992,582,37,39` 与
+  `993,585,36,36` 两次初始化，跟踪框可见帧均值 IoU `0.751/0.719`，显示框
+  `0.677/0.672`；完整门禁分别 PASS 与 FAIL（后者第 192 帧重捕，晚于窗口）。
+  car002 的 `970,517,38,38` 跟踪框/显示框均值 IoU `0.799/0.676`，
+  完整门禁因完全遮挡语义 FAIL。三个 CSV 的新复算工具输出保留在
+  `/tmp/nt-dual-gt-baseline-archived.json`；数据源是
+  `/tmp/display-detector-exact-evidence/{car_001,user_roi,car_002}/frames.csv`，
+  仍属历史 `429ca9b` 运行，不能算本分支改动后的板端表现。
+- 诊断显示第 48--58 帧快速运动时，显示框中心落后跟踪框，两个目标均出现低 IoU；
+  `AdaptiveDisplayBox` 使用跟踪中心的 `accepted_center_smoothing_alpha=0.35`。
+  本候选加入独立的 `display_center_smoothing_alpha`，默认保持已有可见光语义，
+  仅 `visible-adaptive-display.conf` 设为 `0.80`，并把有效值记入 session metadata。
+  旧 CSV 的离线中心回放估计可提高显示 IoU，但该回放保持旧检测时序和尺寸，
+  只是参数筛选，不是运行实测。
+- 实际执行 RKNN-off 主机命令：
+  `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-dual-gt-consistency-build -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF`、
+  `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、
+  `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，
+  `23/23 PASS`。`python3 scripts/evaluate_occ_initialization_consistency.py` 已用三份历史 CSV
+  完整跑通；新增单测覆盖显示与跟踪中心参数分离。模型未重新训练或转换。
+- **证据边界 / Handoff**：RK3588 当前地址 `192.168.1.106` 已连通，真实多初始框基线
+  正在运行。候选尚未完成板端原生编译与同源码参数对照；不批准生产 handoff，
+  不合入 `main` 或 `Debug`。
+
 ## 2026-11-13T22:44:33+08:00 共同算法合入 main 与 Debug
 
 - 用户确认合并本轮功能分支。合并前远端 `main@1fb5a7fe025b38a1d4794ee1a65859a2df0174df`、

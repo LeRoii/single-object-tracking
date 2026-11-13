@@ -165,6 +165,8 @@ int main() {
               1e-6F, "visible accepted scale uses subpixel output hysteresis");
   expect_near(default_visible.accepted_center_smoothing_alpha, 0.35F, 1e-6F,
               "visible accepted centers blend bounded motion innovation");
+  expect_near(default_visible.display_center_smoothing_alpha, 0.35F, 1e-6F,
+              "visible display preserves prior center smoothing unless configured");
   expect_near(default_visible.accepted_center_max_correction_ratio, 0.25F,
               1e-6F, "visible accepted centers bound one-frame correction");
   expect_near(default_visible.max_reacquisition_center_distance, 0.75F,
@@ -325,6 +327,7 @@ int main() {
              "accepted_scale_direction_confirm_frames=4\n"
              "accepted_scale_output_hysteresis_px=0.65\n"
              "accepted_center_smoothing_alpha=0.45\n"
+             "display_center_smoothing_alpha=0.80\n"
              "accepted_center_max_correction_ratio=0.30\n"
              "max_reacquisition_center_distance=0.80\n"
              "uncertain_ms=200\n"
@@ -373,6 +376,8 @@ int main() {
               "accepted scale output hysteresis parses explicitly");
   expect_near(visible.accepted_center_smoothing_alpha, 0.45F, 1e-6F,
               "accepted center smoothing alpha parses explicitly");
+  expect_near(visible.display_center_smoothing_alpha, 0.80F, 1e-6F,
+              "display center smoothing alpha parses independently");
   expect_near(visible.accepted_center_max_correction_ratio, 0.30F, 1e-6F,
               "accepted center correction ratio parses explicitly");
   expect_near(visible.max_reacquisition_center_distance, 0.80F, 1e-6F,
@@ -678,6 +683,8 @@ int main() {
        &ControllerConfig::accepted_scale_smoothing_alpha},
       {"accepted_center_smoothing_alpha",
        &ControllerConfig::accepted_center_smoothing_alpha},
+      {"display_center_smoothing_alpha",
+       &ControllerConfig::display_center_smoothing_alpha},
   };
   for (const NewFloatLimit& limit : new_unit_limits) {
     for (float value : {0.0F, 0.01F, 0.99F, 1.0F, 1.01F, -0.01F,

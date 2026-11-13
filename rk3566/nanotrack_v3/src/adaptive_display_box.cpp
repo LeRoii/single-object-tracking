@@ -245,7 +245,7 @@ BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
   }
 
   BBox target = projected(output.tracking_bbox);
-  float center_alpha = config_.accepted_center_smoothing_alpha;
+  float center_alpha = config_.display_center_smoothing_alpha;
   if (output.tracking_phase == TrackingPhase::kSearching) {
     target = BBox{center_x(output.control_bbox) - 0.5F * last_trusted_bbox_.width,
                   center_y(output.control_bbox) - 0.5F * last_trusted_bbox_.height,

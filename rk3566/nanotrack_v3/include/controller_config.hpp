@@ -51,6 +51,7 @@ struct ControllerConfig {
   float display_unknown_padding_x = 0.0F;
   float display_unknown_padding_y = 0.0F;
   float display_detector_blend_alpha = 0.20F;
+  float display_center_smoothing_alpha = 1.00F;
   float display_max_size_step_ratio = 0.05F;
   float display_detection_consistency_iou = 0.50F;
   int display_detection_confirmations = 2;

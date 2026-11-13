@@ -110,6 +110,7 @@ void set_value(ControllerConfig& config,
   else if (key == "display_unknown_padding_x") config.display_unknown_padding_x = parse_float(key, value);
   else if (key == "display_unknown_padding_y") config.display_unknown_padding_y = parse_float(key, value);
   else if (key == "display_detector_blend_alpha") config.display_detector_blend_alpha = parse_float(key, value);
+  else if (key == "display_center_smoothing_alpha") config.display_center_smoothing_alpha = parse_float(key, value);
   else if (key == "display_max_size_step_ratio") config.display_max_size_step_ratio = parse_float(key, value);
   else if (key == "display_detection_consistency_iou") config.display_detection_consistency_iou = parse_float(key, value);
   else if (key == "display_detection_confirmations") config.display_detection_confirmations = parse_int(key, value);
@@ -211,6 +212,7 @@ ControllerConfig default_controller_config(const std::string& sensor) {
     config.accepted_scale_direction_confirm_frames = 3;
     config.accepted_scale_output_hysteresis_px = 0.75F;
     config.accepted_center_smoothing_alpha = 0.35F;
+    config.display_center_smoothing_alpha = 0.35F;
     config.accepted_center_max_correction_ratio = 0.25F;
     config.max_reacquisition_center_distance = 0.75F;
   }
@@ -305,13 +307,15 @@ void validate_controller_config(const ControllerConfig& config) {
       config.display_person_padding_x, config.display_person_padding_y,
       config.display_unknown_padding_x, config.display_unknown_padding_y,
       config.display_detector_blend_alpha, config.display_max_size_step_ratio,
-      config.display_detection_consistency_iou};
+      config.display_detection_consistency_iou,
+      config.display_center_smoothing_alpha};
   for (const float value : display_ratios) {
     if (!std::isfinite(value) || value < 0.0F || value > 1.0F) {
       throw std::invalid_argument("adaptive display ratios must be in [0,1]");
     }
   }
   if (config.display_detector_blend_alpha <= 0.0F ||
+      config.display_center_smoothing_alpha <= 0.0F ||
       config.display_max_size_step_ratio <= 0.0F ||
       config.display_detection_consistency_iou <= 0.0F ||
       config.display_detection_confirmations < 1 ||
@@ -530,6 +534,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.display_person_padding_x << '|' << config.display_person_padding_y << '|'
          << config.display_unknown_padding_x << '|' << config.display_unknown_padding_y << '|'
          << config.display_detector_blend_alpha << '|'
+         << config.display_center_smoothing_alpha << '|'
          << config.display_max_size_step_ratio << '|'
          << config.display_detection_consistency_iou << '|'
          << config.display_detection_confirmations << '|'

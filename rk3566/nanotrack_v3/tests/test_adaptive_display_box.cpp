@@ -134,7 +134,7 @@ void test_confirmed_detector_box_has_no_extra_margin() {
   auto value = config();
   value.display_detector_blend_alpha = 1.0F;
   value.display_max_size_step_ratio = 1.0F;
-  value.accepted_center_smoothing_alpha = 1.0F;
+  value.display_center_smoothing_alpha = 1.0F;
   AdaptiveDisplayBox display(value);
   TargetClassState target = established(2, BBox{80, 80, 40, 30});
   target.selected_candidate.reset();
@@ -205,6 +205,26 @@ void test_reacquisition_rebases_display_scale() {
               "reacquired display converges toward the padded new tracker without changing it");
 }
 
+void test_display_center_is_independent_of_tracking_smoothing() {
+  using namespace nanotrack;
+  auto value = config();
+  value.accepted_center_smoothing_alpha = 0.35F;
+  value.display_center_smoothing_alpha = 0.80F;
+  const BBox original{80, 80, 20, 20};
+  const BBox moved{100, 80, 20, 20};
+  AdaptiveDisplayBox display(value);
+  display.initialize(original, TargetClassState{}, FrameSize{200, 200});
+  AdaptiveDisplayDiagnostics diagnostics;
+  display.update(tracking_output(original), TargetClassState{}, diagnostics);
+  const BBox result = display.update(tracking_output(moved), TargetClassState{}, diagnostics);
+  expect_true(close(center_x(result), 106.0F) &&
+                  close(result.width, 20.0F) &&
+                  close(display.current().x, 96.0F),
+              "display follows 80 percent of a fast tracker move without resizing");
+  expect_true(close(value.accepted_center_smoothing_alpha, 0.35F),
+              "display-only tuning does not change tracker center smoothing");
+}
+
 }  // namespace
 
 int main() {
@@ -213,6 +233,7 @@ int main() {
   test_confirmed_detector_box_has_no_extra_margin();
   test_adaptive_cadence();
   test_reacquisition_rebases_display_scale();
+  test_display_center_is_independent_of_tracking_smoothing();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;
