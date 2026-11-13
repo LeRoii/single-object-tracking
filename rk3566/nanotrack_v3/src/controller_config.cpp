@@ -150,7 +150,6 @@ void set_value(ControllerConfig& config,
   else if (key == "detector_stale_ms") config.detector_stale_ms = parse_integer(key, value);
   else if (key == "detector_max_candidates") config.detector_max_candidates = static_cast<std::size_t>(parse_integer(key, value));
   else if (key == "detector_candidate_max_center_ratio") config.detector_candidate_max_center_ratio = parse_float(key, value);
-  else if (key == "unified_confident_detector_probe_gate") config.unified_confident_detector_probe_gate = parse_bool(key, value);
   else if (key == "detector_target_mode") config.detector_target_mode = parse_detector_target_mode(value);
   else if (key == "detector_search_scale") config.detector_search_scale = parse_float(key, value);
   else if (key == "detector_subtarget_max_probes") config.detector_subtarget_max_probes = static_cast<std::size_t>(parse_integer(key, value));
@@ -560,7 +559,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.template_bridge_min_stable_frames << '|'
          << config.template_bridge_max_duration_ms << '|'
          << config.detector_candidate_max_center_ratio << '|'
-         << config.unified_confident_detector_probe_gate << '|'
          << config.occlusion_hold_frames << '|'
          << config.occlusion_trigger_consecutive_unreliable << '|'
          << config.occlusion_trigger_min_dimension_ratio << '|'
