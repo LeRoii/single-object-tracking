@@ -1,5 +1,22 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T00:08:27+08:00 Detector 轮询时机主机候选
+
+- `codex/dual-gt-init-consistency`、工作树 `/home/u20/single-object-tracking`，
+  基线 `3c6201d3686988d8724d4eb08a7fe3f6a19a0925`。同一帧中，
+  `LongTermRuntime::process_frame` 现先做 NanoTrack 推理，再无等待地轮询
+  detector，随后将批次交给控制器；这允许推理期间完成的批次参与当前帧决策。
+  新测试让 fake detector 在 NanoTrack 推理回调里完成任务，核验同帧消费，
+  且 display 专用批次仍不进入跟踪/控制恢复。两次 NanoTrack 身份确认、
+  候选时效和其他控制门禁未改。
+- 主机实际命令 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、
+  `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，
+  RKNN-off `23/23 PASS`。此条只证明主机逻辑和回归；真实 RK3588 原生编译、
+  八组双真值中心评分及重复性尚待同一提交的源码包上验证。
+- **证据边界 / Handoff**：该候选尚不批准生产或板端 handoff。下一步从本提交
+  `git archive` 到隔离板端目录，按相同二进制/模型/视频/初始框的协议
+  对照旧 `alpha1` 八组及 car001 右下重复运行。
+
 ## 2026-11-14T00:05:00+08:00 搜索间隔归因修正与同参数重复性
 
 - 继续使用 `codex/dual-gt-init-consistency@ecfa29f6810b8a6610bb551ccdd704b531a5e5fc`，

@@ -179,6 +179,17 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     }
   }
 
+  if (result.plan.run_tracker) {
+    const auto tracker_start = std::chrono::steady_clock::now();
+    result.observations = tracker_.infer(image, result.plan, result.template_heads);
+    result.tracker_ms = std::chrono::duration<float, std::milli>(
+                            std::chrono::steady_clock::now() - tracker_start)
+                            .count();
+  } else {
+    result.tracker_skipped = true;
+  }
+  // Poll after inference so a detector result completed while NanoTrack ran
+  // can still participate in this frame's recovery decision without waiting.
   std::optional<DetectorBatch> detector_batch;
   if (detector_.available() && result.detector.error.empty()) {
     try {
@@ -208,16 +219,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     } else if (detector_batch->purpose == DetectorRequestPurpose::kSearchRecovery) {
       recovery_batch = detector_batch;
     }
-  }
-
-  if (result.plan.run_tracker) {
-    const auto tracker_start = std::chrono::steady_clock::now();
-    result.observations = tracker_.infer(image, result.plan, result.template_heads);
-    result.tracker_ms = std::chrono::duration<float, std::milli>(
-                            std::chrono::steady_clock::now() - tracker_start)
-                            .count();
-  } else {
-    result.tracker_skipped = true;
   }
   // The finish call updates bounded tracking state in place. Keep its input
   // state until every fallible tracker callback has completed. The controller

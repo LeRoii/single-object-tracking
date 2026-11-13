@@ -1676,6 +1676,27 @@ int main() {
                   display_frame.output.control_valid,
               "display detector results never enter recovery or alter tracking/control");
 
+  FakeTracker in_flight_tracker;
+  FakeDetector in_flight_detector;
+  in_flight_detector.enabled = true;
+  in_flight_tracker.on_infer = [&]() {
+    DetectorBatch batch;
+    batch.source_frame_id = in_flight_detector.last_request.frame_id;
+    batch.source_timestamp_ms = in_flight_detector.last_request.timestamp_ms;
+    batch.purpose = in_flight_detector.last_request.purpose;
+    in_flight_detector.next_batch = batch;
+  };
+  LongTermRuntime in_flight_runtime(display_config, in_flight_tracker,
+                                   in_flight_detector, TargetClassRuntimeConfig{2, 9, {}});
+  in_flight_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  const auto in_flight_frame = in_flight_runtime.process_frame(image, 1, 40);
+  expect_true(in_flight_frame.detector.request_submitted &&
+                  in_flight_frame.detector.batch_received &&
+                  in_flight_frame.detector.batch_frame_id == 1 &&
+                  in_flight_detector.poll_calls == 1 &&
+                  in_flight_frame.output.detector_status == DetectorBatchStatus::kNone,
+              "detector result completed during tracker inference is consumed in the same frame");
+
   ControllerConfig hold_config = config;
   hold_config.occlusion_reference_window = 3;
   hold_config.occlusion_hold_frames = 2;
