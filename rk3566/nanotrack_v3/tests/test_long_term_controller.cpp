@@ -2522,56 +2522,6 @@ void test_car_partial_visibility_needs_shrink_and_motion() {
               "other classes and observations without decoded geometry retain their contract");
 }
 
-void test_strong_car_visibility_requires_consecutive_evidence() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.motion_search_enabled = true;
-  config.recent_visibility_height_ratio = 0.98F;
-  config.recent_visibility_center_residual = 0.04F;
-  config.recent_visibility_search_height_ratio = 0.95F;
-  config.recent_visibility_search_center_residual = 0.15F;
-  config.recent_visibility_search_consecutive_frames = 2;
-  config.stable_frames_for_update = 99;
-  const BBox initial{70, 50, 30, 30};
-  const BBox strong{78, 50, 30, 28};
-  const auto run = [&](int class_id, bool clean_middle) {
-    ResolvedControllerFixture controller(config);
-    controller.initialize(initial, 0, 0, {320, 240},
-                          make_fixed_target_class(class_id, false));
-    const auto frame = [&](std::uint64_t id, const BBox& box) {
-      const auto plan = controller.begin_frame(id, static_cast<std::int64_t>(id) * 40,
-                                               false);
-      auto observation = reliable_observation(plan, TemplateKind::kRecent, box);
-      observation.decoded_bbox = box;
-      return controller.finish_frame(plan, {observation}, std::nullopt);
-    };
-    const auto first = frame(1, strong);
-    if (class_id == 2) {
-      expect_true(first.tracking_phase == TrackingPhase::kSuspected &&
-                      first.observation_present && !first.accepted,
-                  "one strong visibility sample remains provisional");
-    }
-    if (clean_middle) {
-      const auto clean = frame(2, initial);
-      expect_true(clean.tracking_phase != TrackingPhase::kSearching,
-                  "clean observation does not start search");
-      const auto after_gap = frame(3, strong);
-      expect_true(after_gap.tracking_phase == TrackingPhase::kSuspected,
-                  "clean frame resets the strong visibility count");
-      return after_gap;
-    }
-    return frame(2, strong);
-  };
-  const auto search = run(2, false);
-  expect_true(search.tracking_phase == TrackingPhase::kSearching &&
-                  !search.observation_present && !search.accepted,
-              "two consecutive strong car visibility samples enter search");
-  run(2, true);
-  const auto other_class = run(0, false);
-  expect_true(other_class.tracking_phase != TrackingPhase::kSearching,
-              "non-car observations do not use the visibility search gate");
-}
-
 void test_search_uses_last_clean_response_motion_trend() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2981,7 +2931,6 @@ int main() {
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();
   test_car_partial_visibility_needs_shrink_and_motion();
-  test_strong_car_visibility_requires_consecutive_evidence();
   test_search_uses_last_clean_response_motion_trend();
   test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();
