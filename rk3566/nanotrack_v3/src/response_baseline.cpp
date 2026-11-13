@@ -33,6 +33,7 @@ ResponseBaseline::ResponseBaseline(const ControllerConfig& config)
       peak_margin_drop_(config.occlusion_peak_margin_drop) {
   validate_controller_config(config);
   samples_.resize(config.occlusion_reference_window);
+  long_samples_.resize(static_cast<std::size_t>(config.occlusion_reference_window) * 3);
 }
 
 void ResponseBaseline::observe_trusted(const ResponseMetrics& metrics) noexcept {
@@ -43,6 +44,9 @@ void ResponseBaseline::observe_trusted(const ResponseMetrics& metrics) noexcept 
   samples_[next_sample_] = {metrics.psr, metrics.apce, metrics.peak_margin};
   next_sample_ = (next_sample_ + 1) % samples_.size();
   sample_count_ = std::min(sample_count_ + 1, samples_.size());
+  long_samples_[next_long_sample_] = {metrics.psr, metrics.apce, metrics.peak_margin};
+  next_long_sample_ = (next_long_sample_ + 1) % long_samples_.size();
+  long_sample_count_ = std::min(long_sample_count_ + 1, long_samples_.size());
 }
 
 ResponseBaselineEvaluation ResponseBaseline::evaluate(
@@ -64,9 +68,25 @@ ResponseBaselineEvaluation ResponseBaseline::evaluate(
   return result;
 }
 
+bool ResponseBaseline::sustained_dual_drop(const ResponseMetrics& metrics) const {
+  if (long_sample_count_ < long_samples_.size()) return false;
+  std::vector<float> sorted;
+  sorted.reserve(long_sample_count_);
+  const float psr = median(long_samples_, long_sample_count_,
+                           &ResponseReference::psr, sorted);
+  const float apce = median(long_samples_, long_sample_count_,
+                            &ResponseReference::apce, sorted);
+  // A single response metric or peak-margin dip can occur during ordinary
+  // motion. Both independent metrics must weaken against the slower history.
+  return relative_drop(metrics.psr, psr, psr_drop_ratio_) &&
+         relative_drop(metrics.apce, apce, apce_drop_ratio_);
+}
+
 void ResponseBaseline::reset_after_recovery() noexcept {
   sample_count_ = 0;
   next_sample_ = 0;
+  long_sample_count_ = 0;
+  next_long_sample_ = 0;
   resume_tracking();
 }
 

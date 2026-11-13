@@ -2368,6 +2368,44 @@ void test_recent_safe_single_metric_dip_is_tentative() {
               "one healthy frame clears an isolated pre-entry response dip");
 }
 
+void test_sustained_dual_response_loss_stops_trusted_observations() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.occlusion_reference_window = 8;
+  config.stable_frames_for_update = 99;
+  config.reliable_psr = 4.2F;
+  config.reliable_apce = 8.0F;
+  config.reliable_peak_margin = 0.04F;
+  config.weak_psr = 4.0F;
+  config.weak_peak_margin = 0.02F;
+  ResolvedControllerFixture controller(config);
+  const BBox bbox{70, 50, 30, 30};
+  controller.initialize(bbox, 0, 0, {320, 240});
+  const auto track = [&](std::uint64_t id, float psr, float apce) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    recent.metrics = ResponseMetrics{0.98F, 0.96F, psr, apce, 0.25F};
+    return controller.finish_frame(plan, {recent}, std::nullopt);
+  };
+  for (std::uint64_t id = 1; id <= 24; ++id) {
+    expect_true(track(id, 8.0F, 20.0F).accepted,
+                "clean observations establish both response histories");
+  }
+  for (std::uint64_t id = 25; id <= 30; ++id) {
+    expect_true(track(id, 7.0F, 17.0F).accepted,
+                "modest decline remains trusted while the short reference adapts");
+  }
+  const auto one_metric = track(31, 5.5F, 19.0F);
+  expect_true(one_metric.accepted &&
+                  one_metric.tracking_phase == TrackingPhase::kTracking,
+              "one long-history metric decline cannot suppress a visible target");
+  const auto both = track(32, 5.5F, 13.0F);
+  expect_true(!both.accepted && both.observation_present &&
+                  both.tracking_phase == TrackingPhase::kSuspected &&
+                  !both.trusted_for_state_update,
+              "sustained PSR and APCE loss blocks a trusted update before short history catches it");
+}
+
 void test_search_uses_last_clean_response_motion_trend() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2775,6 +2813,7 @@ void test_recent_safe_rolling_scale() {
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
+  test_sustained_dual_response_loss_stops_trusted_observations();
   test_search_uses_last_clean_response_motion_trend();
   test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();

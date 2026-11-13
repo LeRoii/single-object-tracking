@@ -26,6 +26,7 @@ class ResponseBaseline {
 
   void observe_trusted(const ResponseMetrics& metrics) noexcept;
   ResponseBaselineEvaluation evaluate(const ResponseMetrics& metrics) const;
+  bool sustained_dual_drop(const ResponseMetrics& metrics) const;
   void freeze() noexcept { frozen_ = true; }
   void resume_tracking() noexcept { frozen_ = false; }
   void reset_after_recovery() noexcept;
@@ -39,6 +40,9 @@ class ResponseBaseline {
   std::vector<ResponseReference> samples_;
   std::size_t sample_count_ = 0;
   std::size_t next_sample_ = 0;
+  std::vector<ResponseReference> long_samples_;
+  std::size_t long_sample_count_ = 0;
+  std::size_t next_long_sample_ = 0;
 };
 
 }  // namespace nanotrack

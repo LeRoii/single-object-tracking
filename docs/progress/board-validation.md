@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T01:32:37+08:00 双时窗 PSR/APCE 候选主机实现
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `267e5b8`。`ResponseBaseline` 继续用配置的短窗口（板端当前 8 帧）评估原有响应/运动门禁，同时保存 3 倍长度的可信样本窗口；长窗口满样本后，只有 PSR 与 APCE 相对长参考 **同时** 下降才触发额外的 SUSPECTED 观测隔离。冻结、恢复、重捕清理同时作用于两份样本；没有使用 GT 帧号或 detector 输出直接授权跟踪/控制。新增基线单测覆盖短窗口已适应弱响应而长窗口仍可识别双指标下降、单指标下降不触发、冻结与重捕清理；控制器单测覆盖 24 次健康、6 次温和下降、单指标负例和双指标观测隔离。
+- 实际运行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/dual-response-host-build.log`、`/tmp/nt-dual-gt-evidence/dual-response-host-ctest.log`。下一步打包本提交源码到 RK3588 隔离目录，原生构建并运行同一八组双真值矩阵，重点核对 car001 第 62 帧模板时序和 car002 第 217～229 帧无框误观测。
+- **证据边界 / Handoff**：当前只有逻辑/主机测试；真实目标中心、重捕与无框门禁必须以板端复测判定，不批准 handoff。
+
 ## 2026-11-14T01:29:22+08:00 24 帧响应参考窗口否决与双时窗判别候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，源代码/二进制仍为已测 `47ccfc8`，板端根 `/home/neardi/Project/SOT/dual-gt-stable14-47ccfc8`，二进制 SHA-256 `9d833901e044cd1b06db8d18e691d7aa60bcbd31c68ad46663c6a68502c0b4c2`，同视频与 RKNN/manifest/labels。只在板端派生 `runs/reference-24.conf` 将 `occlusion_reference_window=8→24`，配置 SHA-256 `42a9778a600e349eccb6981267707d8f14e08f116cc73706dac83dd8688c9193`，`runs/headless-reference-24.conf` SHA-256 `51b43a949458ffaaa70ad6bf319498374abc072a55880df0e616dbcbaa4662b0`，未改 Git 源码。

@@ -951,6 +951,7 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
                              metrics.apce < config_.reliable_apce ||
                              metrics.peak_margin < config_.reliable_peak_margin;
   const bool degraded = isolated_response_dip || drops >= 2 ||
+                        response_baseline_.sustained_dual_drop(metrics) ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
     response_clean_since_ms_.reset();
