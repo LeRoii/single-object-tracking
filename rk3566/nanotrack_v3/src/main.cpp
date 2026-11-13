@@ -107,7 +107,7 @@ cv::Mat render_display(
 }
 
 cv::Mat render_debug(const cv::Mat& source,
-                     const std::optional<nanotrack::RuntimeFrameResult>& result,
+                     const nanotrack::RuntimeFrameResult* result,
                      std::size_t frame_id,
                      bool playing,
                      const std::vector<std::string>& labels) {
@@ -239,6 +239,23 @@ cv::Mat render_debug(const cv::Mat& source,
               cv::Point(8, legend_top + 34), cv::FONT_HERSHEY_SIMPLEX, 0.38,
               cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   return rendered;
+}
+
+cv::Mat render_debug_video(const cv::Mat& source,
+                           const nanotrack::RuntimeFrameResult& result,
+                           std::size_t frame_id,
+                           bool playing,
+                           const std::vector<std::string>& labels,
+                           int output_width,
+                           int output_height) {
+  cv::Mat rendered = render_debug(source, &result, frame_id, playing, labels);
+  if (rendered.cols == output_width && rendered.rows == output_height) {
+    return rendered;
+  }
+  cv::Mat resized;
+  cv::resize(rendered, resized, cv::Size(output_width, output_height), 0.0,
+             0.0, cv::INTER_AREA);
+  return resized;
 }
 
 bool window_visible(const std::string& window_name) noexcept {
@@ -567,7 +584,7 @@ int main(int argc, char** argv) {
       if (options.interactive) {
         cv::imshow(kDisplayWindow, render_display(frame, displayed_result));
         cv::Mat establishing = render_debug(
-            frame, std::nullopt, source_frame, playback.playing(), detector_labels);
+            frame, nullptr, source_frame, playback.playing(), detector_labels);
         cv::putText(establishing, "ESTABLISHING TARGET CLASS...", cv::Point(12, 80),
                     cv::FONT_HERSHEY_SIMPLEX, 0.60, cv::Scalar(255, 255, 255),
                     2, cv::LINE_AA);
@@ -620,8 +637,14 @@ int main(int argc, char** argv) {
           if (!writer.isOpened()) {
             throw std::runtime_error("cannot open output video writer");
           }
-          writer.write(render_annotated(frame, bbox, initial_output, output_width,
-                                        output_height));
+          if (options.interactive) {
+            writer.write(render_debug_video(
+                frame, initial_result, source_frame, playback.playing(),
+                detector_labels, output_width, output_height));
+          } else {
+            writer.write(render_annotated(frame, bbox, initial_output,
+                                          output_width, output_height));
+          }
         }
         if (!artifacts.boxes.empty()) {
           boxes.open(artifacts.boxes);
@@ -674,7 +697,9 @@ int main(int argc, char** argv) {
       if (options.interactive) {
         cv::imshow(kDisplayWindow, render_display(frame, displayed_result));
         cv::imshow(kDebugWindow,
-                   render_debug(frame, displayed_result, source_frame,
+                   render_debug(frame,
+                                displayed_result ? &*displayed_result : nullptr,
+                                source_frame,
                                 playback.playing(), detector_labels));
         const int key = cv::waitKeyEx(playback.playing() ? 1 : 0);
         const nanotrack::InteractiveCommand command =
@@ -761,8 +786,15 @@ int main(int argc, char** argv) {
         throw std::runtime_error("measured tracking latency is invalid");
       }
       if (writer.isOpened()) {
-        writer.write(render_annotated(frame, result.output.control_bbox, result.output,
-                                      output_width, output_height));
+        if (options.interactive) {
+          writer.write(render_debug_video(
+              frame, result, source_frame, playback.playing(), detector_labels,
+              output_width, output_height));
+        } else {
+          writer.write(render_annotated(frame, result.output.control_bbox,
+                                        result.output, output_width,
+                                        output_height));
+        }
       }
       displayed_result = result;
       const float pipeline_ms = std::chrono::duration<float, std::milli>(

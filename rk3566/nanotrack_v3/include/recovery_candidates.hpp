@@ -53,6 +53,7 @@ class RecoveryCandidateTable {
       std::optional<BBox> subtarget_region = std::nullopt);
   const RecoveryCandidate* find(RecoveryCandidateKey key) const noexcept;
   const RecoveryCandidate* select_probe() const noexcept;
+  bool focus_detector(RecoveryCandidateKey key) noexcept;
   void advance_subtarget_probe(RecoveryCandidateKey key, const BBox& bbox,
                                std::size_t index, bool final_probe) noexcept;
   bool conflicted() const noexcept;
@@ -86,6 +87,7 @@ class RecoveryCandidateTable {
   std::vector<RecoveryCandidate> entries_;
   std::optional<FrameStamp> frame_;
   std::optional<FrameStamp> unrepresented_conflict_;
+  std::optional<RecoveryCandidateKey> focused_detector_;
   std::uint64_t generation_ = 0;
   std::uint64_t next_id_ = 1;
 };

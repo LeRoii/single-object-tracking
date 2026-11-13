@@ -134,6 +134,7 @@ void RecoveryCandidateTable::expire(std::uint64_t frame_id,
   entries_.erase(std::remove_if(entries_.begin(), entries_.end(),
                                [](const auto& entry) { return !has_evidence(entry); }),
                  entries_.end());
+  if (focused_detector_ && !find(*focused_detector_)) focused_detector_.reset();
   if (unrepresented_conflict_ &&
       expired(*unrepresented_conflict_, std::min(gap_ms_, detector_stale_ms_))) {
     unrepresented_conflict_.reset();
@@ -144,6 +145,7 @@ void RecoveryCandidateTable::clear() noexcept {
   entries_.clear();
   frame_.reset();
   unrepresented_conflict_.reset();
+  focused_detector_.reset();
 }
 
 bool RecoveryCandidateTable::geometry_consistent(const BBox& reference,
@@ -285,7 +287,13 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
       hits[1] = evidence;
     }
   }
-  if (conflicted()) {
+  if (focused_detector_ && std::any_of(entries_.begin(), entries_.end(),
+          [&](const RecoveryCandidate& candidate) {
+            return candidate.key != *focused_detector_ &&
+                   candidate.hits() == kRequiredHits;
+          })) {
+    mark_identity_conflict();
+  } else if (conflicted()) {
     for (auto& candidate : entries_) candidate.verifications = {};
   }
   return entry->key;
@@ -299,6 +307,10 @@ const RecoveryCandidate* RecoveryCandidateTable::find(
 }
 
 const RecoveryCandidate* RecoveryCandidateTable::select_probe() const noexcept {
+  if (focused_detector_) {
+    const auto* focused = find(*focused_detector_);
+    if (focused && !focused->subtarget_probes_exhausted) return focused;
+  }
   const RecoveryCandidate* best = nullptr;
   for (const auto& candidate : entries_) {
     if (candidate.subtarget_probes_exhausted &&
@@ -309,6 +321,20 @@ const RecoveryCandidate* RecoveryCandidateTable::select_probe() const noexcept {
     if (!best || preferred(candidate, *best)) best = &candidate;
   }
   return best;
+}
+
+bool RecoveryCandidateTable::focus_detector(RecoveryCandidateKey key) noexcept {
+  const auto* candidate = find(key);
+  if (!frame_ || unrepresented_conflict_ || !candidate ||
+      !candidate->from(RecoveryCandidateSource::kDetector)) {
+    return false;
+  }
+  if (focused_detector_ == key) return true;
+  focused_detector_ = key;
+  // A detector only proposes an identity. Confirmation starts with fresh
+  // NanoTrack observations made after the detector batch was received.
+  for (auto& entry : entries_) entry.verifications = {};
+  return true;
 }
 
 void RecoveryCandidateTable::advance_subtarget_probe(
@@ -326,7 +352,15 @@ void RecoveryCandidateTable::advance_subtarget_probe(
 }
 
 bool RecoveryCandidateTable::conflicted() const noexcept {
-  return entries_.size() > 1 || unrepresented_conflict_.has_value();
+  if (unrepresented_conflict_) return true;
+  if (focused_detector_ && find(*focused_detector_)) {
+    return std::any_of(entries_.begin(), entries_.end(),
+        [&](const RecoveryCandidate& candidate) {
+          return candidate.key != *focused_detector_ &&
+                 candidate.hits() == kRequiredHits;
+        });
+  }
+  return entries_.size() > 1;
 }
 
 bool RecoveryCandidateTable::confirmed(RecoveryCandidateKey key) const noexcept {
