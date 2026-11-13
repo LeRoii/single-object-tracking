@@ -1,5 +1,27 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T21:37:35+08:00 重捕后显示框重复放大修正：主机验证
+
+- 分支 `codex/recovery-local-arbitration-debug-video`，工作树
+  `/home/u20/.codex/worktrees/recovery-local-arbitration-debug-video/single-object-tracking`，
+  本次修改基线 `1417535d6491e6b88b473e25efaffa548698de6f`；源码提交以本条 Git 历史
+  为准。输入为此前 RK3588 用户 ROI `993,585,36,36` 的保留 CSV：
+  `/tmp/recovery-5793986-user-frames.csv`，对应源码 `5793986`、板端部署根
+  `/home/neardi/Project/SOT/recovery-local-debug-video-5793986/runs/user_roi/`。
+- 实际 CSV：192 帧 SEARCH 时跟踪框 `36.0×41.1`、显示框 `49.0×57.2`；193 帧重捕后
+  跟踪框变为 `47.9×54.6`，但显示模块继续套用旧宽高比，193--197 帧显示框按每帧
+  `5%` 上限增至 `62.6×72.9`，这些帧 `display_correction_applied=0`。固定 car001 ROI
+  同样从重捕前 `49.8×57.6` 增至 190 帧 `63.6×72.0`。根因是重捕缩放和旧显示变换
+  叠加；首次新的检测显示纠正发生在用户 ROI 的 198 帧，不能解释此前放大。
+- 修正仅在接受重捕时用新跟踪框和现有类别边距重建显示变换，并清除重捕前尚未完成的显示
+  检测确认；保留五帧中心过渡、每帧 `5%` 尺寸上限及原检测纠正规则。跟踪框、控制框、
+  模板、运动模型与重捕状态机代码未变。新增单测覆盖旧包络比例过大时的重捕缩放。
+- 实际执行
+  `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-display-rebase-build -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF -DCMAKE_CXX_FLAGS=-Werror=switch`、
+  `cmake --build /tmp/nt-display-rebase-build -- -j4`、
+  `ctest --test-dir /tmp/nt-display-rebase-build --output-on-failure`：主机 `23/23 PASS`；
+  `git diff --check` 通过。此阶段仅完成源码和主机验证，RK3588 新构建与视频对照待执行。
+
 ## 2026-11-13T21:31:38+08:00 板端进度接管与 RK3588 开发范围
 
 - 用户授权当前对话维护 `docs/progress/board-validation.md`，并明确后续开发只在 RK3588

@@ -146,12 +146,44 @@ void test_adaptive_cadence() {
               "display refresh pauses before the 33.3ms algorithm budget is exceeded");
 }
 
+void test_reacquisition_rebases_display_scale() {
+  using namespace nanotrack;
+  AdaptiveDisplayBox display(config());
+  TargetClassState target = established(2, BBox{80, 80, 40, 40});
+  const BBox original_tracker{90, 90, 20, 20};
+  display.initialize(original_tracker, target, FrameSize{200, 200});
+  const float old_width = display.current().width;
+
+  ControllerOutput output = tracking_output(original_tracker);
+  output.tracking_phase = TrackingPhase::kSearching;
+  output.accepted = false;
+  AdaptiveDisplayDiagnostics diagnostics;
+  display.update(output, target, diagnostics);
+
+  const BBox recovered_tracker{95, 95, 30, 30};
+  output = tracking_output(recovered_tracker);
+  output.reacquired = true;
+  const BBox first = display.update(output, target, diagnostics);
+  expect_true(diagnostics.source == DisplayBoxSource::kReacquisitionBlend &&
+                  first.width < old_width,
+              "reacquisition must not multiply the old display scale by the new tracker size");
+  output.reacquired = false;
+  BBox settled = first;
+  for (int i = 0; i < 4; ++i) {
+    settled = display.update(output, target, diagnostics);
+  }
+  expect_true(settled.width < 36.0F && settled.height < 37.0F &&
+                  close(output.tracking_bbox.width, recovered_tracker.width),
+              "reacquired display converges toward the padded new tracker without changing it");
+}
+
 }  // namespace
 
 int main() {
   test_class_padding_and_initialization();
   test_confirmation_and_search_freeze();
   test_adaptive_cadence();
+  test_reacquisition_rebases_display_scale();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;
