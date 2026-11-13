@@ -1861,32 +1861,6 @@ void test_unified_recovery_candidate_cleanup() {
               "a stale completion cannot carry either candidate or detector history through the frame");
 }
 
-void test_full_object_probe_waits_for_reacquisition_age() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.motion_search_enabled = true;
-  config.detector_target_mode = DetectorTargetMode::kFullObject;
-  config.search_reacquisition_min_age_ms = 600;
-  config.search_probe_requires_reacquisition_age = true;
-  ResolvedControllerFixture controller(config);
-  const BBox initial{40, 30, 20, 20};
-  controller.initialize(initial, 0, 0, {400, 240}, make_fixed_target_class(2, true));
-  reject_frame(controller, 1, 40);
-  auto plan = controller.begin_frame(2, 80, true);
-  expect_true(plan.detector_request.has_value(),
-              "waiting fixture requests detector evidence");
-  DetectorBatch batch{2, 80, {{BBox{44, 30, 20, 20}, 0.9F, 2}}};
-  batch.generation = plan.detector_request->generation;
-  const auto output = controller.finish_frame(plan, {}, batch);
-  expect_true(output.detector_candidates_queued == 1,
-              "early detector evidence is retained during the wait");
-  plan = controller.begin_frame(3, 120, false);
-  expect_true(plan.hypothesis_source == HypothesisSource::kMotion &&
-                  !plan.recovery_probe && !plan.detector_candidate_region,
-              "a detector candidate cannot move the tracker crop before reacquisition age");
-  controller.abort_frame();
-}
-
 void test_subtarget_probe_abort_does_not_advance_cursor() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2462,38 +2436,6 @@ void test_car_partial_visibility_needs_shrink_and_motion() {
   expect_true(run(0, combined, true).accepted &&
                   run(2, combined, false).accepted,
               "other classes and observations without decoded geometry retain their contract");
-
-  ControllerConfig sustained_config = config;
-  sustained_config.motion_search_enabled = true;
-  sustained_config.recent_visibility_search_consecutive_frames = 3;
-  ResolvedControllerFixture sustained(sustained_config);
-  sustained.initialize(initial, 0, 0, {320, 240},
-                       make_fixed_target_class(2, false));
-  for (std::uint64_t frame = 1; frame <= 3; ++frame) {
-    const auto plan = sustained.begin_frame(frame, frame * 40, false);
-    const BBox box{70.0F + 2.0F * static_cast<float>(frame), 50, 30, 29};
-    auto observation = reliable_observation(plan, TemplateKind::kRecent, box, frame);
-    observation.decoded_bbox = box;
-    const auto output = sustained.finish_frame(plan, {observation}, std::nullopt);
-    expect_true(!output.accepted && !output.trusted_for_state_update &&
-                    output.tracking_phase == (frame == 3
-                        ? TrackingPhase::kSearching : TrackingPhase::kSuspected),
-                "three continuous visibility losses enter search only on the third frame");
-  }
-
-  ResolvedControllerFixture interrupted(sustained_config);
-  interrupted.initialize(initial, 0, 0, {320, 240},
-                         make_fixed_target_class(2, false));
-  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
-    const auto plan = interrupted.begin_frame(frame, frame * 40, false);
-    const BBox box = frame == 2 ? initial :
-        BBox{70.0F + 2.0F * static_cast<float>(frame), 50, 30, 29};
-    auto observation = reliable_observation(plan, TemplateKind::kRecent, box, frame);
-    observation.decoded_bbox = box;
-    const auto output = interrupted.finish_frame(plan, {observation}, std::nullopt);
-    expect_true(output.tracking_phase != TrackingPhase::kSearching,
-                "a clean geometry frame breaks the consecutive visibility search count");
-  }
 }
 
 void test_search_uses_last_clean_response_motion_trend() {
@@ -2930,7 +2872,6 @@ int main() {
   test_target_class_gate();
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
-  test_full_object_probe_waits_for_reacquisition_age();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_recovery_probation_cleanup();

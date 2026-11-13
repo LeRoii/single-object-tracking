@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:04:05+08:00 提前搜索但延后 detector 探针的板端否决
+
+- 精确源码 `codex/dual-gt-init-consistency@f53a235ccc22751a8a455c437cef5745d17cfd77`，包 `/home/neardi/Project/SOT/nt-dual-gt-probe-wait-f53a235.tar` 主机/板端 SHA-256 `029e2676a48fada4a7e9788681b1c7a437ce5c3e5be432cc09ff82b1f06ff9cc`，隔离根 `/home/neardi/Project/SOT/dual-gt-probe-wait-f53a235`。RK3588 原生构建及 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `5b035ad3c30338cf7ea8758028305afff76fb99754edff765b97156c1e1542df`，控制器配置 SHA-256 `02c1d19fe98902bb6d63564b276fd23d679960336099abf57cf32733350d882d`，headless 配置 SHA-256 `560ec4cc319bfb3a66938d3015d30c93d3744dd52c3a0b612908aabde1162ad8`。视频、GT、tracker、detector/manifest/labels 和板端环境同前述精确矩阵。
+- 实际运行 `bash scripts/run_occ_init_matrix.sh ./build/nanotrack_v3 runs/headless-eval.conf runs/matrix`；32 文件清单 `runs/matrix-checksums.sha256` SHA-256 `de604d878d0b0341f7d6c2d0f619047ea5804c9f85517b8b6a068c0a23e0ffca`，八 AVI 均 1920×1080、271 帧；文本包 `runs/matrix-text.tar.gz` 主机/板端 SHA-256 `1a1cd2aa961d68ccf08b22520710de68332ae7b6cb91e0f653af8230fec27c33`，评分 `/tmp/nt-dual-gt-evidence/probe-wait-f53a235-center.json` SHA-256 `dda9dd5650c07c77bfd980607518c73c3d03d683648dbc89fec900c58d0bd148`。
+- car001 标准框第 187 帧重捕但可见框门禁失败，右下框延至第 200 帧且 tracking 中心均值 `6.98 px`；跨初始框 tracking/display 中心 P95 `37.21/35.50 px`。car002 四组完全遮挡语义均 PASS，但重捕 `244/255/244/243`，跨初始框 tracking/display 中心 P95 `37.34/34.52 px`；正式门禁 `4/8 PASS`，与之前仅增加 600 ms 等待的失败候选近似。等待期内不探测 detector 候选未解决后续 recent/safe 命中不连续和晚期 detector 救援的问题。
+- **裁决 / Handoff**：撤回 f53a235 的源码/配置/单测，保留上述板端证据；以 `1a7bd72` 的源码和 7cbf58d 的八组矩阵为最佳已测基线，正式 handoff 继续 HOLD。下一步应针对提前搜索造成的运动预测漂移和确认几何设计有独立证据的候选；不能把 4/8 语义 PASS 当成中心一致性达标。
+
 ## 2026-11-14T02:57:29+08:00 提前搜索但延后探针的主机候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `1a7bd72e80c19cd4084f495b06b08dfe39bd0d4b`。恢复已测的“轿车连续三帧高度缩小且中心残差增大即提前 SEARCHING”候选，并把可见配置的 `search_reacquisition_min_age_ms` 设为 600；新增默认关闭的 `search_probe_requires_reacquisition_age`，只在可见配置启用，使全目标模式在确认等待期间也不把 detector 候选作为 NanoTrack 探针。此前 600 ms 反例在等待期间仍探测遮挡中的同类车；本候选针对该差异。配置 SHA-256 `02c1d19fe98902bb6d63564b276fd23d679960336099abf57cf32733350d882d`。
