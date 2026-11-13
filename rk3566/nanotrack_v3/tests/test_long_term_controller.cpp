@@ -2444,6 +2444,12 @@ void test_car_partial_visibility_needs_shrink_and_motion() {
   sustained.initialize(initial, 0, 0, {320, 240},
                        make_fixed_target_class(2, false));
   for (std::uint64_t frame = 1; frame <= 3; ++frame) {
+    if (frame == 3) {
+      sustained.motion_.acceleration_y_ = 40.0F;
+      if (sustained.shadow_motion_) {
+        sustained.shadow_motion_->acceleration_y_ = 40.0F;
+      }
+    }
     const auto plan = sustained.begin_frame(frame, frame * 40, false);
     const BBox box{70.0F + 2.0F * static_cast<float>(frame), 50, 30, 29};
     auto observation = reliable_observation(plan, TemplateKind::kRecent, box, frame);
@@ -2453,6 +2459,10 @@ void test_car_partial_visibility_needs_shrink_and_motion() {
                     output.tracking_phase == (frame == 3
                         ? TrackingPhase::kSearching : TrackingPhase::kSuspected),
                 "three continuous visibility losses enter search only on the third frame");
+    if (frame == 3) {
+      expect_near(sustained.motion_.acceleration_y_, 0.0F, 1e-6F,
+                  "early visibility search clears an unreliable acceleration");
+    }
   }
 
   ResolvedControllerFixture interrupted(sustained_config);

@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:11:25+08:00 冻结加速度触发标志修复及前次四组证据
+
+- `07bdb37d1571eb07b26e2409a68067ae21f4d443` 精确源码包 `/home/neardi/Project/SOT/nt-dual-gt-early-freeze-07bdb37.tar` 主机/板端 SHA-256 `a31a361493e49cf0fc1bea4a47fb3cc9c2310f881ea5aa8fd66145ff784c2bd3`，板端隔离根 `/home/neardi/Project/SOT/dual-gt-early-freeze-07bdb37`。RK3588 原生构建及 CTest `23/23 PASS`；二进制 SHA-256 `37f07eb33d64be6e9b9c1b4ef7f6581c341f08182d3ec890f717d60a966e2816`，控制器配置 SHA-256 `0d9d4479ec2e6a273ce79d2b269833aadfab7926fada11c7f02b03dd76785f66`，headless SHA-256 `37ff6a51c5292c1dc07e229b53fe5820caee9e7524468b53ae2ff377d1f1094c`。视频、GT、模型与板端环境同前述精确矩阵。
+- 执行 `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...` 四组 car001 标准/右下、car002 标准/真值框。16 文件清单 `runs/screen-checksums.sha256` SHA-256 `d902055fd85f52274edbbaaee129c26aa601597b1050da26dea488fae2a72f90`，四 AVI 均 1920×1080、271 帧；文本包 `runs/screen-text.tar.gz` 主机/板端 SHA-256 `2c6c10af9e6ec5898e2e244de9b1aa9295888e3f84f12d5680eb36d600acdf8f`，评分 `/tmp/nt-dual-gt-evidence/early-freeze-07bdb37-screen-center.json` SHA-256 `bceb5ac6cefd9451871a9ed51aa1ac3f2cfe1d5675aaabeb13a55db25ccbfb9f`。四组与先前 600 ms 提前搜索结果一致：car001 重捕 187/200、跨框 tracking 中心 P95 37.21 px；car002 重捕 244/255、跨框 P95 26.49 px。
+- 逐帧核查发现 `motion_acceleration_*` 仍按旧值外推；代码路径先 `clear_suspicion()` 清空 `recent_visibility_streak_`，再检查该计数是否需要冻结，导致 07bdb37 的冻结分支未执行。现将触发标志在清理前保存，并为非零加速度添加单测，实际运行 `cmake --build /tmp/nt-dual-gt-consistency-build --target test_long_term_controller --parallel 4` 和 `/tmp/nt-dual-gt-consistency-build/test_long_term_controller`，结果通过。**证据边界 / Handoff**：07bdb37 板端数据只证明冻结未执行时的退化，不代表修复后的效果；须重新提交精确源码并板端复测，正式 handoff HOLD。
+
 ## 2026-11-14T03:06:08+08:00 提前可见性搜索时冻结开环加速度的主机候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `9f7dec02227e9a9b5a4b0ddb79839170276bcf67`。恢复已测的连续三帧可见性搜索与 600 ms 最小重捕年龄；仅在该几何搜索触发时调用运动预测器 `freeze_open_loop_dynamics()`，保留当前速度、清除加速度。先前 car001 右下框第 171 帧后预测纵向速度反向，提前搜索到第 190 帧的中心 `y≈809`，真值 `y≈848`；旧正常搜索中心 `y≈827`。该候选检验开环加速度反向是否是早搜后的中心漂移主因；运行时不使用真值帧号或位置。配置 SHA-256 `0d9d4479ec2e6a273ce79d2b269833aadfab7926fada11c7f02b03dd76785f66`。

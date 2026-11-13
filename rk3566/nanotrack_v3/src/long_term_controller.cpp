@@ -2183,6 +2183,7 @@ ControllerOutput LongTermController::finish_frame(
           config_.template_agreement_iou;
   std::optional<EvaluatedObservation> selected;
   bool force_confirmation = false;
+  bool visibility_search_triggered = false;
   if (ordinary_recent) {
     selected = recent;
     const auto& other = staged ? staged : safe;
@@ -2212,6 +2213,9 @@ ControllerOutput LongTermController::finish_frame(
       return output;
     }
     if (disposition == RecentDisposition::kSearch && selected) {
+      visibility_search_triggered = config_.recent_visibility_search_consecutive_frames > 0 &&
+          recent_visibility_streak_ >= static_cast<std::size_t>(
+              config_.recent_visibility_search_consecutive_frames);
       selected->quality = QualityLevel::kRejected;
     }
     promote_shadow_prediction();
@@ -2578,9 +2582,7 @@ ControllerOutput LongTermController::finish_frame(
       } else {
         motion_.begin_search(plan.timestamp_ms);
       }
-      if (config_.recent_visibility_search_consecutive_frames > 0 &&
-          recent_visibility_streak_ >= static_cast<std::size_t>(
-              config_.recent_visibility_search_consecutive_frames)) {
+      if (visibility_search_triggered) {
         // Partial visibility can corrupt the last acceleration estimate.
         // Preserve the last velocity while preventing its open-loop reversal.
         motion_.freeze_open_loop_dynamics();
