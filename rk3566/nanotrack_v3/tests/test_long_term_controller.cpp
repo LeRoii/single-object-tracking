@@ -2146,8 +2146,6 @@ void test_conflicted_recovery_needs_matching_detector_evidence() {
   config.motion_search_enabled = true;
   config.max_center_distance = 10.0F;
   config.recovery_conflict_requires_detector = true;
-  config.recovery_confident_detector_proximity_gate = true;
-  config.detector_candidate_max_center_ratio = 0.02F;
   const BBox target{40, 30, 20, 20};
 
   ResolvedControllerFixture conflicted(config);
@@ -2176,27 +2174,6 @@ void test_conflicted_recovery_needs_matching_detector_evidence() {
   expect_true(output.accepted && output.reacquired &&
                   output.selected_template == TemplateKind::kRecent,
               "same-candidate detector evidence allows NanoTrack-verified recovery");
-
-  ResolvedControllerFixture far(config);
-  far.initialize(target, 0, 0, {240, 160});
-  reject_frame(far, 1, 40);
-  const BBox rival{75, 30, 20, 20};
-  for (std::uint64_t frame : {2U, 3U}) {
-    auto rival_plan = far.begin_frame(frame, frame * 40, false);
-    rival_plan.motion_prediction_confident = true;
-    if (frame == 2) {
-      expect_true(far.recovery_candidates_.observe(
-          RecoveryCandidateSource::kDetector, rival, 0.9F,
-          rival_plan.timestamp_ms, 2, false).has_value(),
-          "distant detector identity remains represented in the candidate table");
-    }
-    output = far.finish_frame(
-        rival_plan, {reliable_observation(rival_plan, TemplateKind::kRecent,
-                                          rival, frame)}, std::nullopt);
-  }
-  expect_true(!output.accepted && !output.reacquired &&
-                  output.recovery_confirmation_hits == 2,
-              "distant detector cannot confirm even with two tracker responses");
 
   ResolvedControllerFixture clean(config);
   clean.initialize(target, 0, 0, {240, 160});

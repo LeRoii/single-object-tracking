@@ -350,18 +350,6 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
       ? motion_search_active_
       : mode_ == TrackingMode::kAssistedRecovery || mode_ == TrackingMode::kLost;
   const bool unified = uses_unified_recovery();
-  const MotionSnapshot motion_snapshot = predictor.snapshot(timestamp_ms);
-  const auto select_recovery_probe = [&]() -> const RecoveryCandidate* {
-    if (config_.recovery_confident_detector_proximity_gate &&
-        motion_snapshot.prediction_confident) {
-      return recovery_candidates_.select_probe_near(
-          motion_predicted,
-          config_.detector_candidate_max_center_ratio *
-              std::hypot(static_cast<float>(frame_size_.width),
-                         static_cast<float>(frame_size_.height)));
-    }
-    return recovery_candidates_.select_probe();
-  };
   const bool legacy_detector = recovery_uses_detector && !unified;
   if (legacy_detector && !active_detector_candidate_) {
     activate_next_detector_candidate();
@@ -383,7 +371,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   const bool can_plan_probe = unified && loss_start_ms_ &&
       (config_.detector_target_mode != DetectorTargetMode::kSubtarget ||
        search_reacquisition_eligible(timestamp_ms));
-  const RecoveryCandidate* probe = can_plan_probe ? select_recovery_probe() : nullptr;
+  const RecoveryCandidate* probe = can_plan_probe ? recovery_candidates_.select_probe() : nullptr;
   if (probe) {
     predicted = probe->preferred_evidence().bbox;
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
@@ -422,6 +410,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   plan.control_source = plan.motion_control_authorized
                             ? ControlSource::kMotionSearch
                             : ControlSource::kNone;
+  const MotionSnapshot motion_snapshot = predictor.snapshot(timestamp_ms);
   plan.motion_search_age_ms = motion_snapshot.search_age_ms;
   plan.motion_prediction_confident =
       motion_snapshot.prediction_confident;
@@ -477,7 +466,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.detector_probe_index = active.locked ? active.locked_probe_index
                                               : active.next_probe - 1;
   }
-  const auto* conflict_probe = select_recovery_probe();
+  const auto* conflict_probe = recovery_candidates_.select_probe();
   const bool conflict_refresh_ready =
       config_.recovery_conflict_requires_detector && recovery_conflict_seen_ &&
       !conflict_detector_refresh_sent_ && conflict_probe &&
@@ -1273,17 +1262,9 @@ LongTermController::confirm_recovery_candidate(
     if (output.recovery_conflict || !key || !recovery_candidates_.confirmed(*key))
       return false;
     const auto* candidate = recovery_candidates_.find(*key);
-    if (!candidate) return false;
-    if (config_.recovery_confident_detector_proximity_gate &&
-        plan.motion_prediction_confident &&
-        candidate->key.source == RecoveryCandidateSource::kDetector &&
-        frame_normalized_center_distance(candidate->preferred_evidence().bbox,
-                                         plan.motion_predicted_bbox, frame_size_) >
-            config_.detector_candidate_max_center_ratio) {
-      return false;
-    }
-    return !config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
-           candidate->has_detector_supported_hit();
+    return candidate &&
+        (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
+         candidate->has_detector_supported_hit());
   };
   const bool recent_confirmed = can_confirm(recent_key);
   const bool safe_confirmed = can_confirm(safe_key);

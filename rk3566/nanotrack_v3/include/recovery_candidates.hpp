@@ -62,8 +62,6 @@ class RecoveryCandidateTable {
       std::optional<BBox> subtarget_region = std::nullopt);
   const RecoveryCandidate* find(RecoveryCandidateKey key) const noexcept;
   const RecoveryCandidate* select_probe() const noexcept;
-  const RecoveryCandidate* select_probe_near(const BBox& motion_bbox,
-                                             float max_center_distance_px) const noexcept;
   bool focus_detector(RecoveryCandidateKey key) noexcept;
   void advance_subtarget_probe(RecoveryCandidateKey key, const BBox& bbox,
                                std::size_t index, bool final_probe) noexcept;
