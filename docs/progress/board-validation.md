@@ -1,5 +1,25 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T22:44:33+08:00 共同算法合入 main 与 Debug
+
+- 用户确认合并本轮功能分支。合并前远端 `main@1fb5a7fe025b38a1d4794ee1a65859a2df0174df`、
+  `Debug@59f700d642085ef263a4c34c73caee78cb60bb53`，两工作树均干净。
+  `main` 先快进到已验证运动输入门 `89827227d256aaa648d8dba842f2ec0ac0f94895`，
+  再将 `5793986` 的共同重捕代码、`c829e8a` 的显示缩放修正及 `429ca9b` 的零边距
+  显示配置合入 `811607b2a6ae4adf57ad8dd402724d9c15efc108`。
+  `Debug` 将完整功能分支 `b1da4b06f1e2f6ca27fe0858fda2de3a855401cf` 合入
+  `df130c27cf3d40db6ac7494ea90b22bd2261fa84`，冲突只在 `src/main.cpp` 的
+  Debug 窗口参数传递，采用已在 RK3588 运行的功能分支版本。
+- 两分支的 `rk3566/nanotrack_v3` 对比仅三个交互界面文件不同：
+  `src/main.cpp`、`src/interactive_debug_overlay.cpp`、
+  `tests/test_interactive_debug_overlay.cpp`。共同算法、配置、日志与其余测试文件逐字节一致。
+  合并后分别执行主机 RKNN-off CMake 构建和 CTest：`main`、`Debug` 各 `23/23 PASS`；
+  `git diff --check` 通过。此前 RK3588 原生与三目标视频证据绑定源提交 `429ca9b`；
+  本次没有把 Git 合并本身算作新的板端运行。
+- **Handoff**：板端记录已同步到集成分支；协调对话可据此审查新基线，但公共
+  `STATUS.md` 和 `integration-contract.yaml` 的正式状态及生产 handoff 仍需其所有者裁定。
+  用户要求远端仅保留 `main`、`Debug`；功能分支继续只保留本地。
+
 ## 2026-11-13T22:19:33+08:00 detector 原框零边距 RK3588 复测
 
 - 被测源码 `codex/recovery-local-arbitration-debug-video@429ca9bc109d48f03b945bf861f16f0ff7c4cde5`，
