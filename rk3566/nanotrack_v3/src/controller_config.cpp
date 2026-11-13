@@ -130,6 +130,9 @@ void set_value(ControllerConfig& config,
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
   else if (key == "recent_visibility_center_residual") config.recent_visibility_center_residual = parse_float(key, value);
+  else if (key == "recent_visibility_search_height_ratio") config.recent_visibility_search_height_ratio = parse_float(key, value);
+  else if (key == "recent_visibility_search_center_residual") config.recent_visibility_search_center_residual = parse_float(key, value);
+  else if (key == "recent_visibility_search_consecutive_frames") config.recent_visibility_search_consecutive_frames = parse_int(key, value);
   else if (key == "occlusion_hold_frames") config.occlusion_hold_frames = parse_int(key, value);
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
@@ -369,6 +372,20 @@ void validate_controller_config(const ControllerConfig& config) {
   if (!visibility_disabled && !visibility_enabled) {
     throw std::invalid_argument("recent visibility gate must be disabled or have two unit-interval thresholds");
   }
+  const bool visibility_search_disabled =
+      config.recent_visibility_search_height_ratio == 0.0F &&
+      config.recent_visibility_search_center_residual == 0.0F &&
+      config.recent_visibility_search_consecutive_frames == 0;
+  const bool visibility_search_enabled =
+      config.recent_visibility_search_height_ratio > 0.0F &&
+      config.recent_visibility_search_height_ratio <= 1.0F &&
+      config.recent_visibility_search_center_residual > 0.0F &&
+      config.recent_visibility_search_center_residual <= 1.0F &&
+      config.recent_visibility_search_consecutive_frames >= 2 &&
+      config.recent_visibility_search_consecutive_frames <= 10;
+  if (!visibility_search_disabled && !visibility_search_enabled) {
+    throw std::invalid_argument("recent visibility search gate requires two unit-interval thresholds and 2-10 consecutive frames");
+  }
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
     throw std::invalid_argument("detector limits are invalid");
@@ -603,7 +620,10 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.response_psr_drop_ratio << '|'
          << config.response_apce_drop_ratio << '|'
          << config.recent_visibility_height_ratio << '|'
-         << config.recent_visibility_center_residual;
+         << config.recent_visibility_center_residual << '|'
+         << config.recent_visibility_search_height_ratio << '|'
+         << config.recent_visibility_search_center_residual << '|'
+         << config.recent_visibility_search_consecutive_frames;
   return stream.str();
 }
 

@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T06:16:07+08:00 强遮挡证据连续两帧提前搜索候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，代码基线 `8277b3380358d75b604e3e7252c066e5afd09cf7`，开始时工作树干净。只用 `9f84efe` 精确 RK3588 八框 CSV（`/tmp/nt-dual-gt-evidence/handoff-9f84efe/<label>/frames.csv`）与 canonical 双目标真值分析，不改视频或标注；视频 `data/occ_video_1/1.mp4` SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`。car002 四框在第 212/213 帧均连续两次满足“当前帧 NanoTrack decoded 高度 ≤ 当前可信框 `0.95`，且相对预测中心残差 `>0.15`”；car001 四框均无连续两帧满足。car002 左上框在可见的 120～142 帧虽有持续中心残差，却因 decoded 高度不缩小而不满足。该回放只验证既有轨迹上的判别，不等于改动后的闭环效果，也不证明跨场景泛化。
+- 在 `rk3566/nanotrack_v3` 增加默认关闭的 `recent_visibility_search_height_ratio`、`recent_visibility_search_center_residual`、`recent_visibility_search_consecutive_frames`，当前 `config/visible-adaptive-display.conf` 取 `0.95/0.15/2`，配置 SHA-256 `d35d7d608b45a0d1fee1a05d97d53d5946f554009bb0ddb5ff6dd19bba99ce69`。仅已确认 car 类、decoded 高度与运动残差同时满足且帧号连续时，第二帧从临时观测进入 SEARCHING；单帧仍为 SUSPECTED，干净帧、初始化、异常恢复和结束可疑状态清零。detector 候选与 `display_bbox` 只按现有语义使用，未让 detector 框直接授权 tracking/control。配置解析、校验与指纹包含新参数；负例测试覆盖单帧、干净帧打断和非 car 类。
+- 实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4` 和 `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`，`git diff --check` 通过。SSH 实测 `neardi@192.168.1.106` 为 `LKD3588` Linux `6.1.84` 且保留精确基线 `/home/neardi/Project/SOT/dual-gt-handoff-9f84efe`。**证据边界 / Handoff**：本候选尚未上板，主机测试不证明 car002 第 213 帧可合法输出 MOTION_SEARCH，也不证明 car001 三个微扰框的恢复、两目标中心或八框正式门槛会改善。下一步以本条精确提交归档部署到隔离目录，先跑 car002 标准/左上与 car001 标准/右下，若无退化再扩八框；正式 `9f84efe` 八框仍 `2/8 PASS`、handoff HOLD。本条提交后以实际 commit 为结果身份。
+
 ## 2026-11-14T06:10:08+08:00 官方原始响应峰值与局部加权中心八框筛查
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `88e2af2`，开始时工作树干净。用 `repos/siamtrackers/NanoTrack/models/pretrained/nanotrackv3.pth` SHA-256 `4f0d25108385a67bdec5fa01ca37c74acb72343b53996dd645fe18b86e512e69` 和配置 `repos/siamtrackers/NanoTrack/models/config/configv3.yaml` SHA-256 `60ea9dc886dcdd0451e60b404490a39d19495480185ca7b6299b72b74d746f87`，输入仍为 canonical `data/occ_video_1/1.mp4` SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，评价分别使用两目标已确认真值。此处是官方 PyTorch 桌面单跟踪器，不是现有 RK3588 RKNN 加控制器链；不把离线解码称作已验证的板端改动。

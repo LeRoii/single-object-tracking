@@ -265,7 +265,8 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   try {
     prediction_checkpoint_.emplace(PredictionCheckpoint{
         motion_, shadow_motion_, tentative_control_, response_degraded_since_ms_,
-        suspected_since_ms_, response_clean_since_ms_, motion_residual_history_,
+        suspected_since_ms_, response_clean_since_ms_, strong_visibility_hits_,
+        strong_visibility_last_frame_, motion_residual_history_,
         motion_recent_residuals_,
         motion_freeze_since_ms_, motion_clean_since_ms_,
         motion_frozen_response_reference_, motion_last_clean_trend_,
@@ -687,6 +688,8 @@ void LongTermController::clear_suspicion() noexcept {
   response_degraded_since_ms_.reset();
   suspected_since_ms_.reset();
   response_clean_since_ms_.reset();
+  strong_visibility_hits_ = 0;
+  strong_visibility_last_frame_.reset();
 }
 
 void LongTermController::promote_shadow_prediction() noexcept {
@@ -705,6 +708,8 @@ void LongTermController::restore_prediction_checkpoint() noexcept {
   response_degraded_since_ms_ = checkpoint.degraded_since_ms;
   suspected_since_ms_ = checkpoint.suspected_since_ms;
   response_clean_since_ms_ = checkpoint.clean_since_ms;
+  strong_visibility_hits_ = checkpoint.strong_visibility_hits;
+  strong_visibility_last_frame_ = checkpoint.strong_visibility_last_frame;
   motion_residual_history_ = std::move(checkpoint.motion_residual_history);
   motion_recent_residuals_ = std::move(checkpoint.motion_recent_residuals);
   motion_freeze_since_ms_ = checkpoint.motion_freeze_since_ms;
@@ -966,9 +971,28 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
       observation.decoded_bbox->height <=
           current_bbox_.height * config_.recent_visibility_height_ratio &&
       recent.center_residual >= config_.recent_visibility_center_residual;
+  const bool strong_visibility_loss = target_class_.target_class_id == 2 &&
+      config_.recent_visibility_search_consecutive_frames > 0 &&
+      observation.decoded_bbox &&
+      observation.decoded_bbox->height <=
+          current_bbox_.height * config_.recent_visibility_search_height_ratio &&
+      recent.center_residual >= config_.recent_visibility_search_center_residual;
+  if (strong_visibility_loss) {
+    strong_visibility_hits_ = strong_visibility_last_frame_ &&
+        plan.frame_id == *strong_visibility_last_frame_ + 1
+        ? strong_visibility_hits_ + 1 : 1;
+    strong_visibility_last_frame_ = plan.frame_id;
+    if (strong_visibility_hits_ >=
+        config_.recent_visibility_search_consecutive_frames) {
+      return RecentDisposition::kSearch;
+    }
+  } else {
+    strong_visibility_hits_ = 0;
+    strong_visibility_last_frame_.reset();
+  }
   const bool degraded = isolated_response_dip || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
-                        partial_visibility ||
+                        partial_visibility || strong_visibility_loss ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
     response_clean_since_ms_.reset();
