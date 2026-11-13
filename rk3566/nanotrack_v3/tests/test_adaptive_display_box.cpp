@@ -223,6 +223,14 @@ void test_display_center_is_independent_of_tracking_smoothing() {
               "display follows 80 percent of a fast tracker move without resizing");
   expect_true(close(value.accepted_center_smoothing_alpha, 0.35F),
               "display-only tuning does not change tracker center smoothing");
+
+  ControllerOutput searching = tracking_output(moved);
+  searching.tracking_phase = TrackingPhase::kSearching;
+  searching.accepted = false;
+  searching.control_bbox = BBox{120, 80, 20, 20};
+  const BBox predicted = display.update(searching, TargetClassState{}, diagnostics);
+  expect_true(close(center_x(predicted), 114.4F),
+              "search prediction retains the original 35 percent center smoothing");
 }
 
 }  // namespace

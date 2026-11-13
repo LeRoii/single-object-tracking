@@ -1,5 +1,74 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-13T23:23:00+08:00 双目标多初始框 RK3588 对照与搜索行为隔离
+
+- 候选源码 `codex/dual-gt-init-consistency@e1e1a535c6acfa925ea234e7007f96fac3a5cbd3`，
+  基线为 `main@b80226577954febe22c5eff168125f77a6cdc724`，工作树
+  `/home/u20/single-object-tracking`。`git archive` 源码包
+  `/home/neardi/Project/SOT/nt-dual-gt-candidate-source.tar` 的本机与板端 SHA-256
+  同为 `01c14bb9a9af59072673eb766360a4c11af6d291634c15472ee63c8925f15066`。
+  板端隔离部署根 `/home/neardi/Project/SOT/dual-gt-e1e1a53`，原生编译命令
+  `cmake -S rk3566/nanotrack_v3 -B build -DENABLE_RKNN_RUNTIME=ON -DBUILD_TESTING=ON
+  -DRKNN_INCLUDE_DIR=/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/include
+  -DRKNN_LIBRARY=/usr/lib/librknnrt.so`、`cmake --build build --parallel 4`，
+  CTest `23/23 PASS`。可执行文件 `build/nanotrack_v3` SHA-256
+  `a1013ddf0c3b198cbafdf2f2321d6153db32d4863b53cec20be675876e1c1bc4`。
+  实测板端 Linux `6.1.84`、RKNN API `2.1.0`、driver `0.9.8`。
+- 输入视频板端 `data/occ_video_1/1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；
+  template/search/head RKNN SHA-256 为
+  `eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55`、
+  `d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee`、
+  `4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5`。
+  VisDrone9 detector RKNN/manifest/labels SHA-256 分别为
+  `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`、
+  `ac2b536c3a46761138ecc67a2be865890b8bc0bbe2fb7195c2bb8b12d34049c9`、
+  `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992`。
+- 同源码配置 `.35/.80` 的控制器文件 SHA-256 分别为
+  `85a8f6b8dd2c9215d68c292a388a3011e5a50bf7b854f7e85c567d3378cd6e11`、
+  `2adf4b35587215c18fcaf86221dd36f4c44fbf25910572a7a53c486235943d5e`；
+  headless 入口 SHA-256 分别为
+  `9835e10c89f0487eb6258dcc820de795e7dd04a871284489796aeda2c17c3e15`、
+  `e8311ca8b031d2154b8e9b62a04c6098695fd48f334862438e77b7c3d1618e85`。
+  每个配置按 `scripts/run_occ_init_matrix.sh` 所列八个 ROI 运行，实际核心命令
+  `./build/nanotrack_v3 --config <headless 配置> --bbox <ROI>
+  --output-video runs/compare/alpha<035|080>/<场景>/output.avi
+  --output-boxes runs/compare/alpha<035|080>/<场景>/frames.csv
+  --session-metadata runs/compare/alpha<035|080>/<场景>/session.json`。
+  16 个 CSV 均为 271 数据帧，16 个 AVI 经 ffprobe 均为 1920×1080/271 帧；
+  `runs/compare/checksums.sha256` 含全部 64 个 CSV/AVI/session/log SHA-256，
+  清单 SHA-256 为 `7831279239f9113afa02b6e6da3eb693c2df47b3aa537ed097e668359995e6dc`。
+  主机评分 JSON `/tmp/nt-dual-gt-evidence/alpha035-full.json`、
+  `alpha080-full.json`，用两目标真值各自的正式可见帧评分，不把不可观测框算普通 IoU。
+- car001 四组显示框均值 IoU `.35→.80`：标准 `0.677→0.741`、用户框
+  `0.673→0.741`、左上框 `0.665→0.732`、右下框 `0.646→0.708`；
+  car002 为标准 `0.676→0.708`、真值框 `0.684→0.714`、左上框
+  `0.696→0.731`、右下框 `0.686→0.714`。两配置下跟踪框及控制框保持同一
+  初始化对应的逐帧轨迹；四组内显示框两两平均 IoU 最小值 car001
+  `0.893→0.888`、car002 `0.895→0.890`，贴合度提升但一致性有小幅下降。
+  算法 runtime P95 的八组最大值 `.35=10.569 ms`、`.80=10.335 ms`。
+- 完整门禁不随显示参数改变：car001 四组只有标准框 PASS，另三组分别第
+  `192/194/193` 帧重捕并有晚重捕或遮挡语义失败；car002 四组均因遮挡语义失败，
+  两组无正式重捕。旧 `429ca9b` 二目标八组基线保留在
+  `/home/neardi/Project/SOT/display-detector-exact-429ca9b/runs/dual_gt_baseline/`，
+  `checksums.sha256` 清单 SHA-256 为
+  `10b1f3fa5978124ddfd4b50c2811b01bac720642b2d9fd285c903aac41b03c68`。
+- 隔离参数筛查：检测间隔 `400→200 ms` 时 car001 通过数 `1/4→2/4`，但标准框
+  跟踪均值 IoU `0.751→0.708` 且跨初始框差异增大；`100 ms` 时左上框无正式重捕，
+  跟踪均值仅 `0.567`。把两个目标的唯一 detector 初始化框直接用于 tracker，
+  car001 第 192 帧晚重捕，car002 可见框门禁失败、跟踪均值 `0.640`；
+  因此没有纳入这些初始化或检测节奏改动。弃用键
+  `search_reacquisition_requires_detector` 在该配置中被程序按预期拒绝。
+  这些试验在同一板端隔离根的 `runs/detector200/`、`runs/detector100/`、
+  `runs/detector_init/`，40 个输出的 SHA-256 清单
+  `runs/exploratory-checksums.sha256` 自身 SHA-256 为
+  `c1a19a5b25ef663d6888e773e3aaca57fb30310af24b8c65b66c3cc3cceb60d7`。
+- 当前分支再将 `.80` 限定于 TRACKING；SEARCH/SUSPECTED 保持原 `.35`，
+  避免搜索预测框被额外加速。主机重构建及 CTest 再次 `23/23 PASS`；
+  本条后续提交的精确源码与板端复测另记。**Handoff**：显示贴合度改善已观察，
+  car001 重捕初值敏感与 car002 完全遮挡语义仍是阻塞；正式 handoff 不批准，
+  不合入 `main`/`Debug`。
+
 ## 2026-11-13T23:00:00+08:00 双真值初始框一致性候选：主机阶段
 
 - 新分支 `codex/dual-gt-init-consistency`，工作树 `/home/u20/single-object-tracking`，
