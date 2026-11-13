@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T03:19:53+08:00 detector 初始框统一化的板端反事实否决
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，当前源码 `9f64c5df6bb3112fe23836a12a0b5f4818210e7b`，板端复用已测基线根 `/home/neardi/Project/SOT/dual-gt-visibility-7cbf58d`、二进制 SHA-256 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`，配置/视频/GT/模型/板端环境同基线矩阵。四种人工 ROI 对每个目标都匹配相同的初始化 detector 候选；car001 候选 `994.000916,581.063293,35.289490,39.486084` 接近真值，car002 候选 `973.034729,520.489929,34.091492,31.423828` 比真值 `966.99936,512.99946,42,42.00012` 明显偏小。
+- 用 `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...` 直接模拟三种确定性初始化：car001 detector 原框；car002 detector 原框；car002 detector 中心加 42×42 框。12 文件清单 `runs/init-detector-screen-checksums.sha256` SHA-256 `058021eaefd6e8b04821a7938c81e4f264d5a2ea5c58c2d16976360191fe7b1e`，三 AVI 均 1920×1080、271 帧；文本包 `runs/init-detector-screen-text.tar.gz` 主机/板端 SHA-256 `0fc44a08a4b16a224e1bcef2b508ac8ef49ee0f8c137f837942636f56fa4a916`，评分 `/tmp/nt-dual-gt-evidence/init-detector-screen-center.json` SHA-256 `282d7043275fa05bb25f338dc6493934ace865b8c0eae324205e0dd79327e9a10`。
+- car001 detector 原框第 207 帧才重捕，tracking 中心均值 8.70 px；car002 detector 原框第 82/195 帧两次重捕，均值 103.27 px 且 15 个无框帧有 13 帧误观测。car002 detector 中心加 42×42 框第 233 帧重捕、中心均值 2.17 px，但该 42×42 尺寸来自真值反事实，运行时不能假设。**裁决 / Handoff**：不把 detector 初始候选直接替代人工 ROI；保留三组板端原始输出和评分。正式 handoff 仍 HOLD。
+
 ## 2026-11-14T03:16:06+08:00 真正冻结早搜加速度后的板端四组否决
 
 - 修复后精确源码 `codex/dual-gt-init-consistency@a1b368e2966251cf326816780163bdd1916762e9`，包 `/home/neardi/Project/SOT/nt-dual-gt-early-freeze-a1b368e.tar` 主机/板端 SHA-256 `b96eb2ec6557f58a0ee0fd652ad80ac3b4f26c6b86ef3a75aa44000a1bdda089`，隔离根 `/home/neardi/Project/SOT/dual-gt-early-freeze-a1b368e`。RK3588 原生构建及 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `cc257ac03e078489fca588d95de91bc32c9701c44910a174f8d5b893669eee31`，控制器配置 SHA-256 `0d9d4479ec2e6a273ce79d2b269833aadfab7926fada11c7f02b03dd76785f66`，headless SHA-256 `ca4d32355a163c49cccb0752bf37850429ce361d81a31be63b57ab68cc2d2839`；视频、GT、模型、板端环境同前述精确矩阵。
