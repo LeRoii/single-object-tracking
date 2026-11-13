@@ -1,4 +1,46 @@
-# RK3566 开发板验证任务进度
+# 开发板验证任务进度（当前 RK3588）
+
+## 2026-11-13T21:31:38+08:00 板端进度接管与 RK3588 开发范围
+
+- 用户授权当前对话维护 `docs/progress/board-validation.md`，并明确后续开发只在 RK3588
+  上进行。此前 RK3566 记录保留为历史证据；后续原生构建、调试、算法验证与运行证据均绑定
+  实际 RK3588 板卡。`STATUS.md` 和 `integration-contract.yaml` 仍由协调对话维护。
+- 当前功能分支 `codex/recovery-local-arbitration-debug-video`，工作树
+  `/home/u20/.codex/worktrees/recovery-local-arbitration-debug-video/single-object-tracking`，
+  基线 `ef7dba9e9fe0028850979edcdd5fa06cdb8`，源码提交
+  `5793986141ac560371aab7c6d5e15c44da1999aa`。本进度提交身份以 Git 历史为准。
+  该功能分支尚未合入 `main`、`Debug`，也未推送远端。
+- RK3588 独立部署根 `/home/neardi/Project/SOT/recovery-local-debug-video-5793986`；
+  `source.tar` SHA-256 为
+  `a70642fe634edbc2f717fb528834bd1cce98fd1bc19508ddae6e876cf757007c`，
+  原生 `build/nanotrack_v3` SHA-256 为
+  `785d964aca101085528e7aa274c6990068c53704cea865bfee21619d829bf84c`。
+  RKNN 原生构建、`-Werror=switch` 和主机/板端 CTest 均为 `23/23 PASS`。
+- 输入视频为板端 `data/occ_video_1/1.mp4`，SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`。
+  模型链接到既有 `adaptive-display-59769e8` 部署：RK3588 NanoTrack
+  template/search/head RKNN SHA-256 依次为
+  `eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55`、
+  `d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee`、
+  `4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5`；
+  VisDrone9 RK3588 detector RKNN SHA-256 为
+  `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c`。
+  这些模型身份沿用既有 RK3588 部署记录；板端历史环境记录为 RKNN API `2.1.0`、
+  RKNPU driver `0.9.8`，本轮未单独重测驱动版本。
+- 同一固定 ROI 对照 0--270 帧：`car_001=992,582,37,39` 的 full evaluator **PASS**，
+  185 帧重捕；`car_002=970,517,38,38` 的跟踪、控制、状态和重捕逐帧与父提交一致，
+  保留 213--216 帧已知 `full_occlusion_semantics` FAIL。两目标算法 P95 分别约
+  `10.499 ms`、`10.441 ms`。用户 ROI `993,585,36,36` 的重捕由上一版 218 帧提前到
+  193 帧，但仍晚于 car001 正式窗口 182--189，故不宣称该 ROI 通过完整门禁。
+  三次完整输出分别保留在板端部署根的 `runs/car_001/`、`runs/car_002/`、`runs/user_roi/`。
+- 实际交互验证命令：在部署根运行
+  `DISPLAY=:99 ./build/nanotrack_v3 --config rk3566/nanotrack_v3/config/rk3588-adaptive-display-debug.conf --bbox 993,585,36,36 --max-frames 195 --output-video runs/debug_video_recovery/output.avi --output-boxes runs/debug_video_recovery/frames.csv --session-metadata runs/debug_video_recovery/session.json`。
+  运行退出码 0，AVI 为 `1920x1080`、196 帧，SHA-256
+  `0e8218bddd791c8db231c1f5a02c13ade723e8110f5728cf918d171deacaf740`。
+  第 190 帧可见运动预测、recent/safe、控制和三个关键 detector 候选框，未绘制全部原始检测框。
+- **证据边界 / Handoff**：本轮是 RK3588 上的候选算法与 Debug 视频验证，不等于正式
+  开发板源码/模型 handoff 或真实吊舱验收。请求协调对话把后续开发板目标从 RK3566 更新为
+  RK3588，并在审查此候选提交及未通过项后再更新公共状态和集成契约。
 
 ## 2026-11-12T22:02:57+08:00 自适应显示框 RK3588 双车验收
 
