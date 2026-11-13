@@ -138,18 +138,23 @@ void test_target_class_presentation() {
     // Deliberately leave the other pass flags set: disposition is authoritative.
     diagnostic.rejection = DetectorCandidateRejection::kNone;
     overlay = make_interactive_debug_overlay(result, labels);
-    expect_true(overlay.boxes[1].kind == DebugBoxKind::kDetectorCandidateRejected &&
-                    overlay.boxes[1].label.find(std::string("class=") +
-                        to_string(disposition)) != std::string::npos,
-                "nonmatching and diagnostic-only candidates stay gray with shared disposition");
+    bool raw_candidate_visible = false;
+    for (const auto& box : overlay.boxes) {
+      raw_candidate_visible |= box.label.find("DET RAW") != std::string::npos;
+    }
+    expect_true(!raw_candidate_visible,
+                "nonmatching detector candidates are omitted from the concise overlay");
   }
   auto& stale = result.output.detector_candidate_diagnostics[0];
   stale.class_disposition = DetectorClassDisposition::kMismatch;
   stale.rejection = DetectorCandidateRejection::kStale;
   overlay = make_interactive_debug_overlay(result, labels);
-  expect_true(overlay.boxes[1].label.find("class=MISMATCH") != std::string::npos &&
-                  overlay.boxes[1].label.find("reason=STALE") != std::string::npos,
-              "class disposition and higher-priority final rejection remain independent");
+  bool stale_visible = false;
+  for (const auto& box : overlay.boxes) {
+    stale_visible |= box.label.find("STALE") != std::string::npos;
+  }
+  expect_true(!stale_visible,
+              "stale detector candidates are omitted from the concise overlay");
 
   RuntimeFrameResult initialization;
   initialization.plan.motion_predicted_bbox = BBox{1, 1, 5, 5};
@@ -181,19 +186,16 @@ void test_target_class_presentation() {
   state.target_class_allows_recovery = true;
   initialization.target_class = state;
   overlay = make_interactive_debug_overlay(initialization, labels);
-  expect_true(overlay.boxes.size() == 3 &&
-                  overlay.boxes[1].kind == DebugBoxKind::kDetectorCandidateRejected &&
-                  overlay.boxes[2].kind == DebugBoxKind::kTargetClassInitializationSelected &&
-                  same_bbox(overlay.boxes[2].bbox, selected.clipped_bbox),
-              "initialization selected index uses a distinct box kind and others are gray");
-  expect_true(overlay.boxes[2].label.find("SELECTED car(2)") != std::string::npos &&
-                  overlay.boxes[2].label.find("score=0.850 eligible=1 reason=NONE") != std::string::npos &&
-                  overlay.boxes[1].label.find("score=0.400 eligible=0 reason=NO_MATCH") != std::string::npos,
-              "initialization labels expose shared selection score eligibility and rejection");
-  expect_true(overlay.texts.size() == 2 &&
-                  overlay.texts[0].label.find("reason=INVALID_BOX") != std::string::npos &&
+  expect_true(overlay.boxes.size() == 2 &&
+                  overlay.boxes[1].kind == DebugBoxKind::kTargetClassInitializationSelected &&
+                  same_bbox(overlay.boxes[1].bbox, selected.clipped_bbox),
+              "only the selected initialization candidate is drawn");
+  expect_true(overlay.boxes[1].label.find("SELECTED car(2)") != std::string::npos &&
+                  overlay.boxes[1].label.find("score=0.850 eligible=1 reason=NONE") != std::string::npos,
+              "selected initialization label retains its decision evidence");
+  expect_true(overlay.texts.size() == 1 &&
                   !overlay.control_valid && overlay.status_label == "REJECTED NO_CTRL",
-              "invalid initialization geometry stays text-only and selection never grants control");
+              "unselected initialization candidates are hidden and selection never grants control");
 }
 
 }  // namespace
@@ -226,14 +228,11 @@ int main() {
   const RuntimeFrameResult result = complete_result();
   const InteractiveDebugOverlay overlay =
       make_interactive_debug_overlay(result);
-  expect_true(overlay.boxes.size() == 10,
-              "all four drawable raw candidates plus active verification boxes are retained");
+  expect_true(overlay.boxes.size() == 7,
+              "only the key detector candidate plus active verification boxes are retained");
   const DebugBoxKind expected_kinds[] = {
       DebugBoxKind::kMotionPrediction,
       DebugBoxKind::kDetectorCandidatePass,
-      DebugBoxKind::kDetectorCandidateRejected,
-      DebugBoxKind::kDetectorCandidateRejected,
-      DebugBoxKind::kDetectorCandidateRejected,
       DebugBoxKind::kDetectorCandidate,
       DebugBoxKind::kDetectorProbe,
       DebugBoxKind::kNanoTrackAnchor,
@@ -241,7 +240,7 @@ int main() {
       DebugBoxKind::kAcceptedControl,
   };
   for (std::size_t index = 0;
-       index < overlay.boxes.size() && index < 10; ++index) {
+       index < overlay.boxes.size() && index < 7; ++index) {
     expect_true(overlay.boxes[index].kind == expected_kinds[index],
                 "debug descriptors preserve hypothesis-to-decision draw order");
   }
@@ -251,30 +250,26 @@ int main() {
               "motion descriptor uses the pre-detector prediction");
   expect_true(overlay.boxes[1].label.find(
                   "DET RAW[0] PASS cls=0 conf=0.910 d=0.100 src=10 age=66 queued=1") !=
-                  std::string::npos &&
-                  overlay.boxes[2].label.find("REJECT_POS") != std::string::npos &&
-                  overlay.boxes[3].label.find("CAPACITY") != std::string::npos &&
-                  overlay.boxes[4].label.find("HOLD_INVALIDATED") != std::string::npos,
-              "raw detector labels expose class confidence distance provenance queue and reason");
-  expect_true(overlay.texts.size() == 2 &&
-                  overlay.texts[0].label.find("DET RAW[4] INVALID") != std::string::npos,
-              "invalid geometry is retained as text only");
-  expect_true(same_bbox(overlay.boxes[6].bbox, result.plan.predicted_bbox) &&
-                  overlay.boxes[6].label == "DET PROBE index=2",
+                  std::string::npos,
+              "key detector label exposes class confidence distance provenance and queue state");
+  expect_true(overlay.texts.size() == 1,
+              "rejected and invalid detector candidates are omitted from text and boxes");
+  expect_true(same_bbox(overlay.boxes[3].bbox, result.plan.predicted_bbox) &&
+                  overlay.boxes[3].label == "DET PROBE index=2",
               "detector probe descriptor uses the NanoTrack search hypothesis");
-  expect_true(overlay.boxes[7].label == "NT ANCHOR score=0.910" &&
-                  overlay.boxes[8].label == "NT RECENT score=0.860",
+  expect_true(overlay.boxes[4].label == "NT ANCHOR score=0.910" &&
+                  overlay.boxes[5].label == "NT RECENT score=0.860",
               "NanoTrack descriptors expose raw template scores");
-  expect_true(same_bbox(overlay.boxes[9].bbox, result.output.bbox) &&
-                  overlay.boxes[9].label == "TRACKING / OBSERVATION" &&
+  expect_true(same_bbox(overlay.boxes[6].bbox, result.output.bbox) &&
+                  overlay.boxes[6].label == "TRACKING / OBSERVATION" &&
                   overlay.status_label == "TRACKING / OBSERVATION" &&
                   overlay.control_valid,
               "accepted control is last and explicit");
 
-  expect_true(same_bbox(overlay.boxes[5].bbox, overlay.boxes[6].bbox) &&
-                  overlay.boxes[5].kind != overlay.boxes[6].kind &&
-                  overlay.boxes[5].line_thickness >
-                      overlay.boxes[6].line_thickness,
+  expect_true(same_bbox(overlay.boxes[2].bbox, overlay.boxes[3].bbox) &&
+                  overlay.boxes[2].kind != overlay.boxes[3].kind &&
+                  overlay.boxes[2].line_thickness >
+                      overlay.boxes[3].line_thickness,
               "FULL_OBJECT overlap preserves separately visible candidate and probe borders");
 
   for (const DebugBoxDescriptor& box : overlay.boxes) {
@@ -284,15 +279,19 @@ int main() {
     }
   }
 
-  for (const auto& item : {
-           std::pair{DetectorCandidateRejection::kGenerationInvalidated, "GENERATION_INVALIDATED"},
-           std::pair{DetectorCandidateRejection::kTargetClassUnknown, "TARGET_CLASS_UNKNOWN"},
-           std::pair{DetectorCandidateRejection::kClassMismatch, "CLASS_MISMATCH"}}) {
+  for (const auto rejection : {
+           DetectorCandidateRejection::kGenerationInvalidated,
+           DetectorCandidateRejection::kTargetClassUnknown,
+           DetectorCandidateRejection::kClassMismatch}) {
     RuntimeFrameResult diagnostic = complete_result();
-    diagnostic.output.detector_candidate_diagnostics[0].rejection = item.first;
+    diagnostic.output.detector_candidate_diagnostics[0].rejection = rejection;
     const auto diagnostic_overlay = make_interactive_debug_overlay(diagnostic);
-    expect_true(diagnostic_overlay.boxes[1].label.find(item.second) != std::string::npos,
-                "extended controller rejection reaches the raw-candidate label");
+    bool raw_candidate_visible = false;
+    for (const auto& box : diagnostic_overlay.boxes) {
+      raw_candidate_visible |= box.label.find("DET RAW") != std::string::npos;
+    }
+    expect_true(!raw_candidate_visible,
+                "rejected detector diagnostics stay out of the concise overlay");
   }
 
   RuntimeFrameResult rejected = complete_result();
@@ -308,7 +307,7 @@ int main() {
     if (box.kind == DebugBoxKind::kAcceptedControl) contains_accepted = true;
   }
   expect_true(!contains_accepted &&
-                  rejected_overlay.boxes.size() == 9 &&
+                  rejected_overlay.boxes.size() == 6 &&
                   rejected_overlay.status_label == "SEARCHING / NO_CONTROL" &&
                   !rejected_overlay.control_valid,
               "unconfirmed hypotheses never manufacture an accepted control box");
