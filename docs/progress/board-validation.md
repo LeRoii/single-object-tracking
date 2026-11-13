@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T04:07:45+08:00 恢复 probation 严格双模板 IoU 门禁的四组板端否决
+
+- 精确源码 `codex/dual-gt-init-consistency@4b46dd3ac230c847d4d0d9d246528b771f8fedb0`，源码包 `/home/neardi/Project/SOT/nt-dual-gt-probation-iou-4b46dd3.tar` 主机/板端 SHA-256 `1d11da318aa4460e8f972236ba9bd9564a8ef922977fe650dbe2629fa9f39591`，隔离根 `/home/neardi/Project/SOT/dual-gt-probation-iou-4b46dd3`。RK3588 原生 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `c948a95f9e96ce8dac86b96836fa22ce2c2d9041faeb7d6e207a258faa00149d`，控制器配置 SHA-256 `f20007d44e7a06045d1a2a3edbb79cbc8cdf18c8f334907d8589f4e3fa04c4db`，headless 配置 SHA-256 `35cce3fb3da04ee3fbdba14f8efdd48c71b3f722e68c5ce5bf0525f5c51d0cd5`；视频、GT、模型、detector 及环境同基线矩阵。
+- 执行 car001 标准/右下、car002 标准/真值四组 `./build/nanotrack_v3 --config runs/headless-eval.conf --bbox <ROI> --output-video ... --output-boxes ... --session-metadata ...`。16 文件清单 `runs/screen-checksums.sha256` SHA-256 `879c1e990906eb829e8eda6d403ba42a2d64cdfac26ee9e1c00977fe88338089`，四 AVI 均 1920×1080×271；文本包 `runs/screen-text.tar.gz` 主机/板端 SHA-256 `feb5cd6919326dabfefbcac4107e19c0a124c9f82d5f3cd3783e54837481b770`，评分 `/tmp/nt-dual-gt-evidence/probation-iou-4b46dd3-screen-center.json` SHA-256 `be9c50f37e311c5b764401701c17c6a1e014cdd507870ff00e0692894c71e4f7`。
+- car001 标准/右下 tracking 中心均值 `19.04/5.02 px`，重捕 `185,200,223,239`/`191`，跨初始框 tracking/display 中心 P95 `72.58/72.58 px`。car002 标准/真值中心均值 `2.59/2.00 px`，重捕 `235/233`，跨初始框 tracking/display P95 `5.09/5.03 px`，完全遮挡语义仍失败。四组正式门禁 `0/4 PASS`；严格门禁使 car001 标准框反复回滚、错误重捕，未形成稳定身份。
+- **裁决 / Handoff**：撤回 `4b46dd3` 代码、配置与单测，恢复基线控制器配置 SHA-256 `63007d32b58c7e4aa920762f4d73f3532ef8ee544e50101c0684914d9b470acc`；保留精确板端输出供后续分析。简单调大 probation 几何阈值与前述中心融合均无法保证两目标/两路中心及初始框一致性。正式 handoff HOLD；下一步应以恢复阶段的多假设身份验证与运动连续性为研究对象，并在相同八组真值矩阵复核，不能依据模型加载、主机测试或单个 ROI 局部收益晋级。
+
 ## 2026-11-14T04:03:22+08:00 重捕 probation 双模板冲突门禁候选
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `6363b935fe6dbf1dd0ca1a3b7d60e407d0b89a65`。基线 car001 标准框第 185 帧重捕后，186–189 帧 staged/recent IoU 约 `0.56–0.60`，staged 连续偏离人工真值，recent 则贴近真值；car001 另外三框 probation IoU 至少约 `0.89`，car002 两个代表框至少约 `0.79`。新增默认关闭的 `recovery_probation_min_template_iou`，当前可见配置取 `0.75`；仅当恢复 probation 的 staged/recent 都可靠却低于阈值时，不接受本帧 staged 并回滚模板，避免高分但冲突的 staged 连续污染可信中心。控制器配置 SHA-256 `f20007d44e7a06045d1a2a3edbb79cbc8cdf18c8f334907d8589f4e3fa04c4db`；detector 显示框不参与此门禁。

@@ -160,7 +160,6 @@ void set_value(ControllerConfig& config,
   else if (key == "stable_frames_for_update") config.stable_frames_for_update = parse_int(key, value);
   else if (key == "recent_update_interval_ms") config.recent_update_interval_ms = parse_integer(key, value);
   else if (key == "recent_probation_frames") config.recent_probation_frames = parse_int(key, value);
-  else if (key == "recovery_probation_min_template_iou") config.recovery_probation_min_template_iou = parse_float(key, value);
   else if (key == "confirmation_window") config.confirmation_window = parse_int(key, value);
   else if (key == "confirmation_required") config.confirmation_required = parse_int(key, value);
   else if (key == "search_tracking") config.search_tracking = parse_float(key, value);
@@ -430,11 +429,6 @@ void validate_controller_config(const ControllerConfig& config) {
       config.confirmation_required > config.confirmation_window) {
     throw std::invalid_argument("template or confirmation counts are invalid");
   }
-  if (!std::isfinite(config.recovery_probation_min_template_iou) ||
-      config.recovery_probation_min_template_iou < 0.0F ||
-      config.recovery_probation_min_template_iou > 1.0F) {
-    throw std::invalid_argument("recovery probation template IoU must be in [0,1]");
-  }
   if (config.template_bridge_min_stable_frames < 0 ||
       config.template_bridge_min_stable_frames > 60) {
     throw std::invalid_argument("template bridge stable history is invalid");
@@ -607,8 +601,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.response_psr_drop_ratio << '|'
          << config.response_apce_drop_ratio << '|'
          << config.recent_visibility_height_ratio << '|'
-         << config.recent_visibility_center_residual << '|'
-         << config.recovery_probation_min_template_iou;
+         << config.recent_visibility_center_residual;
   return stream.str();
 }
 
