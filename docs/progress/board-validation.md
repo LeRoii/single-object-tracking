@@ -1,5 +1,47 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T00:05:00+08:00 搜索间隔归因修正与同参数重复性
+
+- 继续使用 `codex/dual-gt-init-consistency@ecfa29f6810b8a6610bb551ccdd704b531a5e5fc`，
+  工作树 `/home/u20/single-object-tracking`，板端隔离根
+  `/home/neardi/Project/SOT/dual-gt-23a43db`。沿用上一条已核对 SHA-256 的
+  可执行文件、RKNN 模型、detector、输入视频和 `runs/alpha1-controller.conf`。
+- **修正上一条参数归因**：源码搜索发现 `search_probe_interval_ms` 只在配置解析、
+  指纹/元数据和验证中出现，运行时没有用它调度探测。所以上一条
+  `runs/probe33/` 的右下框晚重捕不能归因于 `100→33 ms` 参数变化，
+  该参数目前没有运行时效果。重跑同一 `runs/probe33-headless.conf`、
+  同一 `994,584,35,37` 初始框两次，分别第 `193/193` 帧重捕；首次
+  `runs/probe33/car001_right` 则是第 `205` 帧。两次重复结果留在
+  `runs/repeat-probe33/car001_right_<1|2>/`，8 文件清单 SHA-256
+  `5de54774a11ef27bcd5256234c7eb5928fe1d6a8a1997b5e64e957f88859140a`，
+  主机评分 `/tmp/nt-dual-gt-evidence/repeat-probe33-car001-right.json`。
+  首次 detector 第 `188` 帧请求的批次到第 `190` 帧才被消费，
+  `detector_total_ms=124.787`；重复一次在第 `189` 帧消费，
+  `detector_total_ms=51.056`。这是观测到的时序关联，尚未证明唯一因果。
+- 用同一最终 `runs/alpha1-headless.conf` 和相同右下框再连续重复三次，
+  `runs/repeat-alpha1/car001_right_<1|2|3>/` 的 12 文件清单 SHA-256
+  `04b42866fa509321ff72f5ba144b8d448a612955e6a43fef5b78eb284169eb29`，
+  主机评分 `/tmp/nt-dual-gt-evidence/repeat-alpha1-car001-right.json`。
+  加上首次，共四次 tracking 中心轨迹逐帧相同、均第 `193` 帧重捕；
+  display 受异步检测刷新轻微影响，四次同帧最大成对中心距离 P95
+  `1.35 px`。这说明当前基准下本例重现稳定，但不能排除偶发晚重捕。
+- 对 car001 四个初始框还筛查了限制运动加速度：
+  `motion_max_acceleration_diagonals_per_s2=2.0→0.02`，隔离配置/headless
+  SHA-256 分别为
+  `448653a89a5bd435640153b8dc136e76f71cc0dbb756ea8d4e3526a281eb3a44`、
+  `b34c453a170628f23614b8de460e554c6255349fea7dff7978321ac46d5c2683`；
+  结果留在 `runs/accel002/<场景>/`，16 文件清单 SHA-256
+  `0c4d89f29668218482960eefdda100e68aa84712b34466e44ab0c6ae452df165`，
+  主机评分 `/tmp/nt-dual-gt-evidence/accel002-car001.json`。
+  四组重捕变成第 `192/197/196/198` 帧，原标准框 PASS 也失败，
+  tracking 最大成对中心距离 P95 `3.51→15.93 px`，拒绝纳入。
+  单次确认配置被控制器以 `recovery confirmation policy must be two of three`
+  拒绝加载，未运行；保留两次 NanoTrack 确认身份约束。
+- **证据边界 / Handoff**：最终分支的显示参数改善两路可见帧中心贴合，
+  但 tracking 的晚重捕、car002 遮挡误观测和检测异步时序敏感性未解决。
+  下一步需要在保持两次 NanoTrack 确认的前提下，针对候选到达时序做
+  可重复的控制器/运行时实验；正式 handoff 仍不批准。
+
 ## 2026-11-13T23:56:00+08:00 双路中心真值评分及显示重捕渐变对照
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，
