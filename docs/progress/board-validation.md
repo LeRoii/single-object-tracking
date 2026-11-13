@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T05:32:57+08:00 只读 display detector 候选中心诊断源码
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `766f1368ee4a21df0aeb039c6b47d5437080b537`。在 `AdaptiveDisplayBox::ingest` 内仅当显式环境变量 `NT_TRACE_DISPLAY_CANDIDATE=1` 时，把已通过显示候选选择的 detector 框与同帧 tracker 框、源帧及年龄打印到 stderr；未匹配时打印 `none`。代码文件 SHA-256 `aebd3e3debb62c478b41d04eab988b31991248b748f3b70f4ae23f537b938de5`。打印的候选是 padding 后的显示外观框，中心在无图像边缘裁剪时与原 detector 框相同。该诊断不向 tracking/control 写 detector 结果，默认环境不输出。
+- 主机执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4` 和 `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，RKNN-off `23/23 PASS`；构建/测试日志位于 `/tmp/nt-dual-gt-evidence/display-detector-trace-host-build.log`、`/tmp/nt-dual-gt-evidence/display-detector-trace-host-ctest.log`，SHA-256 `67e804ec196d1680ec9412db438c9804d30124c63c2236570f84ebb1126e2fbc`/`047767e41202e4bac7cb0efc89393894c746d15742e3739aac92d7b9135a5dc9`。
+- **证据边界 / Handoff**：这是主机可编译的只读诊断，没有板端候选中心或真值结论。下一步须提交精确源码、RK3588 原生构建，以 canonical 输入分别跑 car001/car002 代表初始框，核验 `tracking_bbox`/`display_bbox` 轨迹与 `9f84efe` 不变，再对 trace 候选框和两目标可观测真值计算中心误差与错身份风险；仅在有跨框改善空间且符合 NanoTrack 确认门时才设计定位改动。正式 handoff HOLD，本条与诊断源码同提交。
+
 ## 2026-11-14T05:31:06+08:00 完整车体图像分割中心的两帧筛查
 
 - 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；筛查基线 `ee450c14e020577b5ba97aee3003722a045c6c1c`。输入沿用下方已核对身份的 canonical 视频/GT 和 `9f84efe` 八框板端 CSV；主机 OpenCV `4.5.5`。执行 `g++ -std=c++17 /tmp/nt-dual-gt-evidence/grabcut-probe.cpp -o /tmp/nt-dual-gt-evidence/grabcut-probe $(pkg-config --cflags --libs opencv4)`，原型源码/二进制 SHA-256 `222596af594cba6f3165af691741667bef34489392e46b72182550dfca8018e2`/`8b1aec3da9c2c5ebaed668595600ac15edbdeef2055d6fbd8ee02246bb32063d`；再运行 `python3 /tmp/nt-dual-gt-evidence/grabcut-screen.py > /tmp/nt-dual-gt-evidence/grabcut-screen.json`，脚本/报告 SHA-256 `d50222bfdc38a3c2b355821ba8041c9df7504153e7b6441f569a73dfc205fbe8`/`0fe73a215a4d2b09edddf61f19d59f1c4ad3f2c61357d0b76ae57160e9e954bd`。

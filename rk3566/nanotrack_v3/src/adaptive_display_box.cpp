@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 
 namespace nanotrack {
@@ -192,6 +194,26 @@ void AdaptiveDisplayBox::ingest(const DetectorBatch& batch,
   last_display_batch_frame_ = batch.source_frame_id;
   const auto candidate = select_candidate(batch, output.tracking_bbox,
                                           target_class.target_class_id);
+  if (const char* trace = std::getenv("NT_TRACE_DISPLAY_CANDIDATE");
+      trace && trace[0] == '1') {
+    if (candidate) {
+      std::fprintf(stderr,
+          "NT_DISPLAY_CANDIDATE frame=%llu source=%llu age_ms=%lld "
+          "tracker=%.3f,%.3f,%.3f,%.3f candidate=%.3f,%.3f,%.3f,%.3f\n",
+          static_cast<unsigned long long>(output.frame_id),
+          static_cast<unsigned long long>(batch.source_frame_id),
+          static_cast<long long>(age_ms),
+          output.tracking_bbox.x, output.tracking_bbox.y,
+          output.tracking_bbox.width, output.tracking_bbox.height,
+          candidate->x, candidate->y, candidate->width, candidate->height);
+    } else {
+      std::fprintf(stderr,
+          "NT_DISPLAY_CANDIDATE frame=%llu source=%llu age_ms=%lld none\n",
+          static_cast<unsigned long long>(output.frame_id),
+          static_cast<unsigned long long>(batch.source_frame_id),
+          static_cast<long long>(age_ms));
+    }
+  }
   if (!candidate) {
     pending_candidate_.reset();
     pending_confirmations_ = 0;
