@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T05:23:11+08:00 原图边界梯度中心修正的离线否决
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`；分析基线 `cd61638cc7474f792be8854377e651f0c03c5e08`，有效板端算法/八框轨迹仍为 `9f84efecd57d611a239cc71c99ab2e4295025dbc`。输入 `data/occ_video_1/1.mp4` SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；八框 CSV 位于 `/tmp/nt-dual-gt-evidence/handoff-9f84efe/<label>/frames.csv`，其中 car001/car002 标准框 SHA-256 分别 `7bcd85d31b9e5840eb4bb56e2d9d7e82eb4b143f9e056c9056fa05e9e9aa3be4`、`23a6e3876ffdc34a863dc5896e2262b851cf7dc84e5d024a7076086c7f82abf4`；其余六框及板端输入、模型、二进制身份见下方 `9f84efe` 八框记录。
+- 主机执行 `ffmpeg -v error -i data/occ_video_1/1.mp4 -q:v 2 -start_number 0 /tmp/nt-dual-gt-evidence/rawframes/%03d.jpg -y`，再执行 `python3 /tmp/nt-dual-gt-evidence/edge-center-offline.py > /tmp/nt-dual-gt-evidence/edge-center-offline.json`；脚本 SHA-256 `e948d02680dd34397159cd078956a16ae110b50ecfee30683d88786570c08c25`，报告 SHA-256 `6bc1f0dea1e6a71006078457e8af5ff1bfebbf3902efa8a6e5a7148263e295d6`。脚本在第 240～270 帧沿 tracker 框四边寻找 ±12 px 内图像梯度最强的位置，不使用真值调参；真值只用于事后计算误差。原图目视确认 car001/car002 均为白车但车身明暗分布不同，因此简单亮度质心也没有可靠的共同偏移方向。
+- 后段 31 帧每框结果：car001 标准/人工/左上/右下原 tracking 中心均误差 `7.39/8.74/7.18/7.37 px`，梯度修正反事实 `16.31/12.57/17.29/12.85 px`，四框各 `0/31` 帧改善。car002 标准/真值/左上/右下原均误差 `7.85/4.66/3.16/6.65 px`，修正后 `5.07/16.27/8.72/4.27 px`；虽有两框均值下降，另外两框显著退化，且四框的 P95 均差于原轨迹。该修正没有进入 C++、板端或正式八框评分。
+- **裁决 / Handoff**：同一图像边缘规则无法稳定消除不同目标/初始框的 NanoTrack 原始中心偏移；不得把 car002 两框的局部收益当成两路达标。继续保持 `9f84efe` 算法内容与 400 ms 配置，正式 handoff HOLD。下一步应研究可跨框验证的外观/模板定位或经协调者冻结的新模型，而非把 display detector 外观框用于 tracking/control 校正。本记录提交后以实际 commit 为结果身份。
+
 ## 2026-11-14T05:18:31+08:00 稳定可见后段中心误差归因与模型侧 Handoff
 
 - 在精确板端运行 `9f84efecd57d611a239cc71c99ab2e4295025dbc` 的八个 CSV 上，主机执行 `python3 /tmp/nt-dual-gt-evidence/analyze-late-center-sources.py > /tmp/nt-dual-gt-evidence/late-center-sources.json`；脚本 SHA-256 `80de59ddcdad3c0a2700e23c417e7202642da12f0afb5e7a7796a006039b42cf`，报告 SHA-256 `cd411b68e52eb7a5ec2cbbad7128f27c96e4dff823164d3e24f30b0c1ac878e7`。脚本通过 `scripts/evaluate_occ_video_1.py` 严格加载两目标匹配 GT，取第 240～270 帧的 31 个可观测框，逐帧比较 tracking、display、NanoTrack recent 原始中心与真值。
