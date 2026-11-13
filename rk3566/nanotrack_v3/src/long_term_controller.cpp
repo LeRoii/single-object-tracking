@@ -2183,6 +2183,14 @@ ControllerOutput LongTermController::finish_frame(
       if (staged) {
         selected = staged;
         disposition = assess_recent(plan, *staged, response);
+        if (recent && staged->quality == QualityLevel::kReliable &&
+            recent->quality == QualityLevel::kReliable &&
+            config_.recovery_probation_min_template_iou > 0.0F &&
+            output.template_iou < config_.recovery_probation_min_template_iou) {
+          // The two committed identities disagree on the recovered target.
+          // Do not accept the staged response solely on its strong score.
+          disposition = RecentDisposition::kSearch;
+        }
       }
     } else if (recent && probation_geometry_allows_acceptance) {
       disposition = assess_recent(plan, *recent, response);

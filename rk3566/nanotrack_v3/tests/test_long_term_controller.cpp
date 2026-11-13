@@ -2204,6 +2204,29 @@ void test_recovery_probation_cleanup() {
 
 namespace {
 
+void test_recovery_probation_rejects_template_divergence() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.recovery_probation_min_template_iou = 0.75F;
+  config.stable_frames_for_update = 50;
+  ResolvedControllerFixture controller(config);
+  controller.initialize({70, 50, 30, 30}, 0, 0, {320, 240});
+  controller.recent_probation_ = true;
+  controller.recovery_probation_ = true;
+  controller.staged_template_slot_id_ = 1;
+  controller.last_template_transaction_id_ = 1;
+  const auto plan = controller.begin_frame(1, 40, false);
+  expect_true(plan.template_run_mode == TemplateRunMode::kStagedAndRecent,
+              "recovery probation compares staged and recent responses");
+  const auto output = controller.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kStaged, {70, 50, 30, 30}),
+             reliable_observation(plan, TemplateKind::kRecent, {78, 50, 30, 30})},
+      std::nullopt);
+  expect_true(!output.accepted && !output.observation_present &&
+                  output.template_action == TemplateAction::kRollbackRecent,
+              "strong but divergent staged response cannot be accepted");
+}
+
 void test_recent_safe_tentative_tracking() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2843,6 +2866,7 @@ void test_recent_safe_rolling_scale() {
 }  // namespace
 
 int main() {
+  test_recovery_probation_rejects_template_divergence();
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();

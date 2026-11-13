@@ -106,6 +106,8 @@ struct ControllerConfig {
   int stable_frames_for_update = 15;
   std::int64_t recent_update_interval_ms = 1000;
   int recent_probation_frames = 3;
+  // Zero disables stricter geometry checks during recovery probation.
+  float recovery_probation_min_template_iou = 0.0F;
   int template_bridge_min_stable_frames = 0;
   std::int64_t template_bridge_max_duration_ms = 0;
   int confirmation_window = 3;

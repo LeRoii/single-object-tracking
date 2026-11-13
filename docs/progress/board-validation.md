@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T04:03:22+08:00 重捕 probation 双模板冲突门禁候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `6363b935fe6dbf1dd0ca1a3b7d60e407d0b89a65`。基线 car001 标准框第 185 帧重捕后，186–189 帧 staged/recent IoU 约 `0.56–0.60`，staged 连续偏离人工真值，recent 则贴近真值；car001 另外三框 probation IoU 至少约 `0.89`，car002 两个代表框至少约 `0.79`。新增默认关闭的 `recovery_probation_min_template_iou`，当前可见配置取 `0.75`；仅当恢复 probation 的 staged/recent 都可靠却低于阈值时，不接受本帧 staged 并回滚模板，避免高分但冲突的 staged 连续污染可信中心。控制器配置 SHA-256 `f20007d44e7a06045d1a2a3edbb79cbc8cdf18c8f334907d8589f4e3fa04c4db`；detector 显示框不参与此门禁。
+- 实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/recovery-probation-iou-host-build.log`、`/tmp/nt-dual-gt-evidence/recovery-probation-iou-host-ctest.log`。新增测试证明可靠但相离的两个模板不能把 staged 作为观测接受。首次测试夹具缺少已暂存模板 slot，导致 `bad_optional_access`；补全真实 probation slot/事务状态后 23/23 通过。
+- **证据边界 / Handoff**：这是对基线板端冲突帧的假设，回滚后可能延迟重捕或转向其他目标；必须在 RK3588 上检验 car001 标准/右下与 car002 标准/真值的中心、重捕、身份和遮挡语义，再决定是否扩八组。正式 handoff HOLD。
+
 ## 2026-11-14T04:00:13+08:00 双模板中心融合的四组板端否决与撤回
 
 - 精确源码 `codex/dual-gt-init-consistency@9bb08b6c8217d026f8023dc2a63a7ab406888284`，源码包 `/home/neardi/Project/SOT/nt-dual-gt-safe-blend-9bb08b6.tar` 主机/板端 SHA-256 `c541ddad201ddcb0e4424f4c633528bcaf95671538c3b8989a4155d9780c3f4b`，隔离根 `/home/neardi/Project/SOT/dual-gt-safe-blend-9bb08b6`。RK3588 原生 CTest `23/23 PASS`；二进制 `build/nanotrack_v3` SHA-256 `79374a4994cff738e326a6bae29f6fda42da675f6b18c346c769f257287cc1a6`，控制器配置 SHA-256 `b56419b8daffae18afeffb2d40e9957899d82586ee027e74aef5c01b065da621`，headless 配置 SHA-256 `6bb93a9cc4af0e25c547cda80f85c3168e0edaa5620b08ae4ce387267dd7dd9f`；视频、GT、模型、detector 及环境同基线矩阵。
