@@ -32,6 +32,10 @@ class MotionEstimator {
   void correct(const BBox& observation, std::int64_t timestamp_ms);
   void freeze_scale(float width, float height);
   void freeze_open_loop_dynamics() noexcept;
+  void hold_trusted_trend(const MotionSnapshot& trusted_trend);
+  void reanchor_preserving_velocity(const BBox& observation,
+                                    const MotionSnapshot& trusted_trend,
+                                    std::int64_t timestamp_ms);
   void begin_search(std::int64_t timestamp_ms);
   void begin_search(std::int64_t timestamp_ms,
                     const MotionSnapshot& trusted_trend);

@@ -2422,6 +2422,125 @@ void test_search_uses_last_clean_response_motion_trend() {
               "search starts from the clean trend without extrapolating acceleration");
 }
 
+void test_motion_input_freeze_and_reanchor() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.occlusion_min_reference_samples = 3;
+  config.stable_frames_for_update = 50;
+  config.suspicion_clear_ms = 80;
+  ResolvedControllerFixture controller(config);
+  const ResponseMetrics healthy{0.98F, 0.96F, 20.0F, 30.0F, 0.60F};
+  controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300});
+  const auto observe = [&](std::uint64_t id, float offset, float margin) {
+    const auto plan = controller.begin_frame(id, static_cast<std::int64_t>(id) * 50, false);
+    if (controller.motion_freeze_since_ms_) {
+      expect_true(plan.predicted_bbox.x == controller.current_bbox_.x &&
+                      plan.predicted_bbox.y == controller.current_bbox_.y,
+                  "frozen motion leaves NanoTrack centered on its accepted observation");
+    }
+    BBox bbox = plan.predicted_bbox;
+    bbox.x += offset;
+    auto observation = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    observation.metrics = healthy;
+    observation.metrics.peak_margin = margin;
+    return controller.finish_frame(plan, {observation}, std::nullopt);
+  };
+  for (std::uint64_t id = 1; id <= 4; ++id) {
+    const auto clean = observe(id, 0.25F, healthy.peak_margin);
+    expect_true(clean.accepted && clean.motion_update_valid &&
+                    clean.motion_correction_applied && !clean.motion_input_frozen,
+                "clean observations update motion normally");
+  }
+  const auto single_risk = observe(5, 2.0F, 0.55F);
+  expect_true(single_risk.accepted && single_risk.motion_update_valid &&
+                  !single_risk.motion_input_frozen,
+              "one response and innovation risk does not freeze motion");
+  const auto clean_turn = observe(6, -2.0F, healthy.peak_margin);
+  expect_true(clean_turn.accepted && clean_turn.motion_update_valid &&
+                  !clean_turn.motion_input_frozen,
+              "clean response permits a normal turn despite high innovation");
+  const auto risk = observe(7, 1.5F, 0.55F);
+  expect_true(risk.accepted && risk.motion_update_valid &&
+                  !risk.motion_input_frozen,
+              "first sustained risk is recorded without freezing");
+  const auto second_risk = observe(8, 2.0F, 0.55F);
+  expect_true(second_risk.accepted && second_risk.motion_update_valid &&
+                  !second_risk.motion_input_frozen,
+              "two response drops remain insufficient for motion freeze");
+  const auto frozen = observe(9, 2.5F, 0.55F);
+  expect_true(frozen.accepted && frozen.tracking_phase == TrackingPhase::kTracking &&
+                  frozen.control_valid && !frozen.motion_update_valid &&
+                  !frozen.motion_correction_applied && frozen.motion_freeze_started &&
+                  frozen.motion_input_frozen,
+              std::string("persistent combined risk freezes only motion correction; reason=") +
+                  frozen.motion_gate_reason + " streak=" +
+                  std::to_string(controller.motion_risk_streak_) + " residual=" +
+                  std::to_string(frozen.normalized_center_residual));
+  const MotionSnapshot trusted = *controller.motion_last_clean_trend_;
+  for (std::uint64_t id = 10; id <= 15; ++id) {
+    const auto held = observe(id, 0.5F, 0.55F);
+    const MotionSnapshot now = controller.motion_.snapshot(id * 50);
+    expect_true(held.accepted && !held.motion_update_valid &&
+                    held.motion_input_frozen && now.acceleration_x == 0.0F &&
+                    now.acceleration_y == 0.0F,
+                "long freeze predicts with bounded constant velocity");
+    expect_near(now.velocity_x, trusted.velocity_x, 1e-5F,
+                "frozen motion retains the last clean horizontal trend");
+  }
+  const auto first_clean = observe(16, 0.5F, healthy.peak_margin);
+  const auto second_clean = observe(17, 0.5F, healthy.peak_margin);
+  const auto reanchored = observe(18, 0.5F, healthy.peak_margin);
+  expect_true(first_clean.motion_input_frozen && second_clean.motion_input_frozen &&
+                  reanchored.motion_freeze_cleared && reanchored.motion_update_valid &&
+                  !reanchored.motion_correction_applied && !reanchored.motion_input_frozen,
+              "continuous clean evidence reanchors without beta correction");
+  const MotionSnapshot resumed = controller.motion_.snapshot(900);
+  expect_near(resumed.velocity_x, trusted.velocity_x, 1e-5F,
+              "reanchor preserves the pre-freeze velocity");
+  expect_true(resumed.acceleration_x == 0.0F && resumed.acceleration_y == 0.0F,
+              "reanchor clears acceleration");
+  const auto corrected = observe(19, 0.5F, healthy.peak_margin);
+  expect_true(corrected.motion_correction_applied,
+              "ordinary correction resumes after reanchor");
+  controller.initialize({100, 80, 20, 20}, 20, 1000, {400, 300});
+  expect_true(!controller.motion_freeze_since_ms_ &&
+                  controller.motion_residual_history_.empty(),
+              "reinitialization clears motion-gate state");
+  controller.motion_freeze_since_ms_ = 1000;
+  const auto interrupted = controller.begin_frame(21, 1050, false);
+  (void)interrupted;
+  controller.abort_frame();
+  expect_true(!controller.motion_freeze_since_ms_ &&
+                  !controller.motion_frozen_response_reference_,
+              "frame interruption clears the motion-input freeze");
+  controller.motion_freeze_since_ms_ = 1000;
+  controller.motion_frozen_response_reference_ = ResponseReference{20, 30, 0.6F};
+  auto recovery = std::make_shared<LongTermController::RecoveryAcceptance>(config);
+  recovery->bbox = {102, 82, 20, 20};
+  recovery->display_bbox = recovery->bbox;
+  recovery->motion.initialize(recovery->bbox, 1050, 400, 300);
+  controller.pending_recovery_acceptance_ = recovery;
+  controller.last_timestamp_ms_ = 1050;
+  controller.pending_template_transition_ = TemplateTransitionRequest{
+      1, TemplateAction::kStageRecent, recovery->bbox, true, 1};
+  ControllerOutput recovered_output;
+  recovered_output.timestamp_ms = 1050;
+  recovered_output.motion_input_frozen = true;
+  recovered_output.motion_update_valid = true;
+  recovered_output.template_transition = controller.pending_template_transition_;
+  expect_true(controller.publish_template_transition(
+                  recovered_output, TemplateTransitionResult::kApplied),
+              "confirmed recovery transition applies the reset");
+  expect_true(!controller.motion_freeze_since_ms_ &&
+                  !controller.motion_frozen_response_reference_ &&
+                  controller.motion_last_clean_trend_ &&
+                  recovered_output.motion_freeze_cleared &&
+                  recovered_output.motion_freeze_age_ms == 50 &&
+                  !recovered_output.motion_input_frozen &&
+                  std::string(recovered_output.motion_gate_reason) == "REACQUIRED",
+              "confirmed reacquisition starts with a fresh motion-input gate");
+}
+
 void test_recent_safe_transient_and_probation() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2628,6 +2747,7 @@ int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
   test_search_uses_last_clean_response_motion_trend();
+  test_motion_input_freeze_and_reanchor();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();
   test_production_observation_preserves_collapse();

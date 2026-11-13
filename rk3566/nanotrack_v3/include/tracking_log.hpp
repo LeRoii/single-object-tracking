@@ -11,7 +11,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 13;
+constexpr int kTrackingSchemaVersion = 14;
 
 class MonotonicVideoClock {
  public:
@@ -36,6 +36,12 @@ struct TrackingLogRow {
   bool observation_present = false;
   bool trusted_for_state_update = false;
   bool motion_update_valid = false;
+  bool motion_correction_applied = false;
+  bool motion_input_frozen = false;
+  bool motion_freeze_started = false;
+  bool motion_freeze_cleared = false;
+  std::int64_t motion_freeze_age_ms = 0;
+  const char* motion_gate_reason = "NONE";
   const char* state_change_reason = "NONE";
   const char* rect0_source = "MOTION_PREDICTION";
   ControlSource control_source = ControlSource::kNone;

@@ -227,7 +227,7 @@ void test_recent_safe_serialization() {
   const auto csv = tracking_csv_header();
   const auto json = tracking_frame_json(row);
   for (const auto& expected : {
-           "\"schema_version\":13", "\"tracking_phase\":\"SUSPECTED\"",
+           "\"schema_version\":14", "\"tracking_phase\":\"SUSPECTED\"",
            "\"observation_valid\":false", "\"observation_present\":true",
            "\"trusted_for_state_update\":false", "\"control_source\":\"OBSERVATION\"",
            "\"rect0_source\":\"RECENT_OBSERVATION\"", "\"active_template\":\"RECENT\"",
@@ -260,7 +260,7 @@ void test_recent_safe_profile_metadata() {
   apply_controller_config_metadata(metadata, config);
   const auto json = tracking_session_metadata_json(metadata);
 
-  expect_true(contains(json, "\"schema_version\": 13,\n") &&
+  expect_true(contains(json, "\"schema_version\": 14,\n") &&
                   contains(json, "\"template_policy\": \"recent_safe_v1\",\n") &&
                   contains(json, "\"recovery_policy\": \"unified_candidates_v1\",\n") &&
                   contains(json, "|recent_safe_v1|unified_candidates_v1|") &&
@@ -418,11 +418,12 @@ void test_adaptive_coast_serialization() {
 }  // namespace
 
 int main() {
-  expect_true(nanotrack::kTrackingSchemaVersion == 13 &&
+  expect_true(nanotrack::kTrackingSchemaVersion == 14 &&
                   nanotrack::tracking_csv_header().find("template_transition_result") != std::string::npos &&
                   nanotrack::tracking_csv_header().find("trusted_for_state_update") != std::string::npos &&
-                  nanotrack::tracking_csv_header().find("motion_update_valid") != std::string::npos,
-              "schema v13 exposes independent motion-update trust");
+                  nanotrack::tracking_csv_header().find("motion_update_valid") != std::string::npos &&
+                  nanotrack::tracking_csv_header().find("motion_gate_reason") != std::string::npos,
+              "schema v14 exposes independent motion-update trust and gate diagnostics");
 
   using namespace nanotrack;
   test_tracking_artifact_paths();
@@ -555,7 +556,7 @@ int main() {
         "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("13,", 0) == 0 && kTrackingSchemaVersion == 13,
+  expect_true(encoded.rfind("14,", 0) == 0 && kTrackingSchemaVersion == 14,
               "tracking rows carry schema version 12 exactly once");
   expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
               "CSV writes established class and recovery gate");
@@ -837,7 +838,7 @@ int main() {
                   contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
                   contains(json, "\"detector_ms\": 15.000000"),
               "same-frame initialization history retains order, result diagnostics and null optionals");
-  expect_true(contains(json, "\"schema_version\": 13") &&
+  expect_true(contains(json, "\"schema_version\": 14") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&

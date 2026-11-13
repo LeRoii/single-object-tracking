@@ -220,6 +220,18 @@ BBox AdaptiveDisplayBox::smooth_toward(const BBox& target, float center_alpha) {
 BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
                                 const TargetClassState& target_class,
                                 AdaptiveDisplayDiagnostics& diagnostics) {
+  if (output.reacquired && output.accepted && initialized_ &&
+      config_.adaptive_display_enabled &&
+      valid_box(output.tracking_bbox)) {
+    // The recovered tracker box can have a different scale. Reusing the old
+    // tracker-to-display ratio would magnify that scale change a second time.
+    pending_candidate_.reset();
+    pending_confirmations_ = 0;
+    correction_applied_ = false;
+    set_transform(output.tracking_bbox,
+                  padded(output.tracking_bbox, target_class.target_class_id),
+                  1.0F);
+  }
   diagnostics.class_id = target_class.target_class_id;
   diagnostics.correction_pending = pending_candidate_.has_value();
   diagnostics.correction_applied = correction_applied_;

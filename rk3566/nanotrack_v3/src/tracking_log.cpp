@@ -259,6 +259,12 @@ void visit_observability_fields(const TrackingLogRow& row, Field field) {
   field("observation_present", row.observation_present);
   field("trusted_for_state_update", row.trusted_for_state_update);
   field("motion_update_valid", row.motion_update_valid);
+  field("motion_correction_applied", row.motion_correction_applied);
+  field("motion_input_frozen", row.motion_input_frozen);
+  field("motion_freeze_started", row.motion_freeze_started);
+  field("motion_freeze_cleared", row.motion_freeze_cleared);
+  field("motion_freeze_age_ms", row.motion_freeze_age_ms);
+  field("motion_gate_reason", row.motion_gate_reason);
   field("state_change_reason", row.state_change_reason);
   field("rect0_source", row.rect0_source);
   field("active_template", "RECENT");
@@ -861,6 +867,12 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.observation_present = output.observation_present;
   row.trusted_for_state_update = output.trusted_for_state_update;
   row.motion_update_valid = output.motion_update_valid;
+  row.motion_correction_applied = output.motion_correction_applied;
+  row.motion_input_frozen = output.motion_input_frozen;
+  row.motion_freeze_started = output.motion_freeze_started;
+  row.motion_freeze_cleared = output.motion_freeze_cleared;
+  row.motion_freeze_age_ms = output.motion_freeze_age_ms;
+  row.motion_gate_reason = output.motion_gate_reason;
   row.state_change_reason = output.state_change_reason;
   row.rect0_source = output.accepted ? "ACCEPTED_OBSERVATION" :
       output.observation_present ? "RECENT_OBSERVATION" : "MOTION_PREDICTION";

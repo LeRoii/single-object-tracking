@@ -136,6 +136,31 @@ void MotionEstimator::freeze_open_loop_dynamics() noexcept {
   velocity_height_ = 0.0F;
 }
 
+void MotionEstimator::hold_trusted_trend(const MotionSnapshot& trusted_trend) {
+  if (!initialized_ || !std::isfinite(trusted_trend.velocity_x) ||
+      !std::isfinite(trusted_trend.velocity_y)) {
+    throw std::invalid_argument("trusted motion trend must be finite and initialized");
+  }
+  velocity_x_ = trusted_trend.velocity_x;
+  velocity_y_ = trusted_trend.velocity_y;
+  freeze_open_loop_dynamics();
+  clamp_derivatives();
+}
+
+void MotionEstimator::reanchor_preserving_velocity(
+    const BBox& observation, const MotionSnapshot& trusted_trend,
+    std::int64_t timestamp_ms) {
+  if (!initialized_ || !correction_allowed_ || timestamp_ms != last_timestamp_ms_) {
+    throw std::logic_error("motion reanchor requires a matching prediction");
+  }
+  validate_bbox(observation, frame_width_, frame_height_);
+  set_state_from_bbox(observation);
+  scale_frozen_ = false;
+  hold_trusted_trend(trusted_trend);
+  correction_allowed_ = false;
+  correction_count_ = 0;
+}
+
 void MotionEstimator::begin_search(std::int64_t timestamp_ms) {
   if (!initialized_) throw std::logic_error("motion estimator is not initialized");
   if (timestamp_ms != last_timestamp_ms_) {

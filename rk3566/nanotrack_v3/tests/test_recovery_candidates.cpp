@@ -100,5 +100,51 @@ int main() {
   expect(nearer && !farther && table.select_probe()->key == *nearer &&
              table.conflicted() && !table.confirmed(*nearer),
          "motion proximity can order detector probes without resolving identity");
+
+  {
+  ControllerConfig focus_config = config;
+  focus_config.detector_max_candidates = 3;
+  RecoveryCandidateTable table(focus_config);
+  table.expire(20, 920, 3);
+  const auto focused = table.observe(Source::kDetector, first, 0.80F,
+                                     std::nullopt, 0, false, 0.002F);
+  const auto distant = table.observe(Source::kDetector, other, 0.95F,
+                                     std::nullopt, 0, false, 0.030F);
+  const auto older_recent = table.observe(Source::kRecent, third, 0.90F,
+                                          std::nullopt, std::nullopt, true, 0.012F);
+  expect(focused && distant && older_recent && table.focus_detector(*focused) &&
+             table.select_probe()->key == *focused && !table.conflicted(),
+         "a dominant nearby detector is probed before single-hit recent and distant cars");
+  table.expire(21, 960, 3);
+  table.observe(Source::kRecent, first, 0.90F, std::nullopt,
+                std::nullopt, true, 0.002F);
+  table.observe(Source::kRecent, third, 0.90F, std::nullopt,
+                std::nullopt, true, 0.012F);
+  expect(!table.confirmed(*focused) && !table.conflicted(),
+         "one NanoTrack hit on the focused candidate does not authorize recovery");
+  table.expire(22, 1000, 3);
+  table.observe(Source::kRecent, moved, 0.90F, std::nullopt,
+                std::nullopt, true, 0.003F);
+  expect(table.confirmed(*focused),
+         "two consistent focused hits confirm despite one-hit distant alternatives");
+
+  table.clear();
+  table.expire(23, 1040, 4);
+  const auto disputed = table.observe(Source::kDetector, first, 0.90F,
+                                      std::nullopt, 0, false, 0.002F);
+  table.observe(Source::kDetector, other, 0.90F,
+                std::nullopt, 0, false, 0.030F);
+  expect(disputed && table.focus_detector(*disputed),
+         "focus starts a fresh detector verification episode");
+  for (std::uint64_t frame = 24; frame <= 25; ++frame) {
+    table.expire(frame, 1040 + static_cast<std::int64_t>(frame - 23) * 40, 4);
+    table.observe(Source::kRecent, first, 0.90F, std::nullopt,
+                  std::nullopt, true, 0.002F);
+    table.observe(Source::kSafe, other, 0.90F, std::nullopt,
+                  std::nullopt, true, 0.030F);
+  }
+  expect(table.conflicted() && !table.confirmed(*disputed),
+         "two tracker-verified identities still block a focused recovery");
+  }
   return failures == 0 ? 0 : 1;
 }

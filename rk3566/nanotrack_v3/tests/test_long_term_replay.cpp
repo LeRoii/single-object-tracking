@@ -597,6 +597,83 @@ void test_subtarget_recovery_identity_and_eligibility() {
 
 }  // namespace
 
+void test_dominant_near_detector_recovery() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_max_candidates = 3;
+  config.detector_candidate_max_center_ratio = 0.02F;
+  config.motion_search_confidence_ms = 2500;
+  const BBox target{850, 820, 48, 50};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(target, 0, 0, {1920, 1080},
+                        make_fixed_target_class(0, true));
+  step(controller, 1, 33, std::nullopt);
+  auto plan = controller.begin_frame(2, 66, true);
+  expect_true(plan.detector_request.has_value() && plan.motion_prediction_confident,
+              "search requests a detector batch while motion has a recent trusted origin");
+  const auto request = *plan.detector_request;
+  DetectorBatch batch{request.frame_id, request.timestamp_ms,
+                      {{target, 0.80F, 0},
+                       {BBox{target.x + 70, target.y, 48, 50}, 0.95F, 0},
+                       {BBox{target.x - 90, target.y, 48, 50}, 0.94F, 0},
+                       {BBox{target.x + 180, target.y, 48, 50}, 0.93F, 0}}};
+  batch.generation = request.generation;
+  auto output = controller.finish_frame(plan, {}, batch);
+  expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                  output.detector_candidates_queued == 3 &&
+                  !output.recovery_conflict &&
+                  output.detector_candidate_diagnostics[3].rejection ==
+                      DetectorCandidateRejection::kCapacityRejected,
+              "distant detector overflow is retained as a rejected alternative without vetoing the near candidate");
+  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
+    plan = controller.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
+    expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                    plan.predicted_bbox.x == target.x,
+                "a dominant near detector is probed before unverified alternatives");
+    output = controller.finish_frame(
+        plan, {reliable_for_plan(plan, target, frame, TemplateKind::kRecent),
+               reliable_for_plan(plan, target, frame, TemplateKind::kSafe)},
+        std::nullopt);
+    expect_true(output.accepted == (frame == 4) &&
+                    output.recovery_confirmation_hits == frame - 2 &&
+                    !output.recovery_conflict,
+                "only two NanoTrack observations promote the focused detector hypothesis");
+  }
+
+  ResolvedControllerFixture close_rivals(config);
+  close_rivals.initialize(target, 0, 0, {1920, 1080},
+                          make_fixed_target_class(0, true));
+  step(close_rivals, 1, 33, std::nullopt);
+  plan = close_rivals.begin_frame(2, 66, true);
+  const auto close_request = *plan.detector_request;
+  DetectorBatch close_batch{
+      close_request.frame_id, close_request.timestamp_ms,
+      {{target, 0.90F, 0},
+       {BBox{target.x + 30, target.y, 48, 50}, 0.89F, 0}}};
+  close_batch.generation = close_request.generation;
+  output = close_rivals.finish_frame(plan, {}, close_batch);
+  expect_true(output.recovery_conflict && !output.accepted,
+              "comparably close same-class objects retain the identity veto");
+
+  ControllerConfig stale_motion_config = config;
+  stale_motion_config.motion_search_confidence_ms = 1;
+  ResolvedControllerFixture stale_motion(stale_motion_config);
+  stale_motion.initialize(target, 0, 0, {1920, 1080},
+                          make_fixed_target_class(0, true));
+  step(stale_motion, 1, 33, std::nullopt);
+  plan = stale_motion.begin_frame(2, 66, true);
+  const auto stale_request = *plan.detector_request;
+  DetectorBatch stale_batch{stale_request.frame_id, stale_request.timestamp_ms,
+                            {{target, 0.90F, 0},
+                             {BBox{target.x + 70, target.y, 48, 50}, 0.89F, 0}}};
+  stale_batch.generation = stale_request.generation;
+  output = stale_motion.finish_frame(plan, {}, stale_batch);
+  expect_true(!plan.motion_prediction_confident && output.recovery_conflict &&
+                  !output.accepted,
+              "a stale motion prediction cannot activate distance-based focus");
+}
+
 int main() {
   test_stable_size_occlusion_replay();
   test_viewpoint_and_turn_replay();
@@ -605,6 +682,7 @@ int main() {
   test_delayed_detector_recovery_replay();
   test_unified_subtarget_offset_replay();
   test_subtarget_recovery_identity_and_eligibility();
+  test_dominant_near_detector_recovery();
   using namespace nanotrack;
   const BBox initial{40, 30, 20, 20};
   const FrameSize frame_size{240, 160};

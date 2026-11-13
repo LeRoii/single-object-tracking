@@ -496,7 +496,7 @@ done
 cp "$artifact_dir/metadata.valid.json" "$artifact_dir/session-metadata.json"
 
 
-unset EXPECTED_TRACKING_SCHEMA
+export EXPECTED_TRACKING_SCHEMA=13
 if bash "$verify_script" "$artifact_dir" "$model_dir" 3 16 16 >/dev/null 2>&1; then
   echo "verify_board accepted historical v10 without explicit selection" >&2
   exit 1
