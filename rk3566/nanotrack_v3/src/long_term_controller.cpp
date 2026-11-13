@@ -1910,8 +1910,12 @@ LongTermController::ingest_detector_batch(
     const float center_ratio = frame_normalized_center_distance(
         projected, plan.motion_predicted_bbox, frame_size_);
     diagnostic.center_ratio = center_ratio;
-    if (unified || center_ratio <=
-        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
+    // The optional unified gate rejects distant same-class detections while
+    // motion still predicts a confident target location.
+    if ((unified && (!config_.unified_confident_detector_position_gate ||
+                     !plan.motion_prediction_confident)) ||
+        center_ratio <= config_.detector_candidate_max_center_ratio +
+                            kPositionGateEpsilon) {
       diagnostic.position_gate_pass = true;
       positioned.push_back(PositionedCandidate{index, center_ratio});
     } else {

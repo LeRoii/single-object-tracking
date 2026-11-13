@@ -1,5 +1,16 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T02:09:55+08:00 可信运动下的统一恢复 detector 位置门禁候选
+
+- 分支/工作树 `codex/dual-gt-init-consistency`、`/home/u20/single-object-tracking`，基线 `b598e58`。`consume_detector_batch` 先前在统一恢复模式中无条件绕过 `detector_candidate_max_center_ratio=0.02`；板端 300 ms 筛查中 car001 第 176～179 帧错误候选距离预测位置 `0.036～0.038`，仍通过 detector + NanoTrack 两次命中误重捕。新增默认关闭的 `unified_confident_detector_position_gate`；仅运动预测可信时执行已有位置上限，失去预测置信度后仍允许远处候选经独立验证。`visible-adaptive-display.conf` 启用，配置 SHA-256 `b6738adf133c258da17aa849b6c04213e3379f6529fd580f24a199c718b66be0`。显示 detector 仍不直接授权 tracking/控制。
+- 新控制器测试覆盖同类近候选通过、远候选拒绝、远候选不能成为后续探针，以及运动置信度过期时允许远处候选进入验证。实际运行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/position-gate-host-build.log`、`/tmp/nt-dual-gt-evidence/position-gate-host-ctest.log`。首次无条件应用位置门禁导致 replay 夹具失败，已改为显式可选配置，默认行为及 replay 回归恢复通过。
+- **证据边界 / Handoff**：当前仅主机逻辑证据；需用精确提交在 RK3588 上同时验证 400 ms 基线与 300 ms 参数反事实的双目标八组中心、重捕和遮挡。未经板端证明不批准 handoff。
+
+## 2026-11-14T02:09:55+08:00 detector 300 ms car001 四初始框参数筛查否决
+
+- 沿用 `codex/dual-gt-init-consistency@7cbf58d` RK3588 二进制 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`；仅板端 `runs/detector300-controller.conf` 把 `detector_interval_ms=400→300`，SHA-256 `4b4f7254aa09e6dfe8f39f0d0e6e7898556a2f066ad5a59d0c9417b1c471013d`，headless 配置 SHA-256 `f16c0f0fcbd441e244bf808dab6fada8b21d6a2819512df65b5d2108b2833f7b`。四个 car001 ROI 的运行输出留在 `runs/detector300-car001/`，16 文件清单 SHA-256 `1c15710a2af1b93cd9b4915a9e046fdb0a49573054d141941b8dbe90099f4903`，四个 AVI 经 ffprobe 均 1920×1080、271 帧。小型文本包 `runs/detector300-car001-text.tar.gz` 主机/板端 SHA-256 `fd26e8d5cd4aea80b44407b881b88b8e8d6b178eefa526e28b3659bd0af09349`；同一初始化一致性脚本评分 `/tmp/nt-dual-gt-evidence/detector300-car001-center.json` SHA-256 `9a8b3c724d374a89d064373a89162d53bc4fcb4ec426a9a1808920b4a761093b`。
+- car001 标准/人工/左上在第 179 帧发生遮挡区错误重捕，之后第 199/197/199 帧再次重捕；三组可见帧 tracking 中心均值 `27.94/28.25/28.45 px`，跨初始框 P95 `79.36 px`，均显著恶化。右下组重捕 190，中心均值 4.94 px。**否决**单独把 detector 间隔改为 300 ms；失效揭示已有统一恢复对远处同类 detector 候选的位置上限绕过，需以代码门禁反事实复测。
+
 ## 2026-11-14T02:01:22+08:00 car001 重捕最短等待时间筛查无收益
 
 - 沿用 `codex/dual-gt-init-consistency@7cbf58d` RK3588 二进制 `3f6c3896f777148a0d038d8c02b5d21fefa7461cc649336bb538db3b1cdb15d4`，仅在板端 `runs/minage200-controller.conf` 把 `search_reacquisition_min_age_ms=400→200`，SHA-256 `b4427fd16a7ebecc90ed73be4b0276ffe268024cc3cf63639f094abc62ca4191`；headless 配置 SHA-256 `37a9dd8abb30863e9c1c6e29422f7e3bb0c139154d0228d4966dc3a4d3ac6f1e`。源码默认配置保持不变，输入身份与上一八组一致。

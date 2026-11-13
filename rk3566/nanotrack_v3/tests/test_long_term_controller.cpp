@@ -1861,6 +1861,56 @@ void test_unified_recovery_candidate_cleanup() {
               "a stale completion cannot carry either candidate or detector history through the frame");
 }
 
+void test_unified_detector_position_gate_while_motion_confident() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kSubtarget;
+  config.detector_candidate_max_center_ratio = 0.02F;
+  config.unified_confident_detector_position_gate = true;
+  config.motion_search_confidence_ms = 100;
+  const BBox initial{40, 30, 20, 20};
+  const FrameSize frame_size{400, 240};
+
+  ResolvedControllerFixture confident(config);
+  confident.initialize(initial, 0, 0, frame_size,
+                       make_fixed_target_class(2, true));
+  reject_frame(confident, 1, 40);
+  auto plan = confident.begin_frame(2, 80, true);
+  expect_true(plan.motion_prediction_confident && plan.detector_request.has_value(),
+              "unified position fixture has a confident search and detector request");
+  DetectorBatch batch{2, 80,
+                      {{BBox{44, 30, 20, 20}, 0.70F, 2},
+                       {BBox{100, 30, 20, 20}, 0.99F, 2}}};
+  batch.generation = plan.detector_request->generation;
+  const auto output = confident.finish_frame(plan, {}, batch);
+  expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                  output.detector_position_valid_count == 1 &&
+                  output.detector_position_rejected_count == 1 &&
+                  output.detector_candidates_queued == 1 &&
+                  !output.accepted && !output.reacquired,
+              "confident unified search queues only the near same-class candidate");
+  plan = confident.begin_frame(3, 120, false);
+  expect_true(plan.detector_candidate_center_ratio.has_value() &&
+                  *plan.detector_candidate_center_ratio <= 0.02F,
+              "the rejected distant detection cannot become a recovery probe");
+  confident.abort_frame();
+
+  ResolvedControllerFixture expired(config);
+  expired.initialize(initial, 0, 0, frame_size,
+                     make_fixed_target_class(2, true));
+  reject_frame(expired, 1, 40);
+  plan = expired.begin_frame(2, 200, true);
+  expect_true(!plan.motion_prediction_confident && plan.detector_request.has_value(),
+              "expired motion fixture still requests detector assistance");
+  DetectorBatch distant{2, 200, {{BBox{100, 30, 20, 20}, 0.99F, 2}}};
+  distant.generation = plan.detector_request->generation;
+  const auto expired_output = expired.finish_frame(plan, {}, distant);
+  expect_true(expired_output.detector_position_valid_count == 1 &&
+                  expired_output.detector_position_rejected_count == 0,
+              "expired motion allows a distant candidate for independent verification");
+}
+
 void test_subtarget_probe_abort_does_not_advance_cursor() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2872,6 +2922,7 @@ int main() {
   test_target_class_gate();
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
+  test_unified_detector_position_gate_while_motion_confident();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_recovery_probation_cleanup();
