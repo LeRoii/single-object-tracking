@@ -269,4 +269,10 @@ if(ENABLE_RKNN_RUNTIME)
     PRIVATE nanotrack_yolo_detector ${OpenCV_LIBS}
   )
   target_compile_options(yolo_detector_smoke PRIVATE -Wall -Wextra -Wpedantic)
+
+  add_executable(yolo_roi_replay src/yolo_roi_replay.cpp)
+  target_link_libraries(yolo_roi_replay
+    PRIVATE nanotrack_yolo_detector ${OpenCV_LIBS}
+  )
+  target_compile_options(yolo_roi_replay PRIVATE -Wall -Wextra -Wpedantic)
 endif()

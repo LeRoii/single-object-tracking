@@ -51,6 +51,7 @@ struct ControllerConfig {
   float display_unknown_padding_x = 0.0F;
   float display_unknown_padding_y = 0.0F;
   float display_detector_blend_alpha = 0.20F;
+  float display_center_smoothing_alpha = 1.00F;
   float display_max_size_step_ratio = 0.05F;
   float display_detection_consistency_iou = 0.50F;
   int display_detection_confirmations = 2;
@@ -70,6 +71,14 @@ struct ControllerConfig {
   std::int64_t suspicion_clear_ms = 100;
   float response_psr_drop_ratio = 0.25F;
   float response_apce_drop_ratio = 0.30F;
+  // Optional car-only early partial-visibility gate. Zero disables both.
+  float recent_visibility_height_ratio = 0.0F;
+  float recent_visibility_center_residual = 0.0F;
+  // Optional visual evidence gate for an already suspected car. Zero disables.
+  float visual_suspect_bright_ratio = 0.0F;
+  float visual_suspect_min_confidence = 0.40F;
+  float visual_suspect_max_center_px = 30.0F;
+  int visual_suspect_consecutive_frames = 2;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;
@@ -119,6 +128,14 @@ struct ControllerConfig {
   std::int64_t motion_max_dt_ms = 200;
   bool motion_search_enabled = false;
   bool search_reacquisition_requires_detector = false;
+  // After an identity conflict, require independent detector evidence on the
+  // same NanoTrack-confirmed recovery candidate. Default preserves behavior.
+  bool recovery_conflict_requires_detector = false;
+  int recovery_confirmation_required = 2;
+  bool recovery_requires_detector_support = false;
+  bool recovery_restore_initial_aspect = false;
+  float recovery_min_top_luma_stddev = 0.0F;
+  bool lower_band_visibility_veto = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   std::int64_t motion_search_confidence_ms = 1000;
   float motion_max_speed_diagonals_per_s = 100.0F;

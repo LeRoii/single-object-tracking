@@ -1137,6 +1137,8 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
       config.accepted_scale_output_hysteresis_px;
   metadata.accepted_center_smoothing_alpha =
       config.accepted_center_smoothing_alpha;
+  metadata.display_center_smoothing_alpha =
+      config.display_center_smoothing_alpha;
   metadata.accepted_center_max_correction_ratio =
       config.accepted_center_max_correction_ratio;
   metadata.max_reacquisition_center_distance =
@@ -1144,6 +1146,11 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.motion_search_enabled = config.motion_search_enabled;
   metadata.search_reacquisition_requires_detector =
       config.search_reacquisition_requires_detector;
+  metadata.recovery_confirmation_required = config.recovery_confirmation_required;
+  metadata.recovery_requires_detector_support = config.recovery_requires_detector_support;
+  metadata.recovery_restore_initial_aspect = config.recovery_restore_initial_aspect;
+  metadata.recovery_min_top_luma_stddev = config.recovery_min_top_luma_stddev;
+  metadata.lower_band_visibility_veto = config.lower_band_visibility_veto;
   metadata.search_reacquisition_min_age_ms =
       config.search_reacquisition_min_age_ms;
   metadata.template_bridge_min_stable_frames =
@@ -1324,6 +1331,8 @@ std::string tracking_session_metadata_json(
          << metadata.accepted_scale_output_hysteresis_px << ",\n"
          << "  \"accepted_center_smoothing_alpha\": "
          << metadata.accepted_center_smoothing_alpha << ",\n"
+         << "  \"display_center_smoothing_alpha\": "
+         << metadata.display_center_smoothing_alpha << ",\n"
          << "  \"accepted_center_max_correction_ratio\": "
          << metadata.accepted_center_max_correction_ratio << ",\n"
          << "  \"max_reacquisition_center_distance\": "
@@ -1336,6 +1345,19 @@ std::string tracking_session_metadata_json(
          << (metadata.motion_search_enabled ? "true" : "false") << ",\n"
          << "  \"search_reacquisition_requires_detector\": "
          << (metadata.search_reacquisition_requires_detector ? "true" : "false")
+         << ",\n"
+         << "  \"recovery_confirmation_required\": "
+         << metadata.recovery_confirmation_required << ",\n"
+         << "  \"recovery_requires_detector_support\": "
+         << (metadata.recovery_requires_detector_support ? "true" : "false")
+         << ",\n"
+         << "  \"recovery_restore_initial_aspect\": "
+         << (metadata.recovery_restore_initial_aspect ? "true" : "false")
+         << ",\n"
+         << "  \"recovery_min_top_luma_stddev\": "
+         << metadata.recovery_min_top_luma_stddev << ",\n"
+         << "  \"lower_band_visibility_veto\": "
+         << (metadata.lower_band_visibility_veto ? "true" : "false")
          << ",\n"
          << "  \"search_reacquisition_min_age_ms\": "
          << metadata.search_reacquisition_min_age_ms << ",\n"

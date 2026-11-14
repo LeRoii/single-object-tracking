@@ -649,6 +649,10 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             report = evaluator.evaluate(synthetic_contract(), evaluator.load_tracking_csv(path), "full")
         self.assertTrue(report["gates"]["reacquisition"]["passed"])
         self.assertEqual(report["reacquisition"]["frames"], [7])
+        three_hit_rows = passing_rows()
+        three_hit_rows[7]["recovery_confirmation_hits"] = 3
+        three_hit_report = evaluator.evaluate(synthetic_contract(), three_hit_rows, "full")
+        self.assertTrue(three_hit_report["gates"]["reacquisition"]["passed"])
         for changes in (
             {"state": "LOCAL_RECOVERY", "tracking_phase": "SEARCHING"},
             {"trusted_for_state_update": False},

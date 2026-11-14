@@ -6,6 +6,7 @@
 #include "short_term_tracker.hpp"
 
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <vector>
@@ -78,7 +79,8 @@ class LongTermRuntime {
                                              std::int64_t timestamp_ms);
   RuntimeFrameResult process_frame(const ImageView& image,
                                    std::uint64_t frame_id,
-                                   std::int64_t timestamp_ms);
+                                   std::int64_t timestamp_ms,
+                                   bool lower_band_crossing = false);
 
   // After returning a revocation-bearing frame, processing and reinitialization
   // wait until the writer acknowledges that exact slot.
@@ -108,6 +110,17 @@ class LongTermRuntime {
   std::optional<std::uint64_t> staged_template_slot_id_;
   std::optional<TemplateSlotRevocation> pending_template_slot_revocation_;
   bool revocation_waiting_for_ack_ = false;
+  float visual_suspect_bright_ratio_ = 0.0F;
+  float recovery_min_top_luma_stddev_ = 0.0F;
+  bool lower_band_visibility_veto_ = false;
+  float visual_suspect_min_confidence_ = 0.40F;
+  float visual_suspect_max_center_px_ = 30.0F;
+  int visual_suspect_consecutive_frames_ = 2;
+  std::deque<float> trusted_brightness_;
+  std::optional<std::uint64_t> last_visual_hit_frame_;
+  int visual_hit_streak_ = 0;
+  bool visual_streak_ambiguous_ = false;
+  TrackingPhase previous_output_phase_ = TrackingPhase::kInvalid;
 };
 
 }  // namespace nanotrack

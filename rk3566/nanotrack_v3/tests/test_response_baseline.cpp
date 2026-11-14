@@ -56,5 +56,27 @@ int main() {
   baseline.observe_trusted(metrics(7, 7, 0.20F));
   expect(baseline.evaluate(probe).reference->psr == 6,
          "recovery needs a fresh minimum count");
+
+  ControllerConfig slow_config = config;
+  slow_config.occlusion_reference_window = 8;
+  ResponseBaseline slow(slow_config);
+  for (int i = 0; i < 23; ++i) slow.observe_trusted(metrics(8, 20, 0.30F));
+  expect(!slow.sustained_dual_drop(metrics(5.5F, 13, 0.05F)),
+         "long reference waits for a full trusted history");
+  slow.observe_trusted(metrics(8, 20, 0.30F));
+  for (int i = 0; i < 6; ++i) slow.observe_trusted(metrics(7, 17, 0.25F));
+  expect(!slow.evaluate(metrics(5.5F, 13, 0.25F)).psr_drop &&
+             !slow.evaluate(metrics(5.5F, 13, 0.25F)).apce_drop &&
+             slow.sustained_dual_drop(metrics(5.5F, 13, 0.25F)),
+         "slow dual-metric drop remains visible after the short window adapts");
+  expect(!slow.sustained_dual_drop(metrics(5.5F, 19, 0.01F)),
+         "a PSR and peak-margin dip without an APCE drop is not sustained dual loss");
+  slow.freeze();
+  for (int i = 0; i < 30; ++i) slow.observe_trusted(metrics(1, 1, 0.01F));
+  expect(slow.sustained_dual_drop(metrics(5.5F, 13, 0.25F)),
+         "suspected frames cannot teach the slower reference to accept degradation");
+  slow.reset_after_recovery();
+  expect(!slow.sustained_dual_drop(metrics(5.5F, 13, 0.25F)),
+         "recovery clears the slower reference with the ordinary reference");
   return failures != 0;
 }

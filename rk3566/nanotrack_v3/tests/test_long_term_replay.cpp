@@ -605,6 +605,42 @@ void test_dominant_near_detector_recovery() {
   config.detector_candidate_max_center_ratio = 0.02F;
   config.motion_search_confidence_ms = 2500;
   const BBox target{850, 820, 48, 50};
+  {
+    ControllerConfig shape_config = config;
+    shape_config.recovery_confirmation_required = 3;
+    shape_config.recovery_requires_detector_support = true;
+    shape_config.recovery_restore_initial_aspect = true;
+    ResolvedControllerFixture shape(shape_config);
+    shape.initialize(target, 0, 0, {1920, 1080},
+                     make_fixed_target_class(0, true));
+    step(shape, 1, 33, std::nullopt);
+    auto shape_plan = shape.begin_frame(2, 66, true);
+    const auto shape_request = *shape_plan.detector_request;
+    const BBox partial{target.x, target.y + 7, target.width, 36};
+    DetectorBatch shape_batch{shape_request.frame_id, shape_request.timestamp_ms,
+                              {{partial, 0.8F, 0}}};
+    shape_batch.generation = shape_request.generation;
+    shape.finish_frame(shape_plan, {}, shape_batch);
+    for (std::uint64_t frame = 3; frame <= 5; ++frame) {
+      shape_plan = shape.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
+      auto shape_output = shape.finish_frame(
+          shape_plan, {reliable_for_plan(shape_plan, partial, frame, TemplateKind::kRecent),
+                       reliable_for_plan(shape_plan, partial, frame, TemplateKind::kSafe)},
+          std::nullopt);
+      expect_true(shape_output.reacquired == (frame == 5),
+                  "shape prior still requires three detector-supported NanoTrack hits");
+      if (frame == 5) {
+        expect_true(shape_output.tracking_bbox.height > partial.height * 1.2F &&
+                        std::fabs(shape_output.tracking_bbox.y +
+                                  0.5F * shape_output.tracking_bbox.height -
+                                  (partial.y + 0.5F * partial.height)) < 0.1F &&
+                        shape_output.template_transition &&
+                        shape_output.template_transition->bbox.height ==
+                            shape_output.tracking_bbox.height,
+                    "car recovery restores full-object aspect around the verified center and stages that box");
+      }
+    }
+  }
   ResolvedControllerFixture controller(config);
   controller.initialize(target, 0, 0, {1920, 1080},
                         make_fixed_target_class(0, true));
@@ -640,6 +676,53 @@ void test_dominant_near_detector_recovery() {
                     !output.recovery_conflict,
                 "only two NanoTrack observations promote the focused detector hypothesis");
   }
+
+  ResolvedControllerFixture separated_rivals(config);
+  separated_rivals.initialize(target, 0, 0, {1920, 1080},
+                              make_fixed_target_class(0, true));
+  step(separated_rivals, 1, 33, std::nullopt);
+  plan = separated_rivals.begin_frame(2, 66, true);
+  const auto separated_request = *plan.detector_request;
+  const BBox near_partial{target.x + 5, target.y + 20, 48, 50};
+  const BBox separated_rival{target.x + 65, target.y + 30, 48, 50};
+  DetectorBatch separated_batch{
+      separated_request.frame_id, separated_request.timestamp_ms,
+      {{near_partial, 0.45F, 0}, {separated_rival, 0.90F, 0}}};
+  separated_batch.generation = separated_request.generation;
+  output = separated_rivals.finish_frame(plan, {}, separated_batch);
+  expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
+                  !output.recovery_conflict,
+              "a distinct motion-near car can lead despite a small normalized distance gap");
+  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
+    plan = separated_rivals.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
+    expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                    plan.predicted_bbox.x == near_partial.x,
+                "the separated motion-near car is probed before the higher confidence rival");
+    output = separated_rivals.finish_frame(
+        plan, {reliable_for_plan(plan, near_partial, frame, TemplateKind::kRecent),
+               reliable_for_plan(plan, near_partial, frame, TemplateKind::kSafe)},
+        std::nullopt);
+    expect_true(output.accepted == (frame == 4) && !output.recovery_conflict,
+                "the focused car still needs two NanoTrack confirmations");
+  }
+
+  ResolvedControllerFixture very_near_rival(config);
+  very_near_rival.initialize(target, 0, 0, {1920, 1080},
+                             make_fixed_target_class(0, true));
+  step(very_near_rival, 1, 33, std::nullopt);
+  plan = very_near_rival.begin_frame(2, 66, true);
+  const auto very_near_request = *plan.detector_request;
+  DetectorBatch very_near_batch{
+      very_near_request.frame_id, very_near_request.timestamp_ms,
+      {{target, 0.60F, 0}, {BBox{target.x + 50, target.y, 48, 50}, 0.95F, 0}}};
+  very_near_batch.generation = very_near_request.generation;
+  output = very_near_rival.finish_frame(plan, {}, very_near_batch);
+  expect_true(!output.recovery_conflict,
+              "a very near candidate can be focused despite a rival just beyond the motion gate");
+  plan = very_near_rival.begin_frame(3, 99, false);
+  expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                  plan.predicted_bbox.x == target.x,
+              "the focused very near candidate leads the next NanoTrack probe");
 
   ResolvedControllerFixture close_rivals(config);
   close_rivals.initialize(target, 0, 0, {1920, 1080},

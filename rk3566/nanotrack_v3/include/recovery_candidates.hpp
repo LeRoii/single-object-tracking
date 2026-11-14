@@ -22,7 +22,15 @@ struct RecoveryCandidateEvidence {
 struct RecoveryCandidate {
   RecoveryCandidateKey key{};
   std::array<std::optional<RecoveryCandidateEvidence>, 3> evidence{};
-  std::array<std::optional<RecoveryCandidateEvidence>, 2> verifications{};
+  std::array<std::optional<RecoveryCandidateEvidence>, 3> verifications{};
+  // A detector must still be fresh when one of the current NanoTrack hits
+  // occurs. Keep that association through the second hit even if the detector
+  // metadata ages out between the two frames.
+  std::optional<std::uint64_t> detector_supported_hit_frame = std::nullopt;
+  // The detector may leave the candidate table's short frame window while
+  // still within its timestamp limit. This handoff belongs only to a
+  // candidate that already has matching tracker evidence.
+  std::optional<std::int64_t> detector_handoff_timestamp_ms = std::nullopt;
   // Geometry for associating a refreshed detector region with a live
   // tracker-verified subtarget. Only live detector evidence can seed offsets.
   std::optional<BBox> subtarget_carrier = std::nullopt;
@@ -34,6 +42,7 @@ struct RecoveryCandidate {
   const std::optional<RecoveryCandidateEvidence>& from(
       RecoveryCandidateSource source) const;
   std::size_t hits() const;
+  bool has_detector_supported_hit() const;
 };
 
 class RecoveryCandidateTable {
@@ -77,9 +86,11 @@ class RecoveryCandidateTable {
                              const BBox& bbox) const noexcept;
 
   std::size_t detector_capacity_;
+  std::size_t required_hits_;
   std::int64_t gap_ms_;
   std::int64_t detector_stale_ms_;
   std::uint64_t detector_window_frames_;
+  bool conflict_detector_handoff_;
   float min_iou_;
   float max_center_distance_;
   float max_area_log_change_;

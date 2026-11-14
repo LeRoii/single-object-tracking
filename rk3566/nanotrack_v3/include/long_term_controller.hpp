@@ -44,6 +44,8 @@ struct SearchPlan {
   std::size_t occlusion_coast_age_frames = 0;
   OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
   bool motion_control_authorized = false;
+  bool visual_occlusion_search = false;
+  bool recovery_texture_veto = false;
   std::optional<SearchHint> search_hint;
   std::int64_t motion_search_age_ms = -1;
   bool motion_prediction_confident = false;
@@ -438,6 +440,7 @@ class LongTermController {
   OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};
   BBox current_bbox_{};
+  BBox initial_bbox_{};
   BBox display_bbox_{};
   DimensionScaleState width_scale_state_{};
   DimensionScaleState height_scale_state_{};
@@ -468,6 +471,8 @@ class LongTermController {
   bool recovery_probation_ = false;
   bool rollback_pending_ = false;
   bool resume_search_after_rollback_ = false;
+  bool recovery_conflict_seen_ = false;
+  bool conflict_detector_refresh_sent_ = false;
   int probation_reliable_frames_ = 0;
   int consecutive_unreliable_frames_ = 0;
   std::size_t hold_remaining_frames_ = 0;

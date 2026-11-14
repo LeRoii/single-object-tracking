@@ -134,7 +134,7 @@ void test_confirmed_detector_box_has_no_extra_margin() {
   auto value = config();
   value.display_detector_blend_alpha = 1.0F;
   value.display_max_size_step_ratio = 1.0F;
-  value.accepted_center_smoothing_alpha = 1.0F;
+  value.display_center_smoothing_alpha = 1.0F;
   AdaptiveDisplayBox display(value);
   TargetClassState target = established(2, BBox{80, 80, 40, 30});
   target.selected_candidate.reset();
@@ -155,6 +155,37 @@ void test_confirmed_detector_box_has_no_extra_margin() {
                   close(confirmed.y, 80.0F) && close(confirmed.width, 40.0F) &&
                   close(confirmed.height, 30.0F),
               "confirmed detector correction targets the unpadded detector box");
+}
+
+void test_car_detector_changes_size_without_shifting_center() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_detector_blend_alpha = 1.0F;
+  value.display_max_size_step_ratio = 1.0F;
+  value.display_center_smoothing_alpha = 1.0F;
+  AdaptiveDisplayBox display(value);
+  const BBox tracked{90, 85, 20, 20};
+  TargetClassState target = established(2, BBox{75, 80, 40, 30});
+  display.initialize(tracked, target, FrameSize{200, 200});
+  expect_true(close(center_x(display.current()), center_x(tracked)) &&
+                  close(display.current().width, 40.0F),
+              "car detector initialization supplies size while tracker supplies center");
+  target.selected_candidate.reset();
+  ControllerOutput output = tracking_output(tracked);
+  DetectorBatch batch;
+  batch.purpose = DetectorRequestPurpose::kDisplayRefresh;
+  batch.candidates = {DetectorCandidate{BBox{75, 80, 40, 30}, 0.9F, 2}};
+  AdaptiveDisplayDiagnostics diagnostics;
+  batch.source_frame_id = 1;
+  display.ingest(batch, output, target);
+  display.update(output, target, diagnostics);
+  batch.source_frame_id = 2;
+  display.ingest(batch, output, target);
+  const BBox confirmed = display.update(output, target, diagnostics);
+  expect_true(diagnostics.correction_applied &&
+                  close(center_x(confirmed), center_x(tracked)) &&
+                  close(confirmed.width, 40.0F),
+              "confirmed detector refresh cannot offset the car display center");
 }
 
 void test_adaptive_cadence() {
@@ -205,14 +236,53 @@ void test_reacquisition_rebases_display_scale() {
               "reacquired display converges toward the padded new tracker without changing it");
 }
 
+void test_display_center_is_independent_of_tracking_smoothing() {
+  using namespace nanotrack;
+  auto value = config();
+  value.accepted_center_smoothing_alpha = 0.35F;
+  value.display_center_smoothing_alpha = 0.80F;
+  const BBox original{80, 80, 20, 20};
+  const BBox moved{100, 80, 20, 20};
+  AdaptiveDisplayBox display(value);
+  display.initialize(original, TargetClassState{}, FrameSize{200, 200});
+  AdaptiveDisplayDiagnostics diagnostics;
+  display.update(tracking_output(original), TargetClassState{}, diagnostics);
+  const BBox result = display.update(tracking_output(moved), TargetClassState{}, diagnostics);
+  expect_true(close(center_x(result), 106.0F) &&
+                  close(result.width, 20.0F) &&
+                  close(display.current().x, 96.0F),
+              "display follows 80 percent of a fast tracker move without resizing");
+  expect_true(close(value.accepted_center_smoothing_alpha, 0.35F),
+              "display-only tuning does not change tracker center smoothing");
+
+  ControllerOutput suspected = tracking_output(moved);
+  suspected.tracking_phase = TrackingPhase::kSuspected;
+  suspected.accepted = false;
+  suspected.control_bbox = BBox{120, 80, 20, 20};
+  const BBox suspected_box = display.update(suspected, TargetClassState{}, diagnostics);
+  expect_true(close(center_x(suspected_box), 125.2F),
+              "visible suspected output follows the faster display center setting");
+
+  AdaptiveDisplayBox search_display(value);
+  search_display.initialize(original, TargetClassState{}, FrameSize{200, 200});
+  search_display.update(tracking_output(original), TargetClassState{}, diagnostics);
+  ControllerOutput searching = suspected;
+  searching.tracking_phase = TrackingPhase::kSearching;
+  const BBox predicted = search_display.update(searching, TargetClassState{}, diagnostics);
+  expect_true(close(center_x(predicted), 104.0F),
+              "search prediction retains the original 35 percent center smoothing");
+}
+
 }  // namespace
 
 int main() {
   test_detector_envelope_and_initialization();
   test_confirmation_and_search_freeze();
   test_confirmed_detector_box_has_no_extra_margin();
+  test_car_detector_changes_size_without_shifting_center();
   test_adaptive_cadence();
   test_reacquisition_rebases_display_scale();
+  test_display_center_is_independent_of_tracking_smoothing();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;

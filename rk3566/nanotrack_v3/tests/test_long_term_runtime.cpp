@@ -1444,6 +1444,131 @@ void test_suspected_inference_retry_restores_prediction() {
 
 }  // namespace
 
+void test_visual_suspect_gate() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.suspicion_enter_ms = 1;
+  config.uncertain_ms = 1000;
+  config.local_recovery_ms = 2000;
+  config.assisted_recovery_ms = 3000;
+  config.visual_suspect_bright_ratio = 0.90F;
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  FakeDetector detector;
+  detector.enabled = true;
+  DetectorBatch candidate_batch;
+  candidate_batch.candidates.push_back(
+      DetectorCandidate{BBox{265.0F, 239.0F, 54.0F, 54.0F}, 0.23F, 2});
+  detector.blocking_batch = candidate_batch;
+  LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+  }
+  tracker.on_infer = [&] {
+    const auto& plan = tracker.inferred_plans.back();
+    tracker.observation_override = std::vector<TrackerObservation>{
+        TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                           ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                           TemplateKind::kRecent, tracker.search_token + 1}};
+  };
+  std::fill(pixels.begin(), pixels.end(), 0);
+  const auto suspect = runtime.process_frame(image, 5, 200);
+  expect_true(suspect.output.tracking_phase == TrackingPhase::kSuspected &&
+                  detector.blocking_calls == 0,
+              "visual detector waits until the controller has entered SUSPECTED");
+  const auto low_confidence = runtime.process_frame(image, 6, 240);
+  expect_true(low_confidence.output.tracking_phase == TrackingPhase::kSuspected &&
+                  low_confidence.detector.batch_purpose == DetectorRequestPurpose::kVisualOcclusion &&
+                  detector.blocking_calls == 1,
+              "a low-confidence visual candidate cannot force SEARCHING");
+  detector.blocking_batch->candidates[0].confidence = 0.80F;
+  detector.blocking_batch->candidates.push_back(
+      DetectorCandidate{BBox{370.0F, 240.0F, 40.0F, 40.0F}, 0.55F, 2});
+  const auto ambiguous = runtime.process_frame(image, 7, 280);
+  expect_true(ambiguous.output.tracking_phase == TrackingPhase::kSuspected &&
+                  detector.blocking_calls == 2,
+              "one ambiguous visual hit remains tentative");
+  const auto ambiguous_pair = runtime.process_frame(image, 8, 320);
+  expect_true(ambiguous_pair.output.tracking_phase == TrackingPhase::kSuspected &&
+                  detector.blocking_calls == 3,
+              "two ambiguous visual hits cannot force an early search");
+  detector.blocking_batch->candidates.pop_back();
+  const auto third_hit = runtime.process_frame(image, 9, 360);
+  expect_true(third_hit.plan.visual_occlusion_search &&
+                  third_hit.output.tracking_phase == TrackingPhase::kSearching &&
+                  !third_hit.output.observation_present &&
+                  !third_hit.output.accepted &&
+                  third_hit.output.control_source != ControlSource::kObservation,
+              "three fresh hits stop ambiguous tentative observation without control authorization");
+
+  FakeTracker unique_tracker;
+  unique_tracker.emit_recent_safe_roles = true;
+  FakeDetector unique_detector;
+  unique_detector.enabled = true;
+  DetectorBatch unique_batch;
+  unique_batch.candidates.push_back(
+      DetectorCandidate{BBox{265.0F, 239.0F, 54.0F, 54.0F}, 0.80F, 2});
+  unique_detector.blocking_batch = unique_batch;
+  LongTermRuntime unique_runtime(config, unique_tracker, unique_detector, {2, 9, {}});
+  std::fill(pixels.begin(), pixels.end(), 200);
+  unique_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    unique_runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+  }
+  unique_tracker.on_infer = [&] {
+    const auto& plan = unique_tracker.inferred_plans.back();
+    unique_tracker.observation_override = std::vector<TrackerObservation>{
+        TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                           ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                           TemplateKind::kRecent, unique_tracker.search_token + 1}};
+  };
+  std::fill(pixels.begin(), pixels.end(), 0);
+  const auto unique_suspect = unique_runtime.process_frame(image, 5, 200);
+  const auto unique_first = unique_runtime.process_frame(image, 6, 240);
+  const auto unique_second = unique_runtime.process_frame(image, 7, 280);
+  expect_true(unique_suspect.output.tracking_phase == TrackingPhase::kSuspected &&
+                  unique_first.output.tracking_phase == TrackingPhase::kSuspected &&
+                  unique_second.plan.visual_occlusion_search &&
+                  unique_second.output.tracking_phase == TrackingPhase::kSearching,
+              "two unambiguous fresh hits stop tentative observation");
+}
+
+void test_lower_band_visibility_veto() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.lower_band_visibility_veto = true;
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  FakeDetector detector;
+  detector.enabled = true;
+  DetectorBatch initial_batch;
+  initial_batch.candidates.push_back(
+      DetectorCandidate{BBox{40.0F, 30.0F, 20.0F, 20.0F}, 0.9F, 2});
+  detector.blocking_batch = initial_batch;
+  LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+  }
+  std::fill(pixels.begin(), pixels.end(), 0);
+  const auto blocked = runtime.process_frame(image, 5, 200, true);
+  expect_true(blocked.plan.visual_occlusion_search &&
+                  blocked.output.tracking_phase == TrackingPhase::kSearching &&
+                  !blocked.output.observation_present &&
+                  blocked.output.control_source != ControlSource::kObservation,
+              "a lower bridge band plus brightness loss rejects the current-frame observation: " +
+                  std::to_string(blocked.plan.visual_occlusion_search) + "/" +
+                  std::to_string(static_cast<int>(blocked.output.tracking_phase)) + "/" +
+                  std::to_string(blocked.output.observation_present) + "/" +
+                  std::to_string(static_cast<int>(blocked.output.control_source)) + "/" +
+                  std::to_string(blocked.target_class.target_class_id.value_or(-1)));
+}
+
 int main() {
   using namespace nanotrack;
   test_tentative_recent_does_not_commit();
@@ -1451,6 +1576,8 @@ int main() {
 
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  test_visual_suspect_gate();
+  test_lower_band_visibility_veto();
   test_target_class_initialization(image);
   test_target_class_session_config(image);
   test_frame_lifetime(image);
@@ -1675,6 +1802,27 @@ int main() {
                             display_frame.output.control_bbox) &&
                   display_frame.output.control_valid,
               "display detector results never enter recovery or alter tracking/control");
+
+  FakeTracker in_flight_tracker;
+  FakeDetector in_flight_detector;
+  in_flight_detector.enabled = true;
+  in_flight_tracker.on_infer = [&]() {
+    DetectorBatch batch;
+    batch.source_frame_id = in_flight_detector.last_request.frame_id;
+    batch.source_timestamp_ms = in_flight_detector.last_request.timestamp_ms;
+    batch.purpose = in_flight_detector.last_request.purpose;
+    in_flight_detector.next_batch = batch;
+  };
+  LongTermRuntime in_flight_runtime(display_config, in_flight_tracker,
+                                   in_flight_detector, TargetClassRuntimeConfig{2, 9, {}});
+  in_flight_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  const auto in_flight_frame = in_flight_runtime.process_frame(image, 1, 40);
+  expect_true(in_flight_frame.detector.request_submitted &&
+                  in_flight_frame.detector.batch_received &&
+                  in_flight_frame.detector.batch_frame_id == 1 &&
+                  in_flight_detector.poll_calls == 1 &&
+                  in_flight_frame.output.detector_status == DetectorBatchStatus::kNone,
+              "detector result completed during tracker inference is consumed in the same frame");
 
   ControllerConfig hold_config = config;
   hold_config.occlusion_reference_window = 3;

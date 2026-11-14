@@ -146,5 +146,58 @@ int main() {
   expect(table.conflicted() && !table.confirmed(*disputed),
          "two tracker-verified identities still block a focused recovery");
   }
+
+  {
+  ControllerConfig supported_config = config;
+  supported_config.recovery_conflict_requires_detector = true;
+  RecoveryCandidateTable supported(supported_config);
+  supported.expire(30, 1200, 5);
+  const auto candidate = supported.observe(Source::kDetector, first, 0.90F,
+                                            1200, 2, false);
+  for (std::uint64_t frame = 31; frame <= 32; ++frame) {
+    supported.expire(frame, 1200 + static_cast<std::int64_t>(frame - 30) * 40, 5);
+  }
+  expect(candidate && supported.observe(Source::kRecent, first, 0.90F,
+                                         std::nullopt, std::nullopt, false) == candidate,
+         "matching unverified tracker evidence associates the detector candidate");
+  supported.expire(33, 1320, 5);
+  expect(supported.find(*candidate) &&
+             !supported.find(*candidate)->from(Source::kDetector) &&
+             supported.find(*candidate)->detector_handoff_timestamp_ms,
+         "detector-only rivals expire while the matched candidate keeps a fresh handoff");
+  expect(supported.observe(Source::kRecent, first) == candidate &&
+             supported.find(*candidate)->has_detector_supported_hit(),
+         "first NanoTrack hit binds the still-fresh detector to this identity");
+  supported.expire(34, 1360, 5);
+  expect(!supported.find(*candidate)->detector_handoff_timestamp_ms &&
+             supported.find(*candidate)->has_detector_supported_hit(),
+         "detector expiry between two tracker hits preserves only the bound hit");
+  expect(supported.observe(Source::kRecent, moved) == candidate &&
+             supported.confirmed(*candidate) &&
+             supported.find(*candidate)->has_detector_supported_hit(),
+         "second NanoTrack hit confirms the supported identity after detector expiry");
+  supported.mark_identity_conflict();
+  expect(!supported.find(*candidate)->has_detector_supported_hit(),
+         "a later identity conflict clears the detector binding and hits");
+
+  supported.clear();
+  supported.expire(40, 1600, 6);
+  const auto stale = supported.observe(Source::kDetector, first, 0.90F,
+                                       1440, 2, false);
+  expect(!stale && supported.size() == 0,
+         "detector older than the time limit cannot seed a supported hit");
+  }
+  {
+  ControllerConfig three_hit_config = config;
+  three_hit_config.recovery_confirmation_required = 3;
+  RecoveryCandidateTable three_hit(three_hit_config);
+  for (std::uint64_t frame = 1; frame <= 3; ++frame) {
+    three_hit.expire(frame, static_cast<std::int64_t>(frame * 40), 7);
+    const auto candidate = three_hit.observe(Source::kRecent, first);
+    expect(candidate && three_hit.find(*candidate)->hits() == frame &&
+               three_hit.confirmed(*candidate) == (frame == 3),
+           "three-hit profile confirms only after three tracker observations");
+  }
+  }
   return failures == 0 ? 0 : 1;
 }

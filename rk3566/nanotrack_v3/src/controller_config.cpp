@@ -110,6 +110,7 @@ void set_value(ControllerConfig& config,
   else if (key == "display_unknown_padding_x") config.display_unknown_padding_x = parse_float(key, value);
   else if (key == "display_unknown_padding_y") config.display_unknown_padding_y = parse_float(key, value);
   else if (key == "display_detector_blend_alpha") config.display_detector_blend_alpha = parse_float(key, value);
+  else if (key == "display_center_smoothing_alpha") config.display_center_smoothing_alpha = parse_float(key, value);
   else if (key == "display_max_size_step_ratio") config.display_max_size_step_ratio = parse_float(key, value);
   else if (key == "display_detection_consistency_iou") config.display_detection_consistency_iou = parse_float(key, value);
   else if (key == "display_detection_confirmations") config.display_detection_confirmations = parse_int(key, value);
@@ -127,6 +128,12 @@ void set_value(ControllerConfig& config,
   else if (key == "suspicion_clear_ms") config.suspicion_clear_ms = parse_integer(key, value);
   else if (key == "response_psr_drop_ratio") config.response_psr_drop_ratio = parse_float(key, value);
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
+  else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
+  else if (key == "recent_visibility_center_residual") config.recent_visibility_center_residual = parse_float(key, value);
+  else if (key == "visual_suspect_bright_ratio") config.visual_suspect_bright_ratio = parse_float(key, value);
+  else if (key == "visual_suspect_min_confidence") config.visual_suspect_min_confidence = parse_float(key, value);
+  else if (key == "visual_suspect_max_center_px") config.visual_suspect_max_center_px = parse_float(key, value);
+  else if (key == "visual_suspect_consecutive_frames") config.visual_suspect_consecutive_frames = parse_int(key, value);
   else if (key == "occlusion_hold_frames") config.occlusion_hold_frames = parse_int(key, value);
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
@@ -169,6 +176,12 @@ void set_value(ControllerConfig& config,
   else if (key == "motion_beta") config.motion_beta = parse_float(key, value);
   else if (key == "motion_max_dt_ms") config.motion_max_dt_ms = parse_integer(key, value);
   else if (key == "motion_search_enabled") config.motion_search_enabled = parse_bool(key, value);
+  else if (key == "recovery_conflict_requires_detector") config.recovery_conflict_requires_detector = parse_bool(key, value);
+  else if (key == "recovery_confirmation_required") config.recovery_confirmation_required = parse_int(key, value);
+  else if (key == "recovery_requires_detector_support") config.recovery_requires_detector_support = parse_bool(key, value);
+  else if (key == "recovery_restore_initial_aspect") config.recovery_restore_initial_aspect = parse_bool(key, value);
+  else if (key == "recovery_min_top_luma_stddev") config.recovery_min_top_luma_stddev = parse_float(key, value);
+  else if (key == "lower_band_visibility_veto") config.lower_band_visibility_veto = parse_bool(key, value);
   else if (key == "search_reacquisition_min_age_ms") config.search_reacquisition_min_age_ms = parse_integer(key, value);
   else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
   else if (key == "motion_max_speed_diagonals_per_s") config.motion_max_speed_diagonals_per_s = parse_float(key, value);
@@ -211,6 +224,7 @@ ControllerConfig default_controller_config(const std::string& sensor) {
     config.accepted_scale_direction_confirm_frames = 3;
     config.accepted_scale_output_hysteresis_px = 0.75F;
     config.accepted_center_smoothing_alpha = 0.35F;
+    config.display_center_smoothing_alpha = 0.35F;
     config.accepted_center_max_correction_ratio = 0.25F;
     config.max_reacquisition_center_distance = 0.75F;
   }
@@ -305,13 +319,15 @@ void validate_controller_config(const ControllerConfig& config) {
       config.display_person_padding_x, config.display_person_padding_y,
       config.display_unknown_padding_x, config.display_unknown_padding_y,
       config.display_detector_blend_alpha, config.display_max_size_step_ratio,
-      config.display_detection_consistency_iou};
+      config.display_detection_consistency_iou,
+      config.display_center_smoothing_alpha};
   for (const float value : display_ratios) {
     if (!std::isfinite(value) || value < 0.0F || value > 1.0F) {
       throw std::invalid_argument("adaptive display ratios must be in [0,1]");
     }
   }
   if (config.display_detector_blend_alpha <= 0.0F ||
+      config.display_center_smoothing_alpha <= 0.0F ||
       config.display_max_size_step_ratio <= 0.0F ||
       config.display_detection_consistency_iou <= 0.0F ||
       config.display_detection_confirmations < 1 ||
@@ -352,6 +368,23 @@ void validate_controller_config(const ControllerConfig& config) {
   if (!in_unit_interval(config.response_apce_drop_ratio) ||
       config.response_apce_drop_ratio == 0.0F) {
     throw std::invalid_argument("response_apce_drop_ratio must be in (0,1]");
+  }
+  const bool visibility_disabled = config.recent_visibility_height_ratio == 0.0F &&
+                                   config.recent_visibility_center_residual == 0.0F;
+  const bool visibility_enabled = config.recent_visibility_height_ratio > 0.0F &&
+                                  config.recent_visibility_height_ratio <= 1.0F &&
+                                  config.recent_visibility_center_residual > 0.0F &&
+                                  config.recent_visibility_center_residual <= 1.0F;
+  if (!visibility_disabled && !visibility_enabled) {
+    throw std::invalid_argument("recent visibility gate must be disabled or have two unit-interval thresholds");
+  }
+  if (!in_unit_interval(config.visual_suspect_bright_ratio) ||
+      !in_unit_interval(config.visual_suspect_min_confidence) ||
+      config.visual_suspect_max_center_px <= 0.0F ||
+      config.visual_suspect_max_center_px > 500.0F ||
+      config.visual_suspect_consecutive_frames < 2 ||
+      config.visual_suspect_consecutive_frames > 10) {
+    throw std::invalid_argument("visual suspect gate limits are invalid");
   }
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
@@ -428,6 +461,15 @@ void validate_controller_config(const ControllerConfig& config) {
   }
   if (config.confirmation_window != 3 || config.confirmation_required != 2) {
     throw std::invalid_argument("recovery confirmation policy must be two of three");
+  }
+  if (config.recovery_confirmation_required < 2 ||
+      config.recovery_confirmation_required > 3) {
+    throw std::invalid_argument("recovery candidate confirmations must be two or three");
+  }
+  if (!std::isfinite(config.recovery_min_top_luma_stddev) ||
+      config.recovery_min_top_luma_stddev < 0.0F ||
+      config.recovery_min_top_luma_stddev > 128.0F) {
+    throw std::invalid_argument("recovery top luminance deviation must be in [0, 128]");
   }
   const float search_scales[] = {
       config.search_tracking, config.search_uncertain, config.search_local_initial,
@@ -530,6 +572,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.display_person_padding_x << '|' << config.display_person_padding_y << '|'
          << config.display_unknown_padding_x << '|' << config.display_unknown_padding_y << '|'
          << config.display_detector_blend_alpha << '|'
+         << config.display_center_smoothing_alpha << '|'
          << config.display_max_size_step_ratio << '|'
          << config.display_detection_consistency_iou << '|'
          << config.display_detection_confirmations << '|'
@@ -572,6 +615,12 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.motion_max_dt_ms << '|'
          << config.motion_search_enabled << '|'
          << config.search_reacquisition_requires_detector << '|'
+         << config.recovery_conflict_requires_detector << '|'
+         << config.recovery_confirmation_required << '|'
+         << config.recovery_requires_detector_support << '|'
+         << config.recovery_restore_initial_aspect << '|'
+         << config.recovery_min_top_luma_stddev << '|'
+         << config.lower_band_visibility_veto << '|'
          << config.search_reacquisition_min_age_ms << '|'
          << config.motion_search_confidence_ms << '|'
          << config.motion_max_speed_diagonals_per_s << '|'
@@ -583,7 +632,13 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.suspicion_enter_ms << '|'
          << config.suspicion_clear_ms << '|'
          << config.response_psr_drop_ratio << '|'
-         << config.response_apce_drop_ratio;
+         << config.response_apce_drop_ratio << '|'
+         << config.recent_visibility_height_ratio << '|'
+         << config.recent_visibility_center_residual << '|'
+         << config.visual_suspect_bright_ratio << '|'
+         << config.visual_suspect_min_confidence << '|'
+         << config.visual_suspect_max_center_px << '|'
+         << config.visual_suspect_consecutive_frames;
   return stream.str();
 }
 

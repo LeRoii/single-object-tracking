@@ -125,6 +125,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   frame_size_ = frame_size;
   target_class_ = target_class;
   current_bbox_ = initial_bbox;
+  initial_bbox_ = initial_bbox;
   display_bbox_ = initial_bbox;
   reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
@@ -145,6 +146,8 @@ void LongTermController::initialize(const BBox& initial_bbox,
   legacy_anchor_observations_ = false;
   recent_safe_observations_ = false;
   loss_start_ms_.reset();
+  recovery_conflict_seen_ = false;
+  conflict_detector_refresh_sent_ = false;
   last_detector_request_ms_.reset();
   last_detector_request_frame_.reset();
   last_detector_request_motion_bbox_.reset();
@@ -464,7 +467,13 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     plan.detector_probe_index = active.locked ? active.locked_probe_index
                                               : active.next_probe - 1;
   }
-  const bool interval_ready =
+  const auto* conflict_probe = recovery_candidates_.select_probe();
+  const bool conflict_refresh_ready =
+      config_.recovery_conflict_requires_detector && recovery_conflict_seen_ &&
+      !conflict_detector_refresh_sent_ && conflict_probe &&
+      conflict_probe->hits() > 0 &&
+      !conflict_probe->from(RecoveryCandidateSource::kDetector);
+  const bool interval_ready = conflict_refresh_ready ||
       !last_detector_request_ms_ ||
       timestamp_ms - *last_detector_request_ms_ >= config_.detector_interval_ms;
   if (detector_ready && recovery_uses_detector && interval_ready &&
@@ -480,6 +489,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     last_detector_request_ms_ = timestamp_ms;
     last_detector_request_frame_ = frame_id;
     last_detector_request_motion_bbox_ = motion_predicted;
+    if (conflict_refresh_ready) conflict_detector_refresh_sent_ = true;
   }
   active_plan_ = plan;
   frame_open_ = true;
@@ -769,6 +779,7 @@ void LongTermController::complete_frame(const SearchPlan& plan,
     last_output_mode_ = output.mode;
     last_output_phase_ = output.tracking_phase;
   }
+  if (output.recovery_conflict) recovery_conflict_seen_ = true;
   prediction_checkpoint_.reset();
   last_frame_id_ = plan.frame_id;
   last_timestamp_ms_ = plan.timestamp_ms;
@@ -917,6 +928,7 @@ bool LongTermController::search_control_live(std::int64_t timestamp_ms) const {
 LongTermController::RecentDisposition LongTermController::assess_recent(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     const ResponseBaselineEvaluation& response) {
+  if (plan.visual_occlusion_search) return RecentDisposition::kSearch;
   const auto& observation = recent.observation;
   const auto& metrics = observation.metrics;
   const auto bounded =
@@ -950,7 +962,15 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   const bool response_weak = metrics.psr < config_.reliable_psr ||
                              metrics.apce < config_.reliable_apce ||
                              metrics.peak_margin < config_.reliable_peak_margin;
+  const bool partial_visibility = target_class_.target_class_id == 2 &&
+      config_.recent_visibility_height_ratio > 0.0F &&
+      observation.decoded_bbox &&
+      observation.decoded_bbox->height <=
+          current_bbox_.height * config_.recent_visibility_height_ratio &&
+      recent.center_residual >= config_.recent_visibility_center_residual;
   const bool degraded = isolated_response_dip || drops >= 2 ||
+                        response_baseline_.sustained_dual_drop(metrics) ||
+                        partial_visibility ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
     response_clean_since_ms_.reset();
@@ -1068,6 +1088,9 @@ BBox LongTermController::constrain_tentative_control(
 void LongTermController::publish_tentative(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     ControllerOutput& output) {
+  // A provisional response breaks the run of trusted frames needed before
+  // extracting a new recent template, even when it never starts full search.
+  stable_frames_ = 0;
   motion_risk_streak_ = 0;
   motion_response_drop_since_ms_.reset();
   motion_recent_residuals_.clear();
@@ -1177,6 +1200,10 @@ LongTermController::confirm_recovery_candidate(
     output.recovery_reason = "SEARCH_MIN_AGE";
     return std::nullopt;
   }
+  if (plan.recovery_texture_veto) {
+    output.recovery_reason = "RECOVERY_TOP_TEXTURE_VETO";
+    return std::nullopt;
+  }
   const auto* planned_candidate = plan.recovery_probe
       ? recovery_candidates_.find(*plan.recovery_probe) : nullptr;
   if (plan.recovery_probe && !planned_candidate) {
@@ -1237,10 +1264,18 @@ LongTermController::confirm_recovery_candidate(
   const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
   if (probe_conflict) recovery_candidates_.mark_identity_conflict();
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
-  const bool recent_confirmed = !output.recovery_conflict && recent_key &&
-      recovery_candidates_.confirmed(*recent_key);
-  const bool safe_confirmed = !output.recovery_conflict && safe_key &&
-      recovery_candidates_.confirmed(*safe_key);
+  const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
+    if (output.recovery_conflict || !key || !recovery_candidates_.confirmed(*key))
+      return false;
+    const auto* candidate = recovery_candidates_.find(*key);
+    return candidate &&
+        (!config_.recovery_requires_detector_support ||
+         candidate->has_detector_supported_hit()) &&
+        (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
+         candidate->has_detector_supported_hit());
+  };
+  const bool recent_confirmed = can_confirm(recent_key);
+  const bool safe_confirmed = can_confirm(safe_key);
   const auto* candidate = recent_confirmed ? recovery_candidates_.find(*recent_key) :
       safe_confirmed ? recovery_candidates_.find(*safe_key) : recovery_candidates_.select_probe();
   if (candidate) {
@@ -1503,7 +1538,19 @@ void LongTermController::defer_recovery_acceptance(
     const SearchPlan& plan, const EvaluatedObservation& selected,
     ControllerOutput& output) {
   auto recovery = std::make_shared<RecoveryAcceptance>(config_);
-  const BBox bbox = selected.observation.bbox;
+  BBox bbox = selected.observation.bbox;
+  if (config_.recovery_restore_initial_aspect &&
+      target_class_.target_class_id &&
+      (*target_class_.target_class_id == 0 || *target_class_.target_class_id == 2)) {
+    const float initial_aspect = initial_bbox_.width / initial_bbox_.height;
+    if (bbox.width / bbox.height > 1.15F * initial_aspect) {
+      const float restored_height = std::min(
+          bbox.width / initial_aspect, bbox.height * 1.35F);
+      bbox = centered_box(bbox.x + 0.5F * bbox.width,
+                          bbox.y + 0.5F * bbox.height,
+                          BBox{0.0F, 0.0F, bbox.width, restored_height}, frame_size_);
+    }
+  }
   recovery->bbox = bbox;
   recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);
   recovery->motion.initialize(bbox, plan.timestamp_ms, frame_size_.width, frame_size_.height);
@@ -1541,6 +1588,8 @@ void LongTermController::apply_recovery_acceptance() noexcept {
   last_trusted_timestamp_ms_ = last_timestamp_ms_;
   motion_search_active_ = false;
   loss_start_ms_.reset();
+  recovery_conflict_seen_ = false;
+  conflict_detector_refresh_sent_ = false;
   hold_used_for_loss_ = false;
   hold_remaining_frames_ = 0;
   occlusion_coast_age_frames_ = 0;
@@ -1758,6 +1807,8 @@ void LongTermController::accept_observation(
   last_trusted_timestamp_ms_ = plan.timestamp_ms;
   display_bbox_ = output.display_bbox;
   loss_start_ms_.reset();
+  recovery_conflict_seen_ = false;
+  conflict_detector_refresh_sent_ = false;
   confirmations_.clear();
   active_detector_candidate_.reset();
   detector_candidates_.clear();
@@ -1934,11 +1985,24 @@ LongTermController::ingest_detector_batch(
     // A near detection with a clear spatial lead gets a short NanoTrack
     // verification window. The closest other detections remain alternatives;
     // distant overflow cannot veto that verification without tracker evidence.
+    const bool separated_by_motion_gate =
+        positioned.size() > 1 &&
+        positioned.front().center_ratio <=
+            0.6F * config_.detector_candidate_max_center_ratio &&
+        positioned[1].center_ratio >
+            1.25F * config_.detector_candidate_max_center_ratio;
+    const bool very_near_with_separated_rival =
+        positioned.size() > 1 &&
+        positioned.front().center_ratio <=
+            0.35F * config_.detector_candidate_max_center_ratio &&
+        positioned[1].center_ratio >
+            config_.detector_candidate_max_center_ratio;
     const bool dominant_near_detector = plan.motion_prediction_confident &&
         positioned.size() > 1 &&
         positioned.front().center_ratio <= config_.detector_candidate_max_center_ratio &&
-        positioned[1].center_ratio - positioned[0].center_ratio >
-            config_.detector_candidate_max_center_ratio;
+        (positioned[1].center_ratio - positioned[0].center_ratio >
+             config_.detector_candidate_max_center_ratio ||
+         separated_by_motion_gate || very_near_with_separated_rival);
     const std::size_t considered = dominant_near_detector
         ? std::min(positioned.size(), config_.detector_max_candidates)
         : positioned.size();
@@ -2347,6 +2411,8 @@ ControllerOutput LongTermController::finish_frame(
     hold_remaining_frames_ = budget - 1;
     hold_used_for_loss_ = true;
     loss_start_ms_ = plan.timestamp_ms;
+    recovery_conflict_seen_ = false;
+    conflict_detector_refresh_sent_ = false;
     ++detector_eligibility_generation_;
     confirmations_.clear();
     coast_probe_candidate_.reset();
@@ -2524,6 +2590,8 @@ ControllerOutput LongTermController::finish_frame(
     ++consecutive_unreliable_frames_;
     const bool starting_search = !loss_start_ms_;
     if (starting_search) loss_start_ms_ = plan.timestamp_ms;
+    if (starting_search) recovery_conflict_seen_ = false;
+    if (starting_search) conflict_detector_refresh_sent_ = false;
     mode_ = mode_for_timestamp(plan.timestamp_ms);
     output.mode = mode_;
     if (starting_search && uses_unified_recovery()) {
@@ -2540,8 +2608,10 @@ ControllerOutput LongTermController::finish_frame(
           ? current_motion.velocity_x * search_motion_reference_->velocity_x +
                 current_motion.velocity_y * search_motion_reference_->velocity_y
           : 0.0F;
-      if (search_motion_reference_held_ && search_motion_reference_ &&
-          trend_dot < 0.0F) {
+      // A noisy final acceleration can reverse the open-loop velocity before
+      // search begins. The last accepted trend is safer than extrapolating
+      // that reversal, even if no separate motion freeze was triggered.
+      if (search_motion_reference_ && trend_dot < 0.0F) {
         motion_.begin_search(plan.timestamp_ms, *search_motion_reference_);
       } else {
         motion_.begin_search(plan.timestamp_ms);

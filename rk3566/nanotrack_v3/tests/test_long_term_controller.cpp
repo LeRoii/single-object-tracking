@@ -2069,6 +2069,18 @@ void test_atomic_search_reacquisition_and_template_probation() {
                   std::to_string(static_cast<int>(plan.template_run_mode)));
   threshold_split.abort_frame();
 
+  ResolvedControllerFixture low_texture(config);
+  low_texture.initialize(initial, 0, 0, {240, 160});
+  reject_frame(low_texture, 1, 40);
+  plan = low_texture.begin_frame(2, 80, false);
+  plan.recovery_texture_veto = true;
+  output = low_texture.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, initial, 2)},
+      std::nullopt);
+  expect_true(!output.accepted && !output.reacquired &&
+                  std::string(output.recovery_reason) == "RECOVERY_TOP_TEXTURE_VETO",
+              "a low-texture recovery probe cannot authorize a tracker observation");
+
   ResolvedControllerFixture off_probe(config);
   off_probe.initialize(initial, 0, 0, {240, 160});
   reject_frame(off_probe, 1, 40);
@@ -2118,6 +2130,8 @@ void test_atomic_search_reacquisition_and_template_probation() {
   expect_true(!output.accepted && output.control_valid && output.recovery_conflict &&
                   output.template_action == TemplateAction::kNone,
               "reliable recent/safe disagreement keeps both hypotheses out of control");
+  expect_true(disagreement.recovery_conflict_seen_,
+              "identity conflict persists as evidence for this loss episode");
 
   ResolvedControllerFixture expired(config);
   expired.initialize(initial, 0, 0, {240, 160});
@@ -2136,6 +2150,88 @@ void test_atomic_search_reacquisition_and_template_probation() {
       std::nullopt);
   expect_true(!output.accepted && !output.reacquired,
               "second hit outside confirmation window cannot commit");
+}
+
+void test_conflicted_recovery_needs_matching_detector_evidence() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.max_center_distance = 10.0F;
+  config.recovery_conflict_requires_detector = true;
+  const BBox target{40, 30, 20, 20};
+
+  ResolvedControllerFixture conflicted(config);
+  conflicted.initialize(target, 0, 0, {240, 160});
+  reject_frame(conflicted, 1, 40);
+  conflicted.recovery_conflict_seen_ = true;
+  ControllerOutput output;
+  for (std::uint64_t frame : {2U, 3U}) {
+    const auto plan = conflicted.begin_frame(frame, frame * 40, false);
+    output = conflicted.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, target, frame)},
+        std::nullopt);
+  }
+  expect_true(!output.accepted && output.recovery_confirmation_hits >= 2 &&
+                  !output.reacquired,
+              "two tracker hits after identity conflict cannot alone authorize recovery");
+  auto plan = conflicted.begin_frame(4, 160, false);
+  const auto detector_key = conflicted.recovery_candidates_.observe(
+      RecoveryCandidateSource::kDetector, target, 0.8F,
+      plan.timestamp_ms, 2, false, 0.0F);
+  expect_true(detector_key.has_value(),
+              "matching detector evidence joins the live tracker hypothesis");
+  output = conflicted.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, target, 4)},
+      std::nullopt);
+  expect_true(output.accepted && output.reacquired &&
+                  output.selected_template == TemplateKind::kRecent,
+              "same-candidate detector evidence allows NanoTrack-verified recovery");
+
+  ResolvedControllerFixture clean(config);
+  clean.initialize(target, 0, 0, {240, 160});
+  reject_frame(clean, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    plan = clean.begin_frame(frame, frame * 40, false);
+    output = clean.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, target, frame)},
+        std::nullopt);
+  }
+  expect_true(output.accepted && output.reacquired,
+              "conflict-free tracker recovery retains its two-hit path");
+
+  ResolvedControllerFixture refresh(config);
+  refresh.initialize(target, 0, 0, {240, 160}, make_fixed_target_class(2, true));
+  reject_frame(refresh, 1, 40);
+  plan = refresh.begin_frame(2, 80, false);
+  refresh.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, target, 2)},
+      std::nullopt);
+  refresh.recovery_conflict_seen_ = true;
+  refresh.last_detector_request_ms_ = 80;
+  plan = refresh.begin_frame(3, 120, true);
+  expect_true(plan.request_detector && refresh.conflict_detector_refresh_sent_,
+              "first post-conflict tracker hit expedites one detector request");
+  refresh.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, target, 3)},
+      std::nullopt);
+  plan = refresh.begin_frame(4, 160, true);
+  expect_true(!plan.request_detector,
+              "the conflict refresh cannot bypass the interval twice");
+  refresh.abort_frame();
+
+  ResolvedControllerFixture no_conflict_refresh(config);
+  no_conflict_refresh.initialize(target, 0, 0, {240, 160},
+                                 make_fixed_target_class(2, true));
+  reject_frame(no_conflict_refresh, 1, 40);
+  plan = no_conflict_refresh.begin_frame(2, 80, false);
+  no_conflict_refresh.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, target, 2)},
+      std::nullopt);
+  no_conflict_refresh.last_detector_request_ms_ = 80;
+  plan = no_conflict_refresh.begin_frame(3, 120, true);
+  expect_true(!plan.request_detector,
+              "conflict-free tracker hit cannot bypass detector cadence");
+  no_conflict_refresh.abort_frame();
 }
 
 void test_recovery_probation_cleanup() {
@@ -2266,9 +2362,9 @@ void test_recent_safe_tentative_tracking() {
       expect_true(saved.bbox.x == trusted.bbox.x &&
                       saved.velocity_x == trusted.velocity_x &&
                       saved.acceleration_x == trusted.acceleration_x &&
-                      controller->stable_frames_ == 3 &&
+                      controller->stable_frames_ == 0 &&
                       controller->response_baseline_.evaluate(healthy).reference->psr == 20,
-                  "tentative frames leave motion, response history and stable count untouched");
+                  "tentative frames preserve trusted motion and response history but reset template stability");
     }
   }
 
@@ -2278,6 +2374,8 @@ void test_recent_safe_tentative_tracking() {
                     out.mode == (id == 9 ? TrackingMode::kTracking : TrackingMode::kSuspected),
                 "clean recent must meet the clear gate even when safe is weak");
   }
+  expect_true(clears.stable_frames_ == 1,
+              "stable template history restarts after tentative recovery clears");
   expect_true(clears.begin_frame(10, 400, false).template_run_mode ==
                   TemplateRunMode::kRecentOnly,
               "clear returns to the single recent head");
@@ -2366,6 +2464,76 @@ void test_recent_safe_single_metric_dip_is_tentative() {
               "one healthy frame clears an isolated pre-entry response dip");
 }
 
+void test_sustained_dual_response_loss_stops_trusted_observations() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.occlusion_reference_window = 8;
+  config.stable_frames_for_update = 99;
+  config.reliable_psr = 4.2F;
+  config.reliable_apce = 8.0F;
+  config.reliable_peak_margin = 0.04F;
+  config.weak_psr = 4.0F;
+  config.weak_peak_margin = 0.02F;
+  ResolvedControllerFixture controller(config);
+  const BBox bbox{70, 50, 30, 30};
+  controller.initialize(bbox, 0, 0, {320, 240});
+  const auto track = [&](std::uint64_t id, float psr, float apce) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    recent.metrics = ResponseMetrics{0.98F, 0.96F, psr, apce, 0.25F};
+    return controller.finish_frame(plan, {recent}, std::nullopt);
+  };
+  for (std::uint64_t id = 1; id <= 24; ++id) {
+    expect_true(track(id, 8.0F, 20.0F).accepted,
+                "clean observations establish both response histories");
+  }
+  for (std::uint64_t id = 25; id <= 30; ++id) {
+    expect_true(track(id, 7.0F, 17.0F).accepted,
+                "modest decline remains trusted while the short reference adapts");
+  }
+  const auto one_metric = track(31, 5.5F, 19.0F);
+  expect_true(one_metric.accepted &&
+                  one_metric.tracking_phase == TrackingPhase::kTracking,
+              "one long-history metric decline cannot suppress a visible target");
+  const auto both = track(32, 5.5F, 13.0F);
+  expect_true(!both.accepted && both.observation_present &&
+                  both.tracking_phase == TrackingPhase::kSuspected &&
+                  !both.trusted_for_state_update,
+              "sustained PSR and APCE loss blocks a trusted update before short history catches it");
+}
+
+void test_car_partial_visibility_needs_shrink_and_motion() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.recent_visibility_height_ratio = 0.98F;
+  config.recent_visibility_center_residual = 0.04F;
+  config.stable_frames_for_update = 99;
+  const BBox initial{70, 50, 30, 30};
+  const auto run = [&](int class_id, const BBox& box, bool decoded) {
+    ResolvedControllerFixture controller(config);
+    controller.initialize(initial, 0, 0, {320, 240},
+                          make_fixed_target_class(class_id, false));
+    const auto plan = controller.begin_frame(1, 40, false);
+    auto observation = reliable_observation(plan, TemplateKind::kRecent, box);
+    if (decoded) observation.decoded_bbox = box;
+    return controller.finish_frame(plan, {observation}, std::nullopt);
+  };
+  const BBox shrink_only{70, 50, 30, 29};
+  const BBox motion_only{72, 50, 30, 30};
+  const BBox combined{72, 50, 30, 29};
+  expect_true(run(2, shrink_only, true).accepted &&
+                  run(2, motion_only, true).accepted,
+              "height noise or center motion alone cannot suppress a car observation");
+  const auto partial = run(2, combined, true);
+  expect_true(!partial.accepted && partial.observation_present &&
+                  partial.tracking_phase == TrackingPhase::kSuspected &&
+                  !partial.trusted_for_state_update,
+              "car raw height shrink with center deviation is provisional");
+  expect_true(run(0, combined, true).accepted &&
+                  run(2, combined, false).accepted,
+              "other classes and observations without decoded geometry retain their contract");
+}
+
 void test_search_uses_last_clean_response_motion_trend() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2420,6 +2588,28 @@ void test_search_uses_last_clean_response_motion_trend() {
                   searching.motion_acceleration_x == 0.0F &&
                   searching.motion_acceleration_y == 0.0F,
               "search starts from the clean trend without extrapolating acceleration");
+}
+
+void test_search_rejects_unverified_velocity_reversal() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  ResolvedControllerFixture controller(config);
+  controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300});
+  auto plan = controller.begin_frame(1, 40, false);
+  controller.search_motion_reference_->velocity_x = 0.0F;
+  controller.search_motion_reference_->velocity_y = 10.0F;
+  controller.search_motion_reference_held_ = false;
+  controller.motion_.velocity_x_ = 0.0F;
+  controller.motion_.velocity_y_ = -10.0F;
+  auto lost = rejected_observation(plan, TemplateKind::kRecent,
+                                   plan.predicted_bbox);
+  lost.metrics.raw_score = 0.10F;
+  const auto searching = controller.finish_frame(plan, {lost}, std::nullopt);
+  expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
+                  searching.motion_velocity_y == 10.0F &&
+                  searching.motion_acceleration_y == 0.0F,
+              "search restores last accepted direction after open-loop reversal");
 }
 
 void test_motion_input_freeze_and_reanchor() {
@@ -2560,7 +2750,7 @@ void test_recent_safe_transient_and_probation() {
     auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
     recent.metrics = metrics;
     std::vector<TrackerObservation> observations{recent};
-    if (id == 6 || id == 7 || id == 11 || id == 12) {
+    if (id == 9 || id == 10 || id == 14 || id == 15) {
       expect_true(plan.template_run_mode == TemplateRunMode::kStagedAndRecent,
                   "probation requests only staged and recent heads");
       auto staged = recent;
@@ -2577,31 +2767,36 @@ void test_recent_safe_transient_and_probation() {
               "an isolated degraded sample freezes learning before the enter duration");
   const auto clears = track(5, healthy);
   expect_true(clears.accepted && clears.mode == TrackingMode::kTracking &&
-                  clears.template_action == TemplateAction::kStageRecent,
-              "a single clean observation clears the pending entry and can stage");
-  expect_true(track(6, stronger).template_action == TemplateAction::kNone &&
-                  track(7, stronger).template_action == TemplateAction::kCommitRecent &&
+                  clears.template_action == TemplateAction::kNone &&
+                  controller.stable_frames_ == 1,
+              "one clean observation clears the pending entry but cannot stage");
+  expect_true(track(6, healthy).template_action == TemplateAction::kNone &&
+                  track(7, healthy).template_action == TemplateAction::kNone &&
+                  track(8, healthy).template_action == TemplateAction::kStageRecent,
+              "recent staging requires four consecutive trusted frames after a tentative sample");
+  expect_true(track(9, stronger).template_action == TemplateAction::kNone &&
+                  track(10, stronger).template_action == TemplateAction::kCommitRecent &&
                   controller.response_baseline_.evaluate(healthy).reference->psr == 20,
               "staged probation leaves the trusted response baseline untouched");
 
   auto multi_metric_collapse = healthy;
   multi_metric_collapse.raw_score = 0.6F;
   multi_metric_collapse.peak_margin = 0.01F;
-  const auto searching = track(8, multi_metric_collapse);
+  const auto searching = track(11, multi_metric_collapse);
   expect_true(searching.tracking_phase == TrackingPhase::kSearching &&
                   searching.mode != TrackingMode::kSuspected,
               "multiple absolute response failures enter search without softening");
-  expect_true(!track(9, healthy).accepted && track(10, healthy).accepted &&
+  expect_true(!track(12, healthy).accepted && track(13, healthy).accepted &&
                   !controller.response_baseline_.evaluate(healthy).reference,
               "recovery from short search also requires a fresh response baseline");
-  expect_true(track(11, healthy).template_action == TemplateAction::kNone &&
-                  track(12, healthy).template_action == TemplateAction::kCommitRecent,
+  expect_true(track(14, healthy).template_action == TemplateAction::kNone &&
+                  track(15, healthy).template_action == TemplateAction::kCommitRecent,
               "recovery probation uses staged/recent and commits once after two clean frames");
-  track(13, healthy);
-  track(14, healthy);
+  track(16, healthy);
+  track(17, healthy);
   expect_true(!controller.response_baseline_.evaluate(healthy).reference,
               "recovery and probation hits cannot count as ordinary baseline samples");
-  track(15, healthy);
+  track(18, healthy);
   expect_true(controller.response_baseline_.evaluate(healthy).reference.has_value(),
               "response gating resumes after a fresh ordinary minimum");
 }
@@ -2746,7 +2941,10 @@ void test_recent_safe_rolling_scale() {
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
+  test_sustained_dual_response_loss_stops_trusted_observations();
+  test_car_partial_visibility_needs_shrink_and_motion();
   test_search_uses_last_clean_response_motion_trend();
+  test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();
@@ -2772,6 +2970,7 @@ int main() {
   test_unified_recovery_candidate_cleanup();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
+  test_conflicted_recovery_needs_matching_detector_evidence();
   test_recovery_probation_cleanup();
 
   const auto expect_enum_name = [](auto value, const char* expected) {

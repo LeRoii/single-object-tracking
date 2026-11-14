@@ -2,8 +2,10 @@
 #include "scoped_cleanup.hpp"
 #include "target_class.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <exception>
 #include <limits>
 #include <optional>
@@ -11,6 +13,109 @@
 #include <utility>
 
 namespace nanotrack {
+
+namespace {
+
+float top_quarter_luma_stddev(const ImageView& image, const BBox& box) {
+  const int left = std::clamp(static_cast<int>(std::lround(box.x)), 0, image.width - 1);
+  const int top = std::clamp(static_cast<int>(std::lround(box.y)), 0, image.height - 1);
+  const int right = std::clamp(left + std::max(1, static_cast<int>(std::lround(box.width))),
+                               left + 1, image.width);
+  const int quarter = std::max(1, static_cast<int>(std::lround(box.height * 0.25F)));
+  const int bottom = std::clamp(top + quarter, top + 1, image.height);
+  double sum = 0.0;
+  double squares = 0.0;
+  for (int y = top; y < bottom; ++y) {
+    const auto* row = image.data + static_cast<std::size_t>(y) * image.stride_bytes;
+    for (int x = left; x < right; ++x) {
+      const auto* pixel = row + static_cast<std::size_t>(x) * 3;
+      const double gray = 0.114 * pixel[0] + 0.587 * pixel[1] + 0.299 * pixel[2];
+      sum += gray;
+      squares += gray * gray;
+    }
+  }
+  const double count = static_cast<double>((right - left) * (bottom - top));
+  const double mean = sum / count;
+  return static_cast<float>(std::sqrt(std::max(0.0, squares / count - mean * mean)));
+}
+
+float bright_fraction(const ImageView& image, const BBox& box) {
+  const int left = std::clamp(static_cast<int>(std::lround(box.x)), 0, image.width - 1);
+  const int top = std::clamp(static_cast<int>(std::lround(box.y)), 0, image.height - 1);
+  const int right = std::clamp(left + std::max(1, static_cast<int>(std::lround(box.width))),
+                               left + 1, image.width);
+  const int bottom = std::clamp(top + std::max(1, static_cast<int>(std::lround(box.height))),
+                                top + 1, image.height);
+  std::size_t bright = 0;
+  for (int y = top; y < bottom; ++y) {
+    const auto* row = image.data + static_cast<std::size_t>(y) * image.stride_bytes;
+    for (int x = left; x < right; ++x) {
+      const auto* pixel = row + static_cast<std::size_t>(x) * 3;
+      const int gray = static_cast<int>(std::lround(
+          0.114 * pixel[0] + 0.587 * pixel[1] + 0.299 * pixel[2]));
+      bright += gray > 150;
+    }
+  }
+  return static_cast<float>(bright) /
+      static_cast<float>((right - left) * (bottom - top));
+}
+
+float median_brightness(const std::deque<float>& history) {
+  std::vector<float> values(history.begin(), history.end());
+  std::sort(values.begin(), values.end());
+  const std::size_t middle = values.size() / 2;
+  return values.size() % 2 ? values[middle] :
+      0.5F * (values[middle - 1] + values[middle]);
+}
+
+struct VisualCrop {
+  std::vector<std::uint8_t> pixels;
+  int left = 0;
+  int top = 0;
+  int side = 0;
+};
+
+VisualCrop make_visual_crop(const ImageView& image, const BBox& predicted) {
+  VisualCrop crop;
+  crop.side = std::min({image.width, image.height,
+      std::max(120, static_cast<int>(std::lround(
+          3.0F * std::max(predicted.width, predicted.height))))});
+  crop.left = std::clamp(static_cast<int>(std::lround(
+      predicted.x + predicted.width * 0.5F - crop.side * 0.5F)),
+      0, image.width - crop.side);
+  crop.top = std::clamp(static_cast<int>(std::lround(
+      predicted.y + predicted.height * 0.5F - crop.side * 0.5F)),
+      0, image.height - crop.side);
+  crop.pixels.assign(640U * 640U * 3U, 114U);
+  // Match the existing ROI replay: a 3x target crop is resized into the
+  // center 320x320 region, leaving 160px of gray padding on each side.
+  for (int y = 0; y < 320; ++y) {
+    const float source_y = (static_cast<float>(y) + 0.5F) * crop.side / 320.0F - 0.5F;
+    const int y0 = std::clamp(static_cast<int>(std::floor(source_y)), 0, crop.side - 1);
+    const int y1 = std::min(y0 + 1, crop.side - 1);
+    const float fy = std::clamp(source_y - std::floor(source_y), 0.0F, 1.0F);
+    for (int x = 0; x < 320; ++x) {
+      const float source_x = (static_cast<float>(x) + 0.5F) * crop.side / 320.0F - 0.5F;
+      const int x0 = std::clamp(static_cast<int>(std::floor(source_x)), 0, crop.side - 1);
+      const int x1 = std::min(x0 + 1, crop.side - 1);
+      const float fx = std::clamp(source_x - std::floor(source_x), 0.0F, 1.0F);
+      auto* target = crop.pixels.data() + ((y + 160) * 640 + x + 160) * 3;
+      for (int channel = 0; channel < 3; ++channel) {
+        const auto sample = [&](int sx, int sy) {
+          return image.data[static_cast<std::size_t>(crop.top + sy) * image.stride_bytes +
+                            static_cast<std::size_t>(crop.left + sx) * 3 + channel];
+        };
+        const float upper = sample(x0, y0) * (1.0F - fx) + sample(x1, y0) * fx;
+        const float lower = sample(x0, y1) * (1.0F - fx) + sample(x1, y1) * fx;
+        target[channel] = static_cast<std::uint8_t>(std::lround(
+            upper * (1.0F - fy) + lower * fy));
+      }
+    }
+  }
+  return crop;
+}
+
+}  // namespace
 
 const char* to_string(TemplateSlotRevocationReason reason) {
   switch (reason) {
@@ -30,7 +135,13 @@ LongTermRuntime::LongTermRuntime(const ControllerConfig& config,
       controller_(config),
       adaptive_display_(config),
       target_class_config_(target_class_config),
-      detector_configured_(detector.available()) {}
+      detector_configured_(detector.available()),
+      visual_suspect_bright_ratio_(config.visual_suspect_bright_ratio),
+      recovery_min_top_luma_stddev_(config.recovery_min_top_luma_stddev),
+      lower_band_visibility_veto_(config.lower_band_visibility_veto),
+      visual_suspect_min_confidence_(config.visual_suspect_min_confidence),
+      visual_suspect_max_center_px_(config.visual_suspect_max_center_px),
+      visual_suspect_consecutive_frames_(config.visual_suspect_consecutive_frames) {}
 
 void LongTermRuntime::validate_image(const ImageView& image) {
   if (image.data == nullptr || image.width <= 0 || image.height <= 0 ||
@@ -99,6 +210,13 @@ TargetClassInitializationResult LongTermRuntime::initialize(
                                FrameSize{image.width, image.height});
   result.display_bbox = adaptive_display_.current();
   tracker_.initialize(image, initial_bbox);
+  trusted_brightness_.clear();
+  if (visual_suspect_bright_ratio_ > 0.0F || lower_band_visibility_veto_)
+    trusted_brightness_.push_back(bright_fraction(image, initial_bbox));
+  last_visual_hit_frame_.reset();
+  visual_hit_streak_ = 0;
+  visual_streak_ambiguous_ = false;
+  previous_output_phase_ = TrackingPhase::kTracking;
   last_initialization_ = result;
   initialized_ = true;
   return result;
@@ -106,7 +224,8 @@ TargetClassInitializationResult LongTermRuntime::initialize(
 
 RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                                                   std::uint64_t frame_id,
-                                                  std::int64_t timestamp_ms) {
+                                                  std::int64_t timestamp_ms,
+                                                  bool lower_band_crossing) {
   if (!initialized_) throw std::logic_error("long-term runtime is not initialized");
   if (frame_open_) throw std::logic_error("previous runtime frame is unfinished");
   if (revocation_waiting_for_ack_) throw std::logic_error("template slot revocation has not been logged");
@@ -164,7 +283,9 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     } catch (const std::exception& error) {
       result.detector.error = error.what();
     }
-  } else if (adaptive_display_.should_request(result.plan.tracking_phase,
+  } else if (!(visual_suspect_bright_ratio_ > 0.0F &&
+               previous_output_phase_ == TrackingPhase::kSuspected) &&
+             adaptive_display_.should_request(result.plan.tracking_phase,
                                               timestamp_ms,
                                               result.detector.ready)) {
     display_request = adaptive_display_.make_request(frame_id, timestamp_ms);
@@ -179,8 +300,119 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     }
   }
 
+  if (result.plan.run_tracker) {
+    const auto tracker_start = std::chrono::steady_clock::now();
+    result.observations = tracker_.infer(image, result.plan, result.template_heads);
+    result.tracker_ms = std::chrono::duration<float, std::milli>(
+                            std::chrono::steady_clock::now() - tracker_start)
+                            .count();
+  } else {
+    result.tracker_skipped = true;
+  }
+  if (lower_band_visibility_veto_ && lower_band_crossing &&
+      result.target_class.target_class_id == 2 && trusted_brightness_.size() >= 3) {
+    const auto recent = std::find_if(result.observations.begin(),
+                                     result.observations.end(),
+                                     [](const TrackerObservation& observation) {
+                                       return observation.template_kind == TemplateKind::kRecent;
+                                     });
+    if (recent != result.observations.end() &&
+        bright_fraction(image, recent->bbox) <
+            0.9F * median_brightness(trusted_brightness_)) {
+      result.plan.visual_occlusion_search = true;
+    }
+  }
+  if (recovery_min_top_luma_stddev_ > 0.0F &&
+      result.plan.tracking_phase == TrackingPhase::kSearching &&
+      result.plan.recovery_probe && result.target_class.target_class_id == 2) {
+    const auto recent = std::find_if(result.observations.begin(),
+                                     result.observations.end(),
+                                     [](const TrackerObservation& observation) {
+                                       return observation.template_kind == TemplateKind::kRecent;
+                                     });
+    if (recent != result.observations.end() &&
+        top_quarter_luma_stddev(image, recent->bbox) <
+            recovery_min_top_luma_stddev_) {
+      result.plan.recovery_texture_veto = true;
+    }
+  }
+  bool visual_hit = false;
+  bool visual_ambiguous = false;
+  bool visual_blocking_used = false;
+  if (visual_suspect_bright_ratio_ > 0.0F &&
+      previous_output_phase_ == TrackingPhase::kSuspected &&
+      result.target_class.target_class_id == 2 &&
+      detector_.available() && trusted_brightness_.size() >= 3) {
+    const auto recent = std::find_if(result.observations.begin(),
+                                     result.observations.end(),
+                                     [](const TrackerObservation& observation) {
+                                       return observation.template_kind == TemplateKind::kRecent;
+                                     });
+    if (recent != result.observations.end() &&
+        bright_fraction(image, recent->bbox) <
+            visual_suspect_bright_ratio_ * median_brightness(trusted_brightness_)) {
+      const auto crop = make_visual_crop(image, result.plan.motion_predicted_bbox);
+      const ImageView canvas{crop.pixels.data(), 640, 640, 640U * 3U, 3};
+      const DetectorRequest request{frame_id, timestamp_ms,
+          BBox{0.0F, 0.0F, 640.0F, 640.0F}, 100, 0,
+          DetectorRequestPurpose::kVisualOcclusion};
+      visual_blocking_used = true;
+      result.detector.request_frame_id = frame_id;
+      result.detector.request_purpose = request.purpose;
+      try {
+        const auto detected = detector_.detect_blocking(canvas, request);
+        if (detected) {
+          result.detector.request_submitted = true;
+          result.detector.batch_received = true;
+          result.detector.batch_frame_id = detected->batch.source_frame_id;
+          result.detector.batch_purpose = detected->batch.purpose;
+          result.detector.batch_age_ms = timestamp_ms - detected->batch.source_timestamp_ms;
+          result.detector.raw_candidate_count = detected->batch.raw_candidate_count;
+          result.detector.filtered_candidate_count = detected->batch.filtered_candidate_count;
+          result.detector.timing = detected->batch.timing;
+          float nearest_distance = std::numeric_limits<float>::infinity();
+          float nearest_confidence = 0.0F;
+          for (const auto& candidate : detected->batch.candidates) {
+            if (candidate.class_id != 2) continue;
+            const float factor = static_cast<float>(crop.side) / 320.0F;
+            const float center_x = crop.left +
+                (candidate.bbox.x + 0.5F * candidate.bbox.width - 160.0F) * factor;
+            const float center_y = crop.top +
+                (candidate.bbox.y + 0.5F * candidate.bbox.height - 160.0F) * factor;
+            const auto& predicted = result.plan.motion_predicted_bbox;
+            const float distance = std::hypot(
+                center_x - predicted.x - 0.5F * predicted.width,
+                center_y - predicted.y - 0.5F * predicted.height);
+            if (distance < nearest_distance) {
+              nearest_distance = distance;
+              nearest_confidence = candidate.confidence;
+            }
+          }
+          visual_hit = detected->batch.source_frame_id == frame_id &&
+              detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion &&
+              nearest_distance <= visual_suspect_max_center_px_ &&
+              nearest_confidence >= visual_suspect_min_confidence_;
+          visual_ambiguous = detected->batch.candidates.size() > 1;
+        }
+      } catch (const std::exception& error) {
+        result.detector.error = error.what();
+      }
+    }
+  }
+  if (visual_hit) {
+    const bool consecutive = last_visual_hit_frame_ &&
+        *last_visual_hit_frame_ + 1 == frame_id;
+    const int next_streak = consecutive ? visual_hit_streak_ + 1 : 1;
+    const bool ambiguous_streak = visual_ambiguous ||
+        (consecutive && visual_streak_ambiguous_);
+    result.plan.visual_occlusion_search =
+        next_streak >= visual_suspect_consecutive_frames_ +
+            (ambiguous_streak ? 1 : 0);
+  }
+  // Poll after inference so a detector result completed while NanoTrack ran
+  // can still participate in this frame's recovery decision without waiting.
   std::optional<DetectorBatch> detector_batch;
-  if (detector_.available() && result.detector.error.empty()) {
+  if (!visual_blocking_used && detector_.available() && result.detector.error.empty()) {
     try {
       detector_batch = detector_.poll();
     } catch (const std::exception& error) {
@@ -209,22 +441,16 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       recovery_batch = detector_batch;
     }
   }
-
-  if (result.plan.run_tracker) {
-    const auto tracker_start = std::chrono::steady_clock::now();
-    result.observations = tracker_.infer(image, result.plan, result.template_heads);
-    result.tracker_ms = std::chrono::duration<float, std::milli>(
-                            std::chrono::steady_clock::now() - tracker_start)
-                            .count();
-  } else {
-    result.tracker_skipped = true;
-  }
   // The finish call updates bounded tracking state in place. Keep its input
   // state until every fallible tracker callback has completed. The controller
   // already holds the pre-prediction checkpoint for the open frame.
   application_checkpoint.emplace(controller_);
   result.output =
       controller_.finish_frame(result.plan, result.observations, recovery_batch);
+  if (result.plan.visual_occlusion_search &&
+      result.output.tracking_phase == TrackingPhase::kSearching) {
+    result.output.state_change_reason = "VISUAL_OCCLUSION_SEARCH";
+  }
   const auto& transition = result.output.template_transition;
   const bool recovery_prepare = transition && transition->recovery &&
       transition->action == TemplateAction::kStageRecent;
@@ -266,6 +492,25 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                           std::chrono::steady_clock::now() - total_start)
                           .count();
   adaptive_display_.observe_runtime(result.runtime_ms);
+  if (visual_hit) {
+    const bool consecutive = last_visual_hit_frame_ &&
+        *last_visual_hit_frame_ + 1 == frame_id;
+    visual_hit_streak_ = consecutive ? visual_hit_streak_ + 1 : 1;
+    visual_streak_ambiguous_ = visual_ambiguous ||
+        (consecutive && visual_streak_ambiguous_);
+    last_visual_hit_frame_ = frame_id;
+  } else {
+    visual_hit_streak_ = 0;
+    visual_streak_ambiguous_ = false;
+    last_visual_hit_frame_.reset();
+  }
+  if ((visual_suspect_bright_ratio_ > 0.0F || lower_band_visibility_veto_) &&
+      result.output.accepted &&
+      result.output.tracking_phase == TrackingPhase::kTracking) {
+    trusted_brightness_.push_back(bright_fraction(image, result.output.tracking_bbox));
+    if (trusted_brightness_.size() > 8) trusted_brightness_.pop_front();
+  }
+  previous_output_phase_ = result.output.tracking_phase;
   result.template_slot_revocation = pending_template_slot_revocation_;
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
   application_checkpoint.reset();

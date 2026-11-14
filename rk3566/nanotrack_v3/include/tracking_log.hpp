@@ -320,6 +320,7 @@ struct TrackingSessionMetadata {
   int accepted_scale_direction_confirm_frames = 1;
   float accepted_scale_output_hysteresis_px = 0.0F;
   float accepted_center_smoothing_alpha = 1.0F;
+  float display_center_smoothing_alpha = 1.0F;
   float accepted_center_max_correction_ratio = 0.0F;
   float max_reacquisition_center_distance = 0.0F;
   std::int64_t uncertain_ms = 0;
@@ -327,6 +328,11 @@ struct TrackingSessionMetadata {
   std::int64_t assisted_recovery_ms = 0;
   bool motion_search_enabled = false;
   bool search_reacquisition_requires_detector = false;
+  int recovery_confirmation_required = 2;
+  bool recovery_requires_detector_support = false;
+  bool recovery_restore_initial_aspect = false;
+  float recovery_min_top_luma_stddev = 0.0F;
+  bool lower_band_visibility_veto = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   int template_bridge_min_stable_frames = 0;
   std::int64_t template_bridge_max_duration_ms = 0;
