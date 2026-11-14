@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T22:14:24+08:00 双真值候选向 main / Debug 集成
+
+- 本次集成从 `main@b80226577954febe22c5eff168125f77a6cdc724` 和 `Debug@7e45f9db9493c8411139dba76294fdd179eb2759` 出发，接收候选 `codex/dual-gt-init-consistency@291e62d1cb4211cf32b2dfc160ade78305774044`；main 集成工作树 `/home/u20/single-object-tracking/.worktrees/dual-gt-main-integration`。main 保留原交互界面，Debug 保留双窗口及只显示关键 detector 框的交互界面；两个目标分支的跟踪、重捕、控制、评测源码必须相同，`main.cpp` 的算法路径也须逐项核对。
+- main 实际执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-dual-gt-main-integration-build -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、`cmake --build /tmp/nt-dual-gt-main-integration-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-main-integration-build --output-on-failure`，CTest `23/23 PASS`。构建与测试日志位于 `/tmp/nt-dual-gt-evidence/main-integration-{cmake,build,ctest}.log`，SHA-256 分别为 `3a5526a494fd963a7168f3f738c747d491745860332847d7a7c46cc06dcb575c`、`9fbc5d1363f1fcf30689d9a18ebc9220c550ffd596b4cd61bc667b8fdf30c45a`、`f5fc0363db4452de74559e7327ae55c7f38c87f2aa926267e2480a5e3fdd8046`。
+- 此处是主机侧集成证据，RK3588 八框 `8/8` 与 GUI 证据仍绑定上方精确板端源码与二进制；新分支提交未经重新板端运行，不升级为生产或吊舱验收。下一步合并 Debug 并核查两个分支算法源码差异和测试结果，向协调者回传最终 commit；`latest_handoff` 仍由协调者裁决。
+
 ## 2026-11-14T22:00:30+08:00 双窗口 Debug 补齐后的 RK3588 验证
 
 - 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，源码基线 `3a87a4264134172f55670fa6ecd64f0759050928`，双窗口与关键 detector 框移植提交 `13bd45dad7589a039b50fa54b49aa3ca30c1628e`；`git diff --name-only 4b4e47a..13bd45d -- rk3566/nanotrack_v3` 仅列 UI 源文件 `src/main.cpp`、`src/interactive_debug_overlay.cpp` 与其测试，追踪核心/配置未变。主机 `/tmp/nt-dual-gt-evidence/dual-window-13bd45d-source.tar` 与板端隔离根 `/home/neardi/Project/SOT/dual-gt-ui-13bd45d/source.tar` SHA-256 同为 `813a311a3ed5a4b14c014991c235605aecb69b422b29bf7fe7f49572306df62f`；构建脚本 `/tmp/nt-dual-gt-evidence/build_dual_window_board.sh` SHA-256 `284e6bb40e915a94b37f9230fd31c8179b271ca04b4c62d9a03048da82327075`，传输后板端核对一致。

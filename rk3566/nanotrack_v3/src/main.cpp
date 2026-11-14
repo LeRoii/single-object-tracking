@@ -129,11 +129,15 @@ cv::Mat render_annotated(const cv::Mat& source,
   return rendered;
 }
 
-cv::Mat render_display(
-    const cv::Mat& source,
-    const std::optional<nanotrack::RuntimeFrameResult>& result) {
+cv::Mat render_interactive(const cv::Mat& source,
+                           const std::optional<nanotrack::RuntimeFrameResult>& result,
+                           std::size_t frame_id,
+                           bool playing,
+                           const std::vector<std::string>& labels) {
   cv::Mat rendered = source.clone();
+  std::optional<nanotrack::InteractiveDebugOverlay> overlay;
   if (result) {
+    overlay = nanotrack::make_interactive_debug_overlay(*result, labels);
     const auto& display = result->output.display_bbox;
     const cv::Rect display_rectangle(
         static_cast<int>(std::lround(display.x)),
@@ -141,19 +145,13 @@ cv::Mat render_display(
         std::max(1, static_cast<int>(std::lround(display.width))),
         std::max(1, static_cast<int>(std::lround(display.height))));
     cv::rectangle(rendered, display_rectangle, cv::Scalar(255, 255, 255), 3);
-  }
-  return rendered;
-}
-
-cv::Mat render_debug(const cv::Mat& source,
-                     const std::optional<nanotrack::RuntimeFrameResult>& result,
-                     std::size_t frame_id,
-                     bool playing,
-                     const std::vector<std::string>& labels) {
-  cv::Mat rendered = source.clone();
-  std::optional<nanotrack::InteractiveDebugOverlay> overlay;
-  if (result) {
-    overlay = nanotrack::make_interactive_debug_overlay(*result, labels);
+    cv::putText(rendered,
+                std::string("DISPLAY ") +
+                    nanotrack::to_string(result->adaptive_display.source),
+                cv::Point(std::max(0, display_rectangle.x),
+                          std::max(18, display_rectangle.y - 6)),
+                cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
     const auto box_color = [](nanotrack::DebugBoxKind kind) {
       switch (kind) {
         case nanotrack::DebugBoxKind::kMotionPrediction:
@@ -173,9 +171,11 @@ cv::Mat render_debug(const cv::Mat& source,
         case nanotrack::DebugBoxKind::kNanoTrackRecent:
           return cv::Scalar(0, 255, 255);
         case nanotrack::DebugBoxKind::kTentativeControl:
+          return cv::Scalar(0, 180, 255);
         case nanotrack::DebugBoxKind::kAcceptedControl:
-        case nanotrack::DebugBoxKind::kSearchControlPrediction:
           return cv::Scalar(0, 255, 0);
+        case nanotrack::DebugBoxKind::kSearchControlPrediction:
+          return cv::Scalar(0, 200, 100);
         case nanotrack::DebugBoxKind::kSearchHint:
           return cv::Scalar(203, 192, 255);
         case nanotrack::DebugBoxKind::kCoastSearchProbe:
@@ -270,11 +270,11 @@ cv::Mat render_debug(const cv::Mat& source,
                                    rendered.rows - legend_top),
                 cv::Scalar(0, 0, 0), cv::FILLED);
   cv::putText(rendered,
-              "CYAN Motion  MAGENTA KeyDet  ORANGE ActiveDet  GREEN Control",
+              "CYAN Motion  MAGENTA DetPass  GRAY DetReject  ORANGE Active",
               cv::Point(8, legend_top + 16), cv::FONT_HERSHEY_SIMPLEX, 0.38,
               cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   cv::putText(rendered,
-              "BLUE Anchor  YELLOW Recent  PINK SearchHint  WHITE SelectedInit",
+              "DARKRED InvalidText  BLUE Anchor  YELLOW Recent  GREEN Ctrl  WHITE Init",
               cv::Point(8, legend_top + 34), cv::FONT_HERSHEY_SIMPLEX, 0.38,
               cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   return rendered;
@@ -588,29 +588,22 @@ int main(int argc, char** argv) {
     bool initialized = false;
     std::optional<nanotrack::RuntimeFrameResult> displayed_result;
     nanotrack::DebugTelemetry debug_telemetry(30);
-    constexpr const char* kDisplayWindow = "NanoTrack Display";
-    constexpr const char* kDebugWindow = "NanoTrack Debug";
+    constexpr const char* kInteractiveWindow = "NanoTrack V3 RK3566 Debug";
     nanotrack::InteractivePlayback playback;
     if (options.interactive) {
-      cv::namedWindow(kDisplayWindow, cv::WINDOW_NORMAL);
-      cv::resizeWindow(kDisplayWindow, nanotrack::kInteractiveWindowWidth,
+      cv::namedWindow(kInteractiveWindow, cv::WINDOW_NORMAL);
+      cv::resizeWindow(kInteractiveWindow, nanotrack::kInteractiveWindowWidth,
                        nanotrack::kInteractiveWindowHeight);
-      cv::namedWindow(kDebugWindow, cv::WINDOW_NORMAL);
-      cv::resizeWindow(kDebugWindow, nanotrack::kInteractiveWindowWidth,
-                       nanotrack::kInteractiveWindowHeight);
-      cv::moveWindow(kDisplayWindow, 0, 0);
-      cv::moveWindow(kDebugWindow, nanotrack::kInteractiveWindowWidth + 16, 0);
     }
     const auto initialize_target = [&](const nanotrack::BBox& bbox) {
       const bool reinitializing = initialized;
       if (options.interactive) {
-        cv::imshow(kDisplayWindow, render_display(frame, displayed_result));
-        cv::Mat establishing = render_debug(
+        cv::Mat establishing = render_interactive(
             frame, std::nullopt, source_frame, playback.playing(), detector_labels);
         cv::putText(establishing, "ESTABLISHING TARGET CLASS...", cv::Point(12, 80),
                     cv::FONT_HERSHEY_SIMPLEX, 0.60, cv::Scalar(255, 255, 255),
                     2, cv::LINE_AA);
-        cv::imshow(kDebugWindow, establishing);
+        cv::imshow(kInteractiveWindow, establishing);
         // Do not pump keys here: initialization must not advance playback.
         // Actual HighGUI paint timing is a board/backend observation boundary.
       }
@@ -711,10 +704,9 @@ int main(int argc, char** argv) {
       bool advance = !options.interactive;
       bool force_heartbeat = false;
       if (options.interactive) {
-        cv::imshow(kDisplayWindow, render_display(frame, displayed_result));
-        cv::imshow(kDebugWindow,
-                   render_debug(frame, displayed_result, source_frame,
-                                playback.playing(), detector_labels));
+        cv::imshow(kInteractiveWindow,
+                   render_interactive(frame, displayed_result, source_frame,
+                                      playback.playing(), detector_labels));
         const int key = cv::waitKeyEx(playback.playing() ? 1 : 0);
         const nanotrack::InteractiveCommand command =
             nanotrack::decode_interactive_key(key);
@@ -726,7 +718,7 @@ int main(int argc, char** argv) {
                     << " frame=" << source_frame
                     << " playing=" << (playback.playing() ? 1 : 0) << '\n';
         }
-        if (!window_visible(kDisplayWindow) || !window_visible(kDebugWindow)) {
+        if (!window_visible(kInteractiveWindow)) {
           shutdown_reason = "window_closed";
           break;
         }
@@ -734,7 +726,7 @@ int main(int argc, char** argv) {
           std::cout << "DEBUG_EVENT event=roi_selection_started frame="
                     << source_frame << '\n';
           const RoiSelectionResult selection =
-              select_target_roi(kDisplayWindow, frame);
+              select_target_roi(kInteractiveWindow, frame);
           if (selection.window_closed) {
             shutdown_reason = "selection_window_closed";
             break;
@@ -853,8 +845,7 @@ int main(int argc, char** argv) {
                 << " frame=" << source_frame
                 << " tracked_frames=" << tracked_count
                 << " initialized=" << (initialized ? 1 : 0) << '\n';
-      destroy_window(kDisplayWindow);
-      destroy_window(kDebugWindow);
+      destroy_window(kInteractiveWindow);
     }
     if (writer.isOpened()) {
       writer.release();

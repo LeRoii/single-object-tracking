@@ -130,7 +130,6 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
     for (const auto& match : state.candidates) {
       const bool selected = state.selected_candidate &&
           match.original_index == state.selected_candidate->original_index;
-      if (!selected) continue;
       const std::string label = initialization_label(match, selected, labels);
       if (!drawable_bbox(match.clipped_bbox)) {
         overlay.texts.push_back(DebugTextDescriptor{label});
@@ -147,11 +146,6 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
        index < result.output.detector_candidate_diagnostics.size(); ++index) {
     const DetectorCandidateDiagnostic& diagnostic =
         result.output.detector_candidate_diagnostics[index];
-    const bool key_candidate =
-        diagnostic.rejection == DetectorCandidateRejection::kNone &&
-        diagnostic.position_gate_pass && diagnostic.queued &&
-        diagnostic.class_disposition == DetectorClassDisposition::kMatch;
-    if (!key_candidate) continue;
     const std::string label = diagnostic_label(diagnostic, index,
                                                result.detector, labels);
     if (!diagnostic.drawable || !drawable_bbox(diagnostic.candidate.bbox)) {
@@ -159,7 +153,14 @@ InteractiveDebugOverlay make_interactive_debug_overlay(
       continue;
     }
     overlay.boxes.push_back(DebugBoxDescriptor{
-        DebugBoxKind::kDetectorCandidatePass, diagnostic.candidate.bbox, label, 2});
+        diagnostic.rejection == DetectorCandidateRejection::kNone &&
+                diagnostic.position_gate_pass &&
+                diagnostic.class_disposition == DetectorClassDisposition::kMatch
+            ? DebugBoxKind::kDetectorCandidatePass
+            : DebugBoxKind::kDetectorCandidateRejected,
+        diagnostic.candidate.bbox,
+        label,
+        2});
   }
 
   if (result.plan.hypothesis_source == HypothesisSource::kDetector &&
