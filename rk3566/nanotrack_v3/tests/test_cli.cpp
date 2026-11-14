@@ -339,6 +339,23 @@ int main() {
         [&] { parse_options({"nanotrack_v3", "--config", path.string()}); },
         "invalid runtime config must fail strictly: " + invalid.first);
   }
+  const std::filesystem::path click_size_config = config_dir / "click-size.conf";
+  write_text_file(click_size_config,
+                  "video=input.mp4\nmodel_dir=models\ninteractive=true\n"
+                  "click_fallback_bbox_size=80x96\n");
+  const Options configured_click =
+      parse_options({"nanotrack_v3", "--config", click_size_config.string()});
+  expect_true(configured_click.click_fallback_bbox_width == 80 &&
+                  configured_click.click_fallback_bbox_height == 96,
+              "runtime config sets click fallback dimensions");
+  const std::filesystem::path invalid_click_size =
+      config_dir / "invalid-click-size.conf";
+  write_text_file(invalid_click_size,
+                  "video=input.mp4\nmodel_dir=models\ninteractive=true\n"
+                  "click_fallback_bbox_size=0x64\n");
+  expect_throws(
+      [&] { parse_options({"nanotrack_v3", "--config", invalid_click_size.string()}); },
+      "invalid runtime-config click dimensions fail before playback");
 
   const std::filesystem::path original_working_directory =
       std::filesystem::current_path();
