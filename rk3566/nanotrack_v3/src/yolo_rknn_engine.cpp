@@ -689,27 +689,45 @@ DetectorEngineResult YoloRknnEngine::infer(const ImageView& image,
   });
   DetectorEngineResult local = recovery_impl_->infer(image, request);
   DetectorEngineResult combined = full_future.get();
+  // Only refine a full-frame identity with a tightly overlapping local box.
+  // The local pass can also see the adjacent car and broad partial-object
+  // envelopes; admitting those as new identities or replacing confidence
+  // changed recovery arbitration even when the full-frame rivals were kept.
+  std::vector<float> best_overlap(combined.candidates.size(), 0.60F);
+  std::vector<std::optional<BBox>> refinements(combined.candidates.size());
   for (const DetectorCandidate& candidate : local.candidates) {
-    const float cx = candidate.bbox.x + 0.5F * candidate.bbox.width;
-    const float cy = candidate.bbox.y + 0.5F * candidate.bbox.height;
-    const auto existing = std::find_if(
-        combined.candidates.begin(), combined.candidates.end(),
-        [&](const DetectorCandidate& other) {
-          if (candidate.class_id != other.class_id ||
-              candidate.bbox.width <= 0.0F || candidate.bbox.height <= 0.0F ||
-              other.bbox.width <= 0.0F || other.bbox.height <= 0.0F) return false;
-          const float ox = other.bbox.x + 0.5F * other.bbox.width;
-          const float oy = other.bbox.y + 0.5F * other.bbox.height;
-          return std::hypot(cx - ox, cy - oy) <=
-                     0.45F * std::max(candidate.bbox.width, candidate.bbox.height) &&
-                 std::abs(std::log(candidate.bbox.width / other.bbox.width)) <= 0.7F &&
-                 std::abs(std::log(candidate.bbox.height / other.bbox.height)) <= 0.7F;
-        });
-    if (existing == combined.candidates.end()) {
-      combined.candidates.push_back(candidate);
-    } else {
-      *existing = candidate;
+    const BBox& box = candidate.bbox;
+    if (box.width <= 0.0F || box.height <= 0.0F) continue;
+    std::size_t best = combined.candidates.size();
+    float overlap = 0.60F;
+    for (std::size_t index = 0; index < combined.candidates.size(); ++index) {
+      const DetectorCandidate& other = combined.candidates[index];
+      const BBox& reference = other.bbox;
+      if (candidate.class_id != other.class_id ||
+          reference.width <= 0.0F || reference.height <= 0.0F) continue;
+      const float left = std::max(box.x, reference.x);
+      const float top = std::max(box.y, reference.y);
+      const float right = std::min(box.x + box.width,
+                                   reference.x + reference.width);
+      const float bottom = std::min(box.y + box.height,
+                                    reference.y + reference.height);
+      const float intersection = std::max(0.0F, right - left) *
+                                 std::max(0.0F, bottom - top);
+      const float union_area = box.width * box.height +
+                               reference.width * reference.height - intersection;
+      const float iou = intersection / union_area;
+      if (iou > overlap && iou > best_overlap[index]) {
+        overlap = iou;
+        best = index;
+      }
     }
+    if (best < combined.candidates.size()) {
+      refinements[best] = box;
+      best_overlap[best] = overlap;
+    }
+  }
+  for (std::size_t index = 0; index < refinements.size(); ++index) {
+    if (refinements[index]) combined.candidates[index].bbox = *refinements[index];
   }
   combined.raw_candidate_count += local.raw_candidate_count;
   combined.filtered_candidate_count += local.filtered_candidate_count;
