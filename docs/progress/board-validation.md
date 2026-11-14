@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T22:19:00+08:00 main / Debug 算法一致性核对与双分支发布
+
+- 算法候选已经合入 `main@05556e660f22eabc112088a27ca3c05e8958d3ab`、`Debug@0f6b56f849324a64991a7f63a6d12d9975d5c923`（后续仅可能追加文档同步提交）。`git diff --name-only main Debug -- rk3566/nanotrack_v3 scripts tests` 只列出 `src/main.cpp`、`src/interactive_debug_overlay.cpp`、`tests/test_interactive_debug_overlay.cpp`；排除这三个交互文件后，NanoTrack 所有其他源码、配置、脚本和测试完全相同。逐段比较两边 `main.cpp` 的 `lower_occluding_band` 与 `runtime.process_frame` 调用也完全相同；其余差异是双窗口、显示框、关键 detector 调试框和交互视频输出。
+- Debug 工作树 `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking` 实际执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-dual-gt-debug-integration-build -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、`cmake --build /tmp/nt-dual-gt-debug-integration-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-debug-integration-build --output-on-failure`，CTest `23/23 PASS`；日志 `/tmp/nt-dual-gt-evidence/debug-integration-{cmake,build,ctest}.log` SHA-256 分别为 `357c88221eae7ac90b23e3fed92af3568d02f51f5ffda4ce90922a0a5fd266e2`、`bb435edecc07774a3a82c36c8880df250b18eee312b0f7e9dfcd41923639c5ee`、`14db662e6f8d19cd527321d466eafba8f1acbb114eb0b6c25a6acfa2210f05f9`。系统 Python 3.10 对两个分支运行 `python3 -m unittest discover -s tests -p 'test_evaluate_occ_initialization_consistency.py'`，各 `2/2 PASS`；旧 NanoTrack venv Python 不支持评测脚本所用的 `math.dist`，故此项用系统 Python 验证。
+- 远端起点 `main@b802265`、`Debug@7e45f9d` 经 `git ls-remote` 核对后，已执行 `git push --atomic origin main Debug`，首次双分支推送成功。本次不包含新板端源码编译或真实吊舱测试；继续沿用上方绑定的 RK3588 证据边界。后续每次合并应再次检查 NanoTrack 非交互源码零差异，并人工审查 `main.cpp` 的交互差异。
+
 ## 2026-11-14T22:14:24+08:00 双真值候选向 main / Debug 集成
 
 - 本次集成从 `main@b80226577954febe22c5eff168125f77a6cdc724` 和 `Debug@7e45f9db9493c8411139dba76294fdd179eb2759` 出发，接收候选 `codex/dual-gt-init-consistency@291e62d1cb4211cf32b2dfc160ade78305774044`；main 集成工作树 `/home/u20/single-object-tracking/.worktrees/dual-gt-main-integration`。main 保留原交互界面，Debug 保留双窗口及只显示关键 detector 框的交互界面；两个目标分支的跟踪、重捕、控制、评测源码必须相同，`main.cpp` 的算法路径也须逐项核对。
