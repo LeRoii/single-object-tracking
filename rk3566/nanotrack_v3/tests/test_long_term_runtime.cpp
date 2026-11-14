@@ -1444,6 +1444,63 @@ void test_suspected_inference_retry_restores_prediction() {
 
 }  // namespace
 
+void test_visual_suspect_gate() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.suspicion_enter_ms = 1;
+  config.uncertain_ms = 1000;
+  config.local_recovery_ms = 2000;
+  config.assisted_recovery_ms = 3000;
+  config.visual_suspect_bright_ratio = 0.90F;
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  FakeDetector detector;
+  detector.enabled = true;
+  DetectorBatch candidate_batch;
+  candidate_batch.candidates.push_back(
+      DetectorCandidate{BBox{265.0F, 239.0F, 54.0F, 54.0F}, 0.23F, 2});
+  detector.blocking_batch = candidate_batch;
+  LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+  }
+  tracker.on_infer = [&] {
+    const auto& plan = tracker.inferred_plans.back();
+    tracker.observation_override = std::vector<TrackerObservation>{
+        TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                           ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                           TemplateKind::kRecent, tracker.search_token + 1}};
+  };
+  std::fill(pixels.begin(), pixels.end(), 0);
+  const auto suspect = runtime.process_frame(image, 5, 200);
+  expect_true(suspect.output.tracking_phase == TrackingPhase::kSuspected &&
+                  detector.blocking_calls == 0,
+              "visual detector waits until the controller has entered SUSPECTED");
+  const auto entering = runtime.process_frame(image, 6, 240);
+  expect_true(entering.output.tracking_phase == TrackingPhase::kSuspected,
+              "degraded response enters SUSPECTED before visual checks");
+  const auto low_confidence = runtime.process_frame(image, 7, 280);
+  expect_true(low_confidence.output.tracking_phase == TrackingPhase::kSuspected &&
+                  low_confidence.detector.batch_purpose == DetectorRequestPurpose::kVisualOcclusion &&
+                  detector.blocking_calls == 1,
+              "a low-confidence visual candidate cannot force SEARCHING");
+  detector.blocking_batch->candidates[0].confidence = 0.80F;
+  const auto first_hit = runtime.process_frame(image, 8, 320);
+  expect_true(first_hit.output.tracking_phase == TrackingPhase::kSuspected &&
+                  detector.blocking_calls == 2,
+              "one visual hit remains tentative");
+  const auto second_hit = runtime.process_frame(image, 9, 360);
+  expect_true(second_hit.plan.visual_occlusion_search &&
+                  second_hit.output.tracking_phase == TrackingPhase::kSearching &&
+                  !second_hit.output.observation_present &&
+                  !second_hit.output.accepted &&
+                  second_hit.output.control_source != ControlSource::kObservation,
+              "two fresh visual hits stop tentative observation without authorizing control");
+}
+
 int main() {
   using namespace nanotrack;
   test_tentative_recent_does_not_commit();
@@ -1451,6 +1508,7 @@ int main() {
 
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  test_visual_suspect_gate();
   test_target_class_initialization(image);
   test_target_class_session_config(image);
   test_frame_lifetime(image);

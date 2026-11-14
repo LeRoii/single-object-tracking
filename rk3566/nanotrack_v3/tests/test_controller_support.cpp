@@ -304,6 +304,19 @@ int main() {
     expect_true(false, std::string("adaptive display profile failed to load: ") +
                            error.what());
   }
+  try {
+    const ControllerConfig visual =
+        load_controller_config(config_dir + "visible-dual-gt-visual-gate.conf");
+    expect_true(!visual.calibrated &&
+                    visual.visual_suspect_bright_ratio == 0.90F &&
+                    visual.visual_suspect_min_confidence == 0.40F &&
+                    visual.visual_suspect_max_center_px == 30.0F &&
+                    visual.visual_suspect_consecutive_frames == 2,
+                "visual candidate profile loads with its experimental gate enabled");
+  } catch (const std::exception& error) {
+    expect_true(false, std::string("visual candidate profile failed to load: ") +
+                           error.what());
+  }
   if (failures != 0) return 1;
 
   write_file(config_path,

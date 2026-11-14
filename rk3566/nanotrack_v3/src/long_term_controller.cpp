@@ -927,6 +927,7 @@ bool LongTermController::search_control_live(std::int64_t timestamp_ms) const {
 LongTermController::RecentDisposition LongTermController::assess_recent(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     const ResponseBaselineEvaluation& response) {
+  if (plan.visual_occlusion_search) return RecentDisposition::kSearch;
   const auto& observation = recent.observation;
   const auto& metrics = observation.metrics;
   const auto bounded =

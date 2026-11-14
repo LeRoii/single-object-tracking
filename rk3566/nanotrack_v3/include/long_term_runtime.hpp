@@ -6,6 +6,7 @@
 #include "short_term_tracker.hpp"
 
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <vector>
@@ -108,6 +109,13 @@ class LongTermRuntime {
   std::optional<std::uint64_t> staged_template_slot_id_;
   std::optional<TemplateSlotRevocation> pending_template_slot_revocation_;
   bool revocation_waiting_for_ack_ = false;
+  float visual_suspect_bright_ratio_ = 0.0F;
+  float visual_suspect_min_confidence_ = 0.40F;
+  float visual_suspect_max_center_px_ = 30.0F;
+  int visual_suspect_consecutive_frames_ = 2;
+  std::deque<float> trusted_brightness_;
+  std::optional<std::uint64_t> last_visual_hit_frame_;
+  int visual_hit_streak_ = 0;
 };
 
 }  // namespace nanotrack
