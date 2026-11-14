@@ -641,35 +641,6 @@ void test_dominant_near_detector_recovery() {
                 "only two NanoTrack observations promote the focused detector hypothesis");
   }
 
-  ResolvedControllerFixture separated_rivals(config);
-  separated_rivals.initialize(target, 0, 0, {1920, 1080},
-                              make_fixed_target_class(0, true));
-  step(separated_rivals, 1, 33, std::nullopt);
-  plan = separated_rivals.begin_frame(2, 66, true);
-  const auto separated_request = *plan.detector_request;
-  const BBox near_partial{target.x + 10, target.y + 30, 48, 50};
-  const BBox separated_rival{target.x + 65, target.y + 30, 48, 50};
-  DetectorBatch separated_batch{
-      separated_request.frame_id, separated_request.timestamp_ms,
-      {{near_partial, 0.45F, 0}, {separated_rival, 0.90F, 0}}};
-  separated_batch.generation = separated_request.generation;
-  output = separated_rivals.finish_frame(plan, {}, separated_batch);
-  expect_true(output.detector_status == DetectorBatchStatus::kAccepted &&
-                  !output.recovery_conflict,
-              "a distinct motion-near car can lead despite a small normalized distance gap");
-  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
-    plan = separated_rivals.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
-    expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
-                    plan.predicted_bbox.x == near_partial.x,
-                "the separated motion-near car is probed before the higher confidence rival");
-    output = separated_rivals.finish_frame(
-        plan, {reliable_for_plan(plan, near_partial, frame, TemplateKind::kRecent),
-               reliable_for_plan(plan, near_partial, frame, TemplateKind::kSafe)},
-        std::nullopt);
-    expect_true(output.accepted == (frame == 4) && !output.recovery_conflict,
-                "the focused car still needs two NanoTrack confirmations");
-  }
-
   ResolvedControllerFixture close_rivals(config);
   close_rivals.initialize(target, 0, 0, {1920, 1080},
                           make_fixed_target_class(0, true));

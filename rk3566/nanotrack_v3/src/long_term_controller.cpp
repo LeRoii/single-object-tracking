@@ -13,7 +13,6 @@ namespace {
 
 constexpr float kPositionGateEpsilon = 1e-6F;
 constexpr float kDominantNearestCandidateRatio = 2.0F / 3.0F;
-constexpr float kMinSeparatedDetectorCentersPx = 40.0F;
 
 bool finite_bbox(const BBox& bbox) {
   return std::isfinite(bbox.x) && std::isfinite(bbox.y) &&
@@ -928,7 +927,6 @@ bool LongTermController::search_control_live(std::int64_t timestamp_ms) const {
 LongTermController::RecentDisposition LongTermController::assess_recent(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     const ResponseBaselineEvaluation& response) {
-  if (plan.visual_occlusion_search) return RecentDisposition::kSearch;
   const auto& observation = recent.observation;
   const auto& metrics = observation.metrics;
   const auto bounded =
@@ -1967,26 +1965,11 @@ LongTermController::ingest_detector_batch(
     // A near detection with a clear spatial lead gets a short NanoTrack
     // verification window. The closest other detections remain alternatives;
     // distant overflow cannot veto that verification without tracker evidence.
-    const auto& near_box = *result.diagnostics[
-        positioned.front().diagnostic_index].projected_bbox;
-    const auto& next_box = *result.diagnostics[
-        positioned.size() > 1 ? positioned[1].diagnostic_index :
-        positioned.front().diagnostic_index].projected_bbox;
-    const float separation = std::hypot(
-        near_box.x + 0.5F * near_box.width - next_box.x - 0.5F * next_box.width,
-        near_box.y + 0.5F * near_box.height - next_box.y - 0.5F * next_box.height);
-    const float distinct_size = std::max({near_box.width, near_box.height,
-                                          next_box.width, next_box.height});
-    const bool separated_spatial_lead =
-        positioned.size() > 1 &&
-        separation > std::max(kMinSeparatedDetectorCentersPx, distinct_size) &&
-        positioned.front().center_ratio <= 0.5F * positioned[1].center_ratio;
     const bool dominant_near_detector = plan.motion_prediction_confident &&
         positioned.size() > 1 &&
         positioned.front().center_ratio <= config_.detector_candidate_max_center_ratio &&
-        (positioned[1].center_ratio - positioned[0].center_ratio >
-             config_.detector_candidate_max_center_ratio ||
-         separated_spatial_lead);
+        positioned[1].center_ratio - positioned[0].center_ratio >
+            config_.detector_candidate_max_center_ratio;
     const std::size_t considered = dominant_near_detector
         ? std::min(positioned.size(), config_.detector_max_candidates)
         : positioned.size();

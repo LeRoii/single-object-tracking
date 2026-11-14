@@ -199,7 +199,6 @@ const char* to_string(DetectorRequestPurpose value) {
     case DetectorRequestPurpose::kSearchRecovery: return "SEARCH_RECOVERY";
     case DetectorRequestPurpose::kInitialization: return "INITIALIZATION";
     case DetectorRequestPurpose::kDisplayRefresh: return "DISPLAY_REFRESH";
-    case DetectorRequestPurpose::kVisualOcclusion: return "VISUAL_OCCLUSION";
   }
   return "UNKNOWN";
 }
