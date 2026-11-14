@@ -3251,36 +3251,6 @@ int main() {
   expect_true(output.detector_status == DetectorBatchStatus::kFrameMismatch,
               "mismatched detector request frame is rejected");
 
-  ControllerConfig roi_config = config;
-  roi_config.detector_recovery_roi_scale = 3.0F;
-  ResolvedControllerFixture roi_controller(roi_config);
-  roi_controller.initialize(BBox{300, 160, 20, 20}, 0, 0,
-                            FrameSize{640, 360},
-                            make_fixed_target_class(2, true));
-  reject_frame(roi_controller, 1, 100);
-  const SearchPlan roi_plan = roi_controller.begin_frame(2, 1100, true);
-  expect_true(roi_plan.detector_request.has_value(),
-              "recovery ROI still schedules a detector request");
-  if (roi_plan.detector_request) {
-    const BBox roi = roi_plan.detector_request->roi;
-    expect_true(roi.width == 120.0F && roi.height == 120.0F &&
-                    roi.x >= 0.0F && roi.y >= 0.0F &&
-                    roi.x + roi.width <= 640.0F &&
-                    roi.y + roi.height <= 360.0F &&
-                    roi.x <= 310.0F && roi.x + roi.width >= 310.0F &&
-                    roi.y <= 170.0F && roi.y + roi.height >= 170.0F,
-                "search detector ROI encloses predicted target and stays in frame");
-  }
-  DetectorBatch roi_batch{2, 1100,
-      {{BBox{297, 157, 25, 25}, 0.80F, 2},
-       {BBox{340, 157, 25, 25}, 0.85F, 2}}};
-  roi_batch.generation = roi_plan.detector_request->generation;
-  const ControllerOutput roi_output =
-      roi_controller.finish_frame(roi_plan, {}, roi_batch);
-  expect_true(roi_output.detector_position_valid_count == 1 &&
-                  roi_output.detector_position_rejected_count == 1,
-              "local search rejects neighboring car before identity competition");
-
   plan = detector_controller.begin_frame(3, 1200, true);
   expect_true(!plan.request_detector,
               "detector requests are limited to once per 500 ms");

@@ -477,28 +477,12 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
       timestamp_ms - *last_detector_request_ms_ >= config_.detector_interval_ms;
   if (detector_ready && recovery_uses_detector && interval_ready &&
       !rollback_pending_ && target_class_.target_class_allows_recovery) {
-    BBox detector_roi{0.0F, 0.0F, static_cast<float>(frame_size_.width),
-                      static_cast<float>(frame_size_.height)};
-    if (config_.detector_recovery_roi_scale > 0.0F) {
-      const int size = std::clamp(
-          static_cast<int>(std::lround(std::max(
-              120.0F, config_.detector_recovery_roi_scale *
-                  std::max(motion_predicted.width, motion_predicted.height)))),
-          1, std::min(frame_size_.width, frame_size_.height));
-      const float cx = motion_predicted.x + 0.5F * motion_predicted.width;
-      const float cy = motion_predicted.y + 0.5F * motion_predicted.height;
-      detector_roi = BBox{
-          static_cast<float>(std::clamp(static_cast<int>(std::lround(cx - 0.5F * size)),
-                                        0, frame_size_.width - size)),
-          static_cast<float>(std::clamp(static_cast<int>(std::lround(cy - 0.5F * size)),
-                                        0, frame_size_.height - size)),
-          static_cast<float>(size), static_cast<float>(size)};
-    }
     plan.request_detector = true;
     plan.detector_request = DetectorRequest{
         frame_id,
         timestamp_ms,
-        detector_roi,
+        BBox{0.0F, 0.0F, static_cast<float>(frame_size_.width),
+             static_cast<float>(frame_size_.height)},
         std::numeric_limits<std::size_t>::max(),
         detector_eligibility_generation_};
     last_detector_request_ms_ = timestamp_ms;
@@ -1946,19 +1930,8 @@ LongTermController::ingest_detector_batch(
     const float center_ratio = frame_normalized_center_distance(
         projected, plan.motion_predicted_bbox, frame_size_);
     diagnostic.center_ratio = center_ratio;
-    // A cropped search request can still contain a neighboring vehicle. Keep
-    // only candidates within one target-sized neighborhood of the motion
-    // prediction before they enter the unified identity competition.
-    const float projected_cx = projected.x + 0.5F * projected.width;
-    const float projected_cy = projected.y + 0.5F * projected.height;
-    const float local_distance = std::hypot(projected_cx - current_center_x,
-                                            projected_cy - current_center_y);
-    const bool local_position_ok =
-        config_.detector_recovery_roi_scale <= 0.0F ||
-        local_distance <= 0.8F * std::max(plan.motion_predicted_bbox.width,
-                                          plan.motion_predicted_bbox.height);
-    if (local_position_ok && (unified || center_ratio <=
-        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon)) {
+    if (unified || center_ratio <=
+        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
       diagnostic.position_gate_pass = true;
       positioned.push_back(PositionedCandidate{index, center_ratio});
     } else {
