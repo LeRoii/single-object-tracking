@@ -15,6 +15,7 @@ struct YoloRknnEngineConfig {
   float confidence_threshold = 0.25F;
   float nms_threshold = 0.45F;
   int class_id = -1;
+  bool parallel_recovery = false;
 };
 
 class YoloRknnEngine final : public DetectorEngine {
@@ -40,6 +41,7 @@ class YoloRknnEngine final : public DetectorEngine {
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
+  std::unique_ptr<Impl> recovery_impl_;
 };
 
 }  // namespace nanotrack
