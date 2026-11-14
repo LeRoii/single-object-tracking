@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T13:15:00+08:00 多候选视觉门与近运动候选优先的联合实验（待板端闭环）
+
+- 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，起始干净，基线 `9e57cf669b68153b10032f8ca8deafe8ce6fc67f`。恢复此前 `3679dca` 的默认关闭视觉遮挡门候选后，依据下方 `gate3` 板端筛查与 car001 右偏框第 185～190 帧候选竞争记录调整两处：局部 VisDrone9 一帧仅一个候选时保持两帧亮度+检测证据，多个候选时必须累计三帧才停用疑似观测；搜索恢复时，若运动预测仍可信、最近 detector 候选在位置门内，并且与第二近候选中心至少相距 `max(40px, 两框最大边长)` 且位置残差不超过后者一半，则优先对较近候选进行既有 NanoTrack 双帧验证。后者只改变候选验证顺序，detector 本身不得直接授权 `tracking_bbox`、`control_bbox` 或重捕。实验 controller `rk3566/nanotrack_v3/config/visible-dual-gt-visual-gate.conf` SHA-256 `c5c4e2edec914eb44cd8777377abf3600574cf3b936225bf9dd2e9d382d15fec`；新分离常数/相对阈值未校准，需在八框和其他场景检验。
+- 新增/调整运行时 fake-detector 单测，覆盖多候选前两帧仍 SUSPECTED、第三帧停用观测、单候选第二帧停用观测；replay 单测覆盖“近车与高置信远车分开但归一化残差差值小”的优先顺序和双帧 NanoTrack 验证，既有近邻车辆冲突测试仍通过。实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4` 与 `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`；构建/CTest 日志 `/tmp/nt-dual-gt-evidence/ambiguous-visual-near-focus-host-build.log` / `ambiguous-visual-near-focus-host-ctest.log` SHA-256 `7f0fe9002b825dc39b1be9f291c2108dead7b3fe453bebbb4334183250deee46` / `291a9c31457dcc112334eff266ef13cb37bbef9c4072b5d8ac6138da8b9f1634`，`git diff --check` 通过。主机测试没有运行 RKNN 引擎，不证明正确重捕或中心改善。
+- **下一步 / Handoff**：本条与源码同提交后按精确 commit 在 RK3588 新隔离目录原生构建/CTest，先完整跑 car001 标准/右偏与 car002 标准/真值四组各 271 帧，对照两套确认真值、重捕期限、无框段语义、两路中心/IoU、跨初始化一致性及错车；失败即撤回。正式 `9f84efe` 八框 `2/8 PASS`、`latest_handoff.available=false` 不因主机测试改变。
+
 ## 2026-11-14T13:06:05+08:00 car001 邻车竞争段的板端参数筛查
 
 - 当前分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，起始干净，基线 `3fcac5fb8b4c1de86bde711ec472afee1ea7ff67`；本轮不改算法源码、真值、模型或正式配置。只复用先前隔离源码 `452c48aa5f6a93abcd6fd888d50801de9894c36b` 的 RK3588 原生二进制 `/home/neardi/Project/SOT/dual-gt-visual-gate-452c48a/build/nanotrack_v3`，重新核对 SHA-256 `1a54d65b23d0746b2dec5bfd49c625233176c3f7e5d69c910fee1884eee129e5`；板 `LKD3588` Linux `6.1.84`、RKNN API/driver `2.1.0` / `0.9.8`，canonical 视频及 tracker/detector 模型、manifest、labels 精确哈希沿用下方 `452c48a` 条目。本轮仅把实验 controller 的连续视觉证据 `2→3`，或另将搜索最短年龄 `400→300 ms`、搜索 detector 间隔 `400→100 ms`，分别复制到独立 `runs/<name>/controller.conf`，再复制 `runs/headless-eval.conf` 改指该配置；未覆盖原实验配置或输出。
