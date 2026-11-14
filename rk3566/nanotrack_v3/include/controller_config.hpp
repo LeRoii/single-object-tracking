@@ -133,6 +133,7 @@ struct ControllerConfig {
   bool recovery_conflict_requires_detector = false;
   int recovery_confirmation_required = 2;
   bool recovery_requires_detector_support = false;
+  bool recovery_restore_initial_aspect = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   std::int64_t motion_search_confidence_ms = 1000;
   float motion_max_speed_diagonals_per_s = 100.0F;

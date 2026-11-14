@@ -605,6 +605,42 @@ void test_dominant_near_detector_recovery() {
   config.detector_candidate_max_center_ratio = 0.02F;
   config.motion_search_confidence_ms = 2500;
   const BBox target{850, 820, 48, 50};
+  {
+    ControllerConfig shape_config = config;
+    shape_config.recovery_confirmation_required = 3;
+    shape_config.recovery_requires_detector_support = true;
+    shape_config.recovery_restore_initial_aspect = true;
+    ResolvedControllerFixture shape(shape_config);
+    shape.initialize(target, 0, 0, {1920, 1080},
+                     make_fixed_target_class(0, true));
+    step(shape, 1, 33, std::nullopt);
+    auto shape_plan = shape.begin_frame(2, 66, true);
+    const auto shape_request = *shape_plan.detector_request;
+    const BBox partial{target.x, target.y + 7, target.width, 36};
+    DetectorBatch shape_batch{shape_request.frame_id, shape_request.timestamp_ms,
+                              {{partial, 0.8F, 0}}};
+    shape_batch.generation = shape_request.generation;
+    shape.finish_frame(shape_plan, {}, shape_batch);
+    for (std::uint64_t frame = 3; frame <= 5; ++frame) {
+      shape_plan = shape.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
+      auto shape_output = shape.finish_frame(
+          shape_plan, {reliable_for_plan(shape_plan, partial, frame, TemplateKind::kRecent),
+                       reliable_for_plan(shape_plan, partial, frame, TemplateKind::kSafe)},
+          std::nullopt);
+      expect_true(shape_output.reacquired == (frame == 5),
+                  "shape prior still requires three detector-supported NanoTrack hits");
+      if (frame == 5) {
+        expect_true(shape_output.tracking_bbox.height > partial.height * 1.2F &&
+                        std::fabs(shape_output.tracking_bbox.y +
+                                  0.5F * shape_output.tracking_bbox.height -
+                                  (partial.y + 0.5F * partial.height)) < 0.1F &&
+                        shape_output.template_transition &&
+                        shape_output.template_transition->bbox.height ==
+                            shape_output.tracking_bbox.height,
+                    "car recovery restores full-object aspect around the verified center and stages that box");
+      }
+    }
+  }
   ResolvedControllerFixture controller(config);
   controller.initialize(target, 0, 0, {1920, 1080},
                         make_fixed_target_class(0, true));

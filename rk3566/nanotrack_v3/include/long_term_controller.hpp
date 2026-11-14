@@ -439,6 +439,7 @@ class LongTermController {
   OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};
   BBox current_bbox_{};
+  BBox initial_bbox_{};
   BBox display_bbox_{};
   DimensionScaleState width_scale_state_{};
   DimensionScaleState height_scale_state_{};

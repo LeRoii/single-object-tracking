@@ -125,6 +125,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   frame_size_ = frame_size;
   target_class_ = target_class;
   current_bbox_ = initial_bbox;
+  initial_bbox_ = initial_bbox;
   display_bbox_ = initial_bbox;
   reset_scale_state(initial_bbox);
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
@@ -1533,7 +1534,19 @@ void LongTermController::defer_recovery_acceptance(
     const SearchPlan& plan, const EvaluatedObservation& selected,
     ControllerOutput& output) {
   auto recovery = std::make_shared<RecoveryAcceptance>(config_);
-  const BBox bbox = selected.observation.bbox;
+  BBox bbox = selected.observation.bbox;
+  if (config_.recovery_restore_initial_aspect &&
+      target_class_.target_class_id &&
+      (*target_class_.target_class_id == 0 || *target_class_.target_class_id == 2)) {
+    const float initial_aspect = initial_bbox_.width / initial_bbox_.height;
+    if (bbox.width / bbox.height > 1.15F * initial_aspect) {
+      const float restored_height = std::min(
+          bbox.width / initial_aspect, bbox.height * 1.35F);
+      bbox = centered_box(bbox.x + 0.5F * bbox.width,
+                          bbox.y + 0.5F * bbox.height,
+                          BBox{0.0F, 0.0F, bbox.width, restored_height}, frame_size_);
+    }
+  }
   recovery->bbox = bbox;
   recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);
   recovery->motion.initialize(bbox, plan.timestamp_ms, frame_size_.width, frame_size_.height);
