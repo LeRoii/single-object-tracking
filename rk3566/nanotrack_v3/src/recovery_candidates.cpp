@@ -81,14 +81,12 @@ bool RecoveryCandidate::has_detector_supported_hit() const {
 RecoveryCandidateTable::RecoveryCandidateTable(const ControllerConfig& config)
     : detector_capacity_(config.detector_max_candidates),
       required_hits_(static_cast<std::size_t>(config.recovery_confirmation_required)),
-      confirmation_window_frames_(std::max<std::uint64_t>(
-          kConfirmationWindow, config.recovery_confirmation_required)),
       gap_ms_(config.motion_max_dt_ms),
       detector_stale_ms_(config.detector_stale_ms),
       detector_window_frames_(config.detector_target_mode == DetectorTargetMode::kSubtarget
-          ? std::max<std::uint64_t>(confirmation_window_frames_,
+          ? std::max<std::uint64_t>(kConfirmationWindow,
                                     config.detector_subtarget_max_probes + 1)
-          : confirmation_window_frames_),
+          : kConfirmationWindow),
       conflict_detector_handoff_(config.recovery_conflict_requires_detector),
       min_iou_(config.detector_confirmation_iou),
       max_center_distance_(config.detector_confirmation_center_distance),
@@ -116,7 +114,7 @@ void RecoveryCandidateTable::expire(std::uint64_t frame_id,
       clear();
       return;
     }
-    if (frame_id - frame_->frame_id >= confirmation_window_frames_ ||
+    if (frame_id - frame_->frame_id >= kConfirmationWindow ||
         static_cast<std::uint64_t>(timestamp_ms) -
                 static_cast<std::uint64_t>(frame_->timestamp_ms) >
             static_cast<std::uint64_t>(gap_ms_)) {
@@ -133,7 +131,7 @@ void RecoveryCandidateTable::expire(std::uint64_t frame_id,
       const bool detector = index == source_index(RecoveryCandidateSource::kDetector);
       if (item && expired({item->frame_id, item->timestamp_ms},
                           detector ? detector_stale_ms_ : gap_ms_,
-                          detector ? detector_window_frames_ : confirmation_window_frames_)) {
+                          detector ? detector_window_frames_ : kConfirmationWindow)) {
         if (detector && conflict_detector_handoff_ &&
             !expired({item->frame_id, item->timestamp_ms}, detector_stale_ms_,
                      std::numeric_limits<std::uint64_t>::max()) &&
@@ -151,8 +149,7 @@ void RecoveryCandidateTable::expire(std::uint64_t frame_id,
       candidate.detector_handoff_timestamp_ms.reset();
     }
     for (auto& hit : candidate.verifications) {
-      if (hit && expired({hit->frame_id, hit->timestamp_ms}, gap_ms_,
-                         confirmation_window_frames_)) hit.reset();
+      if (hit && expired({hit->frame_id, hit->timestamp_ms}, gap_ms_)) hit.reset();
     }
   }
   entries_.erase(std::remove_if(entries_.begin(), entries_.end(),

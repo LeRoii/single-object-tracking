@@ -460,7 +460,7 @@ void validate_controller_config(const ControllerConfig& config) {
     throw std::invalid_argument("recovery confirmation policy must be two of three");
   }
   if (config.recovery_confirmation_required < 2 ||
-      config.recovery_confirmation_required > 4) {
+      config.recovery_confirmation_required > 3) {
     throw std::invalid_argument("recovery candidate confirmations must be two or three");
   }
   const float search_scales[] = {

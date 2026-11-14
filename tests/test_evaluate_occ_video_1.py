@@ -653,10 +653,6 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         three_hit_rows[7]["recovery_confirmation_hits"] = 3
         three_hit_report = evaluator.evaluate(synthetic_contract(), three_hit_rows, "full")
         self.assertTrue(three_hit_report["gates"]["reacquisition"]["passed"])
-        four_hit_rows = passing_rows()
-        four_hit_rows[7]["recovery_confirmation_hits"] = 4
-        four_hit_report = evaluator.evaluate(synthetic_contract(), four_hit_rows, "full")
-        self.assertTrue(four_hit_report["gates"]["reacquisition"]["passed"])
         for changes in (
             {"state": "LOCAL_RECOVERY", "tracking_phase": "SEARCHING"},
             {"trusted_for_state_update": False},
