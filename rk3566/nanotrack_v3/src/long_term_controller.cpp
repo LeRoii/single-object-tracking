@@ -477,12 +477,28 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
       timestamp_ms - *last_detector_request_ms_ >= config_.detector_interval_ms;
   if (detector_ready && recovery_uses_detector && interval_ready &&
       !rollback_pending_ && target_class_.target_class_allows_recovery) {
+    BBox detector_roi{0.0F, 0.0F, static_cast<float>(frame_size_.width),
+                      static_cast<float>(frame_size_.height)};
+    if (config_.detector_recovery_roi_scale > 0.0F) {
+      const int size = std::clamp(
+          static_cast<int>(std::lround(std::max(
+              120.0F, config_.detector_recovery_roi_scale *
+                  std::max(motion_predicted.width, motion_predicted.height)))),
+          1, std::min(frame_size_.width, frame_size_.height));
+      const float cx = motion_predicted.x + 0.5F * motion_predicted.width;
+      const float cy = motion_predicted.y + 0.5F * motion_predicted.height;
+      detector_roi = BBox{
+          static_cast<float>(std::clamp(static_cast<int>(std::lround(cx - 0.5F * size)),
+                                        0, frame_size_.width - size)),
+          static_cast<float>(std::clamp(static_cast<int>(std::lround(cy - 0.5F * size)),
+                                        0, frame_size_.height - size)),
+          static_cast<float>(size), static_cast<float>(size)};
+    }
     plan.request_detector = true;
     plan.detector_request = DetectorRequest{
         frame_id,
         timestamp_ms,
-        BBox{0.0F, 0.0F, static_cast<float>(frame_size_.width),
-             static_cast<float>(frame_size_.height)},
+        detector_roi,
         std::numeric_limits<std::size_t>::max(),
         detector_eligibility_generation_};
     last_detector_request_ms_ = timestamp_ms;
