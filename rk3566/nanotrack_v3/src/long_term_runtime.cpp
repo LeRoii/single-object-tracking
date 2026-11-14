@@ -154,7 +154,8 @@ void LongTermRuntime::validate_image(const ImageView& image) {
 
 TargetClassInitializationResult LongTermRuntime::initialize(
     const ImageView& image, const BBox& initial_bbox,
-    std::uint64_t frame_id, std::int64_t timestamp_ms) {
+    std::uint64_t frame_id, std::int64_t timestamp_ms,
+    InitializationClassSelection selection) {
   if (frame_open_) throw std::logic_error("cannot initialize an open runtime frame");
   if (revocation_waiting_for_ack_) throw std::logic_error("template slot revocation has not been logged");
   validate_image(image);
@@ -167,7 +168,37 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   result.original_roi = initial_bbox;
   result.requested_class_id = target_class_config_.requested_class_id;
   result.target_class = make_unknown_target_class(TargetClassReason::kDetectorUnavailable);
-  if (target_class_config_.requested_class_id >= 0) {
+  if (selection.mode != InitializationClassMode::kConfigured) {
+    result.requested_class_id = -1;
+    result.detector_error = std::move(selection.detector_error);
+    if (selection.detection) {
+      result.request_id = selection.detection->request_id;
+      result.batch = std::move(selection.detection->batch);
+      result.detector_timing = result.batch->timing;
+    }
+    if (selection.mode == InitializationClassMode::kClickedDetector) {
+      if (!result.batch ||
+          selection.selected_candidate_index >= result.batch->candidates.size()) {
+        throw std::invalid_argument("clicked detector candidate is missing");
+      }
+      const DetectorCandidate& candidate =
+          result.batch->candidates[selection.selected_candidate_index];
+      result.target_class = establish_target_class(
+          initial_bbox, FrameSize{image.width, image.height}, {candidate},
+          target_class_config_.class_count, target_class_config_.match_config);
+      if (!result.target_class.selected_candidate) {
+        throw std::invalid_argument("clicked detector candidate is invalid");
+      }
+      result.target_class.selected_candidate->original_index =
+          selection.selected_candidate_index;
+      result.target_class.candidates.front().original_index =
+          selection.selected_candidate_index;
+    } else {
+      result.target_class = make_unknown_target_class(
+          result.detector_error.empty() ? TargetClassReason::kNoMatch
+                                        : TargetClassReason::kDetectorError);
+    }
+  } else if (target_class_config_.requested_class_id >= 0) {
     result.target_class = make_fixed_target_class(
         target_class_config_.requested_class_id, detector_.available());
   } else if (target_class_config_.class_count > 0) {

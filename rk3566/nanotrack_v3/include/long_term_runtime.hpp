@@ -21,6 +21,21 @@ struct TargetClassRuntimeConfig {
   TargetClassMatchConfig match_config{};
 };
 
+enum class InitializationClassMode {
+  kConfigured,
+  kClickedDetector,
+  kUnknown,
+};
+
+// The default preserves CLI initialization. Interactive selection can reuse
+// its one full-frame detector result without submitting a second request.
+struct InitializationClassSelection {
+  InitializationClassMode mode = InitializationClassMode::kConfigured;
+  std::optional<DetectorBlockingResult> detection;
+  std::size_t selected_candidate_index = 0;
+  std::string detector_error;
+};
+
 struct TargetClassInitializationResult {
   std::uint64_t initialization_index = 0;
   std::uint64_t frame_id = 0;
@@ -76,7 +91,8 @@ class LongTermRuntime {
   TargetClassInitializationResult initialize(const ImageView& image,
                                              const BBox& initial_bbox,
                                              std::uint64_t frame_id,
-                                             std::int64_t timestamp_ms);
+                                             std::int64_t timestamp_ms,
+                                             InitializationClassSelection selection = {});
   RuntimeFrameResult process_frame(const ImageView& image,
                                    std::uint64_t frame_id,
                                    std::int64_t timestamp_ms,
