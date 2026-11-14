@@ -115,7 +115,36 @@ void NanoTrackV3::initialize(const cv::Mat& frame, const BBox& bbox) {
   }
   validate_bbox(bbox, frame.cols, frame.rows);
   const cv::Scalar channel_average = cv::mean(frame);
-  templates_.initialize(extract_template_feature(frame, bbox, channel_average));
+  std::vector<float> anchor_feature =
+      extract_template_feature(frame, bbox, channel_average);
+  // Average symmetric crops so a one or two pixel ROI placement difference
+  // does not choose a different permanent anchor template.
+  const float shift = std::min(2.0F, 0.05F * std::min(bbox.width, bbox.height));
+  const BBox shifts[] = {
+      {bbox.x - shift, bbox.y, bbox.width, bbox.height},
+      {bbox.x + shift, bbox.y, bbox.width, bbox.height},
+      {bbox.x, bbox.y - shift, bbox.width, bbox.height},
+      {bbox.x, bbox.y + shift, bbox.width, bbox.height},
+  };
+  int samples = 1;
+  for (const BBox& shifted : shifts) {
+    if (shifted.x < 0.0F || shifted.y < 0.0F ||
+        shifted.x + shifted.width > frame.cols ||
+        shifted.y + shifted.height > frame.rows) {
+      continue;
+    }
+    const std::vector<float> feature =
+        extract_template_feature(frame, shifted, channel_average);
+    if (feature.size() != anchor_feature.size()) {
+      throw std::runtime_error("anchor template feature size changed across crops");
+    }
+    for (std::size_t i = 0; i < anchor_feature.size(); ++i) {
+      anchor_feature[i] += feature[i];
+    }
+    ++samples;
+  }
+  for (float& value : anchor_feature) value /= static_cast<float>(samples);
+  templates_.initialize(std::move(anchor_feature));
   frame_width_ = frame.cols;
   frame_height_ = frame.rows;
   committed_bbox_ = bbox;

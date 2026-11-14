@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T08:45:03+08:00 对称首帧模板扰动平均候选（待板端双目标筛查）
+
+- 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，开始时工作树干净，基线 `4ce4d4ff1646a3a52cc9b9ac9e85004bc7bbd8b5`。八框原始 CSV 显示 car001 遮挡前中心最大差距一般约 2～3 px，第 176 帧起右下框进入搜索较晚、分歧增大，第 188～190 帧四框中心最大差距约 22 px；单改 detector 周期已有错车和重捕变晚反例。
+- 候选只改 `rk3566/nanotrack_v3/src/nanotrack_v3.cpp` 的初始化模板特征：原 ROI 特征加上上下左右各 `min(2 px, 5% 最小边长)` 的对称微扰模板特征，取五路均值作为永久 anchor；边界越界时跳过对应采样。控制器、detector、近期模板、`tracking_bbox`/`display_bbox` 语义及真值均未改。意图是降低微弱初始框差异对永久模板的影响，不用真值调整运行时框。
+- 实际执行 `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4` 和 `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`，`git diff --check` 通过。主机单测不能证明该 RKNN 模板融合的板端轨迹。**Handoff**：待本项与源码同提交后，以精确提交构建 RK3588 隔离目录，先对 car001 标准/右下和 car002 标准/真值四组完整 271 帧筛查；只有两目标中心、恢复身份和无框语义均不退化，才扩八框。正式已验证 `9f84efe` 八框仍 `2/8 PASS`、handoff HOLD。
+
 ## 2026-11-14T08:41:14+08:00 首帧 detector 框归一化与显示候选分数反例
 
 - 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，本轮基线 `8a6c3b68fafadd2865c76952c6e511ccbc384d70`；算法与配置未改。板 `LKD3588` Linux `6.1.84`，RKNN API `2.1.0 (967d001cc8@2024-08-07T19:28:19)`、driver `0.9.8` 沿用已哈希绑定 `9f84efe` 八框环境。板端根 `/home/neardi/Project/SOT/dual-gt-handoff-9f84efe` 的精确源提交 `9f84efecd57d611a239cc71c99ab2e4295025dbc`，本轮复核 `build/nanotrack_v3` SHA-256 `41d83ef0d772833b29400a35cacb8825a1a402f24ea7dbfe9279ac09b062343b`、`runs/headless-eval.conf` SHA-256 `2d45ca0f31916e0d05e0e5c2cad189bbf0d42f372aa4a67f3dbb3de939c531d6`；视频、两套真值和 tracker/detector 模型身份沿用下方 `9f84efe` 条目。未向板端部署新代码。
