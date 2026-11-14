@@ -187,5 +187,17 @@ int main() {
   expect(!stale && supported.size() == 0,
          "detector older than the time limit cannot seed a supported hit");
   }
+  {
+  ControllerConfig three_hit_config = config;
+  three_hit_config.recovery_confirmation_required = 3;
+  RecoveryCandidateTable three_hit(three_hit_config);
+  for (std::uint64_t frame = 1; frame <= 3; ++frame) {
+    three_hit.expire(frame, static_cast<std::int64_t>(frame * 40), 7);
+    const auto candidate = three_hit.observe(Source::kRecent, first);
+    expect(candidate && three_hit.find(*candidate)->hits() == frame &&
+               three_hit.confirmed(*candidate) == (frame == 3),
+           "three-hit profile confirms only after three tracker observations");
+  }
+  }
   return failures == 0 ? 0 : 1;
 }

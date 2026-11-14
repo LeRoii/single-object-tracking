@@ -927,6 +927,7 @@ bool LongTermController::search_control_live(std::int64_t timestamp_ms) const {
 LongTermController::RecentDisposition LongTermController::assess_recent(
     const SearchPlan& plan, const EvaluatedObservation& recent,
     const ResponseBaselineEvaluation& response) {
+  if (plan.visual_occlusion_search) return RecentDisposition::kSearch;
   const auto& observation = recent.observation;
   const auto& metrics = observation.metrics;
   const auto bounded =
@@ -1263,6 +1264,8 @@ LongTermController::confirm_recovery_candidate(
       return false;
     const auto* candidate = recovery_candidates_.find(*key);
     return candidate &&
+        (!config_.recovery_requires_detector_support ||
+         candidate->has_detector_supported_hit()) &&
         (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
          candidate->has_detector_supported_hit());
   };
@@ -1965,11 +1968,18 @@ LongTermController::ingest_detector_batch(
     // A near detection with a clear spatial lead gets a short NanoTrack
     // verification window. The closest other detections remain alternatives;
     // distant overflow cannot veto that verification without tracker evidence.
+    const bool separated_by_motion_gate =
+        positioned.size() > 1 &&
+        positioned.front().center_ratio <=
+            0.6F * config_.detector_candidate_max_center_ratio &&
+        positioned[1].center_ratio >
+            1.25F * config_.detector_candidate_max_center_ratio;
     const bool dominant_near_detector = plan.motion_prediction_confident &&
         positioned.size() > 1 &&
         positioned.front().center_ratio <= config_.detector_candidate_max_center_ratio &&
-        positioned[1].center_ratio - positioned[0].center_ratio >
-            config_.detector_candidate_max_center_ratio;
+        (positioned[1].center_ratio - positioned[0].center_ratio >
+             config_.detector_candidate_max_center_ratio ||
+         separated_by_motion_gate);
     const std::size_t considered = dominant_near_detector
         ? std::min(positioned.size(), config_.detector_max_candidates)
         : positioned.size();

@@ -74,6 +74,11 @@ struct ControllerConfig {
   // Optional car-only early partial-visibility gate. Zero disables both.
   float recent_visibility_height_ratio = 0.0F;
   float recent_visibility_center_residual = 0.0F;
+  // Optional visual evidence gate for an already suspected car. Zero disables.
+  float visual_suspect_bright_ratio = 0.0F;
+  float visual_suspect_min_confidence = 0.40F;
+  float visual_suspect_max_center_px = 30.0F;
+  int visual_suspect_consecutive_frames = 2;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;
@@ -126,6 +131,8 @@ struct ControllerConfig {
   // After an identity conflict, require independent detector evidence on the
   // same NanoTrack-confirmed recovery candidate. Default preserves behavior.
   bool recovery_conflict_requires_detector = false;
+  int recovery_confirmation_required = 2;
+  bool recovery_requires_detector_support = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   std::int64_t motion_search_confidence_ms = 1000;
   float motion_max_speed_diagonals_per_s = 100.0F;

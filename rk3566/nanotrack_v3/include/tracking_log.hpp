@@ -328,6 +328,8 @@ struct TrackingSessionMetadata {
   std::int64_t assisted_recovery_ms = 0;
   bool motion_search_enabled = false;
   bool search_reacquisition_requires_detector = false;
+  int recovery_confirmation_required = 2;
+  bool recovery_requires_detector_support = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   int template_bridge_min_stable_frames = 0;
   std::int64_t template_bridge_max_duration_ms = 0;

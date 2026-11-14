@@ -8,8 +8,6 @@
 namespace nanotrack {
 namespace {
 
-constexpr std::size_t kRequiredHits = 2;
-
 std::size_t source_index(RecoveryCandidateSource source) {
   return static_cast<std::size_t>(source);
 }
@@ -82,6 +80,7 @@ bool RecoveryCandidate::has_detector_supported_hit() const {
 
 RecoveryCandidateTable::RecoveryCandidateTable(const ControllerConfig& config)
     : detector_capacity_(config.detector_max_candidates),
+      required_hits_(static_cast<std::size_t>(config.recovery_confirmation_required)),
       gap_ms_(config.motion_max_dt_ms),
       detector_stale_ms_(config.detector_stale_ms),
       detector_window_frames_(config.detector_target_mode == DetectorTargetMode::kSubtarget
@@ -304,13 +303,16 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   }
   if (!detector && tracker_verified) {
     auto& hits = entry->verifications;
-    if (!hits[1] || hits[1]->frame_id != frame_->frame_id) {
-      if (hits[1] && !temporally_consistent(hits[1]->bbox, bbox)) {
+    auto& latest = hits[required_hits_ - 1];
+    if (!latest || latest->frame_id != frame_->frame_id) {
+      if (latest && !temporally_consistent(latest->bbox, bbox)) {
         hits = {};
         entry->detector_supported_hit_frame.reset();
       }
-      hits[0] = hits[1];
-      hits[1] = evidence;
+      for (std::size_t index = 1; index < required_hits_; ++index) {
+        hits[index - 1] = hits[index];
+      }
+      hits[required_hits_ - 1] = evidence;
     }
     if (entry->from(RecoveryCandidateSource::kDetector) ||
         entry->detector_handoff_timestamp_ms) {
@@ -320,7 +322,7 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
   if (focused_detector_ && std::any_of(entries_.begin(), entries_.end(),
           [&](const RecoveryCandidate& candidate) {
             return candidate.key != *focused_detector_ &&
-                   candidate.hits() == kRequiredHits;
+                   candidate.hits() == required_hits_;
           })) {
     mark_identity_conflict();
   } else if (conflicted()) {
@@ -395,7 +397,7 @@ bool RecoveryCandidateTable::conflicted() const noexcept {
     return std::any_of(entries_.begin(), entries_.end(),
         [&](const RecoveryCandidate& candidate) {
           return candidate.key != *focused_detector_ &&
-                 candidate.hits() == kRequiredHits;
+                 candidate.hits() == required_hits_;
         });
   }
   return entries_.size() > 1;
@@ -403,8 +405,8 @@ bool RecoveryCandidateTable::conflicted() const noexcept {
 
 bool RecoveryCandidateTable::confirmed(RecoveryCandidateKey key) const noexcept {
   const auto* candidate = find(key);
-  return !conflicted() && candidate && candidate->hits() == kRequiredHits &&
-         candidate->verifications[1]->frame_id == frame_->frame_id;
+  return !conflicted() && candidate && candidate->hits() == required_hits_ &&
+         candidate->verifications[required_hits_ - 1]->frame_id == frame_->frame_id;
 }
 
 void RecoveryCandidateTable::mark_identity_conflict() noexcept {

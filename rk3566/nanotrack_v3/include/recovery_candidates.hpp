@@ -22,7 +22,7 @@ struct RecoveryCandidateEvidence {
 struct RecoveryCandidate {
   RecoveryCandidateKey key{};
   std::array<std::optional<RecoveryCandidateEvidence>, 3> evidence{};
-  std::array<std::optional<RecoveryCandidateEvidence>, 2> verifications{};
+  std::array<std::optional<RecoveryCandidateEvidence>, 3> verifications{};
   // A detector must still be fresh when one of the current NanoTrack hits
   // occurs. Keep that association through the second hit even if the detector
   // metadata ages out between the two frames.
@@ -86,6 +86,7 @@ class RecoveryCandidateTable {
                              const BBox& bbox) const noexcept;
 
   std::size_t detector_capacity_;
+  std::size_t required_hits_;
   std::int64_t gap_ms_;
   std::int64_t detector_stale_ms_;
   std::uint64_t detector_window_frames_;

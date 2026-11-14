@@ -130,6 +130,10 @@ void set_value(ControllerConfig& config,
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
   else if (key == "recent_visibility_center_residual") config.recent_visibility_center_residual = parse_float(key, value);
+  else if (key == "visual_suspect_bright_ratio") config.visual_suspect_bright_ratio = parse_float(key, value);
+  else if (key == "visual_suspect_min_confidence") config.visual_suspect_min_confidence = parse_float(key, value);
+  else if (key == "visual_suspect_max_center_px") config.visual_suspect_max_center_px = parse_float(key, value);
+  else if (key == "visual_suspect_consecutive_frames") config.visual_suspect_consecutive_frames = parse_int(key, value);
   else if (key == "occlusion_hold_frames") config.occlusion_hold_frames = parse_int(key, value);
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
@@ -173,6 +177,8 @@ void set_value(ControllerConfig& config,
   else if (key == "motion_max_dt_ms") config.motion_max_dt_ms = parse_integer(key, value);
   else if (key == "motion_search_enabled") config.motion_search_enabled = parse_bool(key, value);
   else if (key == "recovery_conflict_requires_detector") config.recovery_conflict_requires_detector = parse_bool(key, value);
+  else if (key == "recovery_confirmation_required") config.recovery_confirmation_required = parse_int(key, value);
+  else if (key == "recovery_requires_detector_support") config.recovery_requires_detector_support = parse_bool(key, value);
   else if (key == "search_reacquisition_min_age_ms") config.search_reacquisition_min_age_ms = parse_integer(key, value);
   else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
   else if (key == "motion_max_speed_diagonals_per_s") config.motion_max_speed_diagonals_per_s = parse_float(key, value);
@@ -369,6 +375,14 @@ void validate_controller_config(const ControllerConfig& config) {
   if (!visibility_disabled && !visibility_enabled) {
     throw std::invalid_argument("recent visibility gate must be disabled or have two unit-interval thresholds");
   }
+  if (!in_unit_interval(config.visual_suspect_bright_ratio) ||
+      !in_unit_interval(config.visual_suspect_min_confidence) ||
+      config.visual_suspect_max_center_px <= 0.0F ||
+      config.visual_suspect_max_center_px > 500.0F ||
+      config.visual_suspect_consecutive_frames < 2 ||
+      config.visual_suspect_consecutive_frames > 10) {
+    throw std::invalid_argument("visual suspect gate limits are invalid");
+  }
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
     throw std::invalid_argument("detector limits are invalid");
@@ -444,6 +458,10 @@ void validate_controller_config(const ControllerConfig& config) {
   }
   if (config.confirmation_window != 3 || config.confirmation_required != 2) {
     throw std::invalid_argument("recovery confirmation policy must be two of three");
+  }
+  if (config.recovery_confirmation_required < 2 ||
+      config.recovery_confirmation_required > 3) {
+    throw std::invalid_argument("recovery candidate confirmations must be two or three");
   }
   const float search_scales[] = {
       config.search_tracking, config.search_uncertain, config.search_local_initial,
@@ -590,6 +608,8 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.motion_search_enabled << '|'
          << config.search_reacquisition_requires_detector << '|'
          << config.recovery_conflict_requires_detector << '|'
+         << config.recovery_confirmation_required << '|'
+         << config.recovery_requires_detector_support << '|'
          << config.search_reacquisition_min_age_ms << '|'
          << config.motion_search_confidence_ms << '|'
          << config.motion_max_speed_diagonals_per_s << '|'
@@ -603,7 +623,11 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.response_psr_drop_ratio << '|'
          << config.response_apce_drop_ratio << '|'
          << config.recent_visibility_height_ratio << '|'
-         << config.recent_visibility_center_residual;
+         << config.recent_visibility_center_residual << '|'
+         << config.visual_suspect_bright_ratio << '|'
+         << config.visual_suspect_min_confidence << '|'
+         << config.visual_suspect_max_center_px << '|'
+         << config.visual_suspect_consecutive_frames;
   return stream.str();
 }
 

@@ -1146,6 +1146,8 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.motion_search_enabled = config.motion_search_enabled;
   metadata.search_reacquisition_requires_detector =
       config.search_reacquisition_requires_detector;
+  metadata.recovery_confirmation_required = config.recovery_confirmation_required;
+  metadata.recovery_requires_detector_support = config.recovery_requires_detector_support;
   metadata.search_reacquisition_min_age_ms =
       config.search_reacquisition_min_age_ms;
   metadata.template_bridge_min_stable_frames =
@@ -1340,6 +1342,11 @@ std::string tracking_session_metadata_json(
          << (metadata.motion_search_enabled ? "true" : "false") << ",\n"
          << "  \"search_reacquisition_requires_detector\": "
          << (metadata.search_reacquisition_requires_detector ? "true" : "false")
+         << ",\n"
+         << "  \"recovery_confirmation_required\": "
+         << metadata.recovery_confirmation_required << ",\n"
+         << "  \"recovery_requires_detector_support\": "
+         << (metadata.recovery_requires_detector_support ? "true" : "false")
          << ",\n"
          << "  \"search_reacquisition_min_age_ms\": "
          << metadata.search_reacquisition_min_age_ms << ",\n"
