@@ -977,6 +977,9 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
         plan.timestamp_ms - *response_degraded_since_ms_ >= config_.suspicion_enter_ms) {
       suspected_since_ms_ = plan.timestamp_ms;
     }
+    if (suspected_since_ms_ && plan.crossing_band_recent) {
+      return RecentDisposition::kSearch;
+    }
     // Reuse the uncertainty budget after entering SUSPECTED. An intervening
     // clean sample restarts the duration of continuous degradation.
     if (suspected_since_ms_ &&

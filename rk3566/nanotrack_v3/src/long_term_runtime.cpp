@@ -106,7 +106,8 @@ TargetClassInitializationResult LongTermRuntime::initialize(
 
 RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                                                   std::uint64_t frame_id,
-                                                  std::int64_t timestamp_ms) {
+                                                  std::int64_t timestamp_ms,
+                                                  bool crossing_band_recent) {
   if (!initialized_) throw std::logic_error("long-term runtime is not initialized");
   if (frame_open_) throw std::logic_error("previous runtime frame is unfinished");
   if (revocation_waiting_for_ack_) throw std::logic_error("template slot revocation has not been logged");
@@ -151,6 +152,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.detector.ready = detector_.available() && detector_.can_submit();
   result.plan = controller_.begin_frame(frame_id, timestamp_ms,
                                         result.detector.ready);
+  result.plan.crossing_band_recent = crossing_band_recent;
 
   std::optional<DetectorRequest> display_request;
   if (result.plan.request_detector && result.plan.detector_request) {

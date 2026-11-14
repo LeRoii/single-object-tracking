@@ -78,7 +78,8 @@ class LongTermRuntime {
                                              std::int64_t timestamp_ms);
   RuntimeFrameResult process_frame(const ImageView& image,
                                    std::uint64_t frame_id,
-                                   std::int64_t timestamp_ms);
+                                   std::int64_t timestamp_ms,
+                                   bool crossing_band_recent = false);
 
   // After returning a revocation-bearing frame, processing and reinitialization
   // wait until the writer acknowledges that exact slot.
