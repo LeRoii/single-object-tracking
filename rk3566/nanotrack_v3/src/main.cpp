@@ -491,8 +491,6 @@ int main(int argc, char** argv) {
       detector_config.class_id = -1;
       detector_config.confidence_threshold = options.detector_confidence;
       detector_config.nms_threshold = options.detector_nms;
-      detector_config.parallel_recovery =
-          controller_config.detector_recovery_roi_scale > 0.0F;
       auto engine =
           std::make_unique<nanotrack::YoloRknnEngine>(detector_config);
       yolo_engine = engine.get();

@@ -18,7 +18,6 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <future>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -425,20 +424,13 @@ class YoloRknnEngine::Impl {
                         image.stride_bytes);
     const cv::Rect roi_rect(left, top, right - left, bottom - top);
     const cv::Mat crop = frame(roi_rect);
-    // Keep the small-object scale seen in a 320 px detector pass while using
-    // the fixed 640 px RKNN input. Search ROIs are centered on a grey canvas;
-    // the letterbox transform still maps candidates to source-frame pixels.
-    const int content_size =
-        request.purpose == DetectorRequestPurpose::kSearchRecovery &&
-        (crop.cols < image.width || crop.rows < image.height)
-            ? kInputSize / 2 : kInputSize;
     const float scale = std::min(
-        static_cast<float>(content_size) / static_cast<float>(crop.cols),
-        static_cast<float>(content_size) / static_cast<float>(crop.rows));
+        static_cast<float>(kInputSize) / static_cast<float>(crop.cols),
+        static_cast<float>(kInputSize) / static_cast<float>(crop.rows));
     const int resized_width = std::clamp(
-        static_cast<int>(std::lround(crop.cols * scale)), 1, content_size);
+        static_cast<int>(std::lround(crop.cols * scale)), 1, kInputSize);
     const int resized_height = std::clamp(
-        static_cast<int>(std::lround(crop.rows * scale)), 1, content_size);
+        static_cast<int>(std::lround(crop.rows * scale)), 1, kInputSize);
     const int pad_left = (kInputSize - resized_width) / 2;
     const int pad_top = (kInputSize - resized_height) / 2;
     cv::Mat resized_bgr;
@@ -662,80 +654,13 @@ class YoloRknnEngine::Impl {
 };
 
 YoloRknnEngine::YoloRknnEngine(const YoloRknnEngineConfig& config)
-    : impl_(std::make_unique<Impl>(config)),
-      recovery_impl_(config.parallel_recovery ? std::make_unique<Impl>(config)
-                                              : nullptr) {}
+    : impl_(std::make_unique<Impl>(config)) {}
 
 YoloRknnEngine::~YoloRknnEngine() = default;
 
 DetectorEngineResult YoloRknnEngine::infer(const ImageView& image,
                                            const DetectorRequest& request) {
-  if (!recovery_impl_ ||
-      request.purpose != DetectorRequestPurpose::kSearchRecovery ||
-      (request.roi.x <= 0.0F && request.roi.y <= 0.0F &&
-       request.roi.width >= image.width && request.roi.height >= image.height)) {
-    return impl_->infer(image, request);
-  }
-
-  // The full-frame pass supplies competing vehicles as negative identity
-  // evidence. The local pass resolves the small target at the scale verified
-  // by the ROI replay; dropping the full-frame pass caused false recovery.
-  DetectorRequest full_request = request;
-  full_request.roi = BBox{0.0F, 0.0F, static_cast<float>(image.width),
-                           static_cast<float>(image.height)};
-  const auto start = std::chrono::steady_clock::now();
-  auto full_future = std::async(std::launch::async, [&] {
-    return impl_->infer(image, full_request);
-  });
-  DetectorEngineResult local = recovery_impl_->infer(image, request);
-  DetectorEngineResult combined = full_future.get();
-  // Only refine a full-frame identity with a tightly overlapping local box.
-  // The local pass can also see the adjacent car and broad partial-object
-  // envelopes; admitting those as new identities or replacing confidence
-  // changed recovery arbitration even when the full-frame rivals were kept.
-  std::vector<float> best_overlap(combined.candidates.size(), 0.60F);
-  std::vector<std::optional<BBox>> refinements(combined.candidates.size());
-  for (const DetectorCandidate& candidate : local.candidates) {
-    const BBox& box = candidate.bbox;
-    if (box.width <= 0.0F || box.height <= 0.0F) continue;
-    std::size_t best = combined.candidates.size();
-    float overlap = 0.60F;
-    for (std::size_t index = 0; index < combined.candidates.size(); ++index) {
-      const DetectorCandidate& other = combined.candidates[index];
-      const BBox& reference = other.bbox;
-      if (candidate.class_id != other.class_id ||
-          reference.width <= 0.0F || reference.height <= 0.0F) continue;
-      const float left = std::max(box.x, reference.x);
-      const float top = std::max(box.y, reference.y);
-      const float right = std::min(box.x + box.width,
-                                   reference.x + reference.width);
-      const float bottom = std::min(box.y + box.height,
-                                    reference.y + reference.height);
-      const float intersection = std::max(0.0F, right - left) *
-                                 std::max(0.0F, bottom - top);
-      const float union_area = box.width * box.height +
-                               reference.width * reference.height - intersection;
-      const float iou = intersection / union_area;
-      if (iou > overlap && iou > best_overlap[index]) {
-        overlap = iou;
-        best = index;
-      }
-    }
-    if (best < combined.candidates.size()) {
-      refinements[best] = box;
-      best_overlap[best] = overlap;
-    }
-  }
-  for (std::size_t index = 0; index < refinements.size(); ++index) {
-    if (refinements[index]) combined.candidates[index].bbox = *refinements[index];
-  }
-  combined.raw_candidate_count += local.raw_candidate_count;
-  combined.filtered_candidate_count += local.filtered_candidate_count;
-  combined.timing.preprocess_ms += local.timing.preprocess_ms;
-  combined.timing.inference_ms += local.timing.inference_ms;
-  combined.timing.postprocess_ms += local.timing.postprocess_ms;
-  combined.timing.total_ms = milliseconds(std::chrono::steady_clock::now() - start);
-  return combined;
+  return impl_->infer(image, request);
 }
 
 const std::string& YoloRknnEngine::model_sha256() const {
