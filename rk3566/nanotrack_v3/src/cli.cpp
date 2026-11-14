@@ -93,6 +93,7 @@ std::string usage() {
       "[--bbox X,Y,W,H] [--model-dir DIR] "
       "[--output-video OUTPUT.avi] [--output-boxes OUTPUT.csv] [--max-frames N] "
       "[--start-frame N --end-frame N] [--output-size WIDTHxHEIGHT] "
+      "[--click-fallback-bbox-size WIDTHxHEIGHT] "
       "[--interactive] "
       "[--sensor visible|infrared] [--controller-config FILE] "
       "[--session-metadata FILE] "
@@ -132,6 +133,7 @@ Options parse_options(const std::vector<std::string>& arguments) {
         option != "--output-video" && option != "--output-boxes" &&
         option != "--max-frames" && option != "--start-frame" &&
         option != "--end-frame" && option != "--output-size" &&
+        option != "--click-fallback-bbox-size" &&
         option != "--controller-config" && option != "--sensor" &&
         option != "--session-metadata" && option != "--detector-model" &&
         option != "--detector-manifest" && option != "--detector-labels" &&
@@ -218,6 +220,12 @@ Options parse_options(const std::vector<std::string>& arguments) {
     const auto dimensions = parse_output_size(output_size->second);
     options.output_width = dimensions.first;
     options.output_height = dimensions.second;
+  }
+  const auto click_fallback_size = values.find("--click-fallback-bbox-size");
+  if (click_fallback_size != values.end()) {
+    const auto dimensions = parse_output_size(click_fallback_size->second);
+    options.click_fallback_bbox_width = dimensions.first;
+    options.click_fallback_bbox_height = dimensions.second;
   }
   const auto controller_config = values.find("--controller-config");
   if (controller_config != values.end()) {

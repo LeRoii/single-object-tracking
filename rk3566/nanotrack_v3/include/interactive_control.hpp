@@ -1,6 +1,10 @@
 #pragma once
 
+#include "long_term_types.hpp"
+
+#include <cstddef>
 #include <optional>
+#include <vector>
 
 namespace nanotrack {
 
@@ -23,6 +27,23 @@ struct InteractiveRect {
   int width = 0;
   int height = 0;
 };
+
+struct InteractiveClickPoint { int x = 0; int y = 0; };
+
+struct InteractiveClickTarget {
+  BBox bbox{};
+  std::optional<std::size_t> candidate_index;
+};
+
+InteractiveRect interactive_image_rect(int source_width, int source_height,
+                                       int display_width, int display_height);
+std::optional<InteractiveClickPoint> map_interactive_click(
+    int x, int y, int source_width, int source_height,
+    int display_width, int display_height);
+InteractiveClickTarget choose_interactive_click_target(
+    InteractiveClickPoint point, FrameSize frame,
+    const std::vector<DetectorCandidate>& candidates,
+    std::size_t class_count, int fallback_width, int fallback_height);
 
 class InteractiveRoiSelection {
  public:

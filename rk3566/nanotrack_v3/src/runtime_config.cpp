@@ -39,6 +39,7 @@ const std::unordered_map<std::string, std::string>& option_names() {
       {"start_frame", "--start-frame"},
       {"end_frame", "--end-frame"},
       {"output_size", "--output-size"},
+      {"click_fallback_bbox_size", "--click-fallback-bbox-size"},
       {"controller_config", "--controller-config"},
       {"sensor", "--sensor"},
       {"session_metadata", "--session-metadata"},

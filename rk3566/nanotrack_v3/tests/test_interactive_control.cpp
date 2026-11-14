@@ -23,6 +23,43 @@ int main() {
                   kInteractiveWindowHeight == 720,
               "interactive debug window defaults to 1280x720");
 
+  const auto fitted = interactive_image_rect(1920, 1080, 1280, 720);
+  expect_true(fitted.x == 0 && fitted.y == 0 && fitted.width == 1280 &&
+                  fitted.height == 720,
+              "16:9 source fills click canvas");
+  const auto mapped = map_interactive_click(640, 360, 1920, 1080, 1280, 720);
+  expect_true(mapped && mapped->x == 960 && mapped->y == 540,
+              "display click maps to original frame");
+  const auto pillarbox = interactive_image_rect(100, 100, 1280, 720);
+  expect_true(pillarbox.x == 280 && pillarbox.width == 720 &&
+                  !map_interactive_click(100, 360, 100, 100, 1280, 720),
+              "click in image padding is ignored");
+  const std::vector<DetectorCandidate> overlapping{
+      {{20, 20, 80, 80}, 0.8F, 2},
+      {{40, 40, 20, 20}, 0.9F, 5},
+      {{40, 40, 16, 16}, 0.9F, 4},
+      {{40, 40, 16, 16}, 0.9F, 3}};
+  const auto chosen = choose_interactive_click_target(
+      {48, 48}, {120, 100}, overlapping, 9, 64, 64);
+  expect_true(chosen.candidate_index == 2 && chosen.bbox.x == 40 &&
+                  chosen.bbox.width == 16,
+              "overlap chooses confidence then smaller area then original order");
+  const auto fallback = choose_interactive_click_target(
+      {80, 60}, {120, 100}, {}, 9, 64, 64);
+  expect_true(!fallback.candidate_index && fallback.bbox.x == 48 &&
+                  fallback.bbox.y == 28 && fallback.bbox.width == 64 &&
+                  fallback.bbox.height == 64,
+              "blank click gets centered default box");
+  const auto edge = choose_interactive_click_target(
+      {1, 1}, {120, 100}, {}, 9, 64, 64);
+  expect_true(edge.bbox.x == 0 && edge.bbox.y == 0 &&
+                  edge.bbox.width == 33 && edge.bbox.height == 33,
+              "fallback box clips at image edge while retaining click center");
+  const auto invalid_class = choose_interactive_click_target(
+      {48, 48}, {120, 100}, {{{40, 40, 16, 16}, 0.9F, 10}}, 9, 64, 64);
+  expect_true(!invalid_class.candidate_index,
+              "unverified detector class cannot initialize selected target");
+
   expect_true(decode_interactive_key('n') == InteractiveCommand::kStep,
               "n advances exactly one frame");
   expect_true(decode_interactive_key('N') == InteractiveCommand::kStep,

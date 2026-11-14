@@ -126,6 +126,24 @@ int main() {
   expect_true(interactive_bbox_options.interactive &&
                   interactive_bbox_options.has_bbox,
               "interactive mode may initialize from a supplied bbox");
+  expect_true(interactive_bbox_options.click_fallback_bbox_width == 64 &&
+                  interactive_bbox_options.click_fallback_bbox_height == 64,
+              "interactive click fallback defaults to 64x64");
+  for (const std::string& size : {"0x64", "64x0", "-1x64", "64", "64x999999999999"}) {
+    auto invalid = interactive_with_bbox;
+    invalid.push_back("--click-fallback-bbox-size");
+    invalid.push_back(size);
+    expect_throws([&] { parse_options(invalid); },
+                  "invalid click fallback dimensions must fail");
+  }
+  auto custom = interactive_with_bbox;
+  custom.push_back("--click-fallback-bbox-size");
+  custom.push_back("80x96");
+  const Options custom_click = parse_options(custom);
+  expect_true(custom_click.click_fallback_bbox_width == 80 &&
+                  custom_click.click_fallback_bbox_height == 96 &&
+                  custom_click.bbox.width == interactive_bbox_options.bbox.width,
+              "click fallback size is configurable without changing --bbox");
 
   std::vector<std::string> long_term = valid;
   long_term.insert(long_term.end(),
@@ -356,6 +374,9 @@ int main() {
       parse_options({"nanotrack_v3", "--config", rk3588_config.string()});
   expect_true(rk3588.interactive && !rk3588.has_bbox,
               "RK3588 debug config starts interactive for mouse selection");
+  expect_true(rk3588.click_fallback_bbox_width == 64 &&
+                  rk3588.click_fallback_bbox_height == 64,
+              "RK3588 debug config defines click fallback size");
   expect_true(
       rk3588.video ==
           "/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/data/occ_video_1/1.mp4" &&

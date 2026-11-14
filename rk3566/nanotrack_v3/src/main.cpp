@@ -24,6 +24,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -31,6 +32,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace {
 
@@ -313,65 +315,52 @@ void destroy_window(const std::string& window_name) noexcept {
   }
 }
 
-void roi_mouse_callback(int event, int x, int y, int, void* userdata) {
-  auto* selection = static_cast<nanotrack::InteractiveRoiSelection*>(userdata);
-  if (selection == nullptr) return;
-  switch (event) {
-    case cv::EVENT_LBUTTONDOWN:
-      selection->handle_mouse(nanotrack::RoiMouseEvent::kDown, x, y);
-      break;
-    case cv::EVENT_MOUSEMOVE:
-      selection->handle_mouse(nanotrack::RoiMouseEvent::kMove, x, y);
-      break;
-    case cv::EVENT_LBUTTONUP:
-      selection->handle_mouse(nanotrack::RoiMouseEvent::kUp, x, y);
-      break;
-    default: break;
-  }
+void click_mouse_callback(int event, int x, int y, int, void* userdata) {
+  if (event != cv::EVENT_LBUTTONDOWN || userdata == nullptr) return;
+  *static_cast<std::optional<nanotrack::InteractiveClickPoint>*>(userdata) =
+      nanotrack::InteractiveClickPoint{x, y};
 }
 
-struct RoiSelectionResult {
-  std::optional<nanotrack::BBox> bbox;
+struct ClickSelectionResult {
+  std::optional<nanotrack::InteractiveClickPoint> point;
   bool window_closed = false;
 };
 
-RoiSelectionResult select_target_roi(const std::string& window_name,
-                                     const cv::Mat& frame) {
-  nanotrack::InteractiveRoiSelection selection(frame.cols, frame.rows);
-  cv::setMouseCallback(window_name, roi_mouse_callback, &selection);
-  while (!selection.finished()) {
-    cv::Mat rendered = frame.clone();
-    if (const auto rectangle = selection.current_rect()) {
-      cv::rectangle(rendered,
-                    cv::Rect(rectangle->x, rectangle->y, rectangle->width,
-                             rectangle->height),
-                    cv::Scalar(0, 255, 255), 2);
-    }
-    cv::rectangle(rendered, cv::Rect(0, 0, rendered.cols, 30),
-                  cv::Scalar(0, 0, 0), cv::FILLED);
-    cv::putText(rendered, "Drag ROI, Enter/Space: confirm, Esc/C: cancel",
-                cv::Point(12, 22), cv::FONT_HERSHEY_SIMPLEX, 0.55,
-                cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
-    cv::imshow(window_name, rendered);
+ClickSelectionResult select_target_click(const std::string& window_name,
+                                         const cv::Mat& frame) {
+  constexpr int width = nanotrack::kInteractiveWindowWidth;
+  constexpr int height = nanotrack::kInteractiveWindowHeight;
+  const nanotrack::InteractiveRect image = nanotrack::interactive_image_rect(
+      frame.cols, frame.rows, width, height);
+  cv::Mat canvas(height, width, CV_8UC3, cv::Scalar(0, 0, 0));
+  cv::Mat image_area = canvas(cv::Rect(image.x, image.y, image.width, image.height));
+  cv::resize(frame, image_area, cv::Size(image.width, image.height),
+             0, 0, cv::INTER_AREA);
+  cv::rectangle(canvas, cv::Rect(0, 0, width, 30), cv::Scalar(0, 0, 0), cv::FILLED);
+  cv::putText(canvas, "Click target once, Esc/C: cancel", cv::Point(12, 22),
+              cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(255, 255, 255), 1,
+              cv::LINE_AA);
+  std::optional<nanotrack::InteractiveClickPoint> clicked;
+  cv::setMouseCallback(window_name, click_mouse_callback, &clicked);
+  ClickSelectionResult result;
+  while (true) {
+    cv::imshow(window_name, canvas);
     const int key = cv::waitKeyEx(20);
     if (!window_visible(window_name)) {
-      return RoiSelectionResult{std::nullopt, true};
+      result.window_closed = true;
+      break;
     }
-    selection.handle_key(key);
+    if (key == 27 || key == 'c' || key == 'C') break;
+    if (clicked) {
+      result.point = nanotrack::map_interactive_click(
+          clicked->x, clicked->y, frame.cols, frame.rows, width, height);
+      clicked.reset();
+      if (result.point) break;
+    }
   }
-  try {
-    cv::setMouseCallback(window_name, nullptr, nullptr);
-  } catch (const cv::Exception&) {
-  }
-  if (const auto rectangle = selection.confirmed_rect()) {
-    return RoiSelectionResult{
-        nanotrack::BBox{static_cast<float>(rectangle->x),
-                        static_cast<float>(rectangle->y),
-                        static_cast<float>(rectangle->width),
-                        static_cast<float>(rectangle->height)},
-        false};
-  }
-  return RoiSelectionResult{};
+  try { cv::setMouseCallback(window_name, nullptr, nullptr); }
+  catch (const cv::Exception&) {}
+  return result;
 }
 
 std::string fnv1a64_file(const std::filesystem::path& path) {
@@ -618,7 +607,9 @@ int main(int argc, char** argv) {
       cv::moveWindow(kDisplayWindow, 0, 0);
       cv::moveWindow(kDebugWindow, nanotrack::kInteractiveWindowWidth + 16, 0);
     }
-    const auto initialize_target = [&](const nanotrack::BBox& bbox) {
+    const auto initialize_target = [&](
+        const nanotrack::BBox& bbox,
+        nanotrack::InitializationClassSelection selection = {}) {
       const bool reinitializing = initialized;
       if (options.interactive) {
         cv::imshow(kDisplayWindow, render_display(frame, displayed_result));
@@ -632,7 +623,8 @@ int main(int argc, char** argv) {
         // Actual HighGUI paint timing is a board/backend observation boundary.
       }
       const nanotrack::TargetClassInitializationResult initialization =
-          runtime.initialize(image_view(frame), bbox, source_frame, timestamp_ms);
+          runtime.initialize(image_view(frame), bbox, source_frame, timestamp_ms,
+                             std::move(selection));
       nanotrack::record_target_class_initialization(session_metadata, initialization);
       debug_telemetry.reset();
       nanotrack::ControllerOutput initial_output;
@@ -756,21 +748,59 @@ int main(int argc, char** argv) {
           break;
         }
         if (playback.take_selection_request()) {
-          std::cout << "DEBUG_EVENT event=roi_selection_started frame="
+          std::cout << "DEBUG_EVENT event=click_selection_started frame="
                     << source_frame << '\n';
-          const RoiSelectionResult selection =
-              select_target_roi(kDisplayWindow, frame);
-          if (selection.window_closed) {
+          const ClickSelectionResult click =
+              select_target_click(kDisplayWindow, frame);
+          if (click.window_closed) {
             shutdown_reason = "selection_window_closed";
             break;
           }
-          if (selection.bbox) {
-            nanotrack::validate_bbox(*selection.bbox, frame.cols, frame.rows);
-            initialize_target(*selection.bbox);
+          if (click.point) {
+            nanotrack::InitializationClassSelection selection;
+            const nanotrack::DetectorRequest request{
+                source_frame, timestamp_ms,
+                nanotrack::BBox{0, 0, float(frame.cols), float(frame.rows)},
+                std::numeric_limits<std::size_t>::max(), 0,
+                nanotrack::DetectorRequestPurpose::kInitialization};
+            if (detector->available() && !detector_labels.empty()) {
+              try {
+                selection.detection = detector->detect_blocking(image_view(frame), request);
+              } catch (const std::exception& error) {
+                selection.detector_error = error.what();
+              } catch (...) {
+                selection.detector_error = "unknown detector click error";
+              }
+            }
+            if (!selection.detector_error.empty()) {
+              std::cout << "DEBUG_EVENT event=click_detector_error frame="
+                        << source_frame << " error="
+                        << std::quoted(selection.detector_error) << '\n';
+            }
+            const std::vector<nanotrack::DetectorCandidate> empty_candidates;
+            const auto& candidates = selection.detection
+                ? selection.detection->batch.candidates : empty_candidates;
+            const auto chosen = nanotrack::choose_interactive_click_target(
+                *click.point, {frame.cols, frame.rows}, candidates,
+                detector_labels.size(), options.click_fallback_bbox_width,
+                options.click_fallback_bbox_height);
+            selection.mode = chosen.candidate_index
+                ? nanotrack::InitializationClassMode::kClickedDetector
+                : nanotrack::InitializationClassMode::kUnknown;
+            if (chosen.candidate_index)
+              selection.selected_candidate_index = *chosen.candidate_index;
+            const int selected_class = chosen.candidate_index
+                ? candidates[*chosen.candidate_index].class_id : -1;
+            std::cout << "DEBUG_EVENT event=click_selection_resolved frame="
+                      << source_frame << " click=" << click.point->x << ','
+                      << click.point->y << " source="
+                      << (chosen.candidate_index ? "detector" : "fallback")
+                      << " bbox=" << chosen.bbox.x << ',' << chosen.bbox.y
+                      << ',' << chosen.bbox.width << ',' << chosen.bbox.height
+                      << " class_id=" << selected_class << '\n';
+            initialize_target(chosen.bbox, std::move(selection));
           } else {
-            std::cout << "ROI_SELECTION_CANCELLED frame=" << source_frame
-                      << '\n';
-            std::cout << "DEBUG_EVENT event=roi_selection_cancelled frame="
+            std::cout << "DEBUG_EVENT event=click_selection_cancelled frame="
                       << source_frame << '\n';
           }
           continue;

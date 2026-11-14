@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T22:41:59+08:00 Debug 单击选目标源码及主机测试
+
+- 分支/工作树 `codex/debug-click-select` / `/home/u20/single-object-tracking/.worktrees/debug-click-select`，基线 `Debug@1573b20c9aef2b8747752bf5467b5ac4a0261136`，共用运行时提交 `78665da675a8ca05e46a96dcfa49dd697299fe26`。Debug 按 `R` 暂停后在 Display 单击，检测当前帧一次；命中任何有效类别时取裁剪后的 detector bbox 与类别，重叠按置信度、面积、原顺序决胜。未命中、detector 不可用或报错时，用点击位置为中心的固定框并强制目标类别未知；错误写 Debug 事件。单击显示图先缩放到 1280×720 并居中，点击坐标映射回源帧，图像留白点击忽略。`click_fallback_bbox_size=WxH` 配置默认 64x64，CLI `--bbox` 维持原语义。原 RK3588 固定配置文件有哈希保护，未改其字节。
+- 实际主机 `cmake --build /tmp/nt-click-common-build --parallel 4` 和 `ctest --test-dir /tmp/nt-click-common-build --output-on-failure` 23/23 PASS，覆盖 bbox 命中、重叠选择、空白/边缘框、配置值和类别模式；CTest 日志 `/tmp/nt-click-full-ctest.log` SHA-256 `ffcf9566b18d1aeaf3d25fc00b03d0dfbcee12a6c078945c5cb0e706ef28cec3`。从 RK3588 已有开发目录读取 `rknn_api.h` 至主机 `/tmp/nt-click-sdk/include/` 后，`g++ -std=c++17 -fsyntax-only -Wall -Wextra -Wpedantic -I/tmp/nt-click-sdk/include -Irk3566/nanotrack_v3/include $(pkg-config --cflags opencv4) rk3566/nanotrack_v3/src/main.cpp` exit 0。该验证只覆盖主机语法与 RKNN-off 单测；下一步提交后到 RK3588 原生构建、GUI 单击与回归实测。
+
 ## 2026-11-14T22:40:22+08:00 Debug 单击选目标：共用初始化契约
 
 - 新功能分支/工作树 `codex/debug-click-select` / `/home/u20/single-object-tracking/.worktrees/debug-click-select`，基线 `Debug@1573b20c9aef2b8747752bf5467b5ac4a0261136`。通用 `LongTermRuntime::initialize` 增加默认兼容的类别选择参数：现有配置、复用已选 detector 候选、强制未知三种模式。点击候选复用单次检测 batch、覆盖既有固定类别，空白/错误强制未知，不再二次提交 detector；CLI `--bbox` 保持原语义。此通用源码将在 main 和 Debug 保持相同。

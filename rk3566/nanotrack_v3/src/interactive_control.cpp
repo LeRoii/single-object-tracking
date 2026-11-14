@@ -16,6 +16,80 @@ int normalize_highgui_key(int key) {
 
 }  // namespace
 
+InteractiveRect interactive_image_rect(int source_width, int source_height,
+                                       int display_width, int display_height) {
+  if (source_width <= 0 || source_height <= 0 ||
+      display_width <= 0 || display_height <= 0)
+    throw std::invalid_argument("interactive image dimensions must be positive");
+  const double scale = std::min(double(display_width) / source_width,
+                                double(display_height) / source_height);
+  const int width = std::clamp(int(std::lround(source_width * scale)), 1,
+                               display_width);
+  const int height = std::clamp(int(std::lround(source_height * scale)), 1,
+                                display_height);
+  return {(display_width - width) / 2, (display_height - height) / 2,
+          width, height};
+}
+
+std::optional<InteractiveClickPoint> map_interactive_click(
+    int x, int y, int source_width, int source_height,
+    int display_width, int display_height) {
+  const auto image = interactive_image_rect(source_width, source_height,
+                                            display_width, display_height);
+  if (x < image.x || y < image.y || x >= image.x + image.width ||
+      y >= image.y + image.height) return std::nullopt;
+  return InteractiveClickPoint{
+      std::min(source_width - 1, (x - image.x) * source_width / image.width),
+      std::min(source_height - 1, (y - image.y) * source_height / image.height)};
+}
+
+InteractiveClickTarget choose_interactive_click_target(
+    InteractiveClickPoint point, FrameSize frame,
+    const std::vector<DetectorCandidate>& candidates,
+    std::size_t class_count, int fallback_width, int fallback_height) {
+  if (frame.width <= 0 || frame.height <= 0 || fallback_width <= 0 ||
+      fallback_height <= 0 || point.x < 0 || point.y < 0 ||
+      point.x >= frame.width || point.y >= frame.height)
+    throw std::invalid_argument("invalid interactive click or fallback size");
+  std::optional<std::size_t> selected;
+  BBox selected_box{};
+  double selected_area = 0.0;
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const auto& candidate = candidates[i];
+    const auto& box = candidate.bbox;
+    if (candidate.class_id < 0 ||
+        static_cast<std::size_t>(candidate.class_id) >= class_count ||
+        !std::isfinite(candidate.confidence) ||
+        !std::isfinite(box.x) || !std::isfinite(box.y) ||
+        !std::isfinite(box.width) || !std::isfinite(box.height) ||
+        box.width <= 0 || box.height <= 0) continue;
+    const double x0 = std::clamp<double>(box.x, 0, frame.width);
+    const double y0 = std::clamp<double>(box.y, 0, frame.height);
+    const double x1 = std::clamp<double>(double(box.x) + box.width, 0, frame.width);
+    const double y1 = std::clamp<double>(double(box.y) + box.height, 0, frame.height);
+    if (x1 <= x0 || y1 <= y0 || point.x < x0 || point.x >= x1 ||
+        point.y < y0 || point.y >= y1) continue;
+    const double area = (x1 - x0) * (y1 - y0);
+    if (!selected || candidate.confidence > candidates[*selected].confidence ||
+        (candidate.confidence == candidates[*selected].confidence &&
+         area < selected_area)) {
+      selected = i;
+      selected_box = {float(x0), float(y0), float(x1 - x0), float(y1 - y0)};
+      selected_area = area;
+    }
+  }
+  if (selected) return {selected_box, selected};
+  const double x0 = std::clamp<double>(double(point.x) - fallback_width / 2.0,
+                                       0, frame.width);
+  const double y0 = std::clamp<double>(double(point.y) - fallback_height / 2.0,
+                                       0, frame.height);
+  const double x1 = std::clamp<double>(double(point.x) + fallback_width / 2.0,
+                                       0, frame.width);
+  const double y1 = std::clamp<double>(double(point.y) + fallback_height / 2.0,
+                                       0, frame.height);
+  return {{float(x0), float(y0), float(x1 - x0), float(y1 - y0)}, std::nullopt};
+}
+
 InteractiveRoiSelection::InteractiveRoiSelection(int frame_width,
                                                  int frame_height)
     : frame_width_(frame_width), frame_height_(frame_height) {
