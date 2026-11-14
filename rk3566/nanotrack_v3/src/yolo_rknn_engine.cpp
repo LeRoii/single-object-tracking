@@ -424,13 +424,20 @@ class YoloRknnEngine::Impl {
                         image.stride_bytes);
     const cv::Rect roi_rect(left, top, right - left, bottom - top);
     const cv::Mat crop = frame(roi_rect);
+    // Keep the small-object scale seen in a 320 px detector pass while using
+    // the fixed 640 px RKNN input. Search ROIs are centered on a grey canvas;
+    // the letterbox transform still maps candidates to source-frame pixels.
+    const int content_size =
+        request.purpose == DetectorRequestPurpose::kSearchRecovery &&
+        (crop.cols < image.width || crop.rows < image.height)
+            ? kInputSize / 2 : kInputSize;
     const float scale = std::min(
-        static_cast<float>(kInputSize) / static_cast<float>(crop.cols),
-        static_cast<float>(kInputSize) / static_cast<float>(crop.rows));
+        static_cast<float>(content_size) / static_cast<float>(crop.cols),
+        static_cast<float>(content_size) / static_cast<float>(crop.rows));
     const int resized_width = std::clamp(
-        static_cast<int>(std::lround(crop.cols * scale)), 1, kInputSize);
+        static_cast<int>(std::lround(crop.cols * scale)), 1, content_size);
     const int resized_height = std::clamp(
-        static_cast<int>(std::lround(crop.rows * scale)), 1, kInputSize);
+        static_cast<int>(std::lround(crop.rows * scale)), 1, content_size);
     const int pad_left = (kInputSize - resized_width) / 2;
     const int pad_top = (kInputSize - resized_height) / 2;
     cv::Mat resized_bgr;

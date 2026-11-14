@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T10:40:22+08:00 搜索恢复局部检测候选（待 RK3588 闭环）
+
+- 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，起始干净、基线 `f69b5f508c98b96cfb0fcbba83235d08ca80ec2a`。在 `ControllerConfig` 增加默认 `0` 的 `detector_recovery_roi_scale`；只有配置显式设为 `3.0` 且实际发 `SearchRecovery` 请求时，用运动预测框中心、至少 120 px 的方形 ROI 裁图。RKNN 固定输入仍 640×640，但把该搜索 ROI 缩至 320×320 后居中灰底，postprocess 继续映射到原始视频像素。初始化类别检测、显示刷新、无 ROI 的恢复请求均保留原行为；检测候选仍须经既有 NanoTrack 恢复确认才能令 `control_valid=true`。`visible-adaptive-display.conf` SHA-256 `c6c18974e88376cc7567a518b2fb9a52877a16f62ab4146f08c29a3711b95326`。
+- 依据先前完整板端 ROI 探针：car001 第 181 帧错误邻车与正确预测位置相隔约 70 px；3 倍局部 ROI 的半径约 60 px，有望排除该邻车；第 187～190 帧同一 ROI 内的正确车辆候选距真值约 `1～5 px`。这只是反事实动机，局部 ROI 也可能丢失运动预测误差过大的真实目标，或改变异步检测与确认时序；car002 完全遮挡语义尚未解决，不能据此晋级。
+- 在 `test_long_term_controller` 增加一个恢复 ROI 包含预测中心、尺寸和帧边界的单测；实际执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-dual-gt-consistency-build -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、`cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`，`git diff --check` 通过。**证据边界 / 下一步**：主机未执行 RKNN，候选还须以本条实际源码提交在 RK3588 独立目录原生构建和跑 car001 标准/右下、car002 标准/真值，再按各自确认真值检查中心、IoU、完全遮挡、重捕、身份及延迟；只有无反例才扩八框。正式八框仍 `2/8 PASS`，handoff HOLD。
+
 ## 2026-11-14T10:34:34+08:00 稀疏局部检测修正与遮挡外观的双目标再筛查
 
 - 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，基线 `b97cfc305c90bdb42edba2d34a04e1d27a18e64f`、起始干净。仍只读使用已验证的原始 canonical 271 帧、`9f84efe` RK3588 八组 CSV、上一节八组真实 RKNN ROI 候选 CSV 和各自确认真值；没有更改正式模型、算法、配置或标注。实际执行 `python3 /tmp/nt-dual-gt-evidence/search_sparse_roi_policy.py > /tmp/nt-dual-gt-evidence/search-sparse-roi-policy.txt`，脚本/输出 SHA-256 `590dd59d2408d3ef0d1a01c3671312686ebc93783b1600fa718bb0bf31982c36` / `0c827fb9439c8a7095f7664c240866594db984dcebd78eca45f5f6b8bf96011d`。在固定基线轨迹上扫描 detector 每 `3/4/6` 帧请求、`2/3` 帧回报、中心权重、逐帧衰减、置信门和邻近门的 1728 组反事实；其中 440 组八个平均中心误差均不劣于基线。按最坏单框中心均误差排序的首组为每 6 帧、延迟 2 帧、权重 0.5、每帧保留 0.8、conf≥0.2、候选中心距≤0.3 倍框长，八框中心改善仅 `0.014～0.449 px`，car001 左上仅 `0.014 px`。这是用这八组真值选择参数的同集离线筛查，改动后下一帧 tracker 会反馈且异步时延会变化；不能把 440 组或首组称为泛化、板端闭环或算法完成，暂不接入 tracking/control。
