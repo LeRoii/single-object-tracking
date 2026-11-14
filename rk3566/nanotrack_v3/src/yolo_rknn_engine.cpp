@@ -424,20 +424,13 @@ class YoloRknnEngine::Impl {
                         image.stride_bytes);
     const cv::Rect roi_rect(left, top, right - left, bottom - top);
     const cv::Mat crop = frame(roi_rect);
-    // Keep the small-object scale seen in a 320 px detector pass while using
-    // the fixed 640 px RKNN input. Search ROIs are centered on a grey canvas;
-    // the letterbox transform still maps candidates to source-frame pixels.
-    const int content_size =
-        request.purpose == DetectorRequestPurpose::kSearchRecovery &&
-        (crop.cols < image.width || crop.rows < image.height)
-            ? kInputSize / 2 : kInputSize;
     const float scale = std::min(
-        static_cast<float>(content_size) / static_cast<float>(crop.cols),
-        static_cast<float>(content_size) / static_cast<float>(crop.rows));
+        static_cast<float>(kInputSize) / static_cast<float>(crop.cols),
+        static_cast<float>(kInputSize) / static_cast<float>(crop.rows));
     const int resized_width = std::clamp(
-        static_cast<int>(std::lround(crop.cols * scale)), 1, content_size);
+        static_cast<int>(std::lround(crop.cols * scale)), 1, kInputSize);
     const int resized_height = std::clamp(
-        static_cast<int>(std::lround(crop.rows * scale)), 1, content_size);
+        static_cast<int>(std::lround(crop.rows * scale)), 1, kInputSize);
     const int pad_left = (kInputSize - resized_width) / 2;
     const int pad_top = (kInputSize - resized_height) / 2;
     cv::Mat resized_bgr;
@@ -667,49 +660,7 @@ YoloRknnEngine::~YoloRknnEngine() = default;
 
 DetectorEngineResult YoloRknnEngine::infer(const ImageView& image,
                                            const DetectorRequest& request) {
-  if (request.purpose != DetectorRequestPurpose::kSearchRecovery ||
-      (request.roi.x <= 0.0F && request.roi.y <= 0.0F &&
-       request.roi.width >= image.width && request.roi.height >= image.height)) {
-    return impl_->infer(image, request);
-  }
-
-  // The full-frame pass supplies competing vehicles as negative identity
-  // evidence. The local pass resolves the small target at the scale verified
-  // by the ROI replay; dropping the full-frame pass caused false recovery.
-  DetectorRequest full_request = request;
-  full_request.roi = BBox{0.0F, 0.0F, static_cast<float>(image.width),
-                           static_cast<float>(image.height)};
-  DetectorEngineResult combined = impl_->infer(image, full_request);
-  DetectorEngineResult local = impl_->infer(image, request);
-  for (const DetectorCandidate& candidate : local.candidates) {
-    const float cx = candidate.bbox.x + 0.5F * candidate.bbox.width;
-    const float cy = candidate.bbox.y + 0.5F * candidate.bbox.height;
-    const auto existing = std::find_if(
-        combined.candidates.begin(), combined.candidates.end(),
-        [&](const DetectorCandidate& other) {
-          if (candidate.class_id != other.class_id ||
-              candidate.bbox.width <= 0.0F || candidate.bbox.height <= 0.0F ||
-              other.bbox.width <= 0.0F || other.bbox.height <= 0.0F) return false;
-          const float ox = other.bbox.x + 0.5F * other.bbox.width;
-          const float oy = other.bbox.y + 0.5F * other.bbox.height;
-          return std::hypot(cx - ox, cy - oy) <=
-                     0.45F * std::max(candidate.bbox.width, candidate.bbox.height) &&
-                 std::abs(std::log(candidate.bbox.width / other.bbox.width)) <= 0.7F &&
-                 std::abs(std::log(candidate.bbox.height / other.bbox.height)) <= 0.7F;
-        });
-    if (existing == combined.candidates.end()) {
-      combined.candidates.push_back(candidate);
-    } else {
-      *existing = candidate;
-    }
-  }
-  combined.raw_candidate_count += local.raw_candidate_count;
-  combined.filtered_candidate_count += local.filtered_candidate_count;
-  combined.timing.preprocess_ms += local.timing.preprocess_ms;
-  combined.timing.inference_ms += local.timing.inference_ms;
-  combined.timing.postprocess_ms += local.timing.postprocess_ms;
-  combined.timing.total_ms += local.timing.total_ms;
-  return combined;
+  return impl_->infer(image, request);
 }
 
 const std::string& YoloRknnEngine::model_sha256() const {

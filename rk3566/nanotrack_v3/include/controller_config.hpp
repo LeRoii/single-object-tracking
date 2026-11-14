@@ -97,9 +97,6 @@ struct ControllerConfig {
   float detector_candidate_max_center_ratio = 0.15F;
   DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
   float detector_search_scale = 1.5F;
-  // Zero preserves full-frame recovery detection. Positive values request a
-  // square ROI around the current motion prediction in target-box units.
-  float detector_recovery_roi_scale = 0.0F;
   std::size_t detector_subtarget_max_probes = 9;
   float detector_confirmation_iou = 0.50F;
   float detector_confirmation_center_distance = 0.35F;
