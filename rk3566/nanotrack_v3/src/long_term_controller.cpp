@@ -1946,8 +1946,19 @@ LongTermController::ingest_detector_batch(
     const float center_ratio = frame_normalized_center_distance(
         projected, plan.motion_predicted_bbox, frame_size_);
     diagnostic.center_ratio = center_ratio;
-    if (unified || center_ratio <=
-        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
+    // A cropped search request can still contain a neighboring vehicle. Keep
+    // only candidates within one target-sized neighborhood of the motion
+    // prediction before they enter the unified identity competition.
+    const float projected_cx = projected.x + 0.5F * projected.width;
+    const float projected_cy = projected.y + 0.5F * projected.height;
+    const float local_distance = std::hypot(projected_cx - current_center_x,
+                                            projected_cy - current_center_y);
+    const bool local_position_ok =
+        config_.detector_recovery_roi_scale <= 0.0F ||
+        local_distance <= 0.8F * std::max(plan.motion_predicted_bbox.width,
+                                          plan.motion_predicted_bbox.height);
+    if (local_position_ok && (unified || center_ratio <=
+        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon)) {
       diagnostic.position_gate_pass = true;
       positioned.push_back(PositionedCandidate{index, center_ratio});
     } else {

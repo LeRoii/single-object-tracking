@@ -3271,7 +3271,15 @@ int main() {
                     roi.y <= 170.0F && roi.y + roi.height >= 170.0F,
                 "search detector ROI encloses predicted target and stays in frame");
   }
-  roi_controller.finish_frame(roi_plan, {}, std::nullopt);
+  DetectorBatch roi_batch{2, 1100,
+      {{BBox{297, 157, 25, 25}, 0.80F, 2},
+       {BBox{340, 157, 25, 25}, 0.85F, 2}}};
+  roi_batch.generation = roi_plan.detector_request->generation;
+  const ControllerOutput roi_output =
+      roi_controller.finish_frame(roi_plan, {}, roi_batch);
+  expect_true(roi_output.detector_position_valid_count == 1 &&
+                  roi_output.detector_position_rejected_count == 1,
+              "local search rejects neighboring car before identity competition");
 
   plan = detector_controller.begin_frame(3, 1200, true);
   expect_true(!plan.request_detector,
