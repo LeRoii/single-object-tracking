@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T21:44:28+08:00 双真值候选补齐双窗口与关键检测框 Debug 界面
+
+- 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，起始干净，基线 `3a87a4264134172f55670fa6ecd64f0759050928`。用户指出当前板端实验二进制漏掉前一天已实现的两项 Debug UI。核对发现本分支从 `main@b80226577954febe22c5eff168125f77a6cdc724` 延伸，源分支 `Debug@7e45f9db9493c8411139dba76294fdd179eb2759` 的双窗口/候选筛选未进入该 `main` 基线。精确移植原 UI 源码提交 `ef7dba9e9fe0028850979edcdd5fa06acf06cdb8` 的三文件差异，未改本分支 tracker、controller、恢复配置及两套 GT。
+- 新交互界面用 `NanoTrack Display` 单独显示仅一只白色 `display_bbox`，`NanoTrack Debug` 显示运动、模板、控制和关键恢复证据；初始化只画被选 detector 框，逐帧原始 detector 候选只保留类别匹配、位置通过、无拒绝且已入队者，不再绘制所有拒绝/未入队框。ROI 选择仍在 Display 窗口，关闭任一窗口退出。实际 `git show --format= ef7dba9 -- <三文件> | git apply --check`、`git apply`、`git diff --check` 通过；主机 RKNN-off `cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4` 与 `ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure` 为 `23/23 PASS`，日志 `/tmp/nt-dual-gt-evidence/dual-window-host-build.log` / `dual-window-host-ctest.log` SHA-256 `c1d8661f43ae4b1c4a7218e48b6bc193c4903ef96851b6ddb6ebc65dd01d2af7` / `ae81844ebf70c7cb84a6693fd2f704b152fb67625e1369d2d583b0437c86061d`。
+- **证据边界 / 下一步**：上述只是源码与主机单测，当前已验证 `8/8` 的板端二进制 SHA-256 `f61cdf3518e11c59620ff268a8ee518837fc072c00322d0b9b16abc70d215613` 尚不包含双窗口。须提交精确源码后在新的 RK3588 隔离目录原生构建/CTest、图形会话核对两个窗口与精简 detector overlay，并确认最少两目标 headless 轨迹与前项相同；完成前不得称新 UI 已在板端生效。`latest_handoff.available=false` 不变。
+
 ## 2026-11-14T15:02:35+08:00 双目标八初始框板端通过与同框复跑
 
 - 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，候选源码提交 `4b4e47ae1bf4dd5245d9e251ddc693e9057b4d89`，前项基线 `359e8c4a1b2ead6896fec77fdd337e824e7bce1b`。主机源码包 `/tmp/nt-dual-gt-evidence/wide-band-4b4e47a-source.tar` 与板端隔离根 `/home/neardi/Project/SOT/dual-gt-wide-band-4b4e47a/source.tar` SHA-256 同为 `1f897f85dbb979ffb9b72563f4ed9b910a6c3ffdbe5eec068ae89276e5102a29`；构建/前四框/后四框脚本 SHA-256 分别 `d792f9c889a5af49b1c4a4662092a467ea365d3252e8b0b71bf73e6d6024f38b` / `c1b3aa073b5931b1dabb9238deab629b42a2d5335e5102e820a4c21b11aecb40` / `c745bf819380e94caeb1fcda892f16274c9d2e5673f5bbe70aa075f7da8739b1`，板端与主机传输核对一致。
