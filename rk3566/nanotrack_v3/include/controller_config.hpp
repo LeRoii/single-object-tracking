@@ -74,11 +74,6 @@ struct ControllerConfig {
   // Optional car-only early partial-visibility gate. Zero disables both.
   float recent_visibility_height_ratio = 0.0F;
   float recent_visibility_center_residual = 0.0F;
-  // Optional visual evidence gate for an already suspected car. Zero disables.
-  float visual_suspect_bright_ratio = 0.0F;
-  float visual_suspect_min_confidence = 0.40F;
-  float visual_suspect_max_center_px = 30.0F;
-  int visual_suspect_consecutive_frames = 2;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;
