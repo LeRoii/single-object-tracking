@@ -20,7 +20,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -41,56 +40,6 @@ nanotrack::ImageView image_view(const cv::Mat& frame) {
   }
   return nanotrack::ImageView{frame.data, frame.cols, frame.rows, frame.step,
                               frame.channels()};
-}
-
-bool crossing_occluding_band(const cv::Mat& frame,
-                             const nanotrack::BBox& bbox) {
-  const int x0 = std::clamp(static_cast<int>(std::floor(bbox.x - 2.0F * bbox.width)),
-                            0, frame.cols);
-  const int x1 = std::clamp(static_cast<int>(std::ceil(bbox.x + 3.0F * bbox.width)),
-                            0, frame.cols);
-  const int y0 = std::clamp(static_cast<int>(std::floor(bbox.y - bbox.height)),
-                            0, frame.rows);
-  const int y1 = std::clamp(static_cast<int>(std::ceil(bbox.y + 2.0F * bbox.height)),
-                            0, frame.rows);
-  if (x1 <= x0 || y1 <= y0 || bbox.width <= 0.0F || bbox.height <= 0.0F) {
-    return false;
-  }
-  cv::Mat gray;
-  cv::cvtColor(frame(cv::Rect(x0, y0, x1 - x0, y1 - y0)), gray,
-               cv::COLOR_BGR2GRAY);
-  cv::Mat edges;
-  cv::Canny(gray, edges, 70.0, 150.0);
-  std::vector<cv::Vec4i> lines;
-  cv::HoughLinesP(edges, lines, 1.0, CV_PI / 180.0, 45,
-                  std::max(35, static_cast<int>(2.0F * bbox.width)), 12.0);
-  std::vector<float> crossings;
-  for (const auto& line : lines) {
-    const int dx = line[2] - line[0];
-    const int dy = line[3] - line[1];
-    if (std::abs(dy) > 0.1F * std::max(1, std::abs(dx)) ||
-        std::hypot(static_cast<float>(dx), static_cast<float>(dy)) <
-            2.0F * bbox.width ||
-        std::min(line[0], line[2]) + x0 > bbox.x ||
-        std::max(line[0], line[2]) + x0 < bbox.x + bbox.width) {
-      continue;
-    }
-    const float relative_y =
-        (0.5F * (line[1] + line[3]) + y0 - bbox.y) / bbox.height;
-    if (relative_y >= -0.5F && relative_y <= 2.2F) {
-      crossings.push_back(relative_y);
-    }
-  }
-  for (const float upper : crossings) {
-    if (upper < -0.5F || upper > 1.0F) continue;
-    for (const float lower : crossings) {
-      if (lower >= 0.5F && lower <= 2.2F &&
-          lower - upper >= 0.7F && lower - upper <= 1.4F) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 cv::Scalar state_color(const nanotrack::ControllerOutput& output) {
@@ -598,7 +547,6 @@ int main(int argc, char** argv) {
     std::size_t source_frame = options.start_frame;
     std::size_t initialization_count = 0;
     bool initialized = false;
-    std::deque<bool> crossing_band_history;
     std::optional<nanotrack::RuntimeFrameResult> displayed_result;
     nanotrack::DebugTelemetry debug_telemetry(30);
     constexpr const char* kInteractiveWindow = "NanoTrack V3 RK3566 Debug";
@@ -622,7 +570,6 @@ int main(int argc, char** argv) {
       }
       const nanotrack::TargetClassInitializationResult initialization =
           runtime.initialize(image_view(frame), bbox, source_frame, timestamp_ms);
-      crossing_band_history.clear();
       nanotrack::record_target_class_initialization(session_metadata, initialization);
       debug_telemetry.reset();
       nanotrack::ControllerOutput initial_output;
@@ -784,16 +731,8 @@ int main(int argc, char** argv) {
         displayed_result.reset();
         continue;
       }
-      const bool crossing_band =
-          runtime.last_initialization().target_class.target_class_id == 2 &&
-          crossing_occluding_band(frame, runtime.controller().current_bbox());
-      crossing_band_history.push_back(crossing_band);
-      if (crossing_band_history.size() > 6) crossing_band_history.pop_front();
-      const bool crossing_band_recent =
-          std::count(crossing_band_history.begin(), crossing_band_history.end(), true) >= 2;
       const nanotrack::RuntimeFrameResult result =
-          runtime.process_frame(image_view(frame), source_frame, timestamp_ms,
-                                crossing_band_recent);
+          runtime.process_frame(image_view(frame), source_frame, timestamp_ms);
       if (result.detector.request_submitted) ++detector_request_count;
       if (result.detector.batch_received) {
         ++detector_complete_count;

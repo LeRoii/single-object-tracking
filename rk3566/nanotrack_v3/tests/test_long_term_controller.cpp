@@ -2304,10 +2304,8 @@ void test_recent_safe_tentative_tracking() {
   const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
   const ResponseMetrics degraded{0.98F, 0.96F, 11, 16, 0.15F};
   const auto track = [&](LongTermController& controller, std::uint64_t id,
-                         const BBox& bbox, const ResponseMetrics& metrics,
-                         bool crossing_band = false) {
-    auto plan = controller.begin_frame(id, id * 40, false);
-    plan.crossing_band_recent = crossing_band;
+                         const BBox& bbox, const ResponseMetrics& metrics) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
     auto observation = reliable_observation(plan, TemplateKind::kRecent, bbox);
     observation.metrics = metrics;
     std::vector<TrackerObservation> observations{observation};
@@ -2321,7 +2319,6 @@ void test_recent_safe_tentative_tracking() {
   ResolvedControllerFixture clears(config);
   ResolvedControllerFixture expires(config);
   ResolvedControllerFixture collapses(config);
-  ResolvedControllerFixture band(config);
   for (auto* controller : {&clears, &expires, &collapses}) {
     controller->initialize(initial, 0, 0, {320, 240});
     for (std::uint64_t id = 1; id <= 3; ++id) {
@@ -2358,23 +2355,6 @@ void test_recent_safe_tentative_tracking() {
                   "tentative frames preserve trusted motion and response history but reset template stability");
     }
   }
-
-  band.initialize(initial, 0, 0, {320, 240});
-  for (std::uint64_t id = 1; id <= 3; ++id) {
-    const BBox moving{initial.x + static_cast<float>(id), initial.y, 30, 30};
-    expect_true(track(band, id, moving, healthy).accepted,
-                "crossing-band fixture establishes trusted tracking");
-  }
-  for (std::uint64_t id = 4; id <= 5; ++id) {
-    expect_true(track(band, id, shifted, degraded).tracking_phase ==
-                    TrackingPhase::kSuspected,
-                "degraded samples remain tentative without band evidence");
-  }
-  const auto band_search = track(band, 6, shifted, degraded, true);
-  expect_true(band_search.tracking_phase == TrackingPhase::kSearching &&
-                  !band_search.observation_present && !band_search.accepted &&
-                  band_search.control_source != ControlSource::kObservation,
-              "independent crossing band escalates a suspected response without accepting it");
 
   for (std::uint64_t id : {7U, 8U, 9U}) {
     const auto out = track(clears, id, shifted, healthy);

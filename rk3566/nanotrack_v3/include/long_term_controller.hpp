@@ -47,7 +47,6 @@ struct SearchPlan {
   std::optional<SearchHint> search_hint;
   std::int64_t motion_search_age_ms = -1;
   bool motion_prediction_confident = false;
-  bool crossing_band_recent = false;
   float motion_velocity_x = 0.0F;
   float motion_velocity_y = 0.0F;
   float motion_acceleration_x = 0.0F;
