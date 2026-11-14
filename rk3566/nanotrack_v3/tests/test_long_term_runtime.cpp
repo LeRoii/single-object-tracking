@@ -1479,18 +1479,22 @@ void test_visual_suspect_gate() {
   expect_true(suspect.output.tracking_phase == TrackingPhase::kSuspected &&
                   detector.blocking_calls == 0,
               "visual detector waits until the controller has entered SUSPECTED");
-  const auto entering = runtime.process_frame(image, 6, 240);
-  expect_true(entering.output.tracking_phase == TrackingPhase::kSuspected,
-              "degraded response enters SUSPECTED before visual checks");
-  const auto low_confidence = runtime.process_frame(image, 7, 280);
+  const auto low_confidence = runtime.process_frame(image, 6, 240);
   expect_true(low_confidence.output.tracking_phase == TrackingPhase::kSuspected &&
                   low_confidence.detector.batch_purpose == DetectorRequestPurpose::kVisualOcclusion &&
                   detector.blocking_calls == 1,
               "a low-confidence visual candidate cannot force SEARCHING");
   detector.blocking_batch->candidates[0].confidence = 0.80F;
+  detector.blocking_batch->candidates.push_back(
+      DetectorCandidate{BBox{370.0F, 240.0F, 40.0F, 40.0F}, 0.55F, 2});
+  const auto ambiguous = runtime.process_frame(image, 7, 280);
+  expect_true(ambiguous.output.tracking_phase == TrackingPhase::kSuspected &&
+                  detector.blocking_calls == 2,
+              "multiple local candidates cannot force an early search");
+  detector.blocking_batch->candidates.pop_back();
   const auto first_hit = runtime.process_frame(image, 8, 320);
   expect_true(first_hit.output.tracking_phase == TrackingPhase::kSuspected &&
-                  detector.blocking_calls == 2,
+                  detector.blocking_calls == 3,
               "one visual hit remains tentative");
   const auto second_hit = runtime.process_frame(image, 9, 360);
   expect_true(second_hit.plan.visual_occlusion_search &&

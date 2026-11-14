@@ -116,6 +116,7 @@ class LongTermRuntime {
   std::deque<float> trusted_brightness_;
   std::optional<std::uint64_t> last_visual_hit_frame_;
   int visual_hit_streak_ = 0;
+  TrackingPhase previous_output_phase_ = TrackingPhase::kInvalid;
 };
 
 }  // namespace nanotrack

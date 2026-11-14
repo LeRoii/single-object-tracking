@@ -190,6 +190,7 @@ TargetClassInitializationResult LongTermRuntime::initialize(
     trusted_brightness_.push_back(bright_fraction(image, initial_bbox));
   last_visual_hit_frame_.reset();
   visual_hit_streak_ = 0;
+  previous_output_phase_ = TrackingPhase::kTracking;
   last_initialization_ = result;
   initialized_ = true;
   return result;
@@ -256,7 +257,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       result.detector.error = error.what();
     }
   } else if (!(visual_suspect_bright_ratio_ > 0.0F &&
-               result.plan.tracking_phase == TrackingPhase::kSuspected) &&
+               previous_output_phase_ == TrackingPhase::kSuspected) &&
              adaptive_display_.should_request(result.plan.tracking_phase,
                                               timestamp_ms,
                                               result.detector.ready)) {
@@ -284,7 +285,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   bool visual_hit = false;
   bool visual_blocking_used = false;
   if (visual_suspect_bright_ratio_ > 0.0F &&
-      result.plan.tracking_phase == TrackingPhase::kSuspected &&
+      previous_output_phase_ == TrackingPhase::kSuspected &&
       result.target_class.target_class_id == 2 &&
       detector_.available() && trusted_brightness_.size() >= 3) {
     const auto recent = std::find_if(result.observations.begin(),
@@ -332,7 +333,8 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
               nearest_confidence = candidate.confidence;
             }
           }
-          visual_hit = detected->batch.source_frame_id == frame_id &&
+          visual_hit = detected->batch.candidates.size() == 1 &&
+              detected->batch.source_frame_id == frame_id &&
               detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion &&
               nearest_distance <= visual_suspect_max_center_px_ &&
               nearest_confidence >= visual_suspect_min_confidence_;
@@ -444,6 +446,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     trusted_brightness_.push_back(bright_fraction(image, result.output.tracking_bbox));
     if (trusted_brightness_.size() > 8) trusted_brightness_.pop_front();
   }
+  previous_output_phase_ = result.output.tracking_phase;
   result.template_slot_revocation = pending_template_slot_revocation_;
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
   application_checkpoint.reset();
