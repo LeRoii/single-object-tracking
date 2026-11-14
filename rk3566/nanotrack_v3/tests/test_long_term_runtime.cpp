@@ -1296,6 +1296,72 @@ void test_target_class_initialization(const nanotrack::ImageView& image) {
               "completed frame permits a subsequent initialization");
 }
 
+void test_click_initialization_class_modes(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  ControllerConfig config;
+  FakeTracker tracker;
+  FakeDetector detector;
+  detector.enabled = true;
+  const TargetClassRuntimeConfig target_config{2, 9, {}};
+  LongTermRuntime runtime(config, tracker, detector, target_config);
+  const BBox clicked{40, 30, 20, 20};
+  DetectorBatch batch;
+  batch.candidates = {{clicked, 0.9F, 2}, {clicked, 0.8F, 5}};
+  batch.timing.total_ms = 12.0F;
+  InitializationClassSelection choice;
+  choice.mode = InitializationClassMode::kClickedDetector;
+  choice.detection = DetectorBlockingResult{77, batch};
+  choice.selected_candidate_index = 1;
+  const auto selected = runtime.initialize(image, clicked, 7, 280, std::move(choice));
+  expect_true(selected.target_class.status == TargetClassStatus::kEstablished &&
+                  selected.target_class.target_class_id == 5 &&
+                  selected.target_class.selected_candidate &&
+                  selected.target_class.selected_candidate->original_index == 1 &&
+                  selected.request_id == 77 && selected.batch &&
+                  selected.batch->candidates.size() == 2 &&
+                  selected.detector_timing.total_ms == 12.0F &&
+                  detector.blocking_calls == 0 &&
+                  same_bbox(tracker.committed_bbox, clicked),
+              "click uses its chosen detector box and class without duplicate inference");
+
+  InitializationClassSelection fallback;
+  fallback.mode = InitializationClassMode::kUnknown;
+  fallback.detection = DetectorBlockingResult{78, batch};
+  const auto unknown = runtime.initialize(image, BBox{60, 40, 64, 64}, 8, 320,
+                                          std::move(fallback));
+  expect_true(unknown.target_class.status == TargetClassStatus::kUnknown &&
+                  !unknown.target_class.target_class_allows_recovery &&
+                  unknown.target_class.reason == TargetClassReason::kNoMatch &&
+                  unknown.request_id == 78 && detector.blocking_calls == 0,
+              "no clicked candidate forces unknown even with configured class");
+
+  InitializationClassSelection error;
+  error.mode = InitializationClassMode::kUnknown;
+  error.detector_error = "detector failed";
+  const auto failed = runtime.initialize(image, BBox{60, 40, 64, 64}, 9, 360,
+                                         std::move(error));
+  expect_true(failed.target_class.reason == TargetClassReason::kDetectorError &&
+                  failed.detector_error == "detector failed" &&
+                  detector.blocking_calls == 0,
+              "detector error still initializes fallback with unknown class");
+
+  InitializationClassSelection invalid;
+  invalid.mode = InitializationClassMode::kClickedDetector;
+  invalid.detection = DetectorBlockingResult{79, batch};
+  invalid.selected_candidate_index = 3;
+  bool rejected = false;
+  try { runtime.initialize(image, clicked, 10, 400, std::move(invalid)); }
+  catch (const std::invalid_argument&) { rejected = true; }
+  expect_true(rejected && runtime.last_initialization().initialization_index == 3,
+              "missing clicked candidate fails before replacing active target");
+
+  const auto configured = runtime.initialize(image, clicked, 11, 440);
+  expect_true(configured.target_class.status == TargetClassStatus::kFixed &&
+                  configured.target_class.target_class_id == 2 &&
+                  detector.blocking_calls == 0,
+              "default initialization retains configured class semantics");
+}
+
 // These fixtures catch accepting a fixed class equal to labels.size(), losing
 // caller thresholds, and accidentally requiring labels with a disabled detector.
 void test_target_class_session_config(const nanotrack::ImageView& image) {
@@ -1579,6 +1645,7 @@ int main() {
   test_visual_suspect_gate();
   test_lower_band_visibility_veto();
   test_target_class_initialization(image);
+  test_click_initialization_class_modes(image);
   test_target_class_session_config(image);
   test_frame_lifetime(image);
   test_adaptive_coast_execution(image);

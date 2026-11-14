@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T22:40:22+08:00 Debug 单击选目标：共用初始化契约
+
+- 新功能分支/工作树 `codex/debug-click-select` / `/home/u20/single-object-tracking/.worktrees/debug-click-select`，基线 `Debug@1573b20c9aef2b8747752bf5467b5ac4a0261136`。通用 `LongTermRuntime::initialize` 增加默认兼容的类别选择参数：现有配置、复用已选 detector 候选、强制未知三种模式。点击候选复用单次检测 batch、覆盖既有固定类别，空白/错误强制未知，不再二次提交 detector；CLI `--bbox` 保持原语义。此通用源码将在 main 和 Debug 保持相同。
+- 主机实际运行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-click-common-build -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、`cmake --build /tmp/nt-click-common-build --parallel 4`、`ctest --test-dir /tmp/nt-click-common-build --output-on-failure`，23/23 PASS；配置日志 `/tmp/nt-click-common-cmake.log` SHA-256 `d3ff64b86e348b57df7563847ba4882672998fcc0f5b7ffa1e703ed21aafe066`，构建日志 `/tmp/nt-click-full-build.log` SHA-256 `200c73c0d3cea6f513c7de4a8bb7e0816c7ac642d74b3dc3e09794fd21ef62b2`。此处仅是主机 RKNN-off 单测；下一步完成 Debug 图形交互与真实 RK3588 原生构建、点击实测。
+
 ## 2026-11-14T22:19:00+08:00 main / Debug 算法一致性核对与双分支发布
 
 - 算法候选已经合入 `main@05556e660f22eabc112088a27ca3c05e8958d3ab`、`Debug@0f6b56f849324a64991a7f63a6d12d9975d5c923`（后续仅可能追加文档同步提交）。`git diff --name-only main Debug -- rk3566/nanotrack_v3 scripts tests` 只列出 `src/main.cpp`、`src/interactive_debug_overlay.cpp`、`tests/test_interactive_debug_overlay.cpp`；排除这三个交互文件后，NanoTrack 所有其他源码、配置、脚本和测试完全相同。逐段比较两边 `main.cpp` 的 `lower_occluding_band` 与 `runtime.process_frame` 调用也完全相同；其余差异是双窗口、显示框、关键 detector 调试框和交互视频输出。
