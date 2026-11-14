@@ -115,7 +115,28 @@ void NanoTrackV3::initialize(const cv::Mat& frame, const BBox& bbox) {
   }
   validate_bbox(bbox, frame.cols, frame.rows);
   const cv::Scalar channel_average = cv::mean(frame);
-  templates_.initialize(extract_template_feature(frame, bbox, channel_average));
+  BBox anchor_bbox = bbox;
+  const float shorter = std::min(bbox.width, bbox.height);
+  const float longer = std::max(bbox.width, bbox.height);
+  if (shorter >= 30.0F && longer <= 60.0F && longer <= 1.4F * shorter) {
+    // A few pixels of drag error otherwise change the 127-pixel anchor crop
+    // scale by a large fraction for small, nearly square targets. Quantize
+    // only the anchor crop; keep the user box for tracking and control.
+    const float width = 10.0F * std::floor(bbox.width / 10.0F + 0.5F);
+    const float height = 10.0F * std::floor(bbox.height / 10.0F + 0.5F);
+    const float cx = bbox.x + (bbox.width - 1.0F) * 0.5F;
+    const float cy = bbox.y + (bbox.height - 1.0F) * 0.5F;
+    const BBox normalized{cx - (width - 1.0F) * 0.5F,
+                          cy - (height - 1.0F) * 0.5F,
+                          width, height};
+    if (normalized.x >= 0.0F && normalized.y >= 0.0F &&
+        normalized.x + normalized.width <= frame.cols &&
+        normalized.y + normalized.height <= frame.rows) {
+      anchor_bbox = normalized;
+    }
+  }
+  templates_.initialize(
+      extract_template_feature(frame, anchor_bbox, channel_average));
   frame_width_ = frame.cols;
   frame_height_ = frame.rows;
   committed_bbox_ = bbox;

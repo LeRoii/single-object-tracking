@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-14T09:06:35+08:00 小目标首帧永久模板裁剪尺度量化候选（待板端筛查）
+
+- 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，开始时工作树干净、基线 `16cbb439142c1c500b72a9fb393f0fbdcf452e87`。前一轮直接使用 detector 首框初始化与五路模板特征平均均导致 car001 明显退化，均已否决撤回；本候选不使用 detector 候选更新控制，也不融合多个模板特征。
+- 仅修改 `rk3566/nanotrack_v3/src/nanotrack_v3.cpp` 的初始 anchor 特征裁剪框：对宽高均在 30～60 px 且长短比不超过 1.4 的小目标，将模板裁剪框宽高分别四舍五入到 10 px，保持原 ROI 的模板中心；越界则沿用原 ROI。此两目标八个人工初始框的宽高均会变为 `40×40`，但 tracker/控制器的初始框、后续近期模板更新、显示 detector 和所有真值均保持原语义。目标是隔离初始 ROI 尺度微扰对永久模板的影响，判断它是否导致恢复阶段分叉；此启发式还未证明跨目标通用。
+- 实际执行 `git diff --check`、`cmake --build /tmp/nt-dual-gt-consistency-build --parallel 4`、`ctest --test-dir /tmp/nt-dual-gt-consistency-build --output-on-failure`，主机 RKNN-off `23/23 PASS`。**Handoff**：待本项与源码同提交后，用精确提交在 RK3588 独立目录原生编译，先跑 car001 标准/右下、car002 标准/真值四组完整 271 帧；比较两路中心、IoU、恢复身份、完全遮挡语义，只有不退化才扩八框。正式已验证 `9f84efe` 八框仍 `2/8 PASS`，handoff HOLD。主机测试不构成板端算法改善证据。
+
 ## 2026-11-14T09:02:36+08:00 双目标八框 detector 候选中心按源帧对齐的诊断
 
 - 分支/工作树 `codex/dual-gt-init-consistency` / `/home/u20/single-object-tracking`，起始工作树干净、HEAD `80883549b6b0bfcffcfad6f011171ebcb083f874`；正式算法、控制配置、模型和 GT 均未改。沿用既有只读显示候选诊断源码 `d157d0d66a7346dd5460b8a568eea2c0e973cc58` 的 RK3588 隔离根 `/home/neardi/Project/SOT/dual-gt-display-trace-d157d0d`，复核二进制 SHA-256 `ed4f8ad097331988e22ac49dff5fe305ee20163ca2cc425a43b758119bb58e57`、`runs/headless-eval.conf` SHA-256 `c7594ebb9c43789b136e13182fdfd96f634af154f411142f0866b954762cad98`。板 `LKD3588` Linux `6.1.84`，RKNN API `2.1.0`、driver `0.9.8`，视频、两套 GT、tracker RKNN 和 VisDrone9 detector/manifest/labels 身份沿用下方 `d157d0d`/`9f84efe` 已哈希绑定条目。已有 car001/car002 标准框的只读 trace 均与正式基线逐帧轨迹一致。
