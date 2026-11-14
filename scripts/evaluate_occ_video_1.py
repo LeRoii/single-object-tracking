@@ -608,7 +608,7 @@ def _is_current_reacquisition(row, frame_width, frame_height):
         and isinstance(transaction_id, int) and transaction_id > 0
         and row.get("template_slot_id") == transaction_id
         and row.get("recovery_reason") == "RECOVERY_STAGED"
-        and row.get("recovery_confirmation_hits") == 2
+        and row.get("recovery_confirmation_hits") in (2, 3, 4)
         and row.get("candidate_source") in {"RECENT", "SAFE", "DETECTOR"}
         and row.get("recovery_conflict") is False
     )

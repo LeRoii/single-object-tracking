@@ -198,6 +198,16 @@ int main() {
                three_hit.confirmed(*candidate) == (frame == 3),
            "three-hit profile confirms only after three tracker observations");
   }
+  ControllerConfig four_hit_config = config;
+  four_hit_config.recovery_confirmation_required = 4;
+  RecoveryCandidateTable four_hit(four_hit_config);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    four_hit.expire(frame, static_cast<std::int64_t>(frame * 40), 8);
+    const auto candidate = four_hit.observe(Source::kRecent, first);
+    expect(candidate && four_hit.find(*candidate)->hits() == frame &&
+               four_hit.confirmed(*candidate) == (frame == 4),
+           "four-hit profile retains the first observation until confirmation");
+  }
   }
   return failures == 0 ? 0 : 1;
 }
