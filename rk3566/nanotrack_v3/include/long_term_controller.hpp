@@ -45,6 +45,7 @@ struct SearchPlan {
   OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
   bool motion_control_authorized = false;
   bool visual_occlusion_search = false;
+  bool recovery_texture_veto = false;
   std::optional<SearchHint> search_hint;
   std::int64_t motion_search_age_ms = -1;
   bool motion_prediction_confident = false;

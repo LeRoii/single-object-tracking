@@ -1200,6 +1200,10 @@ LongTermController::confirm_recovery_candidate(
     output.recovery_reason = "SEARCH_MIN_AGE";
     return std::nullopt;
   }
+  if (plan.recovery_texture_veto) {
+    output.recovery_reason = "RECOVERY_TOP_TEXTURE_VETO";
+    return std::nullopt;
+  }
   const auto* planned_candidate = plan.recovery_probe
       ? recovery_candidates_.find(*plan.recovery_probe) : nullptr;
   if (plan.recovery_probe && !planned_candidate) {
@@ -1987,12 +1991,18 @@ LongTermController::ingest_detector_batch(
             0.6F * config_.detector_candidate_max_center_ratio &&
         positioned[1].center_ratio >
             1.25F * config_.detector_candidate_max_center_ratio;
+    const bool very_near_with_separated_rival =
+        positioned.size() > 1 &&
+        positioned.front().center_ratio <=
+            0.35F * config_.detector_candidate_max_center_ratio &&
+        positioned[1].center_ratio >
+            config_.detector_candidate_max_center_ratio;
     const bool dominant_near_detector = plan.motion_prediction_confident &&
         positioned.size() > 1 &&
         positioned.front().center_ratio <= config_.detector_candidate_max_center_ratio &&
         (positioned[1].center_ratio - positioned[0].center_ratio >
              config_.detector_candidate_max_center_ratio ||
-         separated_by_motion_gate);
+         separated_by_motion_gate || very_near_with_separated_rival);
     const std::size_t considered = dominant_near_detector
         ? std::min(positioned.size(), config_.detector_max_candidates)
         : positioned.size();

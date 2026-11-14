@@ -2069,6 +2069,18 @@ void test_atomic_search_reacquisition_and_template_probation() {
                   std::to_string(static_cast<int>(plan.template_run_mode)));
   threshold_split.abort_frame();
 
+  ResolvedControllerFixture low_texture(config);
+  low_texture.initialize(initial, 0, 0, {240, 160});
+  reject_frame(low_texture, 1, 40);
+  plan = low_texture.begin_frame(2, 80, false);
+  plan.recovery_texture_veto = true;
+  output = low_texture.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, initial, 2)},
+      std::nullopt);
+  expect_true(!output.accepted && !output.reacquired &&
+                  std::string(output.recovery_reason) == "RECOVERY_TOP_TEXTURE_VETO",
+              "a low-texture recovery probe cannot authorize a tracker observation");
+
   ResolvedControllerFixture off_probe(config);
   off_probe.initialize(initial, 0, 0, {240, 160});
   reject_frame(off_probe, 1, 40);

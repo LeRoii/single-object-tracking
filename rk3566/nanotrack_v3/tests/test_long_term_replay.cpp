@@ -706,6 +706,24 @@ void test_dominant_near_detector_recovery() {
                 "the focused car still needs two NanoTrack confirmations");
   }
 
+  ResolvedControllerFixture very_near_rival(config);
+  very_near_rival.initialize(target, 0, 0, {1920, 1080},
+                             make_fixed_target_class(0, true));
+  step(very_near_rival, 1, 33, std::nullopt);
+  plan = very_near_rival.begin_frame(2, 66, true);
+  const auto very_near_request = *plan.detector_request;
+  DetectorBatch very_near_batch{
+      very_near_request.frame_id, very_near_request.timestamp_ms,
+      {{target, 0.60F, 0}, {BBox{target.x + 50, target.y, 48, 50}, 0.95F, 0}}};
+  very_near_batch.generation = very_near_request.generation;
+  output = very_near_rival.finish_frame(plan, {}, very_near_batch);
+  expect_true(!output.recovery_conflict,
+              "a very near candidate can be focused despite a rival just beyond the motion gate");
+  plan = very_near_rival.begin_frame(3, 99, false);
+  expect_true(plan.hypothesis_source == HypothesisSource::kDetector &&
+                  plan.predicted_bbox.x == target.x,
+              "the focused very near candidate leads the next NanoTrack probe");
+
   ResolvedControllerFixture close_rivals(config);
   close_rivals.initialize(target, 0, 0, {1920, 1080},
                           make_fixed_target_class(0, true));

@@ -1149,6 +1149,7 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.recovery_confirmation_required = config.recovery_confirmation_required;
   metadata.recovery_requires_detector_support = config.recovery_requires_detector_support;
   metadata.recovery_restore_initial_aspect = config.recovery_restore_initial_aspect;
+  metadata.recovery_min_top_luma_stddev = config.recovery_min_top_luma_stddev;
   metadata.search_reacquisition_min_age_ms =
       config.search_reacquisition_min_age_ms;
   metadata.template_bridge_min_stable_frames =
@@ -1352,6 +1353,8 @@ std::string tracking_session_metadata_json(
          << "  \"recovery_restore_initial_aspect\": "
          << (metadata.recovery_restore_initial_aspect ? "true" : "false")
          << ",\n"
+         << "  \"recovery_min_top_luma_stddev\": "
+         << metadata.recovery_min_top_luma_stddev << ",\n"
          << "  \"search_reacquisition_min_age_ms\": "
          << metadata.search_reacquisition_min_age_ms << ",\n"
          << "  \"template_bridge_min_stable_frames\": "

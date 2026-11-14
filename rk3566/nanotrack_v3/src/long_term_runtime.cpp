@@ -16,6 +16,29 @@ namespace nanotrack {
 
 namespace {
 
+float top_quarter_luma_stddev(const ImageView& image, const BBox& box) {
+  const int left = std::clamp(static_cast<int>(std::lround(box.x)), 0, image.width - 1);
+  const int top = std::clamp(static_cast<int>(std::lround(box.y)), 0, image.height - 1);
+  const int right = std::clamp(left + std::max(1, static_cast<int>(std::lround(box.width))),
+                               left + 1, image.width);
+  const int quarter = std::max(1, static_cast<int>(std::lround(box.height * 0.25F)));
+  const int bottom = std::clamp(top + quarter, top + 1, image.height);
+  double sum = 0.0;
+  double squares = 0.0;
+  for (int y = top; y < bottom; ++y) {
+    const auto* row = image.data + static_cast<std::size_t>(y) * image.stride_bytes;
+    for (int x = left; x < right; ++x) {
+      const auto* pixel = row + static_cast<std::size_t>(x) * 3;
+      const double gray = 0.114 * pixel[0] + 0.587 * pixel[1] + 0.299 * pixel[2];
+      sum += gray;
+      squares += gray * gray;
+    }
+  }
+  const double count = static_cast<double>((right - left) * (bottom - top));
+  const double mean = sum / count;
+  return static_cast<float>(std::sqrt(std::max(0.0, squares / count - mean * mean)));
+}
+
 float bright_fraction(const ImageView& image, const BBox& box) {
   const int left = std::clamp(static_cast<int>(std::lround(box.x)), 0, image.width - 1);
   const int top = std::clamp(static_cast<int>(std::lround(box.y)), 0, image.height - 1);
@@ -114,6 +137,7 @@ LongTermRuntime::LongTermRuntime(const ControllerConfig& config,
       target_class_config_(target_class_config),
       detector_configured_(detector.available()),
       visual_suspect_bright_ratio_(config.visual_suspect_bright_ratio),
+      recovery_min_top_luma_stddev_(config.recovery_min_top_luma_stddev),
       visual_suspect_min_confidence_(config.visual_suspect_min_confidence),
       visual_suspect_max_center_px_(config.visual_suspect_max_center_px),
       visual_suspect_consecutive_frames_(config.visual_suspect_consecutive_frames) {}
@@ -282,6 +306,20 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                             .count();
   } else {
     result.tracker_skipped = true;
+  }
+  if (recovery_min_top_luma_stddev_ > 0.0F &&
+      result.plan.tracking_phase == TrackingPhase::kSearching &&
+      result.plan.recovery_probe && result.target_class.target_class_id == 2) {
+    const auto recent = std::find_if(result.observations.begin(),
+                                     result.observations.end(),
+                                     [](const TrackerObservation& observation) {
+                                       return observation.template_kind == TemplateKind::kRecent;
+                                     });
+    if (recent != result.observations.end() &&
+        top_quarter_luma_stddev(image, recent->bbox) <
+            recovery_min_top_luma_stddev_) {
+      result.plan.recovery_texture_veto = true;
+    }
   }
   bool visual_hit = false;
   bool visual_ambiguous = false;
