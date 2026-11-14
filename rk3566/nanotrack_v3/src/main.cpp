@@ -42,6 +42,42 @@ nanotrack::ImageView image_view(const cv::Mat& frame) {
                               frame.channels()};
 }
 
+bool lower_occluding_band(const cv::Mat& frame, const nanotrack::BBox& bbox) {
+  if (bbox.width <= 0.0F || bbox.height <= 0.0F) return false;
+  const int x0 = std::clamp(static_cast<int>(std::floor(bbox.x - 2.0F * bbox.width)),
+                            0, frame.cols);
+  const int x1 = std::clamp(static_cast<int>(std::ceil(bbox.x + 3.0F * bbox.width)),
+                            0, frame.cols);
+  const int y0 = std::clamp(static_cast<int>(std::floor(bbox.y - bbox.height)),
+                            0, frame.rows);
+  const int y1 = std::clamp(static_cast<int>(std::ceil(bbox.y + 2.0F * bbox.height)),
+                            0, frame.rows);
+  if (x1 <= x0 || y1 <= y0) return false;
+  cv::Mat gray;
+  cv::cvtColor(frame(cv::Rect(x0, y0, x1 - x0, y1 - y0)), gray,
+               cv::COLOR_BGR2GRAY);
+  cv::Mat edges;
+  cv::Canny(gray, edges, 70.0, 150.0);
+  std::vector<cv::Vec4i> lines;
+  cv::HoughLinesP(edges, lines, 1.0, CV_PI / 180.0, 45,
+                  std::max(35, static_cast<int>(2.0F * bbox.width)), 12.0);
+  for (const auto& line : lines) {
+    const int dx = line[2] - line[0];
+    const int dy = line[3] - line[1];
+    if (std::abs(dy) > 0.1F * std::max(1, std::abs(dx)) ||
+        std::hypot(static_cast<float>(dx), static_cast<float>(dy)) <
+            4.0F * bbox.width ||
+        std::min(line[0], line[2]) + x0 > bbox.x ||
+        std::max(line[0], line[2]) + x0 < bbox.x + bbox.width) {
+      continue;
+    }
+    const float relative_y =
+        (0.5F * (line[1] + line[3]) + y0 - bbox.y) / bbox.height;
+    if (relative_y >= 1.3F && relative_y <= 1.6F) return true;
+  }
+  return false;
+}
+
 cv::Scalar state_color(const nanotrack::ControllerOutput& output) {
   if (output.control_valid) return cv::Scalar(0, 255, 0);
   switch (output.mode) {
@@ -732,7 +768,11 @@ int main(int argc, char** argv) {
         continue;
       }
       const nanotrack::RuntimeFrameResult result =
-          runtime.process_frame(image_view(frame), source_frame, timestamp_ms);
+          runtime.process_frame(
+              image_view(frame), source_frame, timestamp_ms,
+              controller_config.lower_band_visibility_veto &&
+              runtime.last_initialization().target_class.target_class_id == 2 &&
+              lower_occluding_band(frame, runtime.controller().current_bbox()));
       if (result.detector.request_submitted) ++detector_request_count;
       if (result.detector.batch_received) {
         ++detector_complete_count;

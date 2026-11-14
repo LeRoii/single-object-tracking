@@ -1536,6 +1536,39 @@ void test_visual_suspect_gate() {
               "two unambiguous fresh hits stop tentative observation");
 }
 
+void test_lower_band_visibility_veto() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.lower_band_visibility_veto = true;
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  FakeDetector detector;
+  detector.enabled = true;
+  DetectorBatch initial_batch;
+  initial_batch.candidates.push_back(
+      DetectorCandidate{BBox{40.0F, 30.0F, 20.0F, 20.0F}, 0.9F, 2});
+  detector.blocking_batch = initial_batch;
+  LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+  }
+  std::fill(pixels.begin(), pixels.end(), 0);
+  const auto blocked = runtime.process_frame(image, 5, 200, true);
+  expect_true(blocked.plan.visual_occlusion_search &&
+                  blocked.output.tracking_phase == TrackingPhase::kSearching &&
+                  !blocked.output.observation_present &&
+                  blocked.output.control_source != ControlSource::kObservation,
+              "a lower bridge band plus brightness loss rejects the current-frame observation: " +
+                  std::to_string(blocked.plan.visual_occlusion_search) + "/" +
+                  std::to_string(static_cast<int>(blocked.output.tracking_phase)) + "/" +
+                  std::to_string(blocked.output.observation_present) + "/" +
+                  std::to_string(static_cast<int>(blocked.output.control_source)) + "/" +
+                  std::to_string(blocked.target_class.target_class_id.value_or(-1)));
+}
+
 int main() {
   using namespace nanotrack;
   test_tentative_recent_does_not_commit();
@@ -1544,6 +1577,7 @@ int main() {
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_visual_suspect_gate();
+  test_lower_band_visibility_veto();
   test_target_class_initialization(image);
   test_target_class_session_config(image);
   test_frame_lifetime(image);

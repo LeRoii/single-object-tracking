@@ -138,6 +138,7 @@ LongTermRuntime::LongTermRuntime(const ControllerConfig& config,
       detector_configured_(detector.available()),
       visual_suspect_bright_ratio_(config.visual_suspect_bright_ratio),
       recovery_min_top_luma_stddev_(config.recovery_min_top_luma_stddev),
+      lower_band_visibility_veto_(config.lower_band_visibility_veto),
       visual_suspect_min_confidence_(config.visual_suspect_min_confidence),
       visual_suspect_max_center_px_(config.visual_suspect_max_center_px),
       visual_suspect_consecutive_frames_(config.visual_suspect_consecutive_frames) {}
@@ -210,7 +211,7 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   result.display_bbox = adaptive_display_.current();
   tracker_.initialize(image, initial_bbox);
   trusted_brightness_.clear();
-  if (visual_suspect_bright_ratio_ > 0.0F)
+  if (visual_suspect_bright_ratio_ > 0.0F || lower_band_visibility_veto_)
     trusted_brightness_.push_back(bright_fraction(image, initial_bbox));
   last_visual_hit_frame_.reset();
   visual_hit_streak_ = 0;
@@ -223,7 +224,8 @@ TargetClassInitializationResult LongTermRuntime::initialize(
 
 RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                                                   std::uint64_t frame_id,
-                                                  std::int64_t timestamp_ms) {
+                                                  std::int64_t timestamp_ms,
+                                                  bool lower_band_crossing) {
   if (!initialized_) throw std::logic_error("long-term runtime is not initialized");
   if (frame_open_) throw std::logic_error("previous runtime frame is unfinished");
   if (revocation_waiting_for_ack_) throw std::logic_error("template slot revocation has not been logged");
@@ -306,6 +308,19 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                             .count();
   } else {
     result.tracker_skipped = true;
+  }
+  if (lower_band_visibility_veto_ && lower_band_crossing &&
+      result.target_class.target_class_id == 2 && trusted_brightness_.size() >= 3) {
+    const auto recent = std::find_if(result.observations.begin(),
+                                     result.observations.end(),
+                                     [](const TrackerObservation& observation) {
+                                       return observation.template_kind == TemplateKind::kRecent;
+                                     });
+    if (recent != result.observations.end() &&
+        bright_fraction(image, recent->bbox) <
+            0.9F * median_brightness(trusted_brightness_)) {
+      result.plan.visual_occlusion_search = true;
+    }
   }
   if (recovery_min_top_luma_stddev_ > 0.0F &&
       result.plan.tracking_phase == TrackingPhase::kSearching &&
@@ -489,7 +504,8 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     visual_streak_ambiguous_ = false;
     last_visual_hit_frame_.reset();
   }
-  if (visual_suspect_bright_ratio_ > 0.0F && result.output.accepted &&
+  if ((visual_suspect_bright_ratio_ > 0.0F || lower_band_visibility_veto_) &&
+      result.output.accepted &&
       result.output.tracking_phase == TrackingPhase::kTracking) {
     trusted_brightness_.push_back(bright_fraction(image, result.output.tracking_bbox));
     if (trusted_brightness_.size() > 8) trusted_brightness_.pop_front();

@@ -135,6 +135,7 @@ struct ControllerConfig {
   bool recovery_requires_detector_support = false;
   bool recovery_restore_initial_aspect = false;
   float recovery_min_top_luma_stddev = 0.0F;
+  bool lower_band_visibility_veto = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   std::int64_t motion_search_confidence_ms = 1000;
   float motion_max_speed_diagonals_per_s = 100.0F;

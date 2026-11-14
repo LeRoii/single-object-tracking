@@ -79,7 +79,8 @@ class LongTermRuntime {
                                              std::int64_t timestamp_ms);
   RuntimeFrameResult process_frame(const ImageView& image,
                                    std::uint64_t frame_id,
-                                   std::int64_t timestamp_ms);
+                                   std::int64_t timestamp_ms,
+                                   bool lower_band_crossing = false);
 
   // After returning a revocation-bearing frame, processing and reinitialization
   // wait until the writer acknowledges that exact slot.
@@ -111,6 +112,7 @@ class LongTermRuntime {
   bool revocation_waiting_for_ack_ = false;
   float visual_suspect_bright_ratio_ = 0.0F;
   float recovery_min_top_luma_stddev_ = 0.0F;
+  bool lower_band_visibility_veto_ = false;
   float visual_suspect_min_confidence_ = 0.40F;
   float visual_suspect_max_center_px_ = 30.0F;
   int visual_suspect_consecutive_frames_ = 2;
