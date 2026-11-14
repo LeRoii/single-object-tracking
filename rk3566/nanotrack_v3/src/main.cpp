@@ -61,6 +61,8 @@ bool lower_occluding_band(const cv::Mat& frame, const nanotrack::BBox& bbox) {
   std::vector<cv::Vec4i> lines;
   cv::HoughLinesP(edges, lines, 1.0, CV_PI / 180.0, 45,
                   std::max(35, static_cast<int>(2.0F * bbox.width)), 12.0);
+  bool lower_crossing = false;
+  bool upper_crossing = false;
   for (const auto& line : lines) {
     const int dx = line[2] - line[0];
     const int dy = line[3] - line[1];
@@ -73,9 +75,10 @@ bool lower_occluding_band(const cv::Mat& frame, const nanotrack::BBox& bbox) {
     }
     const float relative_y =
         (0.5F * (line[1] + line[3]) + y0 - bbox.y) / bbox.height;
-    if (relative_y >= 1.3F && relative_y <= 1.6F) return true;
+    if (relative_y >= 0.3F && relative_y <= 0.8F) upper_crossing = true;
+    if (relative_y >= 1.5F && relative_y <= 1.85F) lower_crossing = true;
   }
-  return false;
+  return lower_crossing && !upper_crossing;
 }
 
 cv::Scalar state_color(const nanotrack::ControllerOutput& output) {
