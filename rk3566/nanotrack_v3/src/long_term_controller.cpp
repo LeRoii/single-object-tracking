@@ -1200,10 +1200,6 @@ LongTermController::confirm_recovery_candidate(
     output.recovery_reason = "SEARCH_MIN_AGE";
     return std::nullopt;
   }
-  if (plan.recovery_texture_veto) {
-    output.recovery_reason = "RECOVERY_TOP_TEXTURE_VETO";
-    return std::nullopt;
-  }
   const auto* planned_candidate = plan.recovery_probe
       ? recovery_candidates_.find(*plan.recovery_probe) : nullptr;
   if (plan.recovery_probe && !planned_candidate) {

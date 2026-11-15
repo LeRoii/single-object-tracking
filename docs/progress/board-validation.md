@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-16T00:01:07+08:00 移除恢复顶部纹理硬门：主机阶段
+
+- 分支/工作树 `codex/remove-recovery-texture-veto` / `/home/u20/single-object-tracking/.worktrees/remove-recovery-texture-veto`，起点为干净的 `Debug@3d7f579d3ec7bc0be830865615dc0132ca1a673b`。本次依据板端 `/home/neardi/Project/SOT/occlusion-triad-3c848ad/runs/manual/frames.csv`（SHA-256 `cf3dfa3e2bebd4ed62fd0b2d8f9d896fc65bf101c0a89a1b1a47010eb69c8d23`）诊断：该次首帧目标位于约 `(1033,405)`，并非 car001/car002 真值目标；第 165 帧以后多次 Recent/Safe 与可见车同框，却有 76 帧被 `RECOVERY_TOP_TEXTURE_VETO` 拦截。用户指出车顶并不总可见，要求移除这个过拟合门。
+- 删除顶部四分之一亮度标准差计算、恢复 veto 判定、配置字段、日志字段及相关 veto 单测；现行 `visible-dual-gt-visual-gate.conf` 删除 `recovery_min_top_luma_stddev=32.0`，新文件 SHA-256 `2f9980bbc27d89a0a6ff8aab44af77b85e7c3a7c5333b1f48534ec999b23feb3`。旧运行配置里的同名数值键仅作兼容解析并忽略，不再进入算法或配置身份；增加兼容性测试。detector 候选驱动下一帧 NanoTrack 搜索裁剪的机制本次未改。
+- 实际执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-remove-texture-host-build -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、`cmake --build /tmp/nt-remove-texture-host-build --parallel 4`、`ctest --test-dir /tmp/nt-remove-texture-host-build --output-on-failure`，主机 RKNN-off CTest `23/23 PASS`，`git diff --check` 通过。下一步提交精确源码，在 RK3588 独立目录原生构建并以手点目标及 car001/car002 detector 来源框回放；现阶段没有新板端效果证据，不替代已登记基线或生产 handoff。
+
 ## 2026-11-15T15:29:59+08:00 双分支集成与通用算法一致性
 
 - 从新任务分支 `codex/occlusion-recovery-triad@2bef2cc18c21c5c3f226cc9bb4f08d1bccb16680` 集成。`main` 从 `661b60351e8050607843908c4d24f3094d391692` 在 `/home/u20/single-object-tracking/.worktrees/occlusion-main-integration` 仅引入通用配置/运行时/恢复算法/单测及本进度文档，源码提交 `876a92257251ba0fd81850dea016e303bf435630`；`Debug` 从 `5f76a5acfc8386c8c8fe6a9d5b7a6f0bd2a6175e` 在 `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking` 快进至 `2bef2cc18c21c5c3f226cc9bb4f08d1bccb16680`，包含仅 Debug 的 detector 单击最小尺寸、原/修正框事件记录。

@@ -319,6 +319,13 @@ int main() {
     expect_true(false, std::string("visual candidate profile failed to load: ") +
                            error.what());
   }
+  write_file(config_path, "recovery_min_top_luma_stddev=32.0\n");
+  const ControllerConfig legacy_texture_config = load_controller_config(config_path);
+  write_file(config_path, "");
+  const ControllerConfig current_texture_config = load_controller_config(config_path);
+  expect_true(controller_config_identity(legacy_texture_config) ==
+                  controller_config_identity(current_texture_config),
+              "historical texture setting has no effect on the controller");
   if (failures != 0) return 1;
 
   write_file(config_path,
