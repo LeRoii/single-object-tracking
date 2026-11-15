@@ -247,8 +247,11 @@ int main() {
          "distant detector overflow remains ambiguous until both trackers identify the retained car");
   for (std::uint64_t frame = 71; frame <= 72; ++frame) {
     overflow.expire(frame, 2800 + static_cast<std::int64_t>(frame - 70) * 33, 10);
+    if (frame == 72) {
+      overflow.observe(Source::kDetector, third, 0.95F, 2800 + 66, 2, false);
+    }
     expect(overflow.focus_triad(first, moved) == target,
-           "fresh triad evidence rechecks overflow on each frame");
+           "fresh triad evidence rechecks detector overflow without clearing a verified hit");
     overflow.observe(Source::kRecent, first);
     overflow.observe(Source::kSafe, moved);
     overflow.observe_triad(*target);

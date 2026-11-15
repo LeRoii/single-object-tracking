@@ -280,11 +280,8 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
         weakest->from(RecoveryCandidateSource::kSafe)) {
       overflow_detectors_.push_back(evidence);
       triad_overflow_override_ = false;
-      for (auto& candidate : entries_) {
-        candidate.verifications = {};
-        candidate.detector_supported_hit_frame.reset();
-        candidate.detector_handoff_timestamp_ms.reset();
-      }
+      // Recheck this detector against both tracker boxes in focus_triad().
+      // A distant overflow must not erase a continuous verified tracklet.
       return std::nullopt;
     }
     overflow_detectors_.push_back(*weakest->from(source));
