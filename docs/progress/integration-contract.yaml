@@ -1,14 +1,14 @@
 schema_version: 2
-updated_at: "2026-11-09T21:23:05+08:00"
+updated_at: "2026-11-15T15:43:25+08:00"
 coordinator_baseline:
   branch: main
-  commit: "e0b59f4936ce074c1d263624745d975df52bdef3"
-  note: "All latest committed task updates and the ground-truth requirements document are integrated through this main commit; approval gates below remain unchanged unless stated explicitly."
+  commit: "6d052b54b40cad8254b4b0fd6be1201d22147b12"
+  note: "This is the integrated code and board-validation baseline before the coordinator metadata commit; the latter changes only STATUS.md and this contract. Production handoff remains unapproved."
 
 integrated_task_updates:
   detector_training: "1a851916b3f64fbf65cdf6e9fa4394800a2c795e"
   nanotrack_finetune: "b43aa257e99b7ffaf8e0845c4fdfaabef1d45821"
-  board_validation: "29cd9948196330ed45fac18d7963b9cd385beb58"
+  board_validation: "6d052b54b40cad8254b4b0fd6be1201d22147b12"
   production_cross_compile: "74f2bc8485b2054341979e53562a71d4cbc71d4e"
 
 ownership:
@@ -151,13 +151,13 @@ development_board_validation:
   position: before_production_cross_compile
   environment: complete_native_build_environment
   implementation: interactive_debug_variant
-  latest_task_update_commit: "29cd9948196330ed45fac18d7963b9cd385beb58"
+  latest_task_update_commit: "6d052b54b40cad8254b4b0fd6be1201d22147b12"
   canonical_test_data_on_board:
     path: /home/cat/Project/SOT/data/occ_video_1
     identity_verified: true
     algorithm_run_completed: false
     evidence: docs/progress/board-validation.md
-  latest_review:
+  prior_rk3566_review:
     status: functional_pass_promotion_held
     task_update_commit: "acc595d19b3e270f8adde7cebca5deeb7e8f9328"
     shared_source_candidate: "b98b1335c3d263f542fd52656c7d7c4d58b2bb77"
@@ -173,6 +173,26 @@ development_board_validation:
       - detector_confirmed_reacquisition
       - same_protocol_old_new_resource_comparison
       - visible_infrared_calibration
+  latest_review:
+    status: rk3588_two_target_regression_pass_production_held
+    scope: rk3588_visible_occ_video_1_two_target_detector_click
+    task_update_commit: "6d052b54b40cad8254b4b0fd6be1201d22147b12"
+    shared_source_candidate: "6d052b54b40cad8254b4b0fd6be1201d22147b12"
+    board_source_commit: "3c848ad98f465ea24f710feb41a17567b6dd7bf0"
+    development_baseline_approved: true
+    source_lock_approved: false
+    observed_layers:
+      - native_build
+      - native_ctest
+      - detector_click_two_target_ground_truth_regression
+      - repeated_run_consistency
+    blocked_gates:
+      - detector_confirmed_reacquisition
+      - memory_plateau
+      - same_protocol_old_new_resource_comparison
+      - visible_infrared_calibration
+      - rk3566_latest_source_validation
+      - production_pod_acceptance
   latest_handoff:
     available: false
     source_commit: null
@@ -180,6 +200,73 @@ development_board_validation:
     configuration: null
     evidence: null
     verdict: null
+
+# Scoped RK3588 development regression baseline. This does not change the
+# RK3566 release gates or authorize a production cross-compile handoff.
+development_algorithm_baseline:
+  status: approved_for_development_regression
+  scope: rk3588_visible_occ_video_1_two_target_detector_click
+  main_code_commit: "6d052b54b40cad8254b4b0fd6be1201d22147b12"
+  debug_code_commit: "c14d33a42236d0a3eee1b2dbb9433b61d7f7617c"
+  board_tested_source_commit: "3c848ad98f465ea24f710feb41a17567b6dd7bf0"
+  source_archive:
+    path: /home/neardi/Project/SOT/occlusion-triad-3c848ad/source.tar
+    sha256: "acdc2e0fd26fa67a504b1609745ad052b9703b245196d07d4a0cc1cc9b8e8d34"
+  board:
+    platform: rk3588
+    architecture: aarch64
+    rknn_api: "2.1.0"
+    rknn_driver: "0.9.8"
+    executable:
+      path: /home/neardi/Project/SOT/occlusion-triad-3c848ad/build/nanotrack_v3
+      sha256: "e4cc5d94ce09b8ab41f4ae923cd0e731f052398df9175725c5a10059276c70f8"
+    native_ctest: "23/23 PASS"
+  host_ctest:
+    main: "23/23 PASS"
+    debug: "23/23 PASS"
+  runtime_config:
+    path: /home/neardi/Project/SOT/occlusion-triad-3c848ad/runs/headless-eval.conf
+    sha256: "cda6b05b8677da03fb2947ff8624ee9d02bb73faa98462a68c3f7ab4aa1069eb"
+  controller_config_sha256: "52a3722eec8ed32c2f3ba44be50617ff6c16ad12254f04320b9802738f406bd6"
+  input:
+    video_path: /home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/data/occ_video_1/1.mp4
+    video_sha256: "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d"
+    ground_truth_car_001_manifest_sha256: "9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648"
+    ground_truth_car_002_manifest_sha256: "2f0e78ab1123cb035c87efa06171f1057c108f38b06fcc5c1ed3a3ec63fdbe98"
+    tracker_template_rknn_sha256: "eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55"
+    tracker_search_rknn_sha256: "d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee"
+    tracker_head_rknn_sha256: "4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5"
+    tracker_manifest_sha256: "3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261"
+    detector_rknn_sha256: "8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c"
+    detector_manifest_sha256: "ac2b536c3a46761138ecc67a2be865890b8bc0bbe2fb7195c2bb8b12d34049c9"
+    detector_labels_sha256: "41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992"
+  evaluation:
+    initialization: detector_click_with_recorded_minimum_36x36_tracking_box
+    car_001:
+      runs: 2
+      full_verdict: PASS
+      reacquisition_frame: 187
+      visible_valid_mean_iou: 0.757506
+      report_path: /tmp/nt-triad-3c8-car001-score.json
+      report_sha256: "f6b8b148595a382aff75b9f3b2349c7bdbe4e6cec3eb9d51602a8cfb4ca71551"
+      output_paths:
+        - /home/neardi/Project/SOT/occlusion-triad-3c848ad/runs/detector-click/
+        - /home/neardi/Project/SOT/occlusion-triad-3c848ad/runs/detector-click-repeat/
+    car_002:
+      runs: 2
+      full_verdict: PASS
+      reacquisition_frame: 233
+      visible_valid_mean_iou: 0.756859
+      report_path: /tmp/nt-triad-3c8-car002-score.json
+      report_sha256: "e7004e25aa0729d2fe9e013dab13fa91a587ccb7df4a3b97e2300bb7e9ed0b2c"
+      output_paths:
+        - /home/neardi/Project/SOT/occlusion-triad-3c848ad/runs/detector-click-car002/
+        - /home/neardi/Project/SOT/occlusion-triad-3c848ad/runs/detector-click-car002-repeat/
+    repeat_reports_identical: true
+  main_debug_common_algorithm_identical: true
+  evidence: docs/progress/board-validation.md
+  production_handoff_authorized: false
+  pod_accepted: false
 
 production_cross_compile:
   status: candidate_cross_compile_succeeded_handoff_unapproved

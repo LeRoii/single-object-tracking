@@ -5,11 +5,11 @@
 
 - 初始化时间：`2026-10-22T21:05:39+08:00`
 - 初始化基线：`main@352018bd588a999d03f2685dc7b71266f396b39d`
-- 最近汇总：`2026-11-09T21:23:05+08:00`，四个任务的最新已提交回传已集成至
-  `main@e0b59f4936ce074c1d263624745d975df52bdef3`
-- 最近协调契约更新：`2026-11-07T22:55:06+08:00`，基于
-  `main@40002ba22bda62cffa8519f323abab5f970e0836` 冻结统一非训练算法测试数据
-  `data/occ_video_1`
+- 最近汇总：`2026-11-15T15:43:25+08:00`，RK3588 双目标验证版已集成至
+  `main@6d052b54b40cad8254b4b0fd6be1201d22147b12` 和
+  `Debug@c14d33a42236d0a3eee1b2dbb9433b61d7f7617c`
+- 最近协调契约更新：`2026-11-15T15:43:25+08:00`，将上述版本登记为
+  `data/occ_video_1` 双目标 detector 单击开发回归基线；生产 handoff 仍未批准
 - 当前集成契约：[`integration-contract.yaml`](integration-contract.yaml)
 
 ## 当前状态
@@ -18,7 +18,7 @@
 | --- | --- | --- | --- | --- |
 | NanoTrack 微调 | `ready_for_downstream_evaluation` | g5000 身份保持冻结；九格矩阵 72/72 完成且 verifier 结论为 `no_safe_cell` | 没有新 cell 同时通过双 seed 安全门；g5000 仍无绑定的 ONNX/RKNN/板端验收 | [`nanotrack-finetune.md`](nanotrack-finetune.md) |
 | Detector 训练 | `candidate_ready_promotion_held` | VisDrone9 PT、ONNX、RKNN 和 manifest/labels 身份已复核，76 项回归通过 | 正式切换被集成内存门和重捕效果门阻塞；canonical manifest 仍是 COCO | [`detector-training.md`](detector-training.md) |
-| 开发板验证 | `functional_pass_promotion_held` | 统一数据集已在真实 RK3566 路径完成文件与 271 项标签哈希核验；既有 Debug 功能证据保留 | 尚未用统一数据集形成新的算法运行证据；正式源码/模型 handoff 仍未批准 | [`board-validation.md`](board-validation.md) |
+| 开发板验证 | `rk3588_two_target_regression_pass_production_held` | RK3588 上 car001/car002 detector 单击各两次、完整真值评分均 PASS；双分支通用算法一致 | 证据仅覆盖这段可见光视频和模拟点击；RK3566 正式源码/模型 handoff、资源/红外/吊舱门仍未批准 | [`board-validation.md`](board-validation.md) |
 | 生产交叉编译 | `candidate_cross_compile_succeeded_handoff_unapproved` | 已有候选 A6 编译、隔离板端启动和诊断记录 | 候选记录不是协调者批准的生产 handoff；正式编译裁决和真实吊舱验收仍未完成 | [`cross-compile.md`](cross-compile.md) |
 
 ## 依赖顺序
@@ -57,19 +57,41 @@
 
 ## 当前协调事项
 
+- 新开发算法基线为 `main@6d052b54b40cad8254b4b0fd6be1201d22147b12`、
+  `Debug@c14d33a42236d0a3eee1b2dbb9433b61d7f7617c`；实际 RK3588 原生程序
+  绑定源码 `3c848ad98f465ea24f710feb41a17567b6dd7bf0`、程序 SHA-256
+  `e4cc5d94ce09b8ab41f4ae923cd0e731f052398df9175725c5a10059276c70f8`。
+  新实验以这组身份及契约中的模型、配置、视频和两套真值哈希为起点。
+- car001/car002 各两次 detector 单击回放的完整评分均 PASS 且重复报告一致；
+  car002 的原检测框和按中心最小扩至 `36×36` 的跟踪初始化框均已记录。
+  本轮按用户要求仅验 detector 单击初始化，不将历史八框筛查计入本版验收。
 - 交叉编译任务只需确认能够取得协调对话锁定的最新板端验证结果，并用现有流程编译成功；不要求承担完整工具链/sysroot provenance、开发板复测或吊舱验收。
 - 由协调对话决定是否将 NanoTrack g5000 候选送入 ONNX/RKNN/板端链路；旧官方 NanoTrack V3 板端结果不能替代微调候选的板端证据。
 - VisDrone9 detector 保持候选状态，直到同协议内存复测和正式 promotion gate 通过。
-- 开发板验证继续保持“功能可运行”与“长时重捕/开发板交付门”两条结论分离，并在交叉编译之前完成。
-- 下一轮开发板候选尚未锁定：交互式 Debug 源码候选 `b98b1335c3d263f542fd52656c7d7c4d58b2bb77`
-  仍需集成审查，并需同时决定 NanoTrack 模型身份和 COCO/VisDrone9 detector 选择。
+- 开发板验证保持“RK3588 可见光双目标回归通过”与“RK3566/生产交付门通过”两条结论分离。
 - `development_board_validation.latest_handoff.available` 继续保持 `false`；在门槛通过前，交叉编译任务只等待，不消费历史产物。
 - 真实吊舱测试为人工门禁，不属于任何 Codex 自动验证结论。
-- 开发板验证、生产交叉编译及其他非训练算法任务下一次运行前，必须切换到
-  `data/occ_video_1` 并记录板端/目标环境实际路径和 SHA-256；不得继续新增
+- 开发板验证、生产交叉编译及其他非训练算法任务运行时，继续使用
+  `data/occ_video_1` 并记录板端/目标环境实际路径和 SHA-256；不得新增
   `sot-v1.mp4` 或 `girl_dance.mp4` 证据。
 
 ## 更新记录
+
+### 2026-11-15T15:43:25+08:00
+
+- 工作树 `/home/u20/single-object-tracking/.worktrees/occlusion-main-integration` 的
+  `main@6d052b54b40cad8254b4b0fd6be1201d22147b12` 和 Debug 工作树的
+  `Debug@c14d33a42236d0a3eee1b2dbb9433b61d7f7617c` 均为干净的已合并版本。
+  根工作树仍在独立分支 `codex/dual-gt-init-consistency@291e62d1cb4211cf32b2dfc160ade78305774044`，未覆盖。
+- 核对两分支通用运行时/恢复算法及评测源码相同；差异仅为 Debug 的交互文件。
+  两分支主机 CTest 各 `23/23 PASS`，RK3588 原生 CTest `23/23 PASS`，原始
+  板端记录、精确输入和程序哈希见 `board-validation.md` 2026-11-15T15:26:46 条目。
+- car001/car002 各两次 detector 点击回放完整真值评分均 PASS，重复报告逐字节一致；
+  car001/car002 有效可见观测平均 IoU 分别为 `0.757506` / `0.756859`，重捕帧为
+  `187` / `233`。将这个版本登记为新的 RK3588 开发回归基线，详情与哈希写入
+  `integration-contract.yaml` 的 `development_algorithm_baseline`。
+- 这项基线覆盖单段可见光视频和模拟点击，未完成资源平台化、跨场景/红外、RK3566
+  最新版验证或真实吊舱验收；`latest_handoff.available=false` 和生产门禁保持原裁决。
 
 ### 2026-10-22T21:05:39+08:00
 
