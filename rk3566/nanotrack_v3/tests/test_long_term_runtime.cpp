@@ -1602,6 +1602,44 @@ void test_visual_suspect_gate() {
                   unique_second.plan.visual_occlusion_search &&
                   unique_second.output.tracking_phase == TrackingPhase::kSearching,
               "a distant second detection does not delay two fresh visual hits");
+
+  FakeTracker crosschecked_tracker;
+  crosschecked_tracker.emit_recent_safe_roles = true;
+  FakeDetector crosschecked_detector;
+  crosschecked_detector.enabled = true;
+  DetectorBatch crosschecked_batch;
+  crosschecked_batch.candidates.push_back(
+      DetectorCandidate{BBox{265.0F, 239.0F, 54.0F, 54.0F}, 0.80F, 2});
+  crosschecked_batch.candidates.push_back(
+      DetectorCandidate{BBox{275.0F, 239.0F, 54.0F, 54.0F}, 0.55F, 2});
+  crosschecked_detector.blocking_batch = crosschecked_batch;
+  LongTermRuntime crosschecked_runtime(config, crosschecked_tracker,
+                                      crosschecked_detector, {2, 9, {}});
+  std::fill(pixels.begin(), pixels.end(), 200);
+  crosschecked_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    crosschecked_runtime.process_frame(image, frame,
+                                       static_cast<std::int64_t>(frame * 40));
+  }
+  crosschecked_tracker.on_infer = [&] {
+    const auto& plan = crosschecked_tracker.inferred_plans.back();
+    crosschecked_tracker.observation_override = std::vector<TrackerObservation>{
+        TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                           ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                           TemplateKind::kRecent, crosschecked_tracker.search_token + 1},
+        TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                           ResponseMetrics{0.90F, 0.88F, 9.0F, 11.0F, 0.04F},
+                           TemplateKind::kSafe, crosschecked_tracker.search_token + 1}};
+  };
+  std::fill(pixels.begin(), pixels.end(), 0);
+  const auto crosschecked_suspect = crosschecked_runtime.process_frame(image, 5, 200);
+  const auto crosschecked_first = crosschecked_runtime.process_frame(image, 6, 240);
+  const auto crosschecked_second = crosschecked_runtime.process_frame(image, 7, 280);
+  expect_true(crosschecked_suspect.output.tracking_phase == TrackingPhase::kSuspected &&
+                  crosschecked_first.output.tracking_phase == TrackingPhase::kSuspected &&
+                  crosschecked_second.plan.visual_occlusion_search &&
+                  crosschecked_second.output.tracking_phase == TrackingPhase::kSearching,
+              "matching Recent and Safe allow two hits despite nearby competing detections");
 }
 
 void test_lower_band_visibility_veto() {
