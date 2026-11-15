@@ -41,6 +41,8 @@ struct ControllerConfig {
   float accepted_center_smoothing_alpha = 1.00F;
   float accepted_center_max_correction_ratio = 0.00F;
   float max_reacquisition_center_distance = 0.00F;
+  // Limit for full-object dual-template recovery, in predicted-box diagonals.
+  float recovery_dual_template_max_motion_diagonals = 1.0F;
 
   bool adaptive_display_enabled = false;
   bool display_detector_refresh_enabled = false;

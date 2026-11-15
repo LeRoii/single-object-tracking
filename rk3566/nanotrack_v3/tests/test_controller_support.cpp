@@ -172,6 +172,8 @@ int main() {
   expect_near(default_visible.max_reacquisition_center_distance, 0.75F,
               1e-6F,
               "visible ordinary recovery uses the fixed center residual gate");
+  expect_near(default_visible.recovery_dual_template_max_motion_diagonals, 1.0F,
+              1e-6F, "dual-template recovery limits motion displacement to one box diagonal");
   expect_near(ControllerConfig{}.max_accepted_scale_step_ratio, 1.0F, 1e-6F,
               "generic controller behavior remains unrestricted");
   expect_true(ControllerConfig{}.accepted_scale_deadband_ratio == 0.0F &&

@@ -748,6 +748,30 @@ void test_dominant_near_detector_recovery() {
                 "two frames of unique three-way evidence resolve a nearby unverified car");
   }
 
+  ControllerConfig far_pair_config = config;
+  far_pair_config.detector_candidate_max_center_ratio = 0.10F;
+  far_pair_config.recovery_confirmation_required = 3;
+  ResolvedControllerFixture far_pair(far_pair_config);
+  far_pair.initialize(target, 0, 0, {1920, 1080},
+                      make_fixed_target_class(0, true));
+  step(far_pair, 1, 33, std::nullopt);
+  plan = far_pair.begin_frame(2, 66, true);
+  const auto far_request = *plan.detector_request;
+  const BBox far_identity{target.x + 80, target.y, target.width, target.height};
+  DetectorBatch far_batch{far_request.frame_id, far_request.timestamp_ms,
+                          {{far_identity, 0.90F, 0}}};
+  far_batch.generation = far_request.generation;
+  far_pair.finish_frame(plan, {}, far_batch);
+  for (std::uint64_t frame = 3; frame <= 5; ++frame) {
+    plan = far_pair.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
+    output = far_pair.finish_frame(
+        plan, {reliable_for_plan(plan, far_identity, frame, TemplateKind::kRecent),
+               reliable_for_plan(plan, far_identity, frame, TemplateKind::kSafe)},
+        std::nullopt);
+    expect_true(!output.reacquired,
+                "a distant dual-template agreement cannot override the motion identity gate");
+  }
+
   ResolvedControllerFixture overlapping_rivals(config);
   overlapping_rivals.initialize(target, 0, 0, {1920, 1080},
                                  make_fixed_target_class(0, true));

@@ -1274,6 +1274,16 @@ LongTermController::confirm_recovery_candidate(
     recovery_candidates_.observe_triad(*triad_key);
   }
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
+  const auto motion_center_aligned = [&](const std::optional<EvaluatedObservation>& observation) {
+    if (!observation) return false;
+    const auto& box = observation->observation.bbox;
+    const auto& predicted = plan.motion_predicted_bbox;
+    const float distance = std::hypot(
+        box.x + 0.5F * box.width - predicted.x - 0.5F * predicted.width,
+        box.y + 0.5F * box.height - predicted.y - 0.5F * predicted.height);
+    return distance <= config_.recovery_dual_template_max_motion_diagonals *
+        std::hypot(predicted.width, predicted.height);
+  };
   const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
     if (output.recovery_conflict || !key ||
         (!recovery_candidates_.confirmed(*key) &&
@@ -1281,6 +1291,9 @@ LongTermController::confirm_recovery_candidate(
       return false;
     const auto* candidate = recovery_candidates_.find(*key);
     return candidate &&
+        !(config_.detector_target_mode == DetectorTargetMode::kFullObject &&
+          recent_key == key && safe_key == key &&
+          !motion_center_aligned(recent) && !motion_center_aligned(safe)) &&
         (!config_.recovery_requires_detector_support ||
          candidate->has_detector_supported_hit()) &&
         (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
