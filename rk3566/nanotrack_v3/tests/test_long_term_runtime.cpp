@@ -1552,7 +1552,7 @@ void test_visual_suspect_gate() {
               "a low-confidence visual candidate cannot force SEARCHING");
   detector.blocking_batch->candidates[0].confidence = 0.80F;
   detector.blocking_batch->candidates.push_back(
-      DetectorCandidate{BBox{370.0F, 240.0F, 40.0F, 40.0F}, 0.55F, 2});
+      DetectorCandidate{BBox{275.0F, 239.0F, 54.0F, 54.0F}, 0.55F, 2});
   const auto ambiguous = runtime.process_frame(image, 7, 280);
   expect_true(ambiguous.output.tracking_phase == TrackingPhase::kSuspected &&
                   detector.blocking_calls == 2,
@@ -1577,6 +1577,8 @@ void test_visual_suspect_gate() {
   DetectorBatch unique_batch;
   unique_batch.candidates.push_back(
       DetectorCandidate{BBox{265.0F, 239.0F, 54.0F, 54.0F}, 0.80F, 2});
+  unique_batch.candidates.push_back(
+      DetectorCandidate{BBox{370.0F, 240.0F, 40.0F, 40.0F}, 0.55F, 2});
   unique_detector.blocking_batch = unique_batch;
   LongTermRuntime unique_runtime(config, unique_tracker, unique_detector, {2, 9, {}});
   std::fill(pixels.begin(), pixels.end(), 200);
@@ -1599,7 +1601,7 @@ void test_visual_suspect_gate() {
                   unique_first.output.tracking_phase == TrackingPhase::kSuspected &&
                   unique_second.plan.visual_occlusion_search &&
                   unique_second.output.tracking_phase == TrackingPhase::kSearching,
-              "two unambiguous fresh hits stop tentative observation");
+              "a distant second detection does not delay two fresh visual hits");
 }
 
 void test_lower_band_visibility_veto() {
