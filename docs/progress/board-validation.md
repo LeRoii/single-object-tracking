@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-15T14:23:07+08:00 car001 三路重捕候选主机验证（板端待验）
+
+- 分支 `codex/occlusion-recovery-triad`，工作树 `/home/u20/single-object-tracking/.worktrees/occlusion-recovery-triad`，基线 `Debug@5f76a5acfc8386c8c8fe6a9d5b7a6f0bd2a6175e`；来源为用户单击手测 `0060b7b` 程序在 car001 第 185 帧的 `IDENTITY_CONFLICT`，不是旧算法与新算法版本差。原始板端记录 `/home/neardi/Project/SOT/debug-click-0060b7b/runs/manual-click/frames.csv`，主机只读副本 `/tmp/nt-car001-manual-frames.csv` SHA-256 `6925b6c033e06d92efd39232dd57cf65cc795ce4047499b4259841a2b5581f96`，初始 detector 框 `(994.000916,581.063293,35.289490,39.486084)`、类别 2。
+- 本候选仅为唯一 detector 与可靠 Recent/Safe 同框时建立候选专属的两帧确认；其他探测框若也匹配任一模板则保留冲突，detector 单独不能授权控制。主机实际执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-occlusion-triad-build -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、`cmake --build /tmp/nt-occlusion-triad-build --parallel 4`、`ctest --test-dir /tmp/nt-occlusion-triad-build --output-on-failure`，结果 `23/23 PASS`；最终构建/CTest 日志 `/tmp/nt-triad-host-build.log` / `/tmp/nt-triad-host-ctest.log` SHA-256 `2b2d7bea36ceb923042695d41c3a49312cf74b79997fb8ca45da860513cc0ff7` / `b2f1fcf80f98b1f3261f16ff9082104780859ae716425a60cc60b11a74e7018e`。
+- **边界 / 下一步**：目前只有 RKNN-off 主机单测，没有本候选 RK3588 原生构建、八框回放、精确点击框回放或真值评分；不得视为板端通过。板端免密 SSH `neardi@192.168.1.106` 本轮认证失败；待建立授权连接后在隔离目录构建并执行上述回放。遮挡进入 SEARCHING 时机尚未修改，须以板端闭环证据决定安全触发规则。正式 handoff 继续保持未批准。
+
 ## 2026-11-14T22:59:13+08:00 Debug 单击交互集成到 main / Debug
 
 - 用户要求两分支算法一致、Debug 仅有交互差异。`main` 从 `84b63aeaf575a717652d757b5cd92c993959b835` cherry-pick 通用运行时提交 `78665da675a8ca05e46a96dcfa49dd697299fe26`，得到 `main@1f5b10a0b56da60fa76a34c145bd92e1e314cec0`；`Debug` 从 `1573b20c9aef2b8747752bf5467b5ac4a0261136` 快进功能分支至 `Debug@1791a85c42c7ec4a7fc8f1ae19b5e3ccf469a724`。`git diff --name-only main Debug -- rk3566/nanotrack_v3 scripts tests` 只有 10 个 Debug 交互、配置解析及相应单测文件；`LongTermRuntime` 头文件、实现和单测完全一致，评测脚本与 Python 测试完全一致；逐段核对 `main.cpp` 的 `lower_occluding_band` 与 `runtime.process_frame` 调用一致。Debug 板端实测源码为上方 `0060b7b`，后续 `1791a85` 仅增加配置解析单测和进度文档，不改变板端程序源码。

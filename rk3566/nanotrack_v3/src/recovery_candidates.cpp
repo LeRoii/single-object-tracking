@@ -156,6 +156,11 @@ void RecoveryCandidateTable::expire(std::uint64_t frame_id,
                                [](const auto& entry) { return !has_evidence(entry); }),
                  entries_.end());
   if (focused_detector_ && !find(*focused_detector_)) focused_detector_.reset();
+  if (triad_candidate_ && !find(*triad_candidate_)) {
+    triad_candidate_.reset();
+    triad_last_frame_.reset();
+    triad_streak_ = 0;
+  }
   if (unrepresented_conflict_ &&
       expired(*unrepresented_conflict_, std::min(gap_ms_, detector_stale_ms_))) {
     unrepresented_conflict_.reset();
@@ -167,6 +172,9 @@ void RecoveryCandidateTable::clear() noexcept {
   frame_.reset();
   unrepresented_conflict_.reset();
   focused_detector_.reset();
+  triad_candidate_.reset();
+  triad_last_frame_.reset();
+  triad_streak_ = 0;
 }
 
 bool RecoveryCandidateTable::geometry_consistent(const BBox& reference,
@@ -367,6 +375,9 @@ bool RecoveryCandidateTable::focus_detector(RecoveryCandidateKey key) noexcept {
   }
   if (focused_detector_ == key) return true;
   focused_detector_ = key;
+  triad_candidate_.reset();
+  triad_last_frame_.reset();
+  triad_streak_ = 0;
   // A detector only proposes an identity. Confirmation starts with fresh
   // NanoTrack observations made after the detector batch was received.
   for (auto& entry : entries_) {
@@ -375,6 +386,54 @@ bool RecoveryCandidateTable::focus_detector(RecoveryCandidateKey key) noexcept {
     entry.detector_handoff_timestamp_ms.reset();
   }
   return true;
+}
+
+std::optional<RecoveryCandidateKey> RecoveryCandidateTable::unique_detector_agreement(
+    const BBox& recent, const BBox& safe) const noexcept {
+  if (!frame_ || unrepresented_conflict_ ||
+      !geometry_consistent(recent, safe)) return std::nullopt;
+  std::optional<RecoveryCandidateKey> matched;
+  for (const auto& candidate : entries_) {
+    const auto& detector = candidate.from(RecoveryCandidateSource::kDetector);
+    if (!detector) continue;
+    const bool matches_recent = geometry_consistent(detector->bbox, recent);
+    const bool matches_safe = geometry_consistent(detector->bbox, safe);
+    // A rival matching either template makes the identity ambiguous.
+    if (matches_recent != matches_safe) return std::nullopt;
+    if (!matches_recent) continue;
+    if (matched) return std::nullopt;
+    matched = candidate.key;
+  }
+  if (focused_detector_ && matched && *focused_detector_ != *matched) {
+    return std::nullopt;
+  }
+  return matched;
+}
+
+void RecoveryCandidateTable::observe_triad(RecoveryCandidateKey key) noexcept {
+  if (!frame_ || conflicted() || focused_detector_ != key ||
+      !find(key) || !find(key)->has_detector_supported_hit()) {
+    triad_candidate_.reset();
+    triad_last_frame_.reset();
+    triad_streak_ = 0;
+    return;
+  }
+  if (triad_candidate_ == key && triad_last_frame_ &&
+      *triad_last_frame_ + 1 == frame_->frame_id) {
+    ++triad_streak_;
+  } else if (triad_last_frame_ != frame_->frame_id) {
+    triad_streak_ = 1;
+  }
+  triad_candidate_ = key;
+  triad_last_frame_ = frame_->frame_id;
+}
+
+bool RecoveryCandidateTable::triad_confirmed(RecoveryCandidateKey key) const noexcept {
+  const auto* candidate = find(key);
+  return frame_ && !conflicted() && triad_candidate_ == key &&
+         triad_last_frame_ == frame_->frame_id && triad_streak_ >= 2 &&
+         candidate && candidate->hits() >= 2 &&
+         candidate->has_detector_supported_hit();
 }
 
 void RecoveryCandidateTable::advance_subtarget_probe(
@@ -414,6 +473,9 @@ void RecoveryCandidateTable::mark_identity_conflict() noexcept {
   // permanently poison an otherwise continuous NanoTrack tracklet after a
   // spatially distinct rival expires.
   if (frame_) unrepresented_conflict_ = *frame_;
+  triad_candidate_.reset();
+  triad_last_frame_.reset();
+  triad_streak_ = 0;
   for (auto& candidate : entries_) {
     candidate.verifications = {};
     candidate.detector_supported_hit_frame.reset();

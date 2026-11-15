@@ -63,6 +63,12 @@ class RecoveryCandidateTable {
   const RecoveryCandidate* find(RecoveryCandidateKey key) const noexcept;
   const RecoveryCandidate* select_probe() const noexcept;
   bool focus_detector(RecoveryCandidateKey key) noexcept;
+  // A full-object detector candidate supported by both tracker templates may
+  // be confirmed after two consecutive frames, even with distant detections.
+  std::optional<RecoveryCandidateKey> unique_detector_agreement(
+      const BBox& recent, const BBox& safe) const noexcept;
+  void observe_triad(RecoveryCandidateKey key) noexcept;
+  bool triad_confirmed(RecoveryCandidateKey key) const noexcept;
   void advance_subtarget_probe(RecoveryCandidateKey key, const BBox& bbox,
                                std::size_t index, bool final_probe) noexcept;
   bool conflicted() const noexcept;
@@ -99,6 +105,9 @@ class RecoveryCandidateTable {
   std::optional<FrameStamp> frame_;
   std::optional<FrameStamp> unrepresented_conflict_;
   std::optional<RecoveryCandidateKey> focused_detector_;
+  std::optional<RecoveryCandidateKey> triad_candidate_;
+  std::optional<std::uint64_t> triad_last_frame_;
+  std::size_t triad_streak_ = 0;
   std::uint64_t generation_ = 0;
   std::uint64_t next_id_ = 1;
 };

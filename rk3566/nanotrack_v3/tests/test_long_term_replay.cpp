@@ -627,9 +627,9 @@ void test_dominant_near_detector_recovery() {
           shape_plan, {reliable_for_plan(shape_plan, partial, frame, TemplateKind::kRecent),
                        reliable_for_plan(shape_plan, partial, frame, TemplateKind::kSafe)},
           std::nullopt);
-      expect_true(shape_output.reacquired == (frame == 5),
-                  "shape prior still requires three detector-supported NanoTrack hits");
-      if (frame == 5) {
+      expect_true(shape_output.reacquired == (frame == 4),
+                  "three-way detector and tracker agreement confirms on the second frame");
+      if (frame == 4) {
         expect_true(shape_output.tracking_bbox.height > partial.height * 1.2F &&
                         std::fabs(shape_output.tracking_bbox.y +
                                   0.5F * shape_output.tracking_bbox.height -
@@ -738,6 +738,37 @@ void test_dominant_near_detector_recovery() {
   output = close_rivals.finish_frame(plan, {}, close_batch);
   expect_true(output.recovery_conflict && !output.accepted,
               "comparably close same-class objects retain the identity veto");
+  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
+    plan = close_rivals.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
+    output = close_rivals.finish_frame(
+        plan, {reliable_for_plan(plan, target, frame, TemplateKind::kRecent),
+               reliable_for_plan(plan, target, frame, TemplateKind::kSafe)},
+        std::nullopt);
+    expect_true(output.reacquired == (frame == 4),
+                "two frames of unique three-way evidence resolve a nearby unverified car");
+  }
+
+  ResolvedControllerFixture overlapping_rivals(config);
+  overlapping_rivals.initialize(target, 0, 0, {1920, 1080},
+                                 make_fixed_target_class(0, true));
+  step(overlapping_rivals, 1, 33, std::nullopt);
+  plan = overlapping_rivals.begin_frame(2, 66, true);
+  const auto overlap_request = *plan.detector_request;
+  const BBox rival{target.x + 20, target.y, target.width, target.height};
+  const BBox shared{target.x + 10, target.y, target.width, target.height};
+  DetectorBatch overlap_batch{overlap_request.frame_id, overlap_request.timestamp_ms,
+                              {{target, 0.90F, 0}, {rival, 0.89F, 0}}};
+  overlap_batch.generation = overlap_request.generation;
+  overlapping_rivals.finish_frame(plan, {}, overlap_batch);
+  for (std::uint64_t frame = 3; frame <= 4; ++frame) {
+    plan = overlapping_rivals.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
+    output = overlapping_rivals.finish_frame(
+        plan, {reliable_for_plan(plan, shared, frame, TemplateKind::kRecent),
+               reliable_for_plan(plan, shared, frame, TemplateKind::kSafe)},
+        std::nullopt);
+    expect_true(!output.reacquired && output.recovery_conflict,
+                "tracker pair matching two detector identities keeps the conflict veto");
+  }
 
   ControllerConfig stale_motion_config = config;
   stale_motion_config.motion_search_confidence_ms = 1;
