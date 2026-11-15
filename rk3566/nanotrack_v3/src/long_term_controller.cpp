@@ -1238,11 +1238,8 @@ LongTermController::confirm_recovery_candidate(
   if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
       recent && safe && recent->quality == QualityLevel::kReliable &&
       safe->quality == QualityLevel::kReliable) {
-    triad_key = recovery_candidates_.unique_detector_agreement(
+    triad_key = recovery_candidates_.focus_triad(
         recent->observation.bbox, safe->observation.bbox);
-    if (triad_key && !recovery_candidates_.focus_detector(*triad_key)) {
-      triad_key.reset();
-    }
   }
   const auto observe = [&](RecoveryCandidateSource source,
                            const std::optional<EvaluatedObservation>& observation) {

@@ -233,5 +233,36 @@ int main() {
   expect(!triad.unique_detector_agreement(shared, moved),
          "overlapping rival detectors cannot be resolved by the same tracker pair");
   }
+  {
+  ControllerConfig overflow_config = config;
+  overflow_config.recovery_confirmation_required = 3;
+  RecoveryCandidateTable overflow(overflow_config);
+  overflow.expire(70, 2800, 10);
+  const auto target = overflow.observe(Source::kDetector, first, 0.70F,
+                                        2800, 2, false, 0.015F);
+  overflow.observe(Source::kDetector, third, 0.95F,
+                   2800, 2, false, 0.052F);
+  expect(target && overflow.conflicted() &&
+             overflow.focus_triad(first, moved) == target,
+         "distant detector overflow remains ambiguous until both trackers identify the retained car");
+  for (std::uint64_t frame = 71; frame <= 72; ++frame) {
+    overflow.expire(frame, 2800 + static_cast<std::int64_t>(frame - 70) * 33, 10);
+    expect(overflow.focus_triad(first, moved) == target,
+           "fresh triad evidence rechecks overflow on each frame");
+    overflow.observe(Source::kRecent, first);
+    overflow.observe(Source::kSafe, moved);
+    overflow.observe_triad(*target);
+    expect(overflow.triad_confirmed(*target) == (frame == 72),
+           "two detector-supported tracker frames resolve only distant overflow");
+  }
+  overflow.clear();
+  overflow.expire(80, 3200, 11);
+  const BBox shared{44, 30, 20, 20};
+  const BBox rival{48, 30, 20, 20};
+  overflow.observe(Source::kDetector, first, 0.70F, 3200, 2, false, 0.015F);
+  overflow.observe(Source::kDetector, rival, 0.95F, 3200, 2, false, 0.052F);
+  expect(!overflow.focus_triad(shared, moved) && overflow.conflicted(),
+         "an overflow detector overlapping either tracker still vetoes identity");
+  }
   return failures == 0 ? 0 : 1;
 }

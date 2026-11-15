@@ -125,6 +125,12 @@ void RecoveryCandidateTable::expire(std::uint64_t frame_id,
   }
   generation_ = generation;
   frame_ = FrameStamp{frame_id, timestamp_ms};
+  triad_overflow_override_ = false;
+  overflow_detectors_.erase(std::remove_if(overflow_detectors_.begin(),
+      overflow_detectors_.end(), [&](const auto& item) {
+        return expired({item.frame_id, item.timestamp_ms}, detector_stale_ms_,
+                       detector_window_frames_);
+      }), overflow_detectors_.end());
   for (auto& candidate : entries_) {
     for (std::size_t index = 0; index < candidate.evidence.size(); ++index) {
       auto& item = candidate.evidence[index];
@@ -171,6 +177,8 @@ void RecoveryCandidateTable::clear() noexcept {
   entries_.clear();
   frame_.reset();
   unrepresented_conflict_.reset();
+  overflow_detectors_.clear();
+  triad_overflow_override_ = false;
   focused_detector_.reset();
   triad_candidate_.reset();
   triad_last_frame_.reset();
@@ -262,7 +270,6 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
              detector_count() == detector_capacity_) {
     // A geometrically distinct eligible detection remains an ambiguity even
     // if its metadata cannot be retained at the configured capacity.
-    unrepresented_conflict_ = FrameStamp{evidence.frame_id, evidence.timestamp_ms};
     auto weakest = entries_.end();
     for (auto entry = entries_.begin(); entry != entries_.end(); ++entry) {
       if (!entry->from(source)) continue;
@@ -271,9 +278,17 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
     if (weakest == entries_.end() || !preferred_detector(evidence, *weakest->from(source)) ||
         weakest->from(RecoveryCandidateSource::kRecent) ||
         weakest->from(RecoveryCandidateSource::kSafe)) {
-      mark_identity_conflict();
+      overflow_detectors_.push_back(evidence);
+      triad_overflow_override_ = false;
+      for (auto& candidate : entries_) {
+        candidate.verifications = {};
+        candidate.detector_supported_hit_frame.reset();
+        candidate.detector_handoff_timestamp_ms.reset();
+      }
       return std::nullopt;
     }
+    overflow_detectors_.push_back(*weakest->from(source));
+    triad_overflow_override_ = false;
     weakest->evidence[index].reset();
   }
   entries_.erase(std::remove_if(entries_.begin(), entries_.end(),
@@ -369,7 +384,7 @@ const RecoveryCandidate* RecoveryCandidateTable::select_probe() const noexcept {
 
 bool RecoveryCandidateTable::focus_detector(RecoveryCandidateKey key) noexcept {
   const auto* candidate = find(key);
-  if (!frame_ || unrepresented_conflict_ || !candidate ||
+  if (!frame_ || unrepresented_conflict_ || !overflow_detectors_.empty() || !candidate ||
       !candidate->from(RecoveryCandidateSource::kDetector)) {
     return false;
   }
@@ -404,10 +419,37 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::unique_detector_agre
     if (matched) return std::nullopt;
     matched = candidate.key;
   }
+  for (const auto& overflow : overflow_detectors_) {
+    if (geometry_consistent(overflow.bbox, recent) ||
+        geometry_consistent(overflow.bbox, safe)) return std::nullopt;
+  }
   if (focused_detector_ && matched && *focused_detector_ != *matched) {
     return std::nullopt;
   }
   return matched;
+}
+
+std::optional<RecoveryCandidateKey> RecoveryCandidateTable::focus_triad(
+    const BBox& recent, const BBox& safe) noexcept {
+  const auto key = unique_detector_agreement(recent, safe);
+  if (!key) return std::nullopt;
+  if (focused_detector_ == key) {
+    triad_overflow_override_ = true;
+    return key;
+  }
+  // The geometry check above examined every retained and overflow detector.
+  // A distant overflow candidate cannot veto this unique three-way match.
+  focused_detector_ = key;
+  triad_candidate_.reset();
+  triad_last_frame_.reset();
+  triad_streak_ = 0;
+  triad_overflow_override_ = true;
+  for (auto& candidate : entries_) {
+    candidate.verifications = {};
+    candidate.detector_supported_hit_frame.reset();
+    candidate.detector_handoff_timestamp_ms.reset();
+  }
+  return key;
 }
 
 void RecoveryCandidateTable::observe_triad(RecoveryCandidateKey key) noexcept {
@@ -452,6 +494,7 @@ void RecoveryCandidateTable::advance_subtarget_probe(
 
 bool RecoveryCandidateTable::conflicted() const noexcept {
   if (unrepresented_conflict_) return true;
+  if (!overflow_detectors_.empty() && !triad_overflow_override_) return true;
   if (focused_detector_ && find(*focused_detector_)) {
     return std::any_of(entries_.begin(), entries_.end(),
         [&](const RecoveryCandidate& candidate) {
