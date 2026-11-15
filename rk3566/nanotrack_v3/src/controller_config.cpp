@@ -181,7 +181,13 @@ void set_value(ControllerConfig& config,
   else if (key == "recovery_confirmation_required") config.recovery_confirmation_required = parse_int(key, value);
   else if (key == "recovery_requires_detector_support") config.recovery_requires_detector_support = parse_bool(key, value);
   else if (key == "recovery_restore_initial_aspect") config.recovery_restore_initial_aspect = parse_bool(key, value);
-  else if (key == "recovery_min_top_luma_stddev") config.recovery_min_top_luma_stddev = parse_float(key, value);
+  else if (key == "recovery_min_top_luma_stddev") {
+    // Historical run configs may still contain this removed gate. Accept the
+    // old numeric value, but do not let it affect tracking or config identity.
+    const float legacy_value = parse_float(key, value);
+    if (!std::isfinite(legacy_value) || legacy_value < 0.0F || legacy_value > 128.0F)
+      throw std::invalid_argument("recovery top luminance deviation must be in [0, 128]");
+  }
   else if (key == "lower_band_visibility_veto") config.lower_band_visibility_veto = parse_bool(key, value);
   else if (key == "search_reacquisition_min_age_ms") config.search_reacquisition_min_age_ms = parse_integer(key, value);
   else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
@@ -472,11 +478,6 @@ void validate_controller_config(const ControllerConfig& config) {
       config.recovery_confirmation_required > 3) {
     throw std::invalid_argument("recovery candidate confirmations must be two or three");
   }
-  if (!std::isfinite(config.recovery_min_top_luma_stddev) ||
-      config.recovery_min_top_luma_stddev < 0.0F ||
-      config.recovery_min_top_luma_stddev > 128.0F) {
-    throw std::invalid_argument("recovery top luminance deviation must be in [0, 128]");
-  }
   const float search_scales[] = {
       config.search_tracking, config.search_uncertain, config.search_local_initial,
       config.search_local_late, config.search_assisted, config.search_lost};
@@ -626,7 +627,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.recovery_confirmation_required << '|'
          << config.recovery_requires_detector_support << '|'
          << config.recovery_restore_initial_aspect << '|'
-         << config.recovery_min_top_luma_stddev << '|'
          << config.lower_band_visibility_veto << '|'
          << config.search_reacquisition_min_age_ms << '|'
          << config.motion_search_confidence_ms << '|'
