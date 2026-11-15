@@ -791,14 +791,27 @@ int main(int argc, char** argv) {
               selection.selected_candidate_index = *chosen.candidate_index;
             const int selected_class = chosen.candidate_index
                 ? candidates[*chosen.candidate_index].class_id : -1;
+            const auto tracking_bbox = chosen.candidate_index
+                ? nanotrack::minimum_detector_tracking_bbox(
+                      chosen.bbox, {frame.cols, frame.rows},
+                      options.click_detector_min_bbox_width,
+                      options.click_detector_min_bbox_height)
+                : chosen.bbox;
             std::cout << "DEBUG_EVENT event=click_selection_resolved frame="
                       << source_frame << " click=" << click.point->x << ','
                       << click.point->y << " source="
                       << (chosen.candidate_index ? "detector" : "fallback")
                       << " bbox=" << chosen.bbox.x << ',' << chosen.bbox.y
                       << ',' << chosen.bbox.width << ',' << chosen.bbox.height
+                      << " tracking_bbox=" << tracking_bbox.x << ',' << tracking_bbox.y
+                      << ',' << tracking_bbox.width << ',' << tracking_bbox.height
+                      << " bbox_adjusted="
+                      << (tracking_bbox.x != chosen.bbox.x ||
+                          tracking_bbox.y != chosen.bbox.y ||
+                          tracking_bbox.width != chosen.bbox.width ||
+                          tracking_bbox.height != chosen.bbox.height)
                       << " class_id=" << selected_class << '\n';
-            initialize_target(chosen.bbox, std::move(selection));
+            initialize_target(tracking_bbox, std::move(selection));
           } else {
             std::cout << "DEBUG_EVENT event=click_selection_cancelled frame="
                       << source_frame << '\n';

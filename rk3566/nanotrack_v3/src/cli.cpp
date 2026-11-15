@@ -94,6 +94,7 @@ std::string usage() {
       "[--output-video OUTPUT.avi] [--output-boxes OUTPUT.csv] [--max-frames N] "
       "[--start-frame N --end-frame N] [--output-size WIDTHxHEIGHT] "
       "[--click-fallback-bbox-size WIDTHxHEIGHT] "
+      "[--click-detector-min-bbox-size WIDTHxHEIGHT] "
       "[--interactive] "
       "[--sensor visible|infrared] [--controller-config FILE] "
       "[--session-metadata FILE] "
@@ -134,6 +135,7 @@ Options parse_options(const std::vector<std::string>& arguments) {
         option != "--max-frames" && option != "--start-frame" &&
         option != "--end-frame" && option != "--output-size" &&
         option != "--click-fallback-bbox-size" &&
+        option != "--click-detector-min-bbox-size" &&
         option != "--controller-config" && option != "--sensor" &&
         option != "--session-metadata" && option != "--detector-model" &&
         option != "--detector-manifest" && option != "--detector-labels" &&
@@ -226,6 +228,12 @@ Options parse_options(const std::vector<std::string>& arguments) {
     const auto dimensions = parse_output_size(click_fallback_size->second);
     options.click_fallback_bbox_width = dimensions.first;
     options.click_fallback_bbox_height = dimensions.second;
+  }
+  const auto click_detector_min_size = values.find("--click-detector-min-bbox-size");
+  if (click_detector_min_size != values.end()) {
+    const auto dimensions = parse_output_size(click_detector_min_size->second);
+    options.click_detector_min_bbox_width = dimensions.first;
+    options.click_detector_min_bbox_height = dimensions.second;
   }
   const auto controller_config = values.find("--controller-config");
   if (controller_config != values.end()) {

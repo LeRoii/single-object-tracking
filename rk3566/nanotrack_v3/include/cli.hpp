@@ -35,6 +35,8 @@ struct Options {
   int output_height = 0;
   int click_fallback_bbox_width = 64;
   int click_fallback_bbox_height = 64;
+  int click_detector_min_bbox_width = 36;
+  int click_detector_min_bbox_height = 36;
   bool interactive = false;
   bool has_bbox = false;
   bool help = false;

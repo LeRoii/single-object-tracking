@@ -1,5 +1,6 @@
 #include "interactive_control.hpp"
 
+#include <cmath>
 #include <iostream>
 #include <string>
 
@@ -59,6 +60,25 @@ int main() {
       {48, 48}, {120, 100}, {{{40, 40, 16, 16}, 0.9F, 10}}, 9, 64, 64);
   expect_true(!invalid_class.candidate_index,
               "unverified detector class cannot initialize selected target");
+  const BBox partial_detector{973.034729F, 520.489929F, 34.091492F, 31.423828F};
+  const BBox expanded = minimum_detector_tracking_bbox(
+      partial_detector, {1920, 1080}, 36, 36);
+  expect_true(std::abs(expanded.x - 972.080475F) < 0.001F &&
+                  std::abs(expanded.y - 518.201843F) < 0.001F &&
+                  expanded.width == 36.0F && expanded.height == 36.0F,
+              "detector click minimum keeps the detector center");
+  const BBox full_detector{994.000916F, 581.063293F, 36.0F, 39.486084F};
+  const BBox unchanged = minimum_detector_tracking_bbox(
+      full_detector, {1920, 1080}, 36, 36);
+  expect_true(unchanged.x == full_detector.x && unchanged.y == full_detector.y &&
+                  unchanged.width == full_detector.width &&
+                  unchanged.height == full_detector.height,
+              "detector boxes above the minimum remain unchanged");
+  const BBox clipped_detector = minimum_detector_tracking_bbox(
+      {0, 0, 20, 20}, {100, 100}, 36, 36);
+  expect_true(clipped_detector.x == 0 && clipped_detector.y == 0 &&
+                  clipped_detector.width == 28 && clipped_detector.height == 28,
+              "minimum detector bbox clips at image edges");
 
   expect_true(decode_interactive_key('n') == InteractiveCommand::kStep,
               "n advances exactly one frame");

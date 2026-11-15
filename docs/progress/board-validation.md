@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-15T15:20:26+08:00 获准记录原 detector 框并限制点击跟踪框最小尺寸
+
+- 用户确认 car002 单击可保留 detector 原框，同时用以原框中心为准的最小 `36×36` 修正框初始化跟踪器。分支 `codex/occlusion-recovery-triad`，工作树 `/home/u20/single-object-tracking/.worktrees/occlusion-recovery-triad`，任务基线 `Debug@5f76a5acfc8386c8c8fe6a9d5b7a6f0bd2a6175e`，本阶段前置提交 `6987903cf5430dcaea3d78cbebaf059fa5bf87dd`。Debug 单击 detector 时，新增配置 `click_detector_min_bbox_size=36x36`，宽高须为正整数，分别只补足不足 36 的维度并按图像裁剪；`click_selection_resolved` 同时输出原 detector `bbox`、实际 `tracking_bbox` 和 `bbox_adjusted`。空白点击回退框及命令行 `--bbox` 语义不变。改动范围仅 Debug CLI/交互文件，通用算法部分继续与 main 保持同源。
+- 主机实际执行 `cmake --build /tmp/nt-occlusion-triad-build --parallel 4`、`ctest --test-dir /tmp/nt-occlusion-triad-build --output-on-failure`，RKNN-off CTest 23/23 PASS；日志 `/tmp/nt-triad-host-build-12.log` / `/tmp/nt-triad-host-ctest-12.log` SHA-256 `c1754349c1a8a3be457104a98f38016b09fc534ca275cda7c92077a817647efa` / `8878771031cfdbb1e560b6ec0155c6dac84fd2a96c4bd4c76c864591768e30e5`。下一步板端原生构建并分别实际单击 car001/car002，核对原框与修正框、完整真值评分及程序/工件哈希；正式 handoff 仍未批准。
+
 ## 2026-11-15T15:16:31+08:00 改按 detector 单击初始化双目标验证
 
 - 用户把本轮验收范围改为 detector 实际结果初始化，不再要求八个手设框；板端 `1927bda7432cb4a07abbacf1e79fdd4e74e24460` 的八框批次在 car002 nominal 运行中按要求停止，已完成的零散 CSV 仅保留原件，不作本轮验收。分支/工作树 `codex/occlusion-recovery-triad` / `/home/u20/single-object-tracking/.worktrees/occlusion-recovery-triad`，起始基线 `Debug@5f76a5acfc8386c8c8fe6a9d5b7a6f0bd2a6175e`。源码包 `/tmp/nt-triad-motion-gate-source.tar` 与板端 `/home/neardi/Project/SOT/occlusion-triad-1927bda/source.tar` SHA-256 `e80af940114d69bd419b5bec5567fa93e0be2036e1a35fb127a2fc88d14e58df`；板端配置 `runs/headless-eval.conf` SHA-256 `cda6b05b8677da03fb2947ff8624ee9d02bb73faa98462a68c3f7ab4aa1069eb`，输入视频/模型/标签与上方已登记清单一致。原生 CTest 23/23 PASS，程序 `build/nanotrack_v3` SHA-256 `ced5c458190ac0ba81e72b9b646dcce87c66a83be4f5a25f5171e6680ce868ee`，cmake/build/ctest 日志 SHA-256 `d4a3fbcb12f44cfcc13a5d86796d8d2c18564bac621cb895b939774` / `292cd5aeaba6208b99d425c4b47a80e13462d0a376e3233c6f742de6b7153728` / `60bdd3241420a0b0e09609827c2dc93c41f3264e6ba53b3bbde308016bd26d4d`，RKNN API/driver 2.1.0/0.9.8。

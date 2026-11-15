@@ -129,6 +129,9 @@ int main() {
   expect_true(interactive_bbox_options.click_fallback_bbox_width == 64 &&
                   interactive_bbox_options.click_fallback_bbox_height == 64,
               "interactive click fallback defaults to 64x64");
+  expect_true(interactive_bbox_options.click_detector_min_bbox_width == 36 &&
+                  interactive_bbox_options.click_detector_min_bbox_height == 36,
+              "detector click tracking bbox has a 36x36 minimum");
   for (const std::string& size : {"0x64", "64x0", "-1x64", "64", "64x999999999999"}) {
     auto invalid = interactive_with_bbox;
     invalid.push_back("--click-fallback-bbox-size");
@@ -144,6 +147,17 @@ int main() {
                   custom_click.click_fallback_bbox_height == 96 &&
                   custom_click.bbox.width == interactive_bbox_options.bbox.width,
               "click fallback size is configurable without changing --bbox");
+  auto detector_min = interactive_with_bbox;
+  detector_min.push_back("--click-detector-min-bbox-size");
+  detector_min.push_back("40x44");
+  const Options configured_detector_min = parse_options(detector_min);
+  expect_true(configured_detector_min.click_detector_min_bbox_width == 40 &&
+                  configured_detector_min.click_detector_min_bbox_height == 44 &&
+                  configured_detector_min.bbox.width == interactive_bbox_options.bbox.width,
+              "detector click minimum is configurable without changing --bbox");
+  detector_min.back() = "0x44";
+  expect_throws([&] { parse_options(detector_min); },
+                "invalid detector click minimum must fail");
 
   std::vector<std::string> long_term = valid;
   long_term.insert(long_term.end(),
@@ -348,6 +362,15 @@ int main() {
   expect_true(configured_click.click_fallback_bbox_width == 80 &&
                   configured_click.click_fallback_bbox_height == 96,
               "runtime config sets click fallback dimensions");
+  const std::filesystem::path detector_min_config = config_dir / "detector-min-size.conf";
+  write_text_file(detector_min_config,
+                  "video=input.mp4\nmodel_dir=models\ninteractive=true\n"
+                  "click_detector_min_bbox_size=40x44\n");
+  const Options configured_detector_min_file =
+      parse_options({"nanotrack_v3", "--config", detector_min_config.string()});
+  expect_true(configured_detector_min_file.click_detector_min_bbox_width == 40 &&
+                  configured_detector_min_file.click_detector_min_bbox_height == 44,
+              "runtime config sets detector click minimum dimensions");
   const std::filesystem::path invalid_click_size =
       config_dir / "invalid-click-size.conf";
   write_text_file(invalid_click_size,

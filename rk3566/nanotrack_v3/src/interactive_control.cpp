@@ -90,6 +90,34 @@ InteractiveClickTarget choose_interactive_click_target(
   return {{float(x0), float(y0), float(x1 - x0), float(y1 - y0)}, std::nullopt};
 }
 
+BBox minimum_detector_tracking_bbox(BBox detector_bbox, FrameSize frame,
+                                    int min_width, int min_height) {
+  if (frame.width <= 0 || frame.height <= 0 || min_width <= 0 || min_height <= 0 ||
+      !std::isfinite(detector_bbox.x) || !std::isfinite(detector_bbox.y) ||
+      !std::isfinite(detector_bbox.width) || !std::isfinite(detector_bbox.height) ||
+      detector_bbox.width <= 0.0F || detector_bbox.height <= 0.0F)
+    throw std::invalid_argument("invalid detector tracking bbox or minimum size");
+  const float center_x = detector_bbox.x + 0.5F * detector_bbox.width;
+  const float center_y = detector_bbox.y + 0.5F * detector_bbox.height;
+  if (detector_bbox.width < min_width) {
+    const float left = std::clamp(center_x - 0.5F * min_width, 0.0F,
+                                  static_cast<float>(frame.width));
+    const float right = std::clamp(center_x + 0.5F * min_width, 0.0F,
+                                   static_cast<float>(frame.width));
+    detector_bbox.x = left;
+    detector_bbox.width = right - left;
+  }
+  if (detector_bbox.height < min_height) {
+    const float top = std::clamp(center_y - 0.5F * min_height, 0.0F,
+                                 static_cast<float>(frame.height));
+    const float bottom = std::clamp(center_y + 0.5F * min_height, 0.0F,
+                                    static_cast<float>(frame.height));
+    detector_bbox.y = top;
+    detector_bbox.height = bottom - top;
+  }
+  return detector_bbox;
+}
+
 InteractiveRoiSelection::InteractiveRoiSelection(int frame_width,
                                                  int frame_height)
     : frame_width_(frame_width), frame_height_(frame_height) {

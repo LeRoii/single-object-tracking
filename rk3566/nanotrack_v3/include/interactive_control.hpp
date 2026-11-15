@@ -44,6 +44,8 @@ InteractiveClickTarget choose_interactive_click_target(
     InteractiveClickPoint point, FrameSize frame,
     const std::vector<DetectorCandidate>& candidates,
     std::size_t class_count, int fallback_width, int fallback_height);
+BBox minimum_detector_tracking_bbox(BBox detector_bbox, FrameSize frame,
+                                    int min_width, int min_height);
 
 class InteractiveRoiSelection {
  public:
