@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-16T00:18:35+08:00 car002 第 228 帧提前重捕获获人工认可
+
+- 用户明确确认“car002 在 228 帧重捕没问题，重捕获发生得早也好，越早越好”，覆盖本文件上节因评测脚本固定 `first_reliable_reappearance_frame=230` 而暂缓合并的判断。冻结真值仍保留原样：car002 第 228/229 帧为 `manual_confirmed_no_bbox`、可见比例 `0.86/0.93`，不能把这两帧算作可观测框 IoU；现行 full evaluator 仍会显示 `reacquisition` 时间窗 FAIL，该结果与用户本次人工接受结论并列保存，不修改历史报告或真值。
+- 对板端 `fd6c29df`、CSV SHA-256 `130222ddb5a551861da34c3a9451d2303b2114c2bc163f05d3607e21702b078e` 的第 228 帧再次核对：`TRACKING`、`accepted=1`、`reacquired=1`，框 `(843.082,700.505,47.830,47.830)`；第 230～233 帧对可靠真值的 IoU `0.7545/0.7791/0.8025/0.8223`，中心误差 `5.097/4.043/3.693/1.860px`，未见接到邻车框。手点第三辆车无真值且后续仍丢失，此项不变。用户认可的是第 228 帧提前重捕，不等于全部场景已验收或正式生产 handoff。下一步将去除顶部纹理门的通用算法同步合入 main/Debug，并核查两分支算法一致；评测时间窗与人工接受的差异留待协调方更新规则。
+
 ## 2026-11-16T00:11:45+08:00 移除顶部纹理门：板端回放及回归裁决
 
 - 任务分支/工作树 `codex/remove-recovery-texture-veto` / `/home/u20/single-object-tracking/.worktrees/remove-recovery-texture-veto`，源码提交 `fd6c29df0655ef221ced0e623326043dbe37e02b`，基线 `Debug@3d7f579d3ec7bc0be830865615dc0132ca1a673b`。源码包 `/tmp/nt-no-texture-fd6c29d-source.tar` 与板端 `/home/neardi/Project/SOT/occlusion-no-texture-fd6c29d/source.tar` SHA-256 `f589216c881b8e23db309516a246473b49488c841543944dd77c4c807ef5bc08`；板端原生构建目录及全部输出均在上述独立目录。实际执行 `cmake`、`cmake --build`、`ctest`，RK3588 CTest `23/23 PASS`；`cmake.log`、`build.log`、`ctest.log` SHA-256 分别为 `83a3de2ff34591389062c90799d21bfbfb0182f366794ddc4ec1cdb90dfbef95`、`94759e1a816c1c14099767322733cee3cfacb9e25563144ba7e3d03efba279d6`、`422b5e616dff678ac4507cfdfefa0fee9bf707e96cfbbd58da5df7575917f336`；程序 `build/nanotrack_v3` SHA-256 `fde50985d78e8be9fc062641de386a0c68d0a122f4b268bb2ea3fe496a0e4fe2`。RKNN API/driver `2.1.0/0.9.8`。
