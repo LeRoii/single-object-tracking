@@ -1234,6 +1234,13 @@ LongTermController::confirm_recovery_candidate(
   const bool carrier_disagreement = reliable_in_carrier(recent) && reliable_in_carrier(safe) &&
       !recovery_candidates_.geometry_consistent(recent->observation.bbox, safe->observation.bbox);
   const bool probe_conflict = carrier_disagreement;
+  std::optional<RecoveryCandidateKey> triad_key;
+  if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
+      recent && safe && recent->quality == QualityLevel::kReliable &&
+      safe->quality == QualityLevel::kReliable) {
+    triad_key = recovery_candidates_.focus_triad(
+        recent->observation.bbox, safe->observation.bbox);
+  }
   const auto observe = [&](RecoveryCandidateSource source,
                            const std::optional<EvaluatedObservation>& observation) {
     if (!observation) return std::optional<RecoveryCandidateKey>{};
@@ -1263,12 +1270,30 @@ LongTermController::confirm_recovery_candidate(
   const auto recent_key = observe(RecoveryCandidateSource::kRecent, recent);
   const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
   if (probe_conflict) recovery_candidates_.mark_identity_conflict();
+  if (triad_key && recent_key == triad_key && safe_key == triad_key) {
+    recovery_candidates_.observe_triad(*triad_key);
+  }
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
+  const auto motion_center_aligned = [&](const std::optional<EvaluatedObservation>& observation) {
+    if (!observation) return false;
+    const auto& box = observation->observation.bbox;
+    const auto& predicted = plan.motion_predicted_bbox;
+    const float distance = std::hypot(
+        box.x + 0.5F * box.width - predicted.x - 0.5F * predicted.width,
+        box.y + 0.5F * box.height - predicted.y - 0.5F * predicted.height);
+    return distance <= config_.recovery_dual_template_max_motion_diagonals *
+        std::hypot(predicted.width, predicted.height);
+  };
   const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
-    if (output.recovery_conflict || !key || !recovery_candidates_.confirmed(*key))
+    if (output.recovery_conflict || !key ||
+        (!recovery_candidates_.confirmed(*key) &&
+         !recovery_candidates_.triad_confirmed(*key)))
       return false;
     const auto* candidate = recovery_candidates_.find(*key);
     return candidate &&
+        !(config_.detector_target_mode == DetectorTargetMode::kFullObject &&
+          recent_key == key && safe_key == key &&
+          !motion_center_aligned(recent) && !motion_center_aligned(safe)) &&
         (!config_.recovery_requires_detector_support ||
          candidate->has_detector_supported_hit()) &&
         (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||

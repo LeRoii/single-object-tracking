@@ -403,6 +403,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
           result.detector.timing = detected->batch.timing;
           float nearest_distance = std::numeric_limits<float>::infinity();
           float nearest_confidence = 0.0F;
+          int nearby_candidates = 0;
           for (const auto& candidate : detected->batch.candidates) {
             if (candidate.class_id != 2) continue;
             const float factor = static_cast<float>(crop.side) / 320.0F;
@@ -418,12 +419,16 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
               nearest_distance = distance;
               nearest_confidence = candidate.confidence;
             }
+            if (distance <= visual_suspect_max_center_px_ &&
+                candidate.confidence >= visual_suspect_min_confidence_) {
+              ++nearby_candidates;
+            }
           }
           visual_hit = detected->batch.source_frame_id == frame_id &&
               detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion &&
               nearest_distance <= visual_suspect_max_center_px_ &&
               nearest_confidence >= visual_suspect_min_confidence_;
-          visual_ambiguous = detected->batch.candidates.size() > 1;
+          visual_ambiguous = nearby_candidates > 1;
         }
       } catch (const std::exception& error) {
         result.detector.error = error.what();
@@ -436,7 +441,25 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     const int next_streak = consecutive ? visual_hit_streak_ + 1 : 1;
     const bool ambiguous_streak = visual_ambiguous ||
         (consecutive && visual_streak_ambiguous_);
-    result.plan.visual_occlusion_search =
+    // A decoded Safe observation agreeing with Recent supplies an independent
+    // tracker crosscheck for this visual hit. A mere request to run Safe is
+    // not sufficient. The first confirmed visual hit can stop observation.
+    const auto recent = std::find_if(result.observations.begin(),
+                                     result.observations.end(),
+                                     [frame_id](const TrackerObservation& observation) {
+                                       return observation.frame_id == frame_id &&
+                                           observation.template_kind == TemplateKind::kRecent;
+                                     });
+    const auto safe = std::find_if(result.observations.begin(),
+                                   result.observations.end(),
+                                   [frame_id](const TrackerObservation& observation) {
+                                     return observation.frame_id == frame_id &&
+                                         observation.template_kind == TemplateKind::kSafe;
+                                   });
+    const bool safe_crosscheck = recent != result.observations.end() &&
+        safe != result.observations.end() &&
+        bbox_iou(recent->bbox, safe->bbox) >= 0.5F;
+    result.plan.visual_occlusion_search = safe_crosscheck ||
         next_streak >= visual_suspect_consecutive_frames_ +
             (ambiguous_streak ? 1 : 0);
   }

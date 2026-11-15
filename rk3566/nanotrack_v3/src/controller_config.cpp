@@ -101,6 +101,7 @@ void set_value(ControllerConfig& config,
   else if (key == "accepted_center_smoothing_alpha") config.accepted_center_smoothing_alpha = parse_float(key, value);
   else if (key == "accepted_center_max_correction_ratio") config.accepted_center_max_correction_ratio = parse_float(key, value);
   else if (key == "max_reacquisition_center_distance") config.max_reacquisition_center_distance = parse_float(key, value);
+  else if (key == "recovery_dual_template_max_motion_diagonals") config.recovery_dual_template_max_motion_diagonals = parse_float(key, value);
   else if (key == "adaptive_display_enabled") config.adaptive_display_enabled = parse_bool(key, value);
   else if (key == "display_detector_refresh_enabled") config.display_detector_refresh_enabled = parse_bool(key, value);
   else if (key == "display_car_padding_x") config.display_car_padding_x = parse_float(key, value);
@@ -313,6 +314,11 @@ void validate_controller_config(const ControllerConfig& config) {
       config.max_reacquisition_center_distance < 0.0F) {
     throw std::invalid_argument(
         "reacquisition center distance must be finite and non-negative");
+  }
+  if (!std::isfinite(config.recovery_dual_template_max_motion_diagonals) ||
+      config.recovery_dual_template_max_motion_diagonals <= 0.0F) {
+    throw std::invalid_argument(
+        "recovery dual-template max motion diagonals must be finite and positive");
   }
   const float display_ratios[] = {
       config.display_car_padding_x, config.display_car_padding_y,
@@ -566,6 +572,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.accepted_center_smoothing_alpha << '|'
          << config.accepted_center_max_correction_ratio << '|'
          << config.max_reacquisition_center_distance << '|'
+         << config.recovery_dual_template_max_motion_diagonals << '|'
          << config.adaptive_display_enabled << '|'
          << config.display_detector_refresh_enabled << '|'
          << config.display_car_padding_x << '|' << config.display_car_padding_y << '|'
