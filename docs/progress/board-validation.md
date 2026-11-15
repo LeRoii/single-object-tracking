@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-16T00:20:17+08:00 去顶部纹理门集成至 main/Debug
+
+- 根据用户对 car002 第 228 帧提前重捕的明确认可，将任务分支 `codex/remove-recovery-texture-veto@a084819789b2cabb8ba461dc2add2693491a09ee` 的通用算法与本任务进度提交集成：`main` 工作树 `/home/u20/single-object-tracking/.worktrees/occlusion-main-integration` 从 `17ef93287232656667d6d1099ca5cadb3a1b3d21` 依次 cherry-pick 至 `1774bcd`；`Debug` 工作树 `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking` 从 `3d7f579d3ec7bc0be830865615dc0132ca1a673b` fast-forward 至 `a084819`。两边通用 controller/config/runtime/tracking log、对应单测及 `scripts tests` 的 `git diff --quiet` exit 0；`git diff --name-only main Debug -- rk3566/nanotrack_v3 scripts tests` 仅有 CLI、交互控制/覆盖层、主入口、运行配置与三份交互测试共 10 个 Debug 专属文件。
+- 两分支分别执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-no-texture-<main|debug>-merge-build -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、`cmake --build ... --parallel 4`、`ctest --test-dir ... --output-on-failure`，各 `23/23 PASS`。main cmake/build/CTest 日志 SHA-256 `9b45bd059accc02f7eeea8cc5712f39c9d50e9527ff3e3f1ce3a44d7d616bdbe` / `02254eca100a90ac8f2e1fe9ca59e946eed49fdb04172ea1f1df097eab6bcac0` / `6f6411960b66936093edbaf838a6afb5e6a161fcf45d9f6d1e852b3fecd12024`；Debug 对应 `80b8eb12811082da1f7f3c161aef6f02980a914b165a96e996f7b61f6e6fabd6` / `dfe57195daf13b8f64b55315be3ea807d2101fe031ced1d2947a01f3fbeee452` / `bbaf263529357313a9e3a1df77717443dcbe541ffa46d911d819aced6f76b1bc`。RK3588 实测仍绑定本文件下文源码 `fd6c29df`、程序 SHA-256 `fde50985d78e8be9fc062641de386a0c68d0a122f4b268bb2ea3fe496a0e4fe2`；后续 Git 提交只增进度文档，算法源码一致。固定 full evaluator 对 car002 的时间窗仍报告 FAIL，用户人工认可覆盖此单点时间门；不能据此声称真值被修改、第三辆车稳定恢复或正式生产 handoff。
+- **Handoff**：请协调方依据本次人工接受记录决定是否把“部分遮挡且目标身份连续时可在首个可靠真值框之前重捕”写入下一版评测规则；保留原真值与报告哈希，不能单靠移动 `first_reliable_reappearance_frame` 来制造通过。正式 `latest_handoff.available` 仍为 `false`。
+
 ## 2026-11-16T00:18:35+08:00 car002 第 228 帧提前重捕获获人工认可
 
 - 用户明确确认“car002 在 228 帧重捕没问题，重捕获发生得早也好，越早越好”，覆盖本文件上节因评测脚本固定 `first_reliable_reappearance_frame=230` 而暂缓合并的判断。冻结真值仍保留原样：car002 第 228/229 帧为 `manual_confirmed_no_bbox`、可见比例 `0.86/0.93`，不能把这两帧算作可观测框 IoU；现行 full evaluator 仍会显示 `reacquisition` 时间窗 FAIL，该结果与用户本次人工接受结论并列保存，不修改历史报告或真值。
