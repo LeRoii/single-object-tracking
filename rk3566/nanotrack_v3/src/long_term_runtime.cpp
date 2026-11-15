@@ -442,7 +442,8 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     const bool ambiguous_streak = visual_ambiguous ||
         (consecutive && visual_streak_ambiguous_);
     // A decoded Safe observation agreeing with Recent supplies an independent
-    // tracker crosscheck. A mere request to run Safe is not sufficient.
+    // tracker crosscheck for this visual hit. A mere request to run Safe is
+    // not sufficient. The first confirmed visual hit can stop observation.
     const auto recent = std::find_if(result.observations.begin(),
                                      result.observations.end(),
                                      [frame_id](const TrackerObservation& observation) {
@@ -458,9 +459,9 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     const bool safe_crosscheck = recent != result.observations.end() &&
         safe != result.observations.end() &&
         bbox_iou(recent->bbox, safe->bbox) >= 0.5F;
-    result.plan.visual_occlusion_search =
+    result.plan.visual_occlusion_search = safe_crosscheck ||
         next_streak >= visual_suspect_consecutive_frames_ +
-            (ambiguous_streak && !safe_crosscheck ? 1 : 0);
+            (ambiguous_streak ? 1 : 0);
   }
   // Poll after inference so a detector result completed while NanoTrack ran
   // can still participate in this frame's recovery decision without waiting.

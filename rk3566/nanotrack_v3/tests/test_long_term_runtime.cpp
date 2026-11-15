@@ -1634,12 +1634,11 @@ void test_visual_suspect_gate() {
   std::fill(pixels.begin(), pixels.end(), 0);
   const auto crosschecked_suspect = crosschecked_runtime.process_frame(image, 5, 200);
   const auto crosschecked_first = crosschecked_runtime.process_frame(image, 6, 240);
-  const auto crosschecked_second = crosschecked_runtime.process_frame(image, 7, 280);
   expect_true(crosschecked_suspect.output.tracking_phase == TrackingPhase::kSuspected &&
-                  crosschecked_first.output.tracking_phase == TrackingPhase::kSuspected &&
-                  crosschecked_second.plan.visual_occlusion_search &&
-                  crosschecked_second.output.tracking_phase == TrackingPhase::kSearching,
-              "matching Recent and Safe allow two hits despite nearby competing detections");
+                  crosschecked_first.plan.visual_occlusion_search &&
+                  crosschecked_first.output.tracking_phase == TrackingPhase::kSearching &&
+                  !crosschecked_first.output.observation_present,
+              "matching Recent and Safe confirm the first fresh visual hit");
 }
 
 void test_lower_band_visibility_veto() {
