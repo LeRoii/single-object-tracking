@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T05:22:08+08:00 可见帧中心平滑筛查，收益不足以加入运行时
+
+- 起点 `codex/ten-target-smoothness@5ddf4d989287e3ab639d317cdf926a6afe72721c`，工作树干净；本节只读，对已保存的 `8314980` RK3588 20 路全长 CSV 与各自正式可观测真值比较。脚本 `/tmp/nt-visible-center-filter-screen.py`、结果 `/tmp/nt-visible-center-filter-screen.json` SHA-256 `696b75092086aab42169b89f717068bfde5b6c1dc89f680d6c16b295a520865b` / `04d134f12e525d3d4062c559c23f8ed9a8b305e38dfc7b39248ca2a005ab0288`；只对 accepted/Tracking 帧做因果中心 EMA，非接受或重捕时复位。原始每路平均中心误差的跨 20 路均值 `2.0591px`、平均 IoU `0.8327`。`alpha=0.85` 后误差 `2.1250px`、17/20 路变差；`alpha=0.70` 后 `2.3297px`、20/20 路变差。可见中心不能靠固定低通变得更贴真值。
+- 进一步筛查因果 alpha-beta 速度补偿，脚本 `/tmp/nt-visible-alpha-beta-screen.py`、结果 `/tmp/nt-visible-alpha-beta-screen.json` SHA-256 `44def7ef5c65e93521b60f803f0030ebe8da38e785e6a5a657feb6e3f9ec1f90` / `fc5667ccd34e24270c425c30b286b8d46622bc258111d596067d2759028bc973`。30 组参数中同数据最优 `alpha=0.95,beta=0.4` 的跨路平均误差 `2.0556px`、IoU 仍约 `0.8327`、P95 逐帧误差增量 `1.838→1.786px`；中心误差改善仅 `0.0035px`，且参数也在这同一段视频上筛选，不能当泛化收益。**否决**新增可见帧滤波状态；保留当前可见中心发布路径和已板测的无观测 SEARCH 发布平滑。下一步继续研究有独立身份/可见性证据的遮挡与重捕，不能为了轨迹外观牺牲真值中心。
+
 ## 2026-11-18T05:19:10+08:00 十目标局部光流反例与 car004 修订真值复评
 
 - 起点 `codex/ten-target-smoothness@1cd521a01f105569ca4fba0546038ef466eb361e`，工作树干净；本节只读分析、未改算法或正式数据。对同一板端 20 路 `/tmp/nt-search-output-8314980-full/runs/output-{gt,det}-full/car_###/frames.csv` 与同一视频 `1.mp4` 逐帧做局部 LK 特征光流：脚本 `/tmp/nt-local-flow-all-screen.py`、结果 `/tmp/nt-local-flow-all-screen.csv` SHA-256 `bc1dbdb7b9930d5b9630ff507bfca3971df3e3c812d04241e5f8d5faa6f60ed0` / `5c2b218a55d42b8620d5f291c5ee1e0e7eaf415f9d7d79a649d5bb792047b16e`，共 5396 个相邻帧路样本，其中 4640 个现标可见且被接受。要让两路 car010 第 149 帧都触发，“框内位移 <1px 特征比例”门槛须不高于 `0.486`，在可见接受帧会误触发 `1927/4640`；按光流与输出框位移的中位残差，门槛须不高于 `0.262px`，会误触发 `4269/4640`。car009 第 115 帧有较明显残差，但 detector 初始仅 `1.181px`，也不足以与可见帧稳定分开。光流受框内桥体/车身混合、可见帧静止纹理及框自身抖动影响，**否决单阈值加入运行时**；此为离线启发式筛查，不冒充板端算法候选。
