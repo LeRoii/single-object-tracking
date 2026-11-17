@@ -1,5 +1,25 @@
 # 多对话项目状态总表
 
+## RK3588 当前工作线（2026-11-17 核对）
+
+当前硬件为 RK3588。下方四任务表及 `integration-contract.yaml` 仍保留上次协调
+基线和 RK3566 历史裁决；它们没有自动吸收以下独立工作树的新结果。各任务开始新一轮、
+使用上游结果之前，先读取本节对应分支的最新提交、所属进度文件与工件哈希，并记录
+实际消费的提交。提交尚未合入基线时，不能当作已批准的统一交付结果。
+
+| 新对话 | 当前工作线与核对时提交 | 进度入口 |
+| --- | --- | --- |
+| 3588-开发板测试 | `codex/dual-gt-init-consistency@291e62d1cb4211cf32b2dfc160ade78305774044`；RK3588 双窗口与两目标八初始框验证 | `docs/progress/board-validation.md` 顶部 |
+| 3588-数据集 | `codex/occ-eight-target-ground-truth@acc855d0b45c9d1449e9e25b9e08573be1698c5c`；八个新增目标真值包及多事件评分入口，尚未合入 `main` | 该分支的 `docs/progress/board-validation.md`、`data/occ_video_1/ground_truth/`、`scripts/evaluate_occ_video_1.py` |
+| 3588-开发板测试-实验增加det权重 | `codex/ten-target-smoothness@57ee1acb843196d2368ccec2f2ea7d35c14578c5`；进行中，工作树存在未提交修改 | 该分支的提交与实验记录；未提交修改不得跨工作树消费 |
+| 3588-交叉编译 | `codex/rk3588-a8-cross-compile@2dff71a99c677c34b85f3e383bd3967ce4401ccc`；A8 候选构建及人工运行记录 | 该分支的 `docs/progress/cross-compile.md` |
+
+另有 `main@1454a192558a34442ee424e1569428703281318d` 和
+`Debug@3f6d9e36933a1802da83fd6ce6c24cee77492c34`，两者有独立提交，
+不能凭分支名称推断算法完全一致。新一轮协作请在相应工作树中核对 `git status`、
+`git rev-parse HEAD` 和差异；只有明确合并、验证并更新协调契约后，才将候选标记为
+正式 handoff。RK3588 板端原生验证仍先于生产交叉编译，真实吊舱测试仍由人执行。
+
 本文件由协调对话维护，是四个任务的简明索引。详细事实、命令和证据分别记录在任务文件中；
 这里不复制完整日志，也不把计划当作已完成证据。
 

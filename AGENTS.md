@@ -1,9 +1,10 @@
 # Repository coordination instructions
 
-This repository is developed by several Codex chats working on NanoTrack
-fine-tuning, detector training, RK3566 development-board validation, and
-production cross-compilation. Chat transcripts are not a shared source of
-truth. Durable coordination lives under `docs/progress/` and in Git history.
+This repository is developed by several Codex chats working on NanoTrack,
+detector training, development-board validation, dataset truth, and production
+cross-compilation. The current hardware is RK3588; RK3566 entries are historical
+evidence. Chat transcripts are not a shared source of truth. Durable coordination
+lives under `docs/progress/` and in Git history.
 
 ## Before starting work
 
@@ -16,6 +17,11 @@ truth. Durable coordination lives under `docs/progress/` and in Git history.
    before editing overlapping files.
 5. Treat live source, manifests, artifact hashes, and observed test output as
    authoritative. Plans and previous chats are not completion evidence.
+6. For RK3588 work, also read the "RK3588 current work lines" section at the
+   top of `docs/progress/STATUS.md`. Inspect the named branch heads and their
+   owned progress/data records, because separate worktrees do not receive new
+   commits automatically. Recheck heads at the start of each new task turn and
+   before consuming another task's result; report the exact commit consumed.
 
 ## Ownership
 
@@ -62,7 +68,7 @@ update progress files.
 
 ## Development-board and production boundary
 
-Only an observed run on the stated RK3566 board is board evidence. Every board
+Only an observed run on the stated board is board evidence. Every board
 claim must bind the source commit, executable hash, model/manifest/label
 hashes, board runtime/driver versions, input identity, command, measurement
 boundary, and retained output paths. Detector candidates never directly
@@ -76,3 +82,9 @@ latest source and artifact identities, the cross-compilation chat only needs
 to confirm that it can obtain that exact result and compile the production
 artifact. Deployment to and testing on the real gimbal pod are human-only
 steps. Never claim pod acceptance without an explicit human report.
+
+For current RK3588 work, use RK3588 model, runtime, driver, and board paths
+from the matching RK3588 task evidence. Do not transfer RK3566 artifact hashes
+or acceptance conclusions to RK3588. New dataset or algorithm branch commits
+are candidates until reviewed and integrated; a branch tip alone does not
+change `integration-contract.yaml` or authorize the production handoff.
