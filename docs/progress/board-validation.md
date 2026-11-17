@@ -1,5 +1,47 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-17T15:20:08+08:00 八目标正式真值包与多事件评估接入
+
+- 分支 `codex/occ-eight-target-ground-truth`，工作树
+  `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking`，本阶段基线
+  `dbe45dc280c984e88ca9e03cc1ab4ff0a9fe6294`。按用户指定将原 1--8 号点位依次
+  映射为 `car_003`--`car_010`，保留 `ground_truth/point_01`--`point_08` 草案与
+  `eight_point_draft` 复核证据。输入为视频 SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`、
+  人工确认可见性清单 SHA-256
+  `d3b918ac4473d8ee256f23a5fc725724b057c228ab21136008a0e5e2cdd4adce`。
+- 执行 `python3 scripts/finalize_occ_eight_targets.py --dataset-root
+  /home/u20/single-object-tracking/data/occ_video_1 --output-root /tmp/occ-eight-final-v2`，
+  然后将八包安装到 `/home/u20/single-object-tracking/data/occ_video_1/ground_truth/`。
+  每包有 271 项 YOLO 标签、逐帧状态、事件、元数据及包清单；均为 `draft=false`、
+  `formal_evaluation_authorized=true`、`unresolved_review_count=0`。框共 1993 帧，
+  完全遮挡 115 帧，画面外 60 帧。各包 `checksums.sha256` 的 SHA-256：
+
+  | 目标 | 可见框 / 完全遮挡 / 画面外 | 清单 SHA-256 |
+  | --- | --- | --- |
+  | `car_003` | 208 / 33 / 30 | `a73ecf34177a3b08cb645a32a236cb0f5ce69cbf5d1382ebfed90279e4eefa35` |
+  | `car_004` | 234 / 7 / 30 | `c04048811d0e91c28d835035d1bc2bd6d66d511672bfc9b8c09625b1e6cc1379` |
+  | `car_005` | 259 / 12 / 0 | `497e7e67f7d70dd127bed2999d03198aa32029c1abfd14f28047a2e403c3e51a` |
+  | `car_006` | 256 / 15 / 0 | `a94b5bbf9ec02a90004d64a5a6ad7fd94e5857795daf2d7df414f0dbab21776d` |
+  | `car_007` | 265 / 6 / 0 | `9a1fe3e6735dd63996d877c826e62836356675d841ff84207096be66aede3d3d` |
+  | `car_008` | 261 / 10 / 0 | `08e767aec2f7fd8b405d6f90c1cbb2ca8e9b9727a784156b374cfdea2c866adb` |
+  | `car_009` | 259 / 12 / 0 | `2c85fb097a845730bd9ed86402ae829000d63ca93e31cd9296dcee7cab882117` |
+  | `car_010` | 251 / 20 / 0 | `5c56d98b583120cb1fef755768e70c3b0e8b5d93e4d3460847497fa463c9f2da` |
+
+- `scripts/evaluate_occ_video_1.py` 现支持 `--target-id car_003`--`car_010`，按每段遮挡
+  独立检查搜索、控制和重现；末尾遮挡没有虚构的重捕期限；画面外帧不参与普通 IoU，
+  且不允许声称接受目标观测。8/8 包的 `sha256sum -c labels.sha256` 和
+  `sha256sum -c checksums.sha256` 退出 0；8/8 载入为 271 帧，所列状态计数一致。
+  `python3 -m unittest tests.test_evaluate_occ_video_1 -q` 为 24/24 PASS；
+  8/8 与真值一致的合成 schema-v12 日志经真实 CLI `--scope full` 得到 PASS，
+  用于验证接线而非算法效果。篡改 `car_003/annotation_status.csv` 后载入被包哈希拒绝；
+  原 `car_001/car_002` 各自仍载入 271 帧。
+- **证据边界 / Handoff**：尚无八目标真实追踪 CSV，故未报告真实算法 PASS/FAIL；
+  2026-11-17 当前环境向此前 RK3588 地址 `192.168.1.102:22` 连接返回
+  `No route to host`，未声称板端复测。协调方若采纳八目标正式评估身份，应将本阶段
+  已提交的代码和上述包哈希纳入集成基线；本任务未改协调方专属的 `STATUS.md` 或
+  `integration-contract.yaml`，也未宣称生产/吊舱验收。
+
 ## 2026-11-17T14:57:39+08:00 八目标空框可见性由用户确认
 
 - 基于本分支 `b239ee0656925954f66717629902482d3b1c3917` 的八目标逐帧包，
