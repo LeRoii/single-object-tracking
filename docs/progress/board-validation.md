@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T06:41:07+08:00 冻结可见性模型的 LaSOT 跨数据集筛查
+
+- 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `6adf4ba3d842871ae00d454a4dca95bc55cfcb19`。实际运行 `/home/u20/single-object-tracking/.venvs/nanotrack/bin/python /tmp/nt-paired-visibility-lasot.py`；脚本 SHA-256 `ac59b4dedd869e814b4481a5eda2047ddcdfa3bd33715887a976fc4854322172`，输出 `/tmp/nt-paired-visibility-screen/lasot-car.json` SHA-256 `8d2df4c7f4460ad86702a75e3cbb201891b0b5926a1d5451ab7e38b2563f6ee1`。冻结 VisDrone 模型 `/tmp/nt-paired-visibility-screen/best.pt` SHA-256 `c6506b81f558190c10927d68158a426e8b0b3efaca9e739ad3ece46450cfe40d`，沿用 VisDrone 验证集阈值 `p_full<0.390323`，未在 LaSOT 或 canonical 数据上调参。
+- 输入为独立 `/home/u20/dataset/LaSOT/LaSOTBenchmark/car/car-*` 共 20 个汽车序列；从每段确定性抽最多 150 个无遮挡帧及全部可用的完全遮挡帧，以 3–30 帧前最近清晰真值框为参考，当前裁剪也使用真值框，框宽高至少 20px。共 3000 个无遮挡、196 个完全遮挡样本；可见误报 `164/3000`，完全遮挡检出 `139/196`，AUC `0.9527`。序列差异明显：`car-20` 仅检出 `9/64`，`car-16` 可见误报 `45/150`。LaSOT 部分完全遮挡框是最后位置或无形目标框，裁剪使用真值位置；结果只是离线跨数据集筛查，不等同运行时定位或板端结果。
+- **裁决/Handoff**：独立数据说明模型有识别某些完全遮挡的能力，但用户确认的新增 `car_010` 第 149–169 帧为大部分遮挡，第 149 帧必须开始识别且第 169 帧前正确重捕；现有模型在 canonical 第 149 帧失败，不能以 LaSOT 的完全遮挡结果替代该要求。新增 `car_004` 第 42 帧确认可见，继续使用已有 `car_004_visible_unboxed_v2` 反事实版本检查，不把该帧算作有 IoU 真值。暂不接入模型；算法、main/Debug 与生产 handoff 均未改变。后续需要能识别部分遮挡起点且不损失清晰帧的独立证据，再在 RK3588 十目标 GT/DET 双初始化验证。
+
 ## 2026-11-18T06:35:19+08:00 疑似期抵扣搜索等待的离线反例
 
 - 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `c81630bd65d23eeaa808c108ac34d2e0ccc7c047`；只读复用 `8314980` RK3588 十目标 GT/DET 初始全量 CSV 及对应正式真值。实际 `python3 /tmp/nt-recovery-age-credit-screen.py`；脚本 `/tmp/nt-recovery-age-credit-screen.py`、结果 `/tmp/nt-recovery-age-credit-screen.json` SHA-256 `2433b4c25f90043ec51d55ceb58ffaa68ee7c00c14c4584e9c9bcda991725935` / `2621671a5d1098b32207d86e7c1ae274273b7db97a734f782abe5b45aab62326`。假设仅把连续 SUSPECTED 的前两帧抵扣进 400ms 恢复等待，不提前改变 SEARCH 裁剪/运动；在当前搜索龄 333–399ms 的 48 个帧路样本中，正式真值仍有 `18` 个 `full_occlusion`、`4` 个 `partial_occlusion`、`26` 个 `visible`。此为静态风险筛查，没有冒充改后运行结果。
