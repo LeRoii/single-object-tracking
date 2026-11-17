@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T22:12:00+08:00 最新程序复核手点目标 120--141 帧
+
+- 在板端隔离根 `/home/neardi/Project/SOT/nt-frozen-focus-93eb13e` 使用上一节算法源码 `93eb13ef778581a6d4fa5a0887e8fb98be474d26`、程序 SHA-256 `5407c0f7a05a78bfc9aab88a8b273514485dfde506a06a57291c5bfc93581e98`、运行配置 SHA-256 `58a363afa735d5f1b76d4f3cdd47f66619998749ad6ee9a122694878ce5915ec`；该配置引用的 controller 配置确实有 `suspected_detector_guard_enabled=true`（SHA-256 `62607f7eb3798737fc927a1f997e0d52cc5f78a7250d8df8b23aebfb320d5f44`）。视频、模型、manifest、labels 和 RKNN 版本与下一节同一核验身份。
+- 实际命令 `./build/nanotrack_v3 --config runs/headless-on.conf --bbox 1032.833740,405.310425,36,36 --output-boxes runs/manual-yellow-latest/frames.csv --session-metadata runs/manual-yellow-latest/session.json > runs/manual-yellow-latest/run.log 2>&1`，exit 0、271 帧、CSV 272 行。板端原始目录 `runs/manual-yellow-latest/`，板端 `/home/neardi/Project/SOT/nt-frozen-focus-93eb13e-manual-yellow.tar.gz` 与主机 `/tmp/nt-frozen-focus-93eb13e-manual-yellow.tar.gz` SHA-256 均 `2f07c0755cd6b5929d08c3a39fc5e253f60f8510dab60bb20e23ebbb38e72b00`；CSV/session SHA-256 `19f32421e25ae4c3780c027eb5611913df4a01f19635b3a7515d79252c236cf4` / `cd1b2e27be218649989dfc1b47532e35ab2ee0f344d790c8b8377cf49c48d91a`。主机解包 `/tmp/nt-frozen-focus-93eb13e-manual-yellow/runs/manual-yellow-latest/`。
+- 逐帧记录：120--127 为 `SUSPECTED`，121/124/127 提交 `SUSPECTED_VALIDATION`，128 收到源帧 127 的检测批次后 `SUSPICION_CLEARED`、重新接受 NanoTrack，141 仍 `TRACKING` 且接受；真遮挡时 163 为 `UNCERTAIN`，176 恢复 `TRACKING`。这与原实验版避免 141 帧误入 `SEARCHING` 的结论一致。手点黄车没有逐帧正式真值，不能据此声明框贴真值；新十目标真值初始化 6/10、detector 初始化 6/10 见下一节，003/004/009/010 仍失败。当前版本留在任务分支，不合入 main/Debug 或生产 handoff。
+
 ## 2026-11-17T22:06:18+08:00 冻结运动唯一近距 detector 优先探测：完整十目标回放
 
 - 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`；起点 `eee6592eb20a792c19694cc44bc870831d8d8f75`，板端算法源码 `93eb13ef778581a6d4fa5a0887e8fb98be474d26`。源码包主机 `/tmp/nt-frozen-focus-93eb13e.tar`、板端 `/home/neardi/Project/SOT/nt-frozen-focus-93eb13e.tar` SHA-256 均 `16d8890ad065c8de4e6becaa6cb8739a1664257d8738a08342e5af2594beadb9`，隔离运行根 `/home/neardi/Project/SOT/nt-frozen-focus-93eb13e`。新代码只在运动输入冻结、预测仍可信且近距门只剩一个 detector 候选时优先安排下一帧 NanoTrack 探测；检测框本身不能授权控制。
