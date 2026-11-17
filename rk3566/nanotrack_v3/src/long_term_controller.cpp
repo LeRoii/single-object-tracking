@@ -1005,7 +1005,6 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   }
   const bool degraded = isolated_response_dip || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
-                        plan.visual_probe_clear_veto ||
                         partial_visibility ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {

@@ -1109,11 +1109,6 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
     }
     row.note += ")";
   }
-  if (result.plan.visual_probe_clear_veto &&
-      output.tracking_phase == TrackingPhase::kSuspected) {
-    if (!row.note.empty()) row.note += ";";
-    row.note += "VISUAL_PROBE_EMPTY_HOLD";
-  }
   return row;
 }
 

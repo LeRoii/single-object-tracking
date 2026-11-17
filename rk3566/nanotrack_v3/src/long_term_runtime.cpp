@@ -401,7 +401,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   bool visual_ambiguous = false;
   bool visual_blocking_used = false;
   bool visual_batch_valid = false;
-  bool visual_batch_empty = false;
   if (visual_suspect_bright_ratio_ > 0.0F &&
       previous_output_phase_ == TrackingPhase::kSuspected &&
       result.target_class.target_class_id == 2 &&
@@ -433,7 +432,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         if (detected) {
           visual_batch_valid = detected->batch.source_frame_id == frame_id &&
               detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion;
-          visual_batch_empty = detected->batch.candidates.empty();
           result.detector.request_submitted = true;
           result.detector.batch_received = true;
           result.detector.batch_frame_id = detected->batch.source_frame_id;
@@ -509,9 +507,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         next_streak >= visual_suspect_consecutive_frames_ +
             (ambiguous_streak ? 1 : 0);
   }
-  // A fresh, empty visual probe is negative evidence for clearing SUSPECTED,
-  // but a detector miss alone is not enough to enter SEARCHING.
-  result.plan.visual_probe_clear_veto = visual_batch_valid && visual_batch_empty;
   // Detector support that rescued a visible track must not keep protecting
   // it after the visual probe has failed to find nearby evidence twice in
   // consecutive SUSPECTED frames. Unprotected tracks keep the existing

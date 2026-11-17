@@ -45,9 +45,6 @@ struct SearchPlan {
   OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
   bool motion_control_authorized = false;
   bool visual_occlusion_search = false;
-  // An empty fresh visual probe may delay clearing an existing suspicion;
-  // it does not by itself declare the target lost.
-  bool visual_probe_clear_veto = false;
   // A fresh detector result corroborates this frame's NanoTrack observation.
   bool suspected_detector_guard = false;
   std::optional<SearchHint> search_hint;
