@@ -83,6 +83,8 @@ struct ControllerConfig {
   int visual_suspect_consecutive_frames = 2;
   // Experimental detector corroboration of a reliable NanoTrack observation.
   bool suspected_detector_guard_enabled = false;
+  // Resolve suspected validation on the source frame for repeatable decisions.
+  bool suspected_detector_guard_blocking = false;
   float suspected_detector_guard_min_confidence = 0.35F;
   float suspected_detector_guard_min_iou = 0.50F;
   int suspected_detector_guard_required_hits = 2;

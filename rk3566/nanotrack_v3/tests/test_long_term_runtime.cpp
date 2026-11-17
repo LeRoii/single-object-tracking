@@ -156,6 +156,8 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
               const nanotrack::DetectorRequest& request) override {
     if (!can_submit()) throw std::logic_error("fake detector is busy");
     ++submit_calls;
+    if (request.purpose == nanotrack::DetectorRequestPurpose::kSuspectedValidation)
+      ++guard_async_calls;
     last_request = request;
     ready = false;
     if (complete_immediately) {
@@ -185,6 +187,8 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
       const nanotrack::ImageView&,
       const nanotrack::DetectorRequest& request) override {
     ++blocking_calls;
+    if (request.purpose == nanotrack::DetectorRequestPurpose::kSuspectedValidation)
+      ++guard_blocking_calls;
     blocking_request = request;
     // Model the adapter's quiesce/consume boundary; worker details have their
     // own real-adapter tests. Nothing left here may leak into runtime polling.
@@ -208,6 +212,8 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
   std::int64_t source_age_ms = 0;
   std::vector<nanotrack::DetectorCandidate> automatic_candidates;
   int submit_calls = 0;
+  int guard_async_calls = 0;
+  int guard_blocking_calls = 0;
   int poll_calls = 0;
   int blocking_calls = 0;
   bool fail_blocking = false;
@@ -1768,9 +1774,13 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
                        std::int64_t detector_age_ms,
                        bool duplicate = false, bool lose_tracker = false,
                        float* internal_width = nullptr,
-                       float* committed_width = nullptr) {
+                       float* committed_width = nullptr,
+                       bool blocking = false,
+                       int* guard_blocking_calls = nullptr,
+                       int* guard_async_calls = nullptr) {
     ControllerConfig config;
     config.suspected_detector_guard_enabled = enabled;
+    config.suspected_detector_guard_blocking = blocking;
     config.suspected_detector_guard_min_confidence = 0.35F;
     config.suspected_detector_guard_min_iou = 0.50F;
     config.suspected_detector_guard_required_hits = 2;
@@ -1784,9 +1794,14 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
     FakeTracker tracker;
     FakeDetector detector;
     detector.enabled = true;
-    detector.complete_immediately = true;
+    detector.complete_immediately = !blocking;
     detector.source_age_ms = detector_age_ms;
     detector.automatic_candidates = {{detection, 0.80F, class_id}};
+    if (blocking) {
+      nanotrack::DetectorBatch batch;
+      batch.candidates = detector.automatic_candidates;
+      detector.blocking_batch = batch;
+    }
     if (duplicate) {
       detector.automatic_candidates.push_back({detection, 0.75F, class_id});
     }
@@ -1814,6 +1829,8 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
     }
     if (internal_width) *internal_width = runtime.controller().current_bbox().width;
     if (committed_width) *committed_width = tracker.committed_bbox.width;
+    if (guard_blocking_calls) *guard_blocking_calls = detector.guard_blocking_calls;
+    if (guard_async_calls) *guard_async_calls = detector.guard_async_calls;
     return frames;
   };
   const BBox target{40, 30, 20, 20};
@@ -1824,12 +1841,26 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
   const auto stale = run(true, target, 2, 200);
   const auto ambiguous = run(true, target, 2, 0, true);
   const auto no_tracker = run(true, target, 2, 0, false, true);
+  int guard_blocking_calls = 0;
+  int guard_async_calls = 0;
+  const auto synchronized = run(true, target, 2, 0, false, false,
+                                nullptr, nullptr, true,
+                                &guard_blocking_calls, &guard_async_calls);
   float internal_width = 0.0F;
   float committed_width = 0.0F;
   const auto wider = run(true, BBox{38, 28, 24, 24}, 2, 0,
                          false, false, &internal_width, &committed_width);
   expect_true(supported[4].output.tracking_phase == TrackingPhase::kSuspected,
               "PSR and peak-margin drop first makes the tracker tentative");
+  expect_true(guard_blocking_calls > 0 && guard_async_calls == 0 &&
+                  std::any_of(synchronized.begin(), synchronized.end(),
+                    [](const RuntimeFrameResult& frame) {
+                      return frame.detector.request_purpose ==
+                                 DetectorRequestPurpose::kSuspectedValidation &&
+                             frame.detector.batch_received &&
+                             frame.detector.batch_frame_id == frame.plan.frame_id;
+                    }),
+              "blocking suspected validation uses current-frame detector evidence");
   expect_true(supported[5].detector.request_purpose ==
                   DetectorRequestPurpose::kSuspectedValidation &&
                   supported[5].suspected_detector_guard_hits == 1 &&

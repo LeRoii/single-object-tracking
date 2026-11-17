@@ -518,8 +518,12 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   } else {
     guarded_visual_misses_ = 0;
   }
+  std::optional<DetectorBatch> detector_batch;
+  bool guard_blocking_used = false;
   if (guard_stream && !visual_blocking_used &&
-      !result.plan.request_detector && result.detector.ready &&
+      !result.plan.request_detector &&
+      (guard_config.suspected_detector_guard_blocking
+           ? detector_.available() : result.detector.ready) &&
       (!last_guard_request_ms_ ||
        timestamp_ms - *last_guard_request_ms_ >= guard_config.detector_interval_ms)) {
     const DetectorRequest request{frame_id, timestamp_ms,
@@ -529,8 +533,18 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     result.detector.request_frame_id = frame_id;
     result.detector.request_purpose = request.purpose;
     try {
-      detector_.submit(image, request);
-      result.detector.request_submitted = true;
+      if (guard_config.suspected_detector_guard_blocking) {
+        // Quiesce any older asynchronous request and decide from this frame's
+        // detector result. An asynchronous completion one frame later can
+        // otherwise change whether SUSPECTED is cleared or escalated.
+        guard_blocking_used = true;
+        const auto detected = detector_.detect_blocking(image, request);
+        if (detected) detector_batch = detected->batch;
+        result.detector.request_submitted = detected.has_value();
+      } else {
+        detector_.submit(image, request);
+        result.detector.request_submitted = true;
+      }
       last_guard_request_ms_ = timestamp_ms;
     } catch (const std::exception& error) {
       result.detector.error = error.what();
@@ -538,25 +552,25 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   }
   // Poll after inference so a detector result completed while NanoTrack ran
   // can still participate in this frame's recovery decision without waiting.
-  std::optional<DetectorBatch> detector_batch;
-  if (!visual_blocking_used && detector_.available() && result.detector.error.empty()) {
+  if (!visual_blocking_used && !guard_blocking_used &&
+      detector_.available() && result.detector.error.empty()) {
     try {
       detector_batch = detector_.poll();
     } catch (const std::exception& error) {
       result.detector.error = error.what();
     }
-    if (detector_batch) {
-      result.detector.batch_received = true;
-      result.detector.batch_frame_id = detector_batch->source_frame_id;
-      result.detector.batch_purpose = detector_batch->purpose;
-      result.detector.batch_age_ms =
-          timestamp_ms - detector_batch->source_timestamp_ms;
-      result.detector.raw_candidate_count =
-          detector_batch->raw_candidate_count;
-      result.detector.filtered_candidate_count =
-          detector_batch->filtered_candidate_count;
-      result.detector.timing = detector_batch->timing;
-    }
+  }
+  if (detector_batch) {
+    result.detector.batch_received = true;
+    result.detector.batch_frame_id = detector_batch->source_frame_id;
+    result.detector.batch_purpose = detector_batch->purpose;
+    result.detector.batch_age_ms =
+        timestamp_ms - detector_batch->source_timestamp_ms;
+    result.detector.raw_candidate_count =
+        detector_batch->raw_candidate_count;
+    result.detector.filtered_candidate_count =
+        detector_batch->filtered_candidate_count;
+    result.detector.timing = detector_batch->timing;
   }
 
   std::optional<DetectorBatch> recovery_batch;

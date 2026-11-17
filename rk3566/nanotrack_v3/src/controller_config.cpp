@@ -136,6 +136,7 @@ void set_value(ControllerConfig& config,
   else if (key == "visual_suspect_max_center_px") config.visual_suspect_max_center_px = parse_float(key, value);
   else if (key == "visual_suspect_consecutive_frames") config.visual_suspect_consecutive_frames = parse_int(key, value);
   else if (key == "suspected_detector_guard_enabled") config.suspected_detector_guard_enabled = parse_bool(key, value);
+  else if (key == "suspected_detector_guard_blocking") config.suspected_detector_guard_blocking = parse_bool(key, value);
   else if (key == "suspected_detector_guard_min_confidence") config.suspected_detector_guard_min_confidence = parse_float(key, value);
   else if (key == "suspected_detector_guard_min_iou") config.suspected_detector_guard_min_iou = parse_float(key, value);
   else if (key == "suspected_detector_guard_required_hits") config.suspected_detector_guard_required_hits = parse_int(key, value);
@@ -661,6 +662,9 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.suspected_detector_guard_required_hits << '|'
          << config.visual_suspect_max_center_px << '|'
          << config.visual_suspect_consecutive_frames;
+  if (config.suspected_detector_guard_blocking) {
+    stream << "|suspected_guard_blocking=1";
+  }
   return stream.str();
 }
 

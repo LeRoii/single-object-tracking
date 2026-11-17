@@ -313,7 +313,8 @@ int main() {
                     visual.visual_suspect_bright_ratio == 0.90F &&
                     visual.visual_suspect_min_confidence == 0.40F &&
                     visual.visual_suspect_max_center_px == 30.0F &&
-                    visual.visual_suspect_consecutive_frames == 2,
+                    visual.visual_suspect_consecutive_frames == 2 &&
+                    visual.suspected_detector_guard_blocking,
                 "visual candidate profile loads with its experimental gate enabled");
   } catch (const std::exception& error) {
     expect_true(false, std::string("visual candidate profile failed to load: ") +
