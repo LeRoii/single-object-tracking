@@ -1,5 +1,43 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-17T14:45:38+08:00 occ_video_1 八目标已接受框安装，空框待复核
+
+- 分支 `codex/occ-eight-target-ground-truth`，工作树
+  `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking`，基线
+  `ce2510c27e70607a99456bf3a5d2e814a3bf7b3f`。本次只记录数据标注里程碑，
+  未改算法、模型、配置、协调方的 `STATUS.md` 或 `integration-contract.yaml`。
+- 输入视频 `/home/u20/single-object-tracking/data/occ_video_1/1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，
+  1920x1080、30 FPS、271 帧。辅助候选来自 VisDrone9 PT
+  `/home/u20/single-object-tracking/artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-best.pt`
+  SHA-256 `6744672ac5e35debba2a647ad570e9fe84a1cabd1c45c9840080d0a4127fe36d`；
+  逐帧检测记录 `ground_truth/eight_point_draft/detections.jsonl` SHA-256
+  `a9494f7f85bbf4a0dc87edfe21b54e5730e572e5ae773305cd1d67046991a2af`。
+  复核视频 `ground_truth/eight_point_draft/eight-candidate-review.avi` SHA-256
+  `35a36d6a9456fc03ba4d65ee6ce7bd8483a8ac39d464e46ff45f1a20e198ef7c`。
+- 用户确认：4 号始终跟随绿车，7 号 150--250 帧保持原车，8 号后段浅金色车是原车，
+  自动关联的白车不是原车；随后整体接受八目标修订候选中所有非空的完整车辆框。
+  生成命令为 `python3 /tmp/build_occ_eight_reviewed.py`，将生成的八个包安装到
+  `/home/u20/single-object-tracking/data/occ_video_1/ground_truth/point_01` 至 `point_08`。
+  每包均有 271 个 YOLO 标签、`frames.jsonl`、复核清单、元数据和 SHA-256 清单；
+  `sha256sum -c checksums.sha256` 与 `sha256sum -c labels.sha256` 八包全部退出 0。
+
+  | 目标 | 已接受框 | 空框待复核 | `checksums.sha256` SHA-256 |
+  | --- | ---: | ---: | --- |
+  | 01 | 208 | 63 | `0150e152a3865198f8cf88d7c35393b02e20d801276db6e39d3063d0f1fa13a1` |
+  | 02 | 234 | 37 | `3270c2dcba047e283679a4811e8795c044519a1daa302aac3ed2e3a1cfc3f1df` |
+  | 03 | 259 | 12 | `1371bf3cf8d9f398a07b9b78dbf8f3b171b0215f5f4eddda7818a98daecfe610` |
+  | 04 | 256 | 15 | `e2c1db921e1d2649446c189958ca9a402a06ab7803d4f8c9b59c2365dd4af666` |
+  | 05 | 265 | 6 | `4bbaa46b6d597f9a2b4955891791ac5a8e8383958f5cb4a5c1b6a008e7b52048` |
+  | 06 | 261 | 10 | `b9f2d2ffeada37b81fb8cbc4a39b136193f1131225f3604cac857eaef3f13999` |
+  | 07 | 259 | 12 | `a7f571caa4752bc20881efb4be7d6bb7af6c2377905d7e5ba5c989abd54d0d4f` |
+  | 08 | 251 | 20 | `684de57465dee13a2fa0cdf4e5ba27fe376771a9ad0b130d05d1b74e54c114f0` |
+
+- **边界 / Handoff**：空框帧仍为 `needs_human_review_no_bbox`，不能据此断言完全遮挡、
+  离开画面或算法失败，也不能计入普通 IoU。包的 `draft=true`、
+  `formal_evaluation_authorized=false`，现有 evaluator 仍只接受 car_001/car_002。
+  待空框语义与必要的补框确认后，再形成完整序列并请求协调方纳入可选真值目录。
+
 ## 2026-11-12T16:19:23+08:00 四个已拒绝运动冻结实现的失败帧导出
 
 - 按用户复核请求，从四个已拒绝 RK3588 保留根的原始输出 AVI 导出失败窗口：
