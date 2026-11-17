@@ -642,6 +642,22 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.output.display_bbox = adaptive_display_.update(
       result.output, result.target_class, result.adaptive_display);
   result.output.bbox = result.output.display_bbox;
+  // A detector-confirmed display refresh has already matched two independent
+  // detections to the accepted tracker box. While motion input is frozen,
+  // align only its position with that corroborated tracker observation. The
+  // held velocity remains protected from a potentially degraded response.
+  if (result.adaptive_display.source == DisplayBoxSource::kDetectorConfirmed &&
+      result.output.accepted &&
+      result.output.tracking_phase == TrackingPhase::kTracking &&
+      result.output.selected_template == TemplateKind::kRecent &&
+      controller_.motion_freeze_since_ms_ &&
+      controller_.motion_last_clean_trend_) {
+    controller_.motion_.reanchor_preserving_velocity(
+        result.output.tracking_bbox, *controller_.motion_last_clean_trend_,
+        timestamp_ms);
+    result.output.motion_update_valid = true;
+    result.output.motion_gate_reason = "DETECTOR_CORROBORATED_POSITION";
+  }
   result.runtime_ms = std::chrono::duration<float, std::milli>(
                           std::chrono::steady_clock::now() - total_start)
                           .count();
