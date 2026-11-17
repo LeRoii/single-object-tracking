@@ -641,67 +641,6 @@ void test_dominant_near_detector_recovery() {
       }
     }
   }
-  {
-    ControllerConfig blend_config = config;
-    blend_config.recovery_detector_center_blend = 0.25F;
-    ResolvedControllerFixture blended(blend_config);
-    blended.initialize(target, 0, 0, {1920, 1080},
-                       make_fixed_target_class(0, true));
-    step(blended, 1, 33, std::nullopt);
-    auto blend_plan = blended.begin_frame(2, 66, true);
-    BBox detector_box = target;
-    detector_box.y += 8.0F;
-    DetectorBatch detector_batch{
-        blend_plan.detector_request->frame_id,
-        blend_plan.detector_request->timestamp_ms,
-        {{detector_box, 0.80F, 0}}};
-    detector_batch.generation = blend_plan.detector_request->generation;
-    blended.finish_frame(blend_plan, {}, detector_batch);
-    BBox tracker_box = target;
-    tracker_box.y -= 4.0F;
-    for (std::uint64_t frame = 3; frame <= 4; ++frame) {
-      blend_plan = blended.begin_frame(frame, static_cast<std::int64_t>(frame * 33), false);
-      const auto blended_output = blended.finish_frame(
-          blend_plan,
-          {reliable_for_plan(blend_plan, tracker_box, frame, TemplateKind::kRecent),
-           reliable_for_plan(blend_plan, tracker_box, frame, TemplateKind::kSafe)},
-          std::nullopt);
-      if (frame == 4) {
-        expect_true(blended_output.reacquired &&
-                        blended_output.recovery_detector_center_blend_applied &&
-                        blended_output.detector_candidate_locked &&
-                        blended_output.template_transition.has_value(),
-                    "only the confirmed detector-backed recovery blends its center");
-        expect_true(std::fabs(blended_output.tracking_bbox.y -
-                              (tracker_box.y + 3.0F)) < 0.01F,
-                    "recovery center moves one quarter toward detector");
-        expect_true(std::fabs(blended_output.tracking_bbox.height -
-                              tracker_box.height) < 0.01F,
-                    "recovery keeps NanoTrack dimensions");
-        expect_true(std::fabs(blended.current_bbox().y -
-                              blended_output.tracking_bbox.y) < 0.01F,
-                    "the next crop is based on the blended recovery center");
-      }
-    }
-    ResolvedControllerFixture unbacked(blend_config);
-    unbacked.initialize(target, 0, 0, {1920, 1080},
-                        make_fixed_target_class(0, true));
-    step(unbacked, 1, 33, std::nullopt);
-    for (std::uint64_t frame = 2; frame <= 3; ++frame) {
-      const auto search = unbacked.begin_frame(
-          frame, static_cast<std::int64_t>(frame * 33), false);
-      const auto unbacked_output = unbacked.finish_frame(
-          search,
-          {reliable_for_plan(search, target, frame, TemplateKind::kRecent)},
-          std::nullopt);
-      if (frame == 3) {
-        expect_true(unbacked_output.reacquired &&
-                        !unbacked_output.recovery_detector_center_blend_applied &&
-                        std::fabs(unbacked_output.tracking_bbox.y - target.y) < 0.01F,
-                    "visual-only recovery keeps NanoTrack center when detector is absent");
-      }
-    }
-  }
   ResolvedControllerFixture controller(config);
   controller.initialize(target, 0, 0, {1920, 1080},
                         make_fixed_target_class(0, true));

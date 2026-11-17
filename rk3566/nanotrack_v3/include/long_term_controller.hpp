@@ -103,7 +103,6 @@ struct ControllerOutput {
   bool control_valid = false;
   bool accepted = false;
   bool reacquired = false;
-  bool recovery_detector_center_blend_applied = false;
   bool motion_update_valid = false;
   bool motion_correction_applied = false;
   bool motion_input_frozen = false;

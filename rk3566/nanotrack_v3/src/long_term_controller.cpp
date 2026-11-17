@@ -1614,19 +1614,6 @@ void LongTermController::defer_recovery_acceptance(
                           BBox{0.0F, 0.0F, bbox.width, restored_height}, frame_size_);
     }
   }
-  if (config_.recovery_detector_center_blend > 0.0F &&
-      config_.detector_target_mode == DetectorTargetMode::kFullObject &&
-      output.detector_candidate_locked && plan.detector_candidate_region) {
-    const BBox& detector = *plan.detector_candidate_region;
-    const float weight = config_.recovery_detector_center_blend;
-    bbox = centered_box(
-        bbox.x + 0.5F * bbox.width + weight *
-            (detector.x + 0.5F * detector.width - bbox.x - 0.5F * bbox.width),
-        bbox.y + 0.5F * bbox.height + weight *
-            (detector.y + 0.5F * detector.height - bbox.y - 0.5F * bbox.height),
-        bbox, frame_size_);
-    output.recovery_detector_center_blend_applied = true;
-  }
   recovery->bbox = bbox;
   recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);
   recovery->motion.initialize(bbox, plan.timestamp_ms, frame_size_.width, frame_size_.height);

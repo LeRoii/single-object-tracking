@@ -734,25 +734,6 @@ int main() {
       }
     }
   }
-  for (float value : {0.0F, 0.25F, 1.0F, 1.01F, -0.01F,
-                      std::numeric_limits<float>::quiet_NaN(),
-                      std::numeric_limits<float>::infinity()}) {
-    const bool valid = std::isfinite(value) && value >= 0.0F && value <= 1.0F;
-    ControllerConfig candidate = default_visible;
-    candidate.recovery_detector_center_blend = value;
-    write_file(config_path,
-               "recovery_detector_center_blend=" + std::to_string(value) + "\n");
-    if (valid) {
-      validate_controller_config(candidate);
-      expect_near(load_controller_config(config_path).recovery_detector_center_blend,
-                  value, 1e-6F, "recovery detector blend accepts its exact range");
-    } else {
-      expect_throws([&] { validate_controller_config(candidate); },
-                    "recovery detector blend rejects invalid direct values");
-      expect_throws([&] { load_controller_config(config_path); },
-                    "recovery detector blend rejects invalid file values");
-    }
-  }
   for (int value : {1, 3, 31}) {
     ControllerConfig candidate = default_visible;
     candidate.accepted_scale_median_window_frames = value;

@@ -185,7 +185,6 @@ void set_value(ControllerConfig& config,
   else if (key == "recovery_confirmation_required") config.recovery_confirmation_required = parse_int(key, value);
   else if (key == "recovery_requires_detector_support") config.recovery_requires_detector_support = parse_bool(key, value);
   else if (key == "recovery_restore_initial_aspect") config.recovery_restore_initial_aspect = parse_bool(key, value);
-  else if (key == "recovery_detector_center_blend") config.recovery_detector_center_blend = parse_float(key, value);
   else if (key == "recovery_min_top_luma_stddev") {
     // Historical run configs may still contain this removed gate. Accept the
     // old numeric value, but do not let it affect tracking or config identity.
@@ -409,9 +408,6 @@ void validate_controller_config(const ControllerConfig& config) {
       config.suspected_detector_guard_required_hits < 2 ||
       config.suspected_detector_guard_required_hits > 5) {
     throw std::invalid_argument("suspected detector guard limits are invalid");
-  }
-  if (!in_unit_interval(config.recovery_detector_center_blend)) {
-    throw std::invalid_argument("recovery detector center blend must be in [0,1]");
   }
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
@@ -642,7 +638,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.recovery_confirmation_required << '|'
          << config.recovery_requires_detector_support << '|'
          << config.recovery_restore_initial_aspect << '|'
-         << config.recovery_detector_center_blend << '|'
          << config.lower_band_visibility_veto << '|'
          << config.search_reacquisition_min_age_ms << '|'
          << config.motion_search_confidence_ms << '|'

@@ -1059,10 +1059,6 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.tracker_ms = result.tracker_ms;
   row.runtime_ms = result.runtime_ms;
   row.note = note;
-  if (output.recovery_detector_center_blend_applied) {
-    if (!row.note.empty()) row.note += ";";
-    row.note += "RECOVERY_DETECTOR_CENTER_BLEND";
-  }
   if (result.detector_size_output_applied) {
     if (!row.note.empty()) row.note += ";";
     row.note += "DETECTOR_VERIFIED_OUTPUT_SIZE";
