@@ -399,8 +399,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   } else if (mode_ == TrackingMode::kTracking && !motion_search_active_) {
     plan.tracking_phase = TrackingPhase::kTracking;
     plan.template_run_mode = recent_probation_ ? TemplateRunMode::kStagedAndRecent
-        : config_.tracking_safe_probe_diagnostic ? TemplateRunMode::kRecentAndSafe
-                                                  : TemplateRunMode::kRecentOnly;
+                                               : TemplateRunMode::kRecentOnly;
   } else {
     plan.tracking_phase = TrackingPhase::kSearching;
     plan.template_run_mode = TemplateRunMode::kRecentAndSafe;

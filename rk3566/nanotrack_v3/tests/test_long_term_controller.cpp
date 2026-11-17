@@ -2988,18 +2988,6 @@ void test_recent_safe_rolling_scale() {
 }  // namespace
 
 int main() {
-  {
-    nanotrack::ControllerConfig diagnostic;
-    diagnostic.tracking_safe_probe_diagnostic = true;
-    ResolvedControllerFixture controller(diagnostic);
-    const nanotrack::BBox initial{60, 40, 20, 20};
-    controller.initialize(initial, 0, 0, {240, 160});
-    const auto plan = controller.begin_frame(1, 40, false);
-    expect_true(plan.tracking_phase == nanotrack::TrackingPhase::kTracking &&
-                    plan.template_run_mode == nanotrack::TemplateRunMode::kRecentAndSafe,
-                "opt-in tracking probe executes both templates without changing tracking phase");
-    controller.finish_frame(plan, reliable_pair(plan, initial, 1), std::nullopt);
-  }
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();

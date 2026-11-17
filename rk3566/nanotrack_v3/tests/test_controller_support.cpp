@@ -326,12 +326,6 @@ int main() {
   expect_true(controller_config_identity(legacy_texture_config) ==
                   controller_config_identity(current_texture_config),
               "historical texture setting has no effect on the controller");
-  write_file(config_path, "tracking_safe_probe_diagnostic=true\n");
-  const ControllerConfig dual_probe_config = load_controller_config(config_path);
-  expect_true(dual_probe_config.tracking_safe_probe_diagnostic &&
-                  controller_config_identity(dual_probe_config) !=
-                      controller_config_identity(current_texture_config),
-              "the opt-in Safe-head probe has a distinct config identity");
   if (failures != 0) return 1;
 
   write_file(config_path,

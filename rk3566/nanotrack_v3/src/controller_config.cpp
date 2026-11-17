@@ -127,7 +127,6 @@ void set_value(ControllerConfig& config,
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
   else if (key == "suspicion_enter_ms") config.suspicion_enter_ms = parse_integer(key, value);
   else if (key == "suspicion_clear_ms") config.suspicion_clear_ms = parse_integer(key, value);
-  else if (key == "tracking_safe_probe_diagnostic") config.tracking_safe_probe_diagnostic = parse_bool(key, value);
   else if (key == "response_psr_drop_ratio") config.response_psr_drop_ratio = parse_float(key, value);
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
@@ -662,9 +661,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.suspected_detector_guard_required_hits << '|'
          << config.visual_suspect_max_center_px << '|'
          << config.visual_suspect_consecutive_frames;
-  if (config.tracking_safe_probe_diagnostic) {
-    stream << "|tracking_safe_probe_diagnostic=1";
-  }
   return stream.str();
 }
 

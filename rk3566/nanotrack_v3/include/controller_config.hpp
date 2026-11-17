@@ -73,8 +73,6 @@ struct ControllerConfig {
   std::int64_t suspicion_clear_ms = 100;
   float response_psr_drop_ratio = 0.25F;
   float response_apce_drop_ratio = 0.30F;
-  // Diagnostic only: collect Safe-head evidence during ordinary tracking.
-  bool tracking_safe_probe_diagnostic = false;
   // Optional car-only early partial-visibility gate. Zero disables both.
   float recent_visibility_height_ratio = 0.0F;
   float recent_visibility_center_residual = 0.0F;
