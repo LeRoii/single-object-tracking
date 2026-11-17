@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T21:48:39+08:00 唯一近距 detector 候选先获得双模板探测（待 RK3588）
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `eee6592eb20a792c19694cc44bc870831d8d8f75`。上节 `b168b3a` 的 car001 detector 初始化在 182--197 帧每批只有一个近距 detector 候选，但统一候选表仅在“至少两个候选且第一项优势明显”时调用 `focus_detector`；未聚焦的唯一检测框不能优先决定下一帧 NanoTrack 搜索裁剪，Recent/Safe 旧候选持续竞争并报 `IDENTITY_CONFLICT`，正确恢复延至 202 帧。新候选保留该版 detector 确认趋势及冻结时的半对角线近距门；只在冻结、预测仍可信、近距门仅剩唯一 detector 时把该候选设为下一帧探测焦点。焦点只改变搜索裁剪，仍必须由新鲜 Recent/Safe 逐帧验证和原身份冲突门决定是否接受；不增加 detector 推理频率，不按目标/帧号定制。
+- 主机实际 `cmake --build /tmp/nt-ten-target-build --parallel 4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure` 23/23 PASS；日志 `/tmp/nt-frozen-focus-build.log` / `/tmp/nt-frozen-focus-ctest.log` SHA-256 `b3a2bcdbd85dab20f7863dd04299017d3b7c01090ef4ff116b6d3c2c4a06bba2` / `e13dcfb15f5e0db601c0c4dc673771264dc5b8676e4fc0e41fef3c845525b117`。下一步隔离 RK3588 原生五路定向回放；若 car001 达到身份及重捕门且 003/004/007 不退步，再跑十目标。不可用 host CTest 替代板端结论，不合入 main/Debug。
+
 ## 2026-11-17T21:44:34+08:00 冻结趋势加近距候选阻断错认但超时，撤回
 
 - 候选源码 `codex/ten-target-smoothness@b168b3a276502e3d25cd8bd5ee523c2b2dfd4610`，源码包主机 `/tmp/nt-near-trend-b168b3a.tar`、板端 `/home/neardi/Project/SOT/nt-near-trend-b168b3a.tar` SHA-256 均 `6112341cf0b9720e8e9888a563315f77613205495a0eb6c8be04063845703155`；板端隔离根 `/home/neardi/Project/SOT/nt-near-trend-b168b3a`。原生 CMake/build/CTest 23/23 PASS，日志 `cmake.log` / `build.log` / `ctest.log` SHA-256 `500682f46c26bf305f314a8e57b7aff469e7f91af31adf5b92e853457f737319` / `12d94a97905f2069deef2279c97fb6daf70bb3648565f3e15347164a3cd8505e` / `87e68dd53f924670da201474761b390959d7c81b575d0176cf6d96de22344bdf`；程序 `build/nanotrack_v3` SHA-256 `f58a72730ca4c3a3e744f7e4d4c2f2512e22bab7a720fb4a55e89e0613488a4c`，运行配置 `runs/headless-on.conf` SHA-256 `efa23f317ddd0ac61e6fd4efb3cfd503d56747b156587c58c1401e8984807c0a`。controller 配置、视频、模型/manifest/labels 与 `7212f6f` 同一核验身份，RKNN API `2.1.0`、driver `0.9.8`。

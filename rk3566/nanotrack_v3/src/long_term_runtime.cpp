@@ -232,6 +232,7 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   last_supported_published_bbox_.reset();
   last_published_support_ms_.reset();
   last_guard_confidence_.reset();
+  last_display_motion_support_.reset();
   guard_hits_ = 0;
   guard_stream_active_ = false;
   guard_protection_active_ = false;
@@ -642,6 +643,53 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.output.display_bbox = adaptive_display_.update(
       result.output, result.target_class, result.adaptive_display);
   result.output.bbox = result.output.display_bbox;
+  // Two detector-confirmed display updates bound a tracker displacement
+  // without adding detector requests or feeding detector box size into motion.
+  // This can replace a stale frozen velocity only when both accepted tracker
+  // boxes still overlap and their measured speed is physically bounded.
+  if (!result.output.accepted || result.output.reacquired ||
+      result.output.tracking_phase != TrackingPhase::kTracking) {
+    last_display_motion_support_.reset();
+  } else if (result.adaptive_display.source == DisplayBoxSource::kDetectorConfirmed &&
+             result.output.selected_template == TemplateKind::kRecent) {
+    if (controller_.motion_freeze_since_ms_ &&
+        controller_.motion_last_clean_trend_ &&
+        last_display_motion_support_) {
+      const auto& previous = *last_display_motion_support_;
+      const auto& current = result.output.tracking_bbox;
+      const auto& config = controller_.config();
+      const auto elapsed_ms = timestamp_ms - previous.timestamp_ms;
+      if (elapsed_ms > 0 && elapsed_ms <= 2 * config.detector_stale_ms &&
+          bbox_iou(previous.tracking_bbox, current) >=
+              config.display_detection_consistency_iou) {
+        const float elapsed_s = static_cast<float>(elapsed_ms) / 1000.0F;
+        const float vx = (current.x + 0.5F * current.width -
+                          previous.tracking_bbox.x -
+                          0.5F * previous.tracking_bbox.width) / elapsed_s;
+        const float vy = (current.y + 0.5F * current.height -
+                          previous.tracking_bbox.y -
+                          0.5F * previous.tracking_bbox.height) / elapsed_s;
+        const float diagonal = std::hypot(current.width, current.height);
+        if (std::hypot(vx, vy) <=
+            config.motion_max_speed_diagonals_per_s * diagonal) {
+          MotionSnapshot trend = *controller_.motion_last_clean_trend_;
+          trend.velocity_x += config.motion_alpha * (vx - trend.velocity_x);
+          trend.velocity_y += config.motion_alpha * (vy - trend.velocity_y);
+          controller_.motion_.reanchor_preserving_velocity(current, trend,
+                                                           timestamp_ms);
+          controller_.motion_last_clean_trend_ =
+              controller_.motion_.snapshot(timestamp_ms);
+          controller_.search_motion_reference_ =
+              *controller_.motion_last_clean_trend_;
+          controller_.search_motion_reference_held_ = true;
+          result.output.motion_update_valid = true;
+          result.output.motion_gate_reason = "DETECTOR_CORROBORATED_TREND";
+        }
+      }
+    }
+    last_display_motion_support_ = DetectorMotionSupport{
+        timestamp_ms, result.output.tracking_bbox};
+  }
   result.runtime_ms = std::chrono::duration<float, std::milli>(
                           std::chrono::steady_clock::now() - total_start)
                           .count();

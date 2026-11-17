@@ -157,6 +157,11 @@ class LongTermRuntime {
   std::optional<BBox> last_supported_published_bbox_;
   std::optional<std::int64_t> last_published_support_ms_;
   std::optional<float> last_guard_confidence_;
+  struct DetectorMotionSupport {
+    std::int64_t timestamp_ms = 0;
+    BBox tracking_bbox{};
+  };
+  std::optional<DetectorMotionSupport> last_display_motion_support_;
   int guard_hits_ = 0;
   bool guard_stream_active_ = false;
   bool guard_protection_active_ = false;
