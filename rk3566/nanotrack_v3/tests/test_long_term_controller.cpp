@@ -2155,8 +2155,6 @@ void test_far_recovery_needs_verified_detector_triad() {
   ResolvedControllerFixture controller(config);
   controller.initialize(initial, 0, 0, {240, 160});
   reject_frame(controller, 1, 40);
-  controller.motion_.velocity_x_ = 20.0F;
-  controller.motion_.velocity_y_ = 20.0F;
   ControllerOutput output;
   for (std::uint64_t frame : {2U, 3U, 4U}) {
     const auto plan = controller.begin_frame(frame, frame * 40, false);
@@ -2179,31 +2177,7 @@ void test_far_recovery_needs_verified_detector_triad() {
   expect_true(output.accepted && output.reacquired &&
                   output.selected_template == TemplateKind::kRecent &&
                   output.control_source == ControlSource::kObservation,
-              "aligned distant detector and three agreeing tracker hits override stale motion center");
-
-  ResolvedControllerFixture reversed(config);
-  const BBox reversed_initial{100, 60, 20, 20};
-  const BBox opposite{40, 100, 20, 20};
-  reversed.initialize(reversed_initial, 0, 0, {240, 160});
-  reject_frame(reversed, 1, 40);
-  reversed.motion_.velocity_x_ = 20.0F;
-  reversed.motion_.velocity_y_ = -20.0F;
-  for (std::uint64_t frame : {2U, 3U, 4U}) {
-    const auto plan = reversed.begin_frame(frame, frame * 40, false);
-    if (frame == 2) {
-      reversed.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
-                                            opposite, 0.9F, plan.timestamp_ms,
-                                            2, false, 0.0F);
-    }
-    output = reversed.finish_frame(
-        plan,
-        {reliable_observation(plan, TemplateKind::kRecent, opposite, frame),
-         reliable_observation(plan, TemplateKind::kSafe, opposite, frame)},
-        std::nullopt);
-  }
-  expect_true(!output.accepted && !output.reacquired &&
-                  std::string(output.recovery_reason) == "MOTION_DIRECTION_CONFLICT",
-              "a distant candidate opposite confident motion cannot become the target");
+              "unique detector and three agreeing tracker hits override stale motion center");
 
   ResolvedControllerFixture exited(config);
   const BBox edge{40, 140, 20, 20};

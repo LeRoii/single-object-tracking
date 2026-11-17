@@ -1334,21 +1334,6 @@ LongTermController::confirm_recovery_candidate(
            (at_top(old) && at_top(predicted) && new_y - old_y > limit) ||
            (at_bottom(old) && at_bottom(predicted) && old_y - new_y > limit);
   };
-  const auto reverses_confident_motion = [&](const BBox& bbox) {
-    if (!plan.motion_prediction_confident) return false;
-    const auto& predicted = plan.motion_predicted_bbox;
-    const float diagonal = std::hypot(predicted.width, predicted.height);
-    const float dx = bbox.x + 0.5F * bbox.width -
-        predicted.x - 0.5F * predicted.width;
-    const float dy = bbox.y + 0.5F * bbox.height -
-        predicted.y - 0.5F * predicted.height;
-    const float distance = std::hypot(dx, dy);
-    const float speed = std::hypot(plan.motion_velocity_x, plan.motion_velocity_y);
-    if (distance <= 0.5F * diagonal || speed <= 0.25F * diagonal) return false;
-    return dx * plan.motion_velocity_x + dy * plan.motion_velocity_y <
-        -0.5F * distance * speed;
-  };
-  bool motion_direction_conflict = false;
   const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
     if (output.recovery_conflict || !key ||
         (!recovery_candidates_.confirmed(*key) &&
@@ -1357,10 +1342,6 @@ LongTermController::confirm_recovery_candidate(
     const auto* candidate = recovery_candidates_.find(*key);
     if (candidate && reverses_clipped_exit(candidate->preferred_evidence().bbox))
       return false;
-    if (candidate && reverses_confident_motion(candidate->preferred_evidence().bbox)) {
-      motion_direction_conflict = true;
-      return false;
-    }
     // A motion prediction held through occlusion can lag a returning target.
     // Three independent tracker hits at the unique detector region, with
     // fresh Recent/Safe agreement, are stronger evidence than that stale
@@ -1408,8 +1389,7 @@ LongTermController::confirm_recovery_candidate(
     output.recovery_reason = "RECOVERY_CONFIRMED";
     return recent_confirmed ? recent : safe;
   }
-  output.recovery_reason = motion_direction_conflict ? "MOTION_DIRECTION_CONFLICT" :
-      candidate ? "AWAITING_CONFIRMATION" : "NO_ELIGIBLE_CANDIDATE";
+  output.recovery_reason = candidate ? "AWAITING_CONFIRMATION" : "NO_ELIGIBLE_CANDIDATE";
   return std::nullopt;
 }
 
