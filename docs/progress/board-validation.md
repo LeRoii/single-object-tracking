@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T07:56:25+08:00 car004 可见框误差归因与角点可见性筛查
+
+- 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `6996ac19b64a30a6d9f47aa240d4f0d0dc37f2cc`。只读复用 `8314980d4ce293ee49ec132465677895acc219aa` 的 20 路完整板端 CSV、冻结 PT detector census、正式真值与视频；没有修改算法、真值或配置。car004 GT 路第 22–145 帧连续 `motion_input_frozen=1`，但在该路正式可见且被接受的冻结帧中，tracking 中心平均误差 `2.332px`，非冻结帧 `2.896px`；运动预测中心误差对应 `17.716px` / `4.212px`。说明冻结预测确实滞后，不能仅由这一点推断跟踪输出整体变差。实际 `python3 /tmp/nt-motion-freeze-census.py`，脚本/16 路普查 `/tmp/nt-motion-freeze-census.json` SHA-256 `86d15ecaa39c7a3f3c37753b52ef7bb8463b853cd5781e875867d9ed0daa2fd4` / `b261ddc78dc7a3f536a62ef8dbaf8d198701cea4454b98a4d6c50816786e90bd`；统计仅覆盖新增八目标 GT/DET 路，car001/002 不在此张表。
+- car004 GT 路第 125→126 帧正式真值框高度 `53.68→32.88px`，第 127–129 帧进一步为 `30.02/26.06/26.09px`，图中目标下半被天桥遮住；NanoTrack tracking 框仍约 `45×50px`，第 127–129 帧 tracking 中心偏真值 `14.0/15.2/14.9px`。板端输出框 IoU 为 `0.408/0.342/0.337`；同帧主机 PT detector 第 127 帧近框对真值 IoU `0.52`，第 128–129 帧没有目标近框。逐帧图 `/tmp/nt-car004-f122-130.jpg` SHA-256 `977e60d68fef4cc8f27a06e86333c4803acd70406dababcdf8267a9d389c8d9c`，绿色正式真值、红色输出、黄色 PT detector；图为诊断，不是评测输入。该段主要需要分辨被遮挡后的**可见车身范围**；仅重设冻结速度或提高 detector 权重不能覆盖缺框的 128–129 帧。
+- 为寻找不依赖单帧 detector 的通用信息，实际运行 `/home/u20/single-object-tracking/.venvs/rknn-convert/bin/python /tmp/nt-lk-visibility-screen.py`：对每路 8 帧前已接受的 tracking 框内角点做 Lucas–Kanade 往返光流，并比较角点位移与跟踪中心位移；脚本/逐帧 `/tmp/nt-lk-visibility-screen.csv` SHA-256 `c6233dcbd43519e7acf3c07bd49032cf5e77f13dd728380c2fbd71cd19805ab4` / `0a9911356ede8cf7c8cbbcddac62360226e7219480453c1ea247d4ce69be9f38`。car003 第 130 帧 GT/DET 一致角点比均 `0`，car004 GT 第 127/128 帧 `0.344/0.214`；但 car010 第 149 帧 GT/DET 仍为 `0.429/0.591`。若以 `<0.6` 判遮挡，正式可见且已接受的样本会误触发 `943/3348`，`<0.2` 仍误触发 `648/3348`。这些是固定回放的离线信号筛查，参考框取自既有输出；未在 RK3588 增加运行时光流。
+- **裁决/Handoff**：不放松运动冻结，也不接入角点数量阈值；它们不能同时修好 car004 的可见范围和 car010 的第 149 帧时限，且会损害清晰帧。需要独立可见范围或身份信息，并须在外部分布及 20 路 RK3588 双初始化中证明低误报与框中心连续性。算法仍与 `040a3f1e98eff843424db9e4770a3e8dc88c2cd1` 同内容，正式十目标 6/10 双初始化成绩和 main/Debug、生产 handoff 不变。
+
 ## 2026-11-18T07:48:48+08:00 亮度变化与通用实例分割的遮挡信号筛查
 
 - 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `984c1a543e44a4cae3a6c4a20e7a01f94071181b`，工作树干净。本节只读复用 `8314980d4ce293ee49ec132465677895acc219aa` 板端 20 路全长 CSV 与 canonical 视频 `1.mp4`（SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`），没有改运行算法、标注或正式配置。
