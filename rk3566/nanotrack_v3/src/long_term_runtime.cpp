@@ -54,6 +54,7 @@ std::optional<BBox> select_tracking_size_candidate(
   }
   const float cx = tracker_bbox.x + 0.5F * tracker_bbox.width;
   const float cy = tracker_bbox.y + 0.5F * tracker_bbox.height;
+  const float diagonal = std::hypot(tracker_bbox.width, tracker_bbox.height);
   std::optional<BBox> unique;
   for (const auto& candidate : batch.candidates) {
     const auto& box = candidate.bbox;
@@ -65,7 +66,14 @@ std::optional<BBox> select_tracking_size_candidate(
         box.width <= 0.0F || box.height <= 0.0F ||
         cx < box.x || cx > box.x + box.width ||
         cy < box.y || cy > box.y + box.height ||
-        bbox_iou(box, tracker_bbox) < config.detector_confirmation_iou) {
+        std::hypot(box.x + 0.5F * box.width - cx,
+                   box.y + 0.5F * box.height - cy) >
+            config.detector_confirmation_center_distance * diagonal ||
+        // A detector box 1.5x larger in each dimension has IoU near 0.44
+        // with a centered tracker box. Keep that valid scale evidence while
+        // the independent center and temporal-confirmation gates protect identity.
+        bbox_iou(box, tracker_bbox) <
+            0.8F * config.detector_confirmation_iou) {
       continue;
     }
     if (unique) return std::nullopt;

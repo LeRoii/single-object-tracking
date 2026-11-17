@@ -1922,6 +1922,8 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
         last.output.tracking_bbox.width};
   };
   const auto corroborated = run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}});
+  const auto undersized_tracker = run({
+      DetectorCandidate{BBox{35, 25, 30, 30}, 0.8F, 2}});
   expect_true(std::fabs(corroborated[0] - 20.0F) < 0.01F &&
                   corroborated[1] > 20.0F && corroborated[1] <= 21.01F &&
                   std::fabs(corroborated[2] - 20.0F) < 0.01F &&
@@ -1935,10 +1937,15 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
                   std::to_string(corroborated[3]) + "/" +
                   std::to_string(corroborated[4]) + "/" +
                   std::to_string(corroborated[5]));
+  expect_true(undersized_tracker[4] == 1.0F &&
+                  undersized_tracker[5] > 22.5F &&
+                  undersized_tracker[5] <= 25.01F,
+              "a centered 1.5x detector box can correct tracker undersizing");
   for (const auto& invalid : {
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 0}}),
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.2F, 2}}),
            run({DetectorCandidate{BBox{90, 28, 24, 24}, 0.8F, 2}}),
+           run({DetectorCandidate{BBox{33, 23, 34, 34}, 0.8F, 2}}),
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2},
                 DetectorCandidate{BBox{38, 28, 24, 24}, 0.7F, 2}}),
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}}, 200)}) {
