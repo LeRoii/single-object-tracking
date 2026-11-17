@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T19:50:17+08:00 逆向重捕单测修正：比较字符串内容而非指针
+
+- `52bd88a` 在 RK3588 原生 CMake/build 成功，但 CTest 22/23；仅 `long_term_controller` 新断言失败。隔离板端诊断执行实际得到 `accepted=0, reacquired=0, recovery_reason=MOTION_DIRECTION_CONFLICT, hits=3`，算法行为符合预期；测试错误地对 `const char* recovery_reason` 使用 `==`，主机 Release 构建恰好合并了字面量指针而误通过。改为 `std::string(...)` 内容比较；板端该次测试源码临时插入状态打印，仅用于定位，不把修改后的临时构建当作提交源码验证。
+- 修正后主机 Release `cmake --build /tmp/nt-ten-target-build --parallel 4`/CTest 23/23，日志 SHA-256 `e7e796a9948d4545d324346db6ae8a860ba9a328c087e8b1710d5688c2f16011` / `b8904bcbb96d02abbfd7e2a66f679001d9f961798526d1861740380c665cd42a`；独立 Debug `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-direction-debug-build -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug`、build、CTest 23/23，日志 SHA-256 `01d07d127588ed5c185e538f64ccda881cb19c07fd8c13041a37df8a00a612f6` / `4972261dff9b29ef1af9225ac2b46c7e74902ff933a6ffa15576082144618624` / `e3418bc83d26fcef0cef7cf21ebcc65b5c5277504eb72781032bfa06912cf1f2`。下一步从本提交的干净源码重新板端构建/CTest，再开始回放。
+
 ## 2026-11-17T19:46:41+08:00 远距离逆向重捕身份门候选（待 RK3588）
 
 - 起点 `codex/ten-target-smoothness@e455cd95765b4fcf3e0c164c8cf3db7026b60412`，双模板诊断源码已精确撤回，十目标可信 A/B 基线仍是 `a1aa449` 的 6/10。对该基线重捕帧离线计算“Recent 原始中心相对运动预测中心”距离及与可信速度的夹角：错误 car003 144 帧为 0.65 个预测框对角线、方向余弦 -0.98；正确 car004 156 帧虽然距离 1.15 个对角线，但余弦 +1.00；其他正确重捕 001/002/005/006/007/008/010 的距离均不超过 0.40 个对角线。此区分来自运动几何，而非目标编号、场景位置或车顶外观。

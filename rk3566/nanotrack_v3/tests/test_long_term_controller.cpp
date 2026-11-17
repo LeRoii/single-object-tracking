@@ -2202,7 +2202,7 @@ void test_far_recovery_needs_verified_detector_triad() {
         std::nullopt);
   }
   expect_true(!output.accepted && !output.reacquired &&
-                  output.recovery_reason == "MOTION_DIRECTION_CONFLICT",
+                  std::string(output.recovery_reason) == "MOTION_DIRECTION_CONFLICT",
               "a distant candidate opposite confident motion cannot become the target");
 
   ResolvedControllerFixture exited(config);
