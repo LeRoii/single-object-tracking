@@ -2057,8 +2057,17 @@ LongTermController::ingest_detector_batch(
     const float center_ratio = frame_normalized_center_distance(
         projected, plan.motion_predicted_bbox, frame_size_);
     diagnostic.center_ratio = center_ratio;
-    if (unified || center_ratio <=
-        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
+    const float center_distance = std::hypot(
+        projected.x + 0.5F * projected.width - current_center_x,
+        projected.y + 0.5F * projected.height - current_center_y);
+    const float confident_motion_limit = 0.5F * std::hypot(
+        plan.motion_predicted_bbox.width, plan.motion_predicted_bbox.height);
+    const bool position_allowed = unified
+        ? (!plan.motion_prediction_confident || !motion_freeze_since_ms_ ||
+           center_distance <= confident_motion_limit + kPositionGateEpsilon)
+        : center_ratio <=
+              config_.detector_candidate_max_center_ratio + kPositionGateEpsilon;
+    if (position_allowed) {
       diagnostic.position_gate_pass = true;
       positioned.push_back(PositionedCandidate{index, center_ratio});
     } else {

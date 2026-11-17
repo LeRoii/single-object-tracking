@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T21:38:16+08:00 冻结运动证据与近距候选联合验证（待 RK3588）
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `64c0a9b941d6e8c4589b97d56df8b1b1b0435e95`。只读对比上两版发现：car001 detector 初始化的错误 detector 恢复探针距运动预测约 `1.2` 个预测框对角线，而首帧真值初始化的正确 car001 确认探针约 `0.21--0.23`；已通过的 car002/005/006/007/008 正确确认探针约 `0.08--0.47`。单独修运动趋势把错误邻车验证提前，说明必须同时约束候选身份。联合候选复用上节“两次显示 detector 确认后的运动趋势”实现，仅当运动输入冻结且搜索运动预测仍被标为可信时，让统一恢复路径只验证中心距不超过半个预测框对角线的 detector 候选；运动预测不可信时恢复原来的宽搜索。普通（非 unified）路径仍使用原配置，不增加 detector 请求，不改 tracker 控制授权。此半对角线是相对目标尺度的通用几何约束，尚需板端多目标正反验证，不能把上述观察当作独立验证集。
+- 第一版把近距门应用于所有“运动预测可信”的搜索，主机 `long_term_controller` 和 `long_term_replay` 两组测试失败，包含已有的远距 subtarget 探测和跨车交错恢复契约；随即收窄到“运动输入被冻结”的状态，原有主机回归 `cmake --build /tmp/nt-ten-target-build --parallel 4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure` 23/23 PASS，最终日志 `/tmp/nt-near-trend-build.log` / `/tmp/nt-near-trend-ctest.log` SHA-256 `be459f933cf95e6e4269c05bd1bd8a4453257eded95050f9bd97e05a26df3791` / `7a3a4a52c54a7a5786bcc8b11a25d4c955c7ff615144da2b191053d04c3b817b`。下一步 RK3588 原生定向（car001 两种初始化及 003/004/007），若稳定再完整十目标；这仍是实验，不合入 main/Debug。
+
 ## 2026-11-17T21:31:36+08:00 detector 确认速度候选误重捕，恢复可信算法
 
 - 候选 `codex/ten-target-smoothness@7212f6fe4536e29f55e92cc06550a2c06e8c6711`，源码包主机 `/tmp/nt-frozen-trend-7212f6f.tar`、板端 `/home/neardi/Project/SOT/nt-frozen-trend-7212f6f.tar` SHA-256 均 `a518db5171334051c7770028c74af6f9e163d6da8937abf95832492b5e72e975`；板端隔离根 `/home/neardi/Project/SOT/nt-frozen-trend-7212f6f`。原生 CMake/build/CTest 23/23 PASS，`cmake.log` / `build.log` / `ctest.log` SHA-256 `a45e50e901bf31c56165cff62415643ec6c773cbd27448f8f111ab664ba7d879` / `a32c9ec945fc9765a4141e08a1627352b956b5dc62952b3f601548a3e08e131b` / `7d42e84c92148d3612480e739660d8ec18c3589f3131a1e639652b86da6e2487`。程序 `build/nanotrack_v3` SHA-256 `7b19b63c4be1b40f15a7ce550aa2a8adaf080251dd78a939d306a8f2bf41b719`，运行配置 `runs/headless-on.conf` SHA-256 `3e6a62a837aeccc8fa309037b99746969769eea5b0d639bc127c8640b6b9bb3d`；controller 配置、视频、tracker manifest、detector RKNN/manifest/labels、RKNN API/driver 与上节 `03b954e` 相同。
