@@ -234,6 +234,8 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   last_guard_confidence_.reset();
   guard_hits_ = 0;
   guard_stream_active_ = false;
+  guard_protection_active_ = false;
+  guarded_visual_misses_ = 0;
   previous_output_phase_ = TrackingPhase::kTracking;
   last_initialization_ = result;
   initialized_ = true;
@@ -351,6 +353,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   bool visual_hit = false;
   bool visual_ambiguous = false;
   bool visual_blocking_used = false;
+  bool visual_batch_valid = false;
   if (visual_suspect_bright_ratio_ > 0.0F &&
       previous_output_phase_ == TrackingPhase::kSuspected &&
       result.target_class.target_class_id == 2 &&
@@ -380,6 +383,8 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       try {
         const auto detected = detector_.detect_blocking(canvas, request);
         if (detected) {
+          visual_batch_valid = detected->batch.source_frame_id == frame_id &&
+              detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion;
           result.detector.request_submitted = true;
           result.detector.batch_received = true;
           result.detector.batch_frame_id = detected->batch.source_frame_id;
@@ -454,6 +459,19 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     result.plan.visual_occlusion_search = safe_crosscheck ||
         next_streak >= visual_suspect_consecutive_frames_ +
             (ambiguous_streak ? 1 : 0);
+  }
+  // Detector support that rescued a visible track must not keep protecting
+  // it after the visual probe has failed to find nearby evidence twice in
+  // consecutive SUSPECTED frames. Unprotected tracks keep the existing
+  // uncertainty budget, since a detector miss alone is not proof of loss.
+  if (visual_batch_valid) {
+    guarded_visual_misses_ = visual_hit ? 0 : guarded_visual_misses_ + 1;
+    if (guard_protection_active_ && guarded_visual_misses_ >= 2 &&
+        previous_output_phase_ == TrackingPhase::kSuspected) {
+      result.plan.visual_occlusion_search = true;
+    }
+  } else {
+    guarded_visual_misses_ = 0;
   }
   if (guard_stream && !visual_blocking_used &&
       !result.plan.request_detector && result.detector.ready &&
@@ -653,6 +671,16 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   }
   guard_stream_active_ = result.output.tracking_phase == TrackingPhase::kSuspected ||
                          result.suspected_detector_guard_applied;
+  if (result.output.tracking_phase == TrackingPhase::kSearching ||
+      result.output.reacquired) {
+    guard_protection_active_ = false;
+    guarded_visual_misses_ = 0;
+  } else if (result.suspected_detector_guard_applied && result.output.accepted) {
+    guard_protection_active_ = true;
+  }
+  if (result.output.tracking_phase == TrackingPhase::kTracking) {
+    guarded_visual_misses_ = 0;
+  }
   if (!guard_stream_active_) {
     next_guard_hits = 0;
     next_guard_source_ms.reset();

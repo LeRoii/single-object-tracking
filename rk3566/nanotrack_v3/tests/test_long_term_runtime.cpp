@@ -1645,6 +1645,89 @@ void test_visual_suspect_gate() {
               "matching Recent and Safe confirm the first fresh visual hit");
 }
 
+void test_guarded_visual_miss_revocation() {
+  using namespace nanotrack;
+  const auto run = [](bool guard_enabled) {
+    ControllerConfig config;
+    config.suspected_detector_guard_enabled = guard_enabled;
+    config.suspected_detector_guard_required_hits = 2;
+    config.detector_interval_ms = 40;
+    config.detector_stale_ms = 150;
+    config.suspicion_enter_ms = 1;
+    config.uncertain_ms = 1000;
+    config.local_recovery_ms = 2000;
+    config.assisted_recovery_ms = 3000;
+    config.visual_suspect_bright_ratio = 0.90F;
+    config.reliable_psr = 5.0F;
+    config.reliable_peak_margin = 0.04F;
+    config.response_psr_drop_ratio = 0.20F;
+    config.occlusion_peak_margin_drop = 0.05F;
+    config.stable_frames_for_update = 99;
+    FakeTracker tracker;
+    FakeDetector detector;
+    detector.enabled = true;
+    detector.complete_immediately = true;
+    detector.automatic_candidates = {{BBox{40, 30, 20, 20}, 0.80F, 2}};
+    DetectorBatch initial;
+    initial.candidates.push_back(
+        DetectorCandidate{BBox{265, 239, 54, 54}, 0.9F, 2});
+    detector.blocking_batch = initial;
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+    const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      const bool degraded = plan.frame_id >= 5;
+      const ResponseMetrics metrics = degraded
+          ? ResponseMetrics{0.92F, 0.90F, 6.0F, 12.0F, 0.05F}
+          : ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F};
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms,
+                             BBox{40, 30, 20, 20}, metrics,
+                             TemplateKind::kRecent, tracker.search_token + 1}};
+    };
+    std::vector<RuntimeFrameResult> frames;
+    for (int frame = 1; frame <= 7; ++frame) {
+      frames.push_back(runtime.process_frame(image, frame, frame * 40));
+    }
+    detector.automatic_candidates.clear();
+    detector.blocking_batch = DetectorBatch{};
+    std::fill(pixels.begin(), pixels.end(), 0);
+    for (int frame = 8; frame <= 16; ++frame) {
+      frames.push_back(runtime.process_frame(image, frame, frame * 40));
+      if (frames.back().output.tracking_phase == TrackingPhase::kSearching) break;
+    }
+    return frames;
+  };
+  const auto guarded = run(true);
+  expect_true(std::any_of(guarded.begin(), guarded.end(),
+                  [](const RuntimeFrameResult& frame) {
+                    return frame.suspected_detector_guard_applied;
+                  }), "test fixture must first corroborate a visible NanoTrack target");
+  int misses = 0;
+  bool two_misses_searched = false;
+  for (const auto& frame : guarded) {
+    if (frame.visual_probe_ran && !frame.visual_probe_hit) {
+      ++misses;
+      if (misses == 2 && frame.plan.visual_occlusion_search &&
+          frame.output.tracking_phase == TrackingPhase::kSearching) {
+        two_misses_searched = true;
+      }
+    } else {
+      misses = 0;
+    }
+  }
+  expect_true(two_misses_searched,
+              "two fresh visual misses revoke prior detector guard support");
+  const auto unguarded = run(false);
+  expect_true(std::none_of(unguarded.begin(), unguarded.end(),
+                  [](const RuntimeFrameResult& frame) {
+                    return frame.plan.visual_occlusion_search;
+                  }),
+              "visual misses alone cannot force an unprotected track to search");
+}
+
 void test_lower_band_visibility_veto() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -1801,6 +1884,7 @@ int main() {
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_visual_suspect_gate();
+  test_guarded_visual_miss_revocation();
   test_lower_band_visibility_veto();
   test_suspected_detector_guard(image);
   test_target_class_initialization(image);

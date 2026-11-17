@@ -159,6 +159,8 @@ class LongTermRuntime {
   std::optional<float> last_guard_confidence_;
   int guard_hits_ = 0;
   bool guard_stream_active_ = false;
+  bool guard_protection_active_ = false;
+  int guarded_visual_misses_ = 0;
   TrackingPhase previous_output_phase_ = TrackingPhase::kInvalid;
 };
 
