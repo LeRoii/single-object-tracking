@@ -151,6 +151,7 @@ LongTermRuntime::LongTermRuntime(const ControllerConfig& config,
       target_class_config_(target_class_config),
       detector_configured_(detector.available()),
       visual_suspect_bright_ratio_(config.visual_suspect_bright_ratio),
+      visual_negative_clear_veto_bright_ratio_(config.visual_negative_clear_veto_bright_ratio),
       lower_band_visibility_veto_(config.lower_band_visibility_veto),
       visual_suspect_min_confidence_(config.visual_suspect_min_confidence),
       visual_suspect_max_center_px_(config.visual_suspect_max_center_px),
@@ -504,6 +505,12 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     result.plan.visual_occlusion_search = safe_crosscheck ||
         next_streak >= visual_suspect_consecutive_frames_ +
             (ambiguous_streak ? 1 : 0);
+  }
+  if (visual_batch_valid && !visual_hit && result.visual_probe_brightness_ratio &&
+      visual_negative_clear_veto_bright_ratio_ > 0.0F &&
+      *result.visual_probe_brightness_ratio <=
+          visual_negative_clear_veto_bright_ratio_) {
+    result.plan.visual_negative_clear_veto = true;
   }
   // Detector support that rescued a visible track must not keep protecting
   // it after the visual probe has failed to find nearby evidence twice in
