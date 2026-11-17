@@ -2426,8 +2426,10 @@ void test_recent_safe_tentative_tracking() {
   const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
   const ResponseMetrics degraded{0.98F, 0.96F, 11, 16, 0.15F};
   const auto track = [&](LongTermController& controller, std::uint64_t id,
-                         const BBox& bbox, const ResponseMetrics& metrics) {
-    const auto plan = controller.begin_frame(id, id * 40, false);
+                         const BBox& bbox, const ResponseMetrics& metrics,
+                         bool visual_miss = false) {
+    auto plan = controller.begin_frame(id, id * 40, false);
+    plan.visual_probe_clear_veto = visual_miss;
     auto observation = reliable_observation(plan, TemplateKind::kRecent, bbox);
     observation.metrics = metrics;
     std::vector<TrackerObservation> observations{observation};
@@ -2441,7 +2443,8 @@ void test_recent_safe_tentative_tracking() {
   ResolvedControllerFixture clears(config);
   ResolvedControllerFixture expires(config);
   ResolvedControllerFixture collapses(config);
-  for (auto* controller : {&clears, &expires, &collapses}) {
+  ResolvedControllerFixture misses(config);
+  for (auto* controller : {&clears, &expires, &collapses, &misses}) {
     controller->initialize(initial, 0, 0, {320, 240});
     for (std::uint64_t id = 1; id <= 3; ++id) {
       const BBox moving{initial.x + static_cast<float>(id), initial.y, 30, 30};
@@ -2489,6 +2492,22 @@ void test_recent_safe_tentative_tracking() {
   expect_true(clears.begin_frame(10, 400, false).template_run_mode ==
                   TemplateRunMode::kRecentOnly,
               "clear returns to the single recent head");
+
+  for (std::uint64_t id : {7U, 8U}) {
+    expect_true(!track(misses, id, shifted, healthy).accepted,
+                "clean recent still waits for the ordinary clear gate");
+  }
+  const auto held = track(misses, 9, shifted, healthy, true);
+  expect_true(held.tracking_phase == TrackingPhase::kSuspected &&
+                  !held.accepted && held.observation_present &&
+                  held.control_valid,
+              "fresh empty visual evidence delays clearing but retains tentative control");
+  for (std::uint64_t id : {10U, 11U}) {
+    expect_true(!track(misses, id, shifted, healthy).accepted,
+                "one empty visual probe does not instantly clear on the next frame");
+  }
+  expect_true(track(misses, 12, shifted, healthy).accepted,
+              "later clean observations can clear suspicion without detector support");
 
   for (std::uint64_t id : {7U, 8U, 9U}) {
     const auto out = track(expires, id, shifted, degraded);
