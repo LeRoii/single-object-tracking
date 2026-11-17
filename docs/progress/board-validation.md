@@ -1,4 +1,39 @@
-# RK3566 开发板验证任务进度
+# 开发板验证任务进度（当前 RK3588）
+
+## 2026-11-17T15:56:24+08:00 RK3588 协调基线与八目标真值消费审计
+
+- 本任务工作树 `/home/u20/.codex/worktrees/rk3588-debug-deploy/single-object-tracking`，
+  分支 `codex/occ-eight-target-ground-truth@acc855d0b45c9d1449e9e25b9e08573be1698c5c`，
+  `git status --short` 为空。GitHub `git ls-remote origin refs/heads/main` 返回
+  `d4f14028768484027d37d9174a02eaedc23b80ab`；实际读取该提交的 `AGENTS.md`、
+  `docs/progress/STATUS.md` 顶部“RK3588 当前工作线”和 `integration-contract.yaml`。
+  本分支与该 `main` 的共同祖先是 `ce2510c27e70607a99456bf3a5d2e814a3bf7b3f`，
+  `main@d4f1402` 不是本分支祖先；本轮**消费** `d4f1402` 的协调指令与契约事实，
+  未移入它的源码、模型或板端结果，也未将本分支的八目标评分候选视为协调方批准。
+- 在读取时复核本地分支头：开发板 `codex/dual-gt-init-consistency@291e62d1cb4211cf32b2dfc160ade78305774044`，
+  十目标实验 `codex/ten-target-smoothness@e6660ea2903e2f988364cde031b181e5cab3e84c`，
+  交叉编译 `codex/rk3588-a8-cross-compile@2dff71a99c677c34b85f3e383bd3967ce4401ccc`；
+  三个对应工作树及 `main` 工作树 `git status --porcelain` 均为 0 项。
+  `STATUS.md@d4f1402` 记录实验线为较早的 `57ee1ac`；已读取 `e6660ea` 的所属
+  `board-validation.md` 首条，该提交报告十目标实验，但本任务**未消费其算法修改、
+  CSV、程序或 PASS/FAIL 作为自己的验证结论**。交叉编译分支进度已读取，
+  `integration-contract.yaml@d4f1402` 的 `latest_handoff.available=false`、
+  `production_handoff_authorized=false` 仍有效。
+- 本任务实际继续使用自身 `acc855d` 的八目标封装和评分实现，以及现存 canonical 数据：
+  `/home/u20/single-object-tracking/data/occ_video_1/1.mp4` SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`；
+  `ground_truth/car_003`--`car_010/checksums.sha256` 的八项 SHA-256 逐一与上节冻结值
+  一致。标注辅助 PT `/home/u20/single-object-tracking/artifacts/yolov8-visdrone9/export/yolov8n-visdrone9-best.pt`
+  SHA-256 `6744672ac5e35debba2a647ad570e9fe84a1cabd1c45c9840080d0a4127fe36d`
+  与 `integration-contract.yaml` 的该训练检查点身份一致；这是既有标注来源复核，
+  **不是** RK3588 detector 模型晋级或板端加载证据。此次仅审计，无新推理或运行测试。
+- **Handoff**：请协调对话以本分支提交及八个包清单哈希为输入，审查后决定是否将
+  `car_003`--`car_010` 登记进 `STATUS.md` / `integration-contract.yaml`；此工作树不改
+  协调方专属文件。开发板测试对话若使用八目标真值，须记录消费的
+  `acc855d0b45c9d1449e9e25b9e08573be1698c5c`、目标包哈希、实际运行源码/程序/
+  RK3588 模型和日志，不能沿用 RK3566 哈希或把合成评分当板端结果。十目标实验
+  `e6660ea` 与交叉编译候选 `2dff71a` 均不能替代协调方批准的板端 handoff；
+  `latest_handoff.available` 保持 `false`。
 
 ## 2026-11-17T15:20:08+08:00 八目标正式真值包与多事件评估接入
 
