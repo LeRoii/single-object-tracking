@@ -1105,10 +1105,6 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
     }
     row.note += ")";
   }
-  if (result.plan.visual_negative_clear_veto) {
-    if (!row.note.empty()) row.note += ";";
-    row.note += "VISUAL_NEGATIVE_CLEAR_EVIDENCE";
-  }
   return row;
 }
 

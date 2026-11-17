@@ -2462,53 +2462,6 @@ void test_recent_safe_tentative_tracking() {
               "collapsed recent escalates even if safe is strong");
 }
 
-void test_visual_negative_only_vetoes_direct_clear() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.motion_search_enabled = true;
-  config.suspicion_enter_ms = 80;
-  config.suspicion_clear_ms = 40;
-  config.uncertain_ms = 120;
-  const BBox bbox{70, 50, 30, 30};
-  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
-  const ResponseMetrics degraded{0.98F, 0.96F, 11, 16, 0.15F};
-  const auto step = [&](LongTermController& controller, std::uint64_t frame,
-                        const ResponseMetrics& metrics, bool veto) {
-    auto plan = controller.begin_frame(frame, frame * 40, false);
-    plan.visual_negative_clear_veto = veto;
-    auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
-    recent.metrics = metrics;
-    return controller.finish_frame(plan, {recent}, std::nullopt);
-  };
-  ResolvedControllerFixture ordinary(config);
-  ResolvedControllerFixture vetoed(config);
-  for (auto* controller : {&ordinary, &vetoed}) {
-    controller->initialize(bbox, 0, 0, {320, 240});
-    for (std::uint64_t frame = 1; frame <= 3; ++frame) {
-      expect_true(step(*controller, frame, healthy, false).accepted,
-                  "seed responses are trusted");
-    }
-    for (std::uint64_t frame = 4; frame <= 6; ++frame) {
-      const auto out = step(*controller, frame, degraded, false);
-      expect_true(out.tracking_phase == TrackingPhase::kSuspected && !out.accepted,
-                  "degraded response enters tentative suspicion");
-    }
-    const auto still_degraded = step(*controller, 7, degraded, true);
-    expect_true(still_degraded.tracking_phase == TrackingPhase::kSuspected &&
-                    !still_degraded.accepted,
-                "negative clear veto alone does not bypass the existing degraded path");
-    step(*controller, 8, healthy, false);
-  }
-  const auto normal = step(ordinary, 9, healthy, false);
-  const auto negative = step(vetoed, 9, healthy, true);
-  expect_true(normal.accepted && normal.tracking_phase == TrackingPhase::kTracking,
-              "a clean response normally clears suspicion");
-  expect_true(!negative.accepted &&
-                  negative.tracking_phase == TrackingPhase::kSearching &&
-                  negative.control_source != ControlSource::kObservation,
-              "strong independent negative evidence blocks a direct clear");
-}
-
 void test_recent_safe_single_metric_dip_is_tentative() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3150,7 +3103,6 @@ void test_verified_recovery_blends_fresh_detector_center() {
 
 int main() {
   test_recent_safe_tentative_tracking();
-  test_visual_negative_only_vetoes_direct_clear();
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();
   test_car_partial_visibility_needs_shrink_and_motion();

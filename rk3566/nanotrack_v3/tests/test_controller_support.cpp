@@ -311,7 +311,6 @@ int main() {
         load_controller_config(config_dir + "visible-dual-gt-visual-gate.conf");
     expect_true(!visual.calibrated &&
                     visual.visual_suspect_bright_ratio == 0.90F &&
-                    visual.visual_negative_clear_veto_bright_ratio == 0.65F &&
                     visual.visual_suspect_min_confidence == 0.40F &&
                     visual.visual_suspect_max_center_px == 30.0F &&
                     visual.visual_suspect_consecutive_frames == 2,
@@ -320,13 +319,6 @@ int main() {
     expect_true(false, std::string("visual candidate profile failed to load: ") +
                            error.what());
   }
-  write_file(config_path,
-             "visual_suspect_bright_ratio=0.90\n"
-             "visual_negative_clear_veto_bright_ratio=0.90\n");
-  expect_config_error(config_path, "visual suspect gate limits");
-  write_file(config_path,
-             "visual_negative_clear_veto_bright_ratio=0.65\n");
-  expect_config_error(config_path, "visual suspect gate limits");
   write_file(config_path, "recovery_min_top_luma_stddev=32.0\n");
   const ControllerConfig legacy_texture_config = load_controller_config(config_path);
   write_file(config_path, "");

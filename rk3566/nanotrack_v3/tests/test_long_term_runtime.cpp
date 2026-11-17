@@ -1646,61 +1646,6 @@ void test_visual_suspect_gate() {
               "matching Recent and Safe confirm the first fresh visual hit");
 }
 
-void test_visual_negative_clear_veto() {
-  using namespace nanotrack;
-  const auto run = [](float veto_ratio, bool detector_returns_batch) {
-    ControllerConfig config;
-    config.suspicion_enter_ms = 1;
-    config.suspicion_clear_ms = 1;
-    config.uncertain_ms = 1000;
-    config.local_recovery_ms = 2000;
-    config.assisted_recovery_ms = 3000;
-    config.visual_suspect_bright_ratio = 0.90F;
-    config.visual_negative_clear_veto_bright_ratio = veto_ratio;
-    FakeTracker tracker;
-    tracker.emit_recent_safe_roles = true;
-    FakeDetector detector;
-    detector.enabled = true;
-    if (detector_returns_batch) detector.blocking_batch = DetectorBatch{};
-    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
-    std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
-    const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
-    runtime.initialize(image, {40, 30, 20, 20}, 0, 0);
-    for (std::uint64_t frame = 1; frame <= 4; ++frame) {
-      runtime.process_frame(image, frame, frame * 40);
-    }
-    bool degraded = true;
-    tracker.on_infer = [&] {
-      const auto& plan = tracker.inferred_plans.back();
-      const ResponseMetrics metrics = degraded
-          ? ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F}
-          : ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F};
-      tracker.observation_override = std::vector<TrackerObservation>{
-          TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
-                             metrics, TemplateKind::kRecent, tracker.search_token + 1}};
-    };
-    std::fill(pixels.begin(), pixels.end(), 0);
-    const auto suspect = runtime.process_frame(image, 5, 200);
-    expect_true(suspect.output.tracking_phase == TrackingPhase::kSuspected,
-                "weak response starts a visual suspicion");
-    degraded = false;
-    return runtime.process_frame(image, 6, 240);
-  };
-  const auto ordinary = run(0.0F, true);
-  const auto vetoed = run(0.65F, true);
-  const auto unavailable = run(0.65F, false);
-  expect_true(ordinary.output.accepted &&
-                  ordinary.output.tracking_phase == TrackingPhase::kTracking,
-              "without the opt-in veto a clean response clears suspicion");
-  expect_true(vetoed.plan.visual_negative_clear_veto &&
-                  !vetoed.output.accepted &&
-                  vetoed.output.tracking_phase == TrackingPhase::kSearching,
-              "a strong current-frame visual miss blocks a direct clear");
-  expect_true(!unavailable.plan.visual_negative_clear_veto &&
-                  unavailable.output.accepted,
-              "detector unavailability does not become negative visual evidence");
-}
-
 void test_guarded_visual_miss_revocation() {
   using namespace nanotrack;
   const auto run = [](bool guard_enabled) {
@@ -2042,7 +1987,6 @@ int main() {
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_visual_suspect_gate();
-  test_visual_negative_clear_veto();
   test_guarded_visual_miss_revocation();
   test_lower_band_visibility_veto();
   test_suspected_detector_guard(image);

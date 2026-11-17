@@ -970,7 +970,6 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
       recent.center_residual >= config_.recent_visibility_center_residual;
   if (plan.suspected_detector_guard &&
       recent.quality == QualityLevel::kReliable && !partial_visibility) {
-    if (plan.visual_negative_clear_veto) return RecentDisposition::kSearch;
     clear_suspicion();
     return RecentDisposition::kDirect;
   }
@@ -997,16 +996,12 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
 
   response_degraded_since_ms_.reset();
   if (recent.quality != QualityLevel::kReliable) return RecentDisposition::kSearch;
-  if (!suspected_since_ms_) {
-    return plan.visual_negative_clear_veto ? RecentDisposition::kSearch
-                                           : RecentDisposition::kDirect;
-  }
+  if (!suspected_since_ms_) return RecentDisposition::kDirect;
   if (!response_clean_since_ms_) response_clean_since_ms_ = plan.timestamp_ms;
   if (plan.timestamp_ms - *response_clean_since_ms_ < config_.suspicion_clear_ms) {
     return RecentDisposition::kTentative;
   }
-  return plan.visual_negative_clear_veto ? RecentDisposition::kSearch
-                                         : RecentDisposition::kDirect;
+  return RecentDisposition::kDirect;
 }
 
 BBox LongTermController::bound_recent_scale(const BBox& bbox,

@@ -132,7 +132,6 @@ void set_value(ControllerConfig& config,
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
   else if (key == "recent_visibility_center_residual") config.recent_visibility_center_residual = parse_float(key, value);
   else if (key == "visual_suspect_bright_ratio") config.visual_suspect_bright_ratio = parse_float(key, value);
-  else if (key == "visual_negative_clear_veto_bright_ratio") config.visual_negative_clear_veto_bright_ratio = parse_float(key, value);
   else if (key == "visual_suspect_min_confidence") config.visual_suspect_min_confidence = parse_float(key, value);
   else if (key == "visual_suspect_max_center_px") config.visual_suspect_max_center_px = parse_float(key, value);
   else if (key == "visual_suspect_consecutive_frames") config.visual_suspect_consecutive_frames = parse_int(key, value);
@@ -396,10 +395,6 @@ void validate_controller_config(const ControllerConfig& config) {
     throw std::invalid_argument("recent visibility gate must be disabled or have two unit-interval thresholds");
   }
   if (!in_unit_interval(config.visual_suspect_bright_ratio) ||
-      !in_unit_interval(config.visual_negative_clear_veto_bright_ratio) ||
-      (config.visual_negative_clear_veto_bright_ratio > 0.0F &&
-       (config.visual_suspect_bright_ratio == 0.0F ||
-        config.visual_negative_clear_veto_bright_ratio >= config.visual_suspect_bright_ratio)) ||
       !in_unit_interval(config.visual_suspect_min_confidence) ||
       config.visual_suspect_max_center_px <= 0.0F ||
       config.visual_suspect_max_center_px > 500.0F ||
@@ -666,10 +661,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.suspected_detector_guard_required_hits << '|'
          << config.visual_suspect_max_center_px << '|'
          << config.visual_suspect_consecutive_frames;
-  if (config.visual_negative_clear_veto_bright_ratio > 0.0F) {
-    stream << "|visual_negative_clear_veto="
-           << config.visual_negative_clear_veto_bright_ratio;
-  }
   return stream.str();
 }
 
