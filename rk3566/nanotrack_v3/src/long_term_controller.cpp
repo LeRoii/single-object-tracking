@@ -374,8 +374,12 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
        search_reacquisition_eligible(timestamp_ms));
   const RecoveryCandidate* probe = can_plan_probe ? recovery_candidates_.select_probe() : nullptr;
   if (probe) {
-    predicted = probe->preferred_evidence().bbox;
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
+    // A tracker hit may be offset from the detector region while confirmation
+    // is still pending. Keep probing the fresh detector region instead of
+    // moving the next crop toward an unconfirmed tracker response.
+    predicted = detector && config_.detector_target_mode == DetectorTargetMode::kFullObject
+        ? detector->bbox : probe->preferred_evidence().bbox;
     if (detector && probe->subtarget_carrier &&
         !probe->from(RecoveryCandidateSource::kRecent) &&
         !probe->from(RecoveryCandidateSource::kSafe)) {
@@ -1181,7 +1185,9 @@ void LongTermController::cancel_probation() noexcept {
 
 SearchHint LongTermController::search_hint_for(
     const RecoveryCandidate& candidate) const {
-  const auto& evidence = candidate.preferred_evidence();
+  const auto& detector = candidate.from(RecoveryCandidateSource::kDetector);
+  const auto& evidence = detector && config_.detector_target_mode == DetectorTargetMode::kFullObject
+      ? *detector : candidate.preferred_evidence();
   const auto& first_hit = candidate.verifications[0]
       ? candidate.verifications[0] : candidate.verifications[1];
   SearchHint hint;

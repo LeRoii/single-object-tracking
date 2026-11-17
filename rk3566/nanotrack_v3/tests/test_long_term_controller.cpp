@@ -1861,6 +1861,49 @@ void test_unified_recovery_candidate_cleanup() {
               "a stale completion cannot carry either candidate or detector history through the frame");
 }
 
+void test_fresh_detector_anchor_survives_unconfirmed_tracker_offset() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.detector_interval_ms = 20;
+  config.detector_candidate_max_center_ratio = 1.0F;
+  config.search_reacquisition_min_age_ms = 0;
+  config.recovery_confirmation_required = 3;
+  ResolvedControllerFixture controller(config);
+  const BBox initial{100, 100, 40, 40};
+  const BBox detector_box{102, 102, 40, 40};
+  controller.initialize(initial, 0, 0, {400, 300}, make_fixed_target_class(2, true));
+  reject_frame(controller, 1, 40);
+  auto plan = controller.begin_frame(2, 80, true);
+  expect_true(plan.detector_request.has_value(),
+              "detector anchor fixture requests a candidate after loss");
+  DetectorBatch batch{2, 80, {{detector_box, 0.9F, 2}}};
+  if (plan.detector_request) batch.generation = plan.detector_request->generation;
+  controller.finish_frame(plan, {}, batch);
+
+  plan = controller.begin_frame(3, 120, false);
+  expect_true(plan.recovery_probe && plan.predicted_bbox.x == detector_box.x &&
+                  plan.predicted_bbox.y == detector_box.y,
+              "fresh detector supplies the first confirmation crop");
+  const BBox offset{96, 96, 40, 40};
+  const auto output = controller.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, offset, 3),
+             reliable_observation(plan, TemplateKind::kSafe, offset, 3)},
+      std::nullopt);
+  expect_true(!output.accepted && output.recovery_confirmation_hits == 1,
+              "one offset tracker response cannot authorize recovery");
+
+  plan = controller.begin_frame(4, 160, false);
+  expect_true(plan.recovery_probe && plan.predicted_bbox.x == detector_box.x &&
+                  plan.predicted_bbox.y == detector_box.y &&
+                  plan.search_hint &&
+                  plan.search_hint->projected_bbox.x == detector_box.x &&
+                  plan.search_hint->projected_bbox.y == detector_box.y,
+              "unconfirmed tracker offset does not drag the next crop away from detector");
+  controller.abort_frame();
+}
+
 void test_subtarget_probe_abort_does_not_advance_cursor() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3131,6 +3174,7 @@ int main() {
   test_target_class_gate();
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
+  test_fresh_detector_anchor_survives_unconfirmed_tracker_offset();
   test_frozen_motion_single_near_detector_probe();
   test_verified_recovery_blends_fresh_detector_center();
   test_subtarget_probe_abort_does_not_advance_cursor();
