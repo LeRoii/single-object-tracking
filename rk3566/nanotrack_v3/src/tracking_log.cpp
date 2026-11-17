@@ -1080,6 +1080,10 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
     if (!row.note.empty()) row.note += ";";
     row.note += "DETECTOR_VERIFIED_OUTPUT_SIZE";
   }
+  if (output.recovery_detector_center_fused) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "RECOVERY_DETECTOR_CENTER_FUSED";
+  }
   if (result.visual_probe_ran) {
     if (!row.note.empty()) row.note += ";";
     row.note += "VISUAL_PROBE(hit=";

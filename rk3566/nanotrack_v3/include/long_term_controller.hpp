@@ -212,6 +212,7 @@ struct ControllerOutput {
   float motion_scale_velocity_height = 0.0F;
   std::optional<RecoveryCandidateKey> recovery_candidate_key;
   std::size_t recovery_confirmation_hits = 0;
+  bool recovery_detector_center_fused = false;
   bool recovery_conflict = false;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};

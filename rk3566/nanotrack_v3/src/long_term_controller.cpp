@@ -1638,8 +1638,33 @@ void LongTermController::defer_recovery_acceptance(
                           BBox{0.0F, 0.0F, bbox.width, restored_height}, frame_size_);
     }
   }
+  // A detector-supported candidate has already passed the independent
+  // NanoTrack confirmation gate. Use its recent full-object center as one
+  // measurement of the confirmed object, while retaining NanoTrack's size.
+  if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
+      output.recovery_candidate_key) {
+    const auto* candidate = recovery_candidates_.find(*output.recovery_candidate_key);
+    const auto* detector = candidate &&
+        candidate->from(RecoveryCandidateSource::kDetector)
+        ? &*candidate->from(RecoveryCandidateSource::kDetector) : nullptr;
+    if (candidate && candidate->has_detector_supported_hit() && detector &&
+        detector->frame_id <= plan.frame_id &&
+        detector->timestamp_ms <= plan.timestamp_ms &&
+        plan.timestamp_ms - detector->timestamp_ms <= config_.detector_stale_ms &&
+        recovery_candidates_.geometry_consistent(bbox, detector->bbox)) {
+      const float tracker_cx = bbox.x + 0.5F * bbox.width;
+      const float tracker_cy = bbox.y + 0.5F * bbox.height;
+      const float detector_cx = detector->bbox.x + 0.5F * detector->bbox.width;
+      const float detector_cy = detector->bbox.y + 0.5F * detector->bbox.height;
+      bbox = centered_box(0.5F * (tracker_cx + detector_cx),
+                          0.5F * (tracker_cy + detector_cy), bbox, frame_size_);
+      output.recovery_detector_center_fused = true;
+    }
+  }
   recovery->bbox = bbox;
   recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);
+  if (output.recovery_detector_center_fused)
+    output.selected_observation_bbox = selected.observation.bbox;
   recovery->motion.initialize(bbox, plan.timestamp_ms, frame_size_.width, frame_size_.height);
   recovery->occlusion_decision = recovery->occlusion_evidence.observe(
       OcclusionEvidenceInput{bbox, bbox, selected.observation.metrics, true, false, false});

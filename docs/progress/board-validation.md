@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T22:32:09+08:00 NanoTrack 确认后融合新鲜 detector 恢复中心（待板端）
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `1579c6a72f8248eba33d71353657206dd47063df`；主机历史记录仅包含进度更新，算法起点仍为板端 `93eb13ef778581a6d4fa5a0887e8fb98be474d26`。对七个有可见真值的 detector 支持重捕帧离线比较中心误差：car003 第144帧 NanoTrack 21.0 px、detector 6.9 px；car010 第176帧为 9.6/0.7 px；但 car005 第182帧为 2.3/8.5 px、car008 第258帧为 2.6/6.5 px。因此直接采用 detector 中心并不稳妥，等权融合保留了两方信息。单帧几何反事实的 IoU：003 为 0.379→0.534，004 0.778→0.893，005 0.891→0.752，006 0.725→0.769，007 0.850→0.870，008 0.787→0.730，010 0.552→0.732；这些只是固定输出框静态计算，后续裁剪/模板闭环可能完全不同。
+- 新候选只在统一恢复已经由 NanoTrack 验证、候选带有 detector 支持、无身份冲突、detector 为完整目标且仍在既有新鲜期、两框满足现有恢复几何一致性时，把恢复控制框中心取 NanoTrack 与 detector 中心的中点，尺寸仍来自 NanoTrack；探测、身份确认和控制授权门不变。原始 NanoTrack 观测保留在 `selected_observation_bbox`，日志 note 记 `RECOVERY_DETECTOR_CENTER_FUSED`。无 detector、过期、非完整目标或不一致时保持原路径；不是按目标/帧号定制。
+- 新增控制器单测验证两次 NanoTrack 确认前不可接受、确认后中点与原始观测/控制框的关系；主机实际 `cmake --build /tmp/nt-ten-target-build --parallel 4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure`，23/23 PASS，日志 `/tmp/nt-recovery-center-host-build.log` / `/tmp/nt-recovery-center-host-ctest.log` SHA-256 `e0599784cca586b1c9ea80e6b5cadf1d2a30e3fa0d1bece3792769ba41bd9a34` / `55fa7b1b579b6bac4506afd58744fd99719b943c8c3d787c6b529dbdb5dd5d3b`。下一步提交源码后，在 RK3588 隔离目录原生构建、先跑 car003/005/008/010 的正反例，再跑完整十目标双初始化；有害退步则撤回，不合入 main/Debug。
+
 ## 2026-11-17T22:18:53+08:00 十目标失败帧视觉审计：car004 第 42 帧待真值复核
 
 - 只读分析上一节板端算法源码 `93eb13ef778581a6d4fa5a0887e8fb98be474d26` 的十目标真值初始化输出 `/tmp/nt-frozen-focus-93eb13e-full-gt/runs/ten-target-full/<target>/frames.csv` 与正式多事件真值 `data/occ_video_1/ground_truth/<target>/frames.jsonl`，视频仍为 SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`。失败集合仍是 003/004/009/010；完全遮挡门失败帧分别为 003:130、004:42/131/132、009:115--120、010:149--157。没有修改原真值、评测器或算法。

@@ -3030,6 +3030,53 @@ void test_frozen_motion_single_near_detector_probe() {
   inspect(false);
 }
 
+void test_verified_recovery_blends_fresh_detector_center() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.recovery_requires_detector_support = true;
+  config.recovery_confirmation_required = 2;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  ResolvedControllerFixture controller(config);
+  controller.initialize({40, 30, 20, 20}, 0, 0, {240, 160});
+  reject_frame(controller, 1, 40);
+  ControllerOutput output;
+  for (std::uint64_t frame : {2U, 3U}) {
+    const auto plan = controller.begin_frame(frame, frame * 40, false);
+    if (frame == 2) {
+      const auto detector_key = controller.recovery_candidates_.observe(
+          RecoveryCandidateSource::kDetector, {125, 90, 20, 20}, 0.9F,
+          plan.timestamp_ms, 2, false, 0.0F);
+      expect_true(detector_key.has_value(), "fresh full-object detector seeds recovery");
+    }
+    const BBox tracked{128, 90, 20, 20};
+    output = controller.finish_frame(plan,
+        {reliable_observation(plan, TemplateKind::kRecent, tracked, frame),
+         reliable_observation(plan, TemplateKind::kSafe, tracked, frame)},
+        std::nullopt);
+    if (frame == 2) {
+      expect_true(!output.accepted && !output.reacquired &&
+                      !output.recovery_detector_center_fused,
+                  "one detector-supported tracker hit cannot authorize control");
+    }
+  }
+  expect_true(output.accepted && output.reacquired &&
+                  output.recovery_detector_center_fused &&
+                  output.selected_observation_bbox.has_value(),
+              "detector center is used only after tracker-verified recovery");
+  if (output.accepted && output.selected_observation_bbox) {
+    expect_near(output.selected_observation_bbox->x, 128.0F, 0.01F,
+                "raw NanoTrack observation stays traceable");
+    expect_near(output.tracking_bbox.x, 126.5F, 0.01F,
+                "accepted center is the midpoint of tracker and detector");
+    expect_near(output.control_bbox.x, output.tracking_bbox.x, 0.01F,
+                "verified blended center is the control box center");
+  }
+}
+
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
@@ -3061,6 +3108,7 @@ int main() {
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
   test_frozen_motion_single_near_detector_probe();
+  test_verified_recovery_blends_fresh_detector_center();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_far_recovery_needs_verified_detector_triad();
