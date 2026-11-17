@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T07:28:37+08:00 空探针暂缓规则计时门修正候选
+
+- 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `76e03d2a710b225d329075ac77b945382f706eb9`。板端第一版在 car003 第 51 帧和 car004 GT 第 131 帧虽有有效空视觉探针，仍直接从显示的 SUSPECTED 回到 TRACKING；定位为 `assess_recent` 额外要求内部 `suspected_since_ms_` 已启动，而输出 SUSPECTED 可先于该计时器。修正为有效空探针直接暂缓当前帧清除，仍沿用原有疑似进入与搜索时长门；新增计时器尚未启动的测试。
+- 实际执行 `cmake --build /tmp/nt-ten-target-build --parallel 4` 和 `ctest --test-dir /tmp/nt-ten-target-build --output-on-failure --parallel 4`，主机 RKNN-off CTest **23/23 PASS**，`git diff --check` PASS。板端第一版 12 路回放正在隔离目录中运行，修正版尚未上板；因此本条仅证明修正后的单元路径，不宣称十目标精度改善。下一步冻结源码，在 RK3588 另建目录运行相同双初始化回放，核查遮挡时序、误拒与真值评分。
+
 ## 2026-11-18T07:16:39+08:00 空视觉探针暂缓清除 SUSPECTED 候选待板端
 
 - 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `040a3f1e98eff843424db9e4770a3e8dc88c2cd1`。实际运行 `python3 /tmp/nt-suspected-clear-transition-audit.py`，脚本 `/tmp/nt-suspected-clear-transition-audit.py` SHA-256 `9998788276d4a3f4c800f69f4291e12fc576f3d1929b06774959690d5d41ba0e`，20 路 271 帧逐帧转移结果 `/tmp/nt-suspected-clear-transition-audit.json` SHA-256 `580b0bf85cc70ec9e209b6844656537913af462c91d703ac9c51d176158394ac`。35 次 SUSPECTED→TRACKING 中，33 次回到正式可见帧，2 次回到正式全遮挡帧，后者为 car004 GT 第 131 帧及 car009 GT 第 116 帧，两次板端同帧 VISUAL_OCCLUSION 探针均返回 0 候选。可见 car003 GT/DET 第 51 帧也各有一次空探针后正确返回，故不能把探针空当作立即 SEARCH 的充分条件；这份转移筛查没有使用真值驱动运行时规则。

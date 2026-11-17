@@ -2509,6 +2509,26 @@ void test_recent_safe_tentative_tracking() {
   expect_true(track(misses, 12, shifted, healthy).accepted,
               "later clean observations can clear suspicion without detector support");
 
+  ControllerConfig early_config = config;
+  early_config.suspicion_enter_ms = 1000;
+  ResolvedControllerFixture early_miss(early_config);
+  early_miss.initialize(initial, 0, 0, {320, 240});
+  for (std::uint64_t id = 1; id <= 3; ++id) {
+    expect_true(track(early_miss, id,
+                      BBox{initial.x + static_cast<float>(id), initial.y, 30, 30},
+                      healthy).accepted,
+                "early-miss fixture must establish trusted tracking");
+  }
+  expect_true(track(early_miss, 4, shifted, degraded).tracking_phase ==
+                  TrackingPhase::kSuspected,
+              "a tentative output can precede the internal suspicion timer");
+  const auto early_held = track(early_miss, 5, shifted, healthy, true);
+  expect_true(early_held.tracking_phase == TrackingPhase::kSuspected &&
+                  !early_held.accepted,
+              "empty visual probe delays immediate clearance even before the timer starts");
+  expect_true(track(early_miss, 6, shifted, healthy).accepted,
+              "a later clean frame may clear the one-frame empty-probe hold");
+
   for (std::uint64_t id : {7U, 8U, 9U}) {
     const auto out = track(expires, id, shifted, degraded);
     expect_true(out.control_valid,
