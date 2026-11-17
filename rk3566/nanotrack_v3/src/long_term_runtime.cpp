@@ -6,6 +6,7 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <optional>
@@ -375,9 +376,29 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     }
   }
 
+  // Diagnostic only: inspect the older Safe template during ordinary tracking
+  // without supplying that extra observation to any controller decision.
+  const char* safe_probe_env = std::getenv("NT_TRACKING_SAFE_PROBE");
+  const bool tracking_safe_probe = safe_probe_env && safe_probe_env[0] == '1' &&
+      safe_probe_env[1] == '\0' && result.plan.run_tracker &&
+      result.plan.tracking_phase == TrackingPhase::kTracking &&
+      result.plan.template_run_mode == TemplateRunMode::kRecentOnly;
+  std::optional<TrackerObservation> tracking_safe_diagnostic;
   if (result.plan.run_tracker) {
     const auto tracker_start = std::chrono::steady_clock::now();
-    result.observations = tracker_.infer(image, result.plan, result.template_heads);
+    SearchPlan tracker_plan = result.plan;
+    if (tracking_safe_probe) tracker_plan.template_run_mode = TemplateRunMode::kRecentAndSafe;
+    result.observations = tracker_.infer(image, tracker_plan, result.template_heads);
+    if (tracking_safe_probe) {
+      const auto safe = std::find_if(result.observations.begin(), result.observations.end(),
+          [](const TrackerObservation& observation) {
+            return observation.template_kind == TemplateKind::kSafe;
+          });
+      if (safe != result.observations.end()) {
+        tracking_safe_diagnostic = *safe;
+        result.observations.erase(safe);
+      }
+    }
     result.tracker_ms = std::chrono::duration<float, std::milli>(
                             std::chrono::steady_clock::now() - tracker_start)
                             .count();
@@ -959,6 +980,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
   application_checkpoint.reset();
   bbox_restore.reset();
+  if (tracking_safe_diagnostic) result.observations.push_back(*tracking_safe_diagnostic);
   completed = true;
   return result;
 }
