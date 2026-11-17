@@ -1231,35 +1231,7 @@ LongTermController::confirm_recovery_candidate(
     const std::optional<EvaluatedObservation>& recent,
     const std::optional<EvaluatedObservation>& safe,
     ControllerOutput& output) {
-  const auto* early_candidate = plan.recovery_probe
-      ? recovery_candidates_.find(*plan.recovery_probe) : nullptr;
-  const auto* early_detector = early_candidate &&
-      early_candidate->from(RecoveryCandidateSource::kDetector)
-      ? &*early_candidate->from(RecoveryCandidateSource::kDetector) : nullptr;
-  const auto& motion = plan.motion_predicted_bbox;
-  const auto near_motion = [&](const BBox& bbox) {
-    const float distance = std::hypot(
-        bbox.x + 0.5F * bbox.width - motion.x - 0.5F * motion.width,
-        bbox.y + 0.5F * bbox.height - motion.y - 0.5F * motion.height);
-    return distance <= 0.5F * std::hypot(motion.width, motion.height);
-  };
-  const bool early_near_motion =
-      config_.search_early_near_motion_age_ms > 0 && loss_start_ms_ &&
-      plan.timestamp_ms - *loss_start_ms_ >=
-          config_.search_early_near_motion_age_ms &&
-      config_.detector_target_mode == DetectorTargetMode::kFullObject &&
-      plan.motion_prediction_confident && early_detector && recent && safe &&
-      recent->quality == QualityLevel::kReliable &&
-      safe->quality == QualityLevel::kReliable &&
-      near_motion(early_detector->bbox) &&
-      near_motion(recent->observation.bbox) &&
-      near_motion(safe->observation.bbox) &&
-      recovery_candidates_.geometry_consistent(
-          early_detector->bbox, recent->observation.bbox) &&
-      recovery_candidates_.geometry_consistent(
-          early_detector->bbox, safe->observation.bbox);
-  if (!search_reacquisition_eligible(plan.timestamp_ms) &&
-      !early_near_motion) {
+  if (!search_reacquisition_eligible(plan.timestamp_ms)) {
     output.recovery_reason = "SEARCH_MIN_AGE";
     return std::nullopt;
   }
@@ -1393,16 +1365,11 @@ LongTermController::confirm_recovery_candidate(
            (at_bottom(old) && at_bottom(predicted) && old_y - new_y > limit);
   };
   const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
-    const auto* candidate = key ? recovery_candidates_.find(*key) : nullptr;
-    const bool early_two_hit = early_near_motion &&
-        !search_reacquisition_eligible(plan.timestamp_ms) &&
-        key == plan.recovery_probe && candidate && candidate->hits() >= 2 &&
-        candidate->has_detector_supported_hit() &&
-        recent_key == key && safe_key == key;
     if (output.recovery_conflict || !key ||
         (!recovery_candidates_.confirmed(*key) &&
-         !recovery_candidates_.triad_confirmed(*key) && !early_two_hit))
+         !recovery_candidates_.triad_confirmed(*key)))
       return false;
+    const auto* candidate = recovery_candidates_.find(*key);
     if (candidate && reverses_clipped_exit(candidate->preferred_evidence().bbox))
       return false;
     // A motion prediction held through occlusion can lag a returning target.
