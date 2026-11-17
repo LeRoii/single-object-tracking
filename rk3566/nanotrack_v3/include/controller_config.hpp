@@ -143,6 +143,9 @@ struct ControllerConfig {
   bool recovery_restore_initial_aspect = false;
   bool lower_band_visibility_veto = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
+  // Run a second search crop on the current frame when a fresh, unique nearby
+  // detector result arrives after the first NanoTrack inference.
+  bool search_fresh_detector_reprobe = false;
   std::int64_t motion_search_confidence_ms = 1000;
   float motion_max_speed_diagonals_per_s = 100.0F;
   float motion_max_acceleration_diagonals_per_s2 = 1000.0F;

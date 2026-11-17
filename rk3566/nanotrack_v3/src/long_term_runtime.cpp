@@ -571,6 +571,82 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       guard_batch = detector_batch;
     }
   }
+  // An asynchronous search result may arrive after NanoTrack has already
+  // searched the old crop on this frame. Re-run only for one same-class box
+  // close to the motion prediction when the first crop disagreed with it.
+  // The controller still applies its detector, identity and confirmation
+  // gates to the second NanoTrack observations before accepting anything.
+  if (guard_config.search_fresh_detector_reprobe && recovery_batch &&
+      result.plan.tracking_phase == TrackingPhase::kSearching &&
+      result.plan.run_tracker && result.plan.motion_prediction_confident &&
+      result.target_class.target_class_id &&
+      recovery_batch->source_frame_id + 1 == frame_id &&
+      timestamp_ms >= recovery_batch->source_timestamp_ms &&
+      timestamp_ms - recovery_batch->source_timestamp_ms <=
+          guard_config.detector_stale_ms) {
+    const auto& motion = result.plan.motion_predicted_bbox;
+    const float motion_x = motion.x + 0.5F * motion.width;
+    const float motion_y = motion.y + 0.5F * motion.height;
+    const float near_limit = 0.5F * std::hypot(motion.width, motion.height);
+    const DetectorCandidate* unique = nullptr;
+    for (const auto& candidate : recovery_batch->candidates) {
+      const auto& box = candidate.bbox;
+      if (candidate.class_id != *result.target_class.target_class_id ||
+          !std::isfinite(candidate.confidence) ||
+          candidate.confidence <
+              guard_config.suspected_detector_guard_min_confidence ||
+          !std::isfinite(box.x) || !std::isfinite(box.y) ||
+          !std::isfinite(box.width) || !std::isfinite(box.height) ||
+          box.width <= 0.0F || box.height <= 0.0F ||
+          std::hypot(box.x + 0.5F * box.width - motion_x,
+                     box.y + 0.5F * box.height - motion_y) > near_limit) {
+        continue;
+      }
+      if (unique) {
+        unique = nullptr;
+        break;
+      }
+      unique = &candidate;
+    }
+    if (unique) {
+      const bool first_crop_disagreed = std::any_of(
+          result.observations.begin(), result.observations.end(),
+          [&](const TrackerObservation& observation) {
+            return (observation.template_kind == TemplateKind::kRecent ||
+                    observation.template_kind == TemplateKind::kSafe) &&
+                bbox_iou(observation.bbox, unique->bbox) <
+                    guard_config.detector_confirmation_iou;
+          });
+      if (first_crop_disagreed) {
+        const auto& box = unique->bbox;
+        const auto& old = result.plan.predicted_bbox;
+        const BBox recentered = clip_bbox(
+            BBox{box.x + 0.5F * box.width - 0.5F * old.width,
+                 box.y + 0.5F * box.height - 0.5F * old.height,
+                 old.width, old.height}, image.width, image.height);
+        if (recentered.width > 0.0F && recentered.height > 0.0F) {
+          const bool same_probe = result.plan.search_hint &&
+              bbox_iou(result.plan.search_hint->projected_bbox, box) >=
+                  guard_config.detector_confirmation_iou;
+          result.plan.predicted_bbox = recentered;
+          result.plan.hypothesis_source = HypothesisSource::kDetector;
+          if (same_probe) {
+            result.plan.search_hint->projected_bbox = recentered;
+          } else {
+            result.plan.recovery_probe.reset();
+            result.plan.search_hint.reset();
+            result.plan.subtarget_probe_is_final.reset();
+          }
+          const auto reprobe_start = std::chrono::steady_clock::now();
+          result.observations = tracker_.infer(
+              image, result.plan, result.template_heads);
+          result.tracker_ms += std::chrono::duration<float, std::milli>(
+              std::chrono::steady_clock::now() - reprobe_start).count();
+          result.detector_search_reprobe_applied = true;
+        }
+      }
+    }
+  }
   auto next_guard_hits = guard_hits_;
   auto next_guard_batch_frame_id = last_guard_batch_frame_id_;
   auto next_guard_source_ms = last_guard_source_ms_;
