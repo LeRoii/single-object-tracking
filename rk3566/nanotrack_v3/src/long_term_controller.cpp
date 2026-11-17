@@ -167,7 +167,6 @@ void LongTermController::initialize(const BBox& initial_bbox,
   staged_template_slot_id_.reset();
   recent_probation_ = false;
   recovery_probation_ = false;
-  recovery_detector_reference_.reset();
   rollback_pending_ = false;
   resume_search_after_rollback_ = false;
   probation_reliable_frames_ = 0;
@@ -802,7 +801,6 @@ void LongTermController::reset_template_probation() noexcept {
   staged_template_slot_id_.reset();
   recent_probation_ = false;
   recovery_probation_ = false;
-  recovery_detector_reference_.reset();
   rollback_pending_ = false;
   probation_reliable_frames_ = 0;
   stable_frames_ = 0;
@@ -1641,13 +1639,6 @@ void LongTermController::defer_recovery_acceptance(
     }
   }
   recovery->bbox = bbox;
-  if (output.recovery_candidate_key) {
-    const auto* candidate = recovery_candidates_.find(*output.recovery_candidate_key);
-    if (candidate) {
-      const auto& detector = candidate->from(RecoveryCandidateSource::kDetector);
-      if (detector) recovery->detector_reference = detector->bbox;
-    }
-  }
   recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);
   recovery->motion.initialize(bbox, plan.timestamp_ms, frame_size_.width, frame_size_.height);
   recovery->occlusion_decision = recovery->occlusion_evidence.observe(
@@ -1671,7 +1662,6 @@ void LongTermController::defer_recovery_acceptance(
 
 void LongTermController::apply_recovery_acceptance() noexcept {
   auto& recovery = *pending_recovery_acceptance_;
-  recovery_detector_reference_ = recovery.detector_reference;
   static_assert(std::is_nothrow_move_assignable_v<MotionEstimator>);
   static_assert(std::is_nothrow_move_assignable_v<OcclusionEvidenceTracker>);
   static_assert(std::is_nothrow_move_assignable_v<DimensionScaleState>);
@@ -2334,7 +2324,6 @@ ControllerOutput LongTermController::finish_frame(
           config_.template_agreement_iou;
   std::optional<EvaluatedObservation> selected;
   bool force_confirmation = false;
-  bool detector_corroborated_recent = false;
   if (ordinary_recent) {
     selected = recent;
     const auto& other = staged ? staged : safe;
@@ -2354,30 +2343,6 @@ ControllerOutput LongTermController::finish_frame(
       if (staged) {
         selected = staged;
         disposition = assess_recent(plan, *staged, response);
-      }
-      if (recent && staged && recovery_detector_reference_ &&
-          recent->quality == QualityLevel::kReliable &&
-          staged->quality == QualityLevel::kReliable &&
-          output.template_iou < 0.70F) {
-        const auto center_distance = [](const BBox& a, const BBox& b) {
-          return std::hypot(a.x + 0.5F * a.width - b.x - 0.5F * b.width,
-                            a.y + 0.5F * a.height - b.y - 0.5F * b.height);
-        };
-        const float diagonal = std::hypot(recovery_detector_reference_->width,
-                                          recovery_detector_reference_->height);
-        const float recent_distance = center_distance(
-            recent->observation.bbox, *recovery_detector_reference_);
-        const float staged_distance = center_distance(
-            staged->observation.bbox, *recovery_detector_reference_);
-        if (recent_distance <= 0.5F * diagonal &&
-            staged_distance - recent_distance >= 0.10F * diagonal) {
-          const auto recent_disposition = assess_recent(plan, *recent, response);
-          if (recent_disposition == RecentDisposition::kDirect) {
-            selected = recent;
-            disposition = recent_disposition;
-            detector_corroborated_recent = true;
-          }
-        }
       }
     } else if (recent && probation_geometry_allows_acceptance) {
       disposition = assess_recent(plan, *recent, response);
@@ -2816,14 +2781,6 @@ ControllerOutput LongTermController::finish_frame(
              plan.timestamp_ms - last_recent_update_ms_ >=
                  config_.recent_update_interval_ms) {
     output.template_action = TemplateAction::kStageRecent;
-  }
-
-  if (detector_corroborated_recent && accepted) {
-    // The old Recent head agrees better with the confirmed detector region.
-    // Keep the recovered track and discard only the newly staged template.
-    recovery_probation_ = false;
-    output.template_action = TemplateAction::kRollbackRecent;
-    output.recovery_reason = "PROBATION_DETECTOR_RECENT";
   }
 
   output.detector_candidates_queued = uses_unified_recovery()
