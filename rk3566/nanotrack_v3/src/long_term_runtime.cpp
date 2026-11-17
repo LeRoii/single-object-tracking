@@ -266,6 +266,8 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   last_guard_source_ms_.reset();
   last_guard_candidate_bbox_.reset();
   published_tracking_bbox_.reset();
+  published_center_offset_x_ = 0.0F;
+  published_center_offset_y_ = 0.0F;
   last_supported_published_bbox_.reset();
   last_published_support_ms_.reset();
   pending_tracking_size_candidate_.reset();
@@ -822,10 +824,9 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   last_guard_candidate_bbox_ = next_guard_candidate_bbox;
   last_guard_confidence_ = next_guard_confidence;
   // The controller and NanoTrack have already committed their own box. Only
-  // the published dimensions use a detector candidate corroborated by both
-  // the detector guard and an accepted Recent observation. This keeps the
-  // next search crop and the visual-occlusion reference independent of the
-  // detector's size measurement.
+  // the published geometry uses detector evidence corroborated by an accepted
+  // Recent observation. The next search crop and visual-occlusion reference
+  // continue to use the internal tracker box.
   if (result.output.accepted && !result.output.reacquired &&
       result.output.accepted_observation_path == AcceptedObservationPath::kDirect &&
       result.output.selected_template == TemplateKind::kRecent) {
@@ -865,14 +866,46 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         target.width);
     const float height = next_dimension(previous.height, tracker_box.height,
         target.height);
-    const float center_x = tracker_box.x + 0.5F * tracker_box.width;
-    const float center_y = tracker_box.y + 0.5F * tracker_box.height;
+    const float tracker_center_x = tracker_box.x + 0.5F * tracker_box.width;
+    const float tracker_center_y = tracker_box.y + 0.5F * tracker_box.height;
+    float desired_offset_x = 0.0F;
+    float desired_offset_y = 0.0F;
+    if (tracking_size_supported && !guard_size_supported) {
+      const auto& detector_box = *confirmed_tracking_size_candidate_;
+      const float tracker_area = tracker_box.width * tracker_box.height;
+      const float detector_area = detector_box.width * detector_box.height;
+      // A larger detector envelope can expose a tracker center bias caused
+      // by undersizing. Equal or smaller envelopes keep the tracker center.
+      // The two-hit identity gate above must already have passed.
+      const float weight = std::clamp(detector_area / tracker_area - 1.0F,
+                                      0.0F, 0.5F);
+      desired_offset_x = weight *
+          (detector_box.x + 0.5F * detector_box.width - tracker_center_x);
+      desired_offset_y = weight *
+          (detector_box.y + 0.5F * detector_box.height - tracker_center_y);
+    }
+    const float max_offset = controller_.config().accepted_center_max_correction_ratio *
+        std::hypot(tracker_box.width, tracker_box.height);
+    const float alpha = controller_.config().accepted_center_smoothing_alpha;
+    published_center_offset_x_ = std::clamp(
+        published_center_offset_x_ + alpha *
+            (desired_offset_x - published_center_offset_x_),
+        -max_offset, max_offset);
+    published_center_offset_y_ = std::clamp(
+        published_center_offset_y_ + alpha *
+            (desired_offset_y - published_center_offset_y_),
+        -max_offset, max_offset);
+    const float center_x = tracker_center_x + published_center_offset_x_;
+    const float center_y = tracker_center_y + published_center_offset_y_;
     const BBox published = clip_bbox(
         BBox{center_x - 0.5F * width, center_y - 0.5F * height,
              width, height}, image.width, image.height);
     result.detector_size_output_applied =
         std::fabs(published.width - tracker_box.width) > 0.01F ||
         std::fabs(published.height - tracker_box.height) > 0.01F;
+    result.detector_center_output_applied =
+        std::hypot(published_center_offset_x_,
+                   published_center_offset_y_) > 0.01F;
     result.output.tracking_bbox = published;
     result.output.control_bbox = published;
     published_tracking_bbox_ = published;
@@ -882,6 +915,8 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     }
   } else {
     published_tracking_bbox_.reset();
+    published_center_offset_x_ = 0.0F;
+    published_center_offset_y_ = 0.0F;
     last_supported_published_bbox_.reset();
     last_published_support_ms_.reset();
   }

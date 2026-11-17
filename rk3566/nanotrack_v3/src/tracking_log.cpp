@@ -1080,6 +1080,10 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
     if (!row.note.empty()) row.note += ";";
     row.note += "DETECTOR_VERIFIED_OUTPUT_SIZE";
   }
+  if (result.detector_center_output_applied) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "DETECTOR_VERIFIED_OUTPUT_CENTER";
+  }
   if (result.detector_tracking_size_confirmed) {
     if (!row.note.empty()) row.note += ";";
     row.note += "DETECTOR_TRACKING_SIZE_CONFIRMED";

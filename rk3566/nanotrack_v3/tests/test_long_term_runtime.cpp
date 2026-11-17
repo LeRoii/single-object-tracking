@@ -1890,6 +1890,8 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
     config.detector_confirmation_iou = 0.50F;
     config.confirmation_required = 2;
     config.max_accepted_scale_step_ratio = 0.05F;
+    config.accepted_center_smoothing_alpha = 0.35F;
+    config.accepted_center_max_correction_ratio = 0.25F;
     config.stable_frames_for_update = 99;
     FakeTracker tracker;
     tracker.reliable_bbox = BBox{40, 30, 20, 20};
@@ -1914,16 +1916,22 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
     for (int frame = 3; frame <= 12; ++frame) {
       last = runtime.process_frame(image, frame, frame * 40);
     }
-    return std::array<float, 6>{first.output.tracking_bbox.width,
+    return std::array<float, 10>{first.output.tracking_bbox.width,
         second.output.tracking_bbox.width,
         runtime.controller().current_bbox().width,
         tracker.committed_bbox.width,
         second.detector_tracking_size_confirmed ? 1.0F : 0.0F,
-        last.output.tracking_bbox.width};
+        last.output.tracking_bbox.width,
+        first.output.tracking_bbox.x + 0.5F * first.output.tracking_bbox.width,
+        second.output.tracking_bbox.x + 0.5F * second.output.tracking_bbox.width,
+        last.output.tracking_bbox.x + 0.5F * last.output.tracking_bbox.width,
+        tracker.committed_bbox.x + 0.5F * tracker.committed_bbox.width};
   };
   const auto corroborated = run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}});
   const auto undersized_tracker = run({
       DetectorCandidate{BBox{35, 25, 30, 30}, 0.8F, 2}});
+  const auto offset_detector = run({
+      DetectorCandidate{BBox{39, 28, 24, 24}, 0.8F, 2}});
   expect_true(std::fabs(corroborated[0] - 20.0F) < 0.01F &&
                   corroborated[1] > 20.0F && corroborated[1] <= 21.01F &&
                   std::fabs(corroborated[2] - 20.0F) < 0.01F &&
@@ -1941,6 +1949,22 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
                   undersized_tracker[5] > 22.5F &&
                   undersized_tracker[5] <= 25.01F,
               "a centered 1.5x detector box can correct tracker undersizing");
+  expect_true(std::fabs(offset_detector[6] - 50.0F) < 0.01F &&
+                  offset_detector[7] > 50.0F &&
+                  offset_detector[7] < 50.5F &&
+                  offset_detector[8] >= offset_detector[7] &&
+                  offset_detector[8] <= 50.5F &&
+                  std::fabs(offset_detector[9] - 50.0F) < 0.01F &&
+                  std::fabs(corroborated[8] - 50.0F) < 0.01F,
+              "confirmed larger detector envelope smoothly corrects only the published center: " +
+                  std::to_string(offset_detector[6]) + "/" +
+                  std::to_string(offset_detector[7]) + "/" +
+                  std::to_string(offset_detector[8]) + "/" +
+                  std::to_string(offset_detector[9]) + "/" +
+                  std::to_string(corroborated[8]) + "/" +
+                  std::to_string(offset_detector[1]) + "/" +
+                  std::to_string(offset_detector[4]) + "/" +
+                  std::to_string(offset_detector[5]));
   for (const auto& invalid : {
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 0}}),
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.2F, 2}}),
