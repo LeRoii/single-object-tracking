@@ -410,20 +410,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
               nearest_distance <= visual_suspect_max_center_px_ &&
               nearest_confidence >= visual_suspect_min_confidence_;
           visual_ambiguous = nearby_candidates > 1;
-          // A severe appearance loss and a fresh detector crop containing no
-          // recognizable object are independent evidence against accepting
-          // this frame's Recent box. A mildly changed visible target can also
-          // be missed by the detector, so require a stronger brightness loss
-          // than the threshold that merely starts the visual probe.
-          if (detected->batch.source_frame_id == frame_id &&
-              detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion &&
-              detected->batch.raw_candidate_count == 0 &&
-              detected->batch.candidates.empty() &&
-              bright_fraction(image, recent->bbox) <
-                  0.75F * visual_suspect_bright_ratio_ *
-                      median_brightness(trusted_brightness_)) {
-            result.plan.visual_occlusion_search = true;
-          }
         }
       } catch (const std::exception& error) {
         result.detector.error = error.what();
