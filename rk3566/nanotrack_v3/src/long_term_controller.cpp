@@ -978,8 +978,10 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
                         partial_visibility ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
+    if (response_clean_since_ms_ || !response_degraded_since_ms_) {
+      response_degraded_since_ms_ = plan.timestamp_ms;
+    }
     response_clean_since_ms_.reset();
-    if (!response_degraded_since_ms_) response_degraded_since_ms_ = plan.timestamp_ms;
     if (!suspected_since_ms_ &&
         plan.timestamp_ms - *response_degraded_since_ms_ >= config_.suspicion_enter_ms) {
       suspected_since_ms_ = plan.timestamp_ms;
@@ -994,9 +996,22 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
     return RecentDisposition::kTentative;
   }
 
-  response_degraded_since_ms_.reset();
   if (recent.quality != QualityLevel::kReliable) return RecentDisposition::kSearch;
-  if (!suspected_since_ms_) return RecentDisposition::kDirect;
+  if (config_.tentative_requires_clear_interval &&
+      !suspected_since_ms_ && response_degraded_since_ms_) {
+    // A single clean response cannot erase a tentative degradation. Apply
+    // the same clear interval used after entering sustained suspicion.
+    if (!response_clean_since_ms_) response_clean_since_ms_ = plan.timestamp_ms;
+    if (plan.timestamp_ms - *response_clean_since_ms_ <
+        config_.suspicion_clear_ms) {
+      return RecentDisposition::kTentative;
+    }
+  }
+  response_degraded_since_ms_.reset();
+  if (!suspected_since_ms_) {
+    response_clean_since_ms_.reset();
+    return RecentDisposition::kDirect;
+  }
   if (!response_clean_since_ms_) response_clean_since_ms_ = plan.timestamp_ms;
   if (plan.timestamp_ms - *response_clean_since_ms_ < config_.suspicion_clear_ms) {
     return RecentDisposition::kTentative;

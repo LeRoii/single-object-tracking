@@ -71,6 +71,7 @@ struct ControllerConfig {
   // Candidate defaults pending calibration.
   std::int64_t suspicion_enter_ms = 100;
   std::int64_t suspicion_clear_ms = 100;
+  bool tentative_requires_clear_interval = false;
   float response_psr_drop_ratio = 0.25F;
   float response_apce_drop_ratio = 0.30F;
   // Optional car-only early partial-visibility gate. Zero disables both.
