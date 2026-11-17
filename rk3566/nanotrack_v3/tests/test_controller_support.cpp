@@ -311,7 +311,6 @@ int main() {
         load_controller_config(config_dir + "visible-dual-gt-visual-gate.conf");
     expect_true(!visual.calibrated &&
                     visual.visual_suspect_bright_ratio == 0.90F &&
-                    visual.motion_search_rebase_min_center_ratio == 0.25F &&
                     visual.visual_suspect_min_confidence == 0.40F &&
                     visual.visual_suspect_max_center_px == 30.0F &&
                     visual.visual_suspect_consecutive_frames == 2,
@@ -521,10 +520,6 @@ int main() {
   identity_variant.motion_search_confidence_ms += 1;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes motion search confidence time");
-  identity_variant = default_visible;
-  identity_variant.motion_search_rebase_min_center_ratio = 0.25F;
-  expect_true(controller_config_identity(identity_variant) != default_identity,
-              "built-in identity includes frozen-search rebase threshold");
   identity_variant = default_visible;
   identity_variant.motion_max_speed_diagonals_per_s *= 0.5F;
   expect_true(controller_config_identity(identity_variant) != default_identity,
@@ -895,7 +890,7 @@ int main() {
   expect_throws([&] { uninitialized_motion.snapshot(0); },
                 "uninitialized motion snapshots fail closed");
 
-  for (int invalid_case = 0; invalid_case < 7; ++invalid_case) {
+  for (int invalid_case = 0; invalid_case < 5; ++invalid_case) {
     ControllerConfig invalid_motion_config;
     if (invalid_case == 0) invalid_motion_config.motion_search_confidence_ms = 0;
     if (invalid_case == 1) invalid_motion_config.motion_max_speed_diagonals_per_s = 0.0F;
@@ -903,8 +898,6 @@ int main() {
     if (invalid_case == 3) invalid_motion_config.motion_scale_rate_limit_per_s =
         std::numeric_limits<float>::quiet_NaN();
     if (invalid_case == 4) invalid_motion_config.search_probe_interval_ms = 0;
-    if (invalid_case == 5) invalid_motion_config.motion_search_rebase_min_center_ratio = -0.1F;
-    if (invalid_case == 6) invalid_motion_config.motion_search_rebase_min_center_ratio = 1.1F;
     expect_throws([&] { validate_controller_config(invalid_motion_config); },
                   "invalid motion-search limits fail configuration validation");
   }
