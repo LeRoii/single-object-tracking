@@ -2871,13 +2871,13 @@ void test_tentative_requires_clean_interval_when_enabled() {
   for (std::uint64_t id = 1; id <= 3; ++id) track(id, healthy);
   expect_true(!track(4, degraded).accepted,
               "a weak response starts tentative tracking");
-  for (std::uint64_t id : {5U, 6U, 7U}) {
+  for (std::uint64_t id : {5U, 6U, 7U, 8U, 9U}) {
     const auto output = track(id, healthy);
     expect_true(!output.accepted &&
                     output.tracking_phase == TrackingPhase::kSuspected,
                 "clean responses remain tentative until the configured clear interval");
   }
-  const auto cleared = track(8, healthy);
+  const auto cleared = track(10, healthy);
   expect_true(cleared.accepted &&
                   cleared.tracking_phase == TrackingPhase::kTracking &&
                   !controller.response_degraded_since_ms_ &&

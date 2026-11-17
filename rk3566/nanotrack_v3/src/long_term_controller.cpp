@@ -999,11 +999,11 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   if (recent.quality != QualityLevel::kReliable) return RecentDisposition::kSearch;
   if (config_.tentative_requires_clear_interval &&
       !suspected_since_ms_ && response_degraded_since_ms_) {
-    // A single clean response cannot erase a tentative degradation. Apply
-    // the same clear interval used after entering sustained suspicion.
+    // A single clean response cannot erase a tentative degradation. Wait
+    // through the existing uncertainty budget before trusting it again.
     if (!response_clean_since_ms_) response_clean_since_ms_ = plan.timestamp_ms;
     if (plan.timestamp_ms - *response_clean_since_ms_ <
-        config_.suspicion_clear_ms) {
+        std::max(config_.suspicion_clear_ms, config_.uncertain_ms)) {
       return RecentDisposition::kTentative;
     }
   }
