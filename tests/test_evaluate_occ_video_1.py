@@ -157,6 +157,12 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         current_report = evaluator.evaluate(contract, rows, "full")
         self.assertEqual(current_report["verdict"], "PASS")
         self.assertEqual(current_report["reacquisition"]["frames"], [5])
+        rows[5]["recovery_confirmation_hits"] = 3
+        self.assertEqual(evaluator.evaluate(contract, rows, "full")["verdict"], "PASS")
+        rows[5]["recovery_confirmation_hits"] = 1
+        self.assertFalse(evaluator.evaluate(contract, rows, "full")
+                         ["gates"]["reacquisition_claims"]["passed"])
+        rows[5]["recovery_confirmation_hits"] = 2
         self.assertEqual(report["strata"]["full_occlusion"]["frames"], 3)
         self.assertEqual(report["strata"]["out_of_view"]["frames"], 2)
         self.assertEqual(len(report["reacquisition"]["events"]), 1)
