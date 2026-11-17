@@ -231,7 +231,8 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
     RecoveryCandidateSource source, const BBox& bbox, float confidence,
     std::optional<std::int64_t> source_timestamp_ms,
     std::optional<int> detector_class_id, bool tracker_verified,
-    float motion_residual, std::optional<BBox> subtarget_region) {
+    float motion_residual, std::optional<BBox> subtarget_region,
+    std::optional<RecoveryCandidateKey> triad_key) {
   if (!frame_ || !valid_box(bbox) || !std::isfinite(confidence) ||
       confidence < 0.0F || confidence > 1.0F ||
       !std::isfinite(motion_residual) || motion_residual < 0.0F ||
@@ -247,22 +248,38 @@ std::optional<RecoveryCandidateKey> RecoveryCandidateTable::observe(
     return std::nullopt;
   }
   std::optional<RecoveryCandidateKey> matched;
-  for (const auto& candidate : entries_) {
-    const bool compare_regions = detector && subtarget_region && candidate.subtarget_carrier;
-    const auto& same_source = candidate.from(source);
-    const BBox& reference = compare_regions ? *candidate.subtarget_carrier :
-        same_source ? same_source->bbox : candidate.preferred_evidence().bbox;
-    const BBox& observed = compare_regions ? *subtarget_region : bbox;
-    const bool consistent = !detector && same_source
-        ? temporally_consistent(reference, observed)
-        : geometry_consistent(reference, observed);
-    if (!consistent) continue;
-    if (matched) {
-      unrepresented_conflict_ = FrameStamp{evidence.frame_id, evidence.timestamp_ms};
-      mark_identity_conflict();
-      return std::nullopt;
+  if (!detector && triad_key && focused_detector_ == triad_key &&
+      triad_overflow_override_) {
+    const auto* focused = find(*triad_key);
+    if (focused && focused->from(RecoveryCandidateSource::kDetector) &&
+        geometry_consistent(
+            focused->from(RecoveryCandidateSource::kDetector)->bbox, bbox) &&
+        (!focused->from(source) ||
+         temporally_consistent(focused->from(source)->bbox, bbox))) {
+      // The current frame's Recent/Safe pair uniquely selected this detector.
+      // A second tracker-only hypothesis covering the same car is duplicate
+      // bookkeeping, not a second detected identity.
+      matched = triad_key;
     }
-    matched = candidate.key;
+  }
+  if (!matched) {
+    for (const auto& candidate : entries_) {
+      const bool compare_regions = detector && subtarget_region && candidate.subtarget_carrier;
+      const auto& same_source = candidate.from(source);
+      const BBox& reference = compare_regions ? *candidate.subtarget_carrier :
+          same_source ? same_source->bbox : candidate.preferred_evidence().bbox;
+      const BBox& observed = compare_regions ? *subtarget_region : bbox;
+      const bool consistent = !detector && same_source
+          ? temporally_consistent(reference, observed)
+          : geometry_consistent(reference, observed);
+      if (!consistent) continue;
+      if (matched) {
+        unrepresented_conflict_ = FrameStamp{evidence.frame_id, evidence.timestamp_ms};
+        mark_identity_conflict();
+        return std::nullopt;
+      }
+      matched = candidate.key;
+    }
   }
 
   const auto index = source_index(source);
