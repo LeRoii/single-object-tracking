@@ -1922,6 +1922,48 @@ void test_fresh_detector_anchor_survives_unconfirmed_tracker_offset() {
   small_offset.abort_frame();
 }
 
+void test_early_near_motion_recovery() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.detector_interval_ms = 20;
+  config.detector_candidate_max_center_ratio = 1.0F;
+  config.search_reacquisition_min_age_ms = 200;
+  config.search_early_near_motion_age_ms = 80;
+  config.recovery_confirmation_required = 3;
+  config.recovery_requires_detector_support = true;
+  const auto run = [&](const BBox& detector_box) {
+    ResolvedControllerFixture controller(config);
+    const BBox initial{100, 100, 40, 40};
+    controller.initialize(initial, 0, 0, {400, 300},
+                          make_fixed_target_class(2, true));
+    reject_frame(controller, 1, 40);
+    auto plan = controller.begin_frame(2, 80, true);
+    DetectorBatch batch{2, 80, {{detector_box, 0.9F, 2}}};
+    if (plan.detector_request) batch.generation = plan.detector_request->generation;
+    controller.finish_frame(plan, {}, batch);
+    plan = controller.begin_frame(3, 120, false);
+    const auto first = controller.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, detector_box, 3),
+               reliable_observation(plan, TemplateKind::kSafe, detector_box, 3)},
+        std::nullopt);
+    expect_true(!first.accepted, "one early near-motion hit cannot recover");
+    plan = controller.begin_frame(4, 160, false);
+    return controller.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, detector_box, 4),
+               reliable_observation(plan, TemplateKind::kSafe, detector_box, 4)},
+        std::nullopt);
+  };
+  const auto near = run({102, 102, 40, 40});
+  expect_true(near.accepted && near.reacquired &&
+                  near.recovery_confirmation_hits >= 2,
+              "detector plus two reliable template hits near motion recover early");
+  const auto far = run({150, 100, 40, 40});
+  expect_true(!far.accepted && !far.reacquired,
+              "distant lookalike cannot use early near-motion recovery");
+}
+
 void test_subtarget_probe_abort_does_not_advance_cursor() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3193,6 +3235,7 @@ int main() {
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
   test_fresh_detector_anchor_survives_unconfirmed_tracker_offset();
+  test_early_near_motion_recovery();
   test_frozen_motion_single_near_detector_probe();
   test_verified_recovery_blends_fresh_detector_center();
   test_subtarget_probe_abort_does_not_advance_cursor();

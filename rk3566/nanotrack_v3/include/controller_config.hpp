@@ -143,6 +143,9 @@ struct ControllerConfig {
   bool recovery_restore_initial_aspect = false;
   bool lower_band_visibility_veto = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
+  // Optional earlier confirmation for a detector/dual-template match close to
+  // a confident motion prediction. Zero disables the experimental path.
+  std::int64_t search_early_near_motion_age_ms = 0;
   std::int64_t motion_search_confidence_ms = 1000;
   float motion_max_speed_diagonals_per_s = 100.0F;
   float motion_max_acceleration_diagonals_per_s2 = 1000.0F;
