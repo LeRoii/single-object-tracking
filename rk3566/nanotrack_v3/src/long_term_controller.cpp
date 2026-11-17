@@ -1291,10 +1291,20 @@ LongTermController::confirm_recovery_candidate(
          !recovery_candidates_.triad_confirmed(*key)))
       return false;
     const auto* candidate = recovery_candidates_.find(*key);
+    // A motion prediction held through occlusion can lag a returning target.
+    // Three independent tracker hits at the unique detector region, with
+    // fresh Recent/Safe agreement, are stronger evidence than that stale
+    // center. The detector box itself still cannot authorize control.
+    const bool verified_detector_triad = candidate &&
+        candidate->hits() >= static_cast<std::size_t>(config_.recovery_confirmation_required) &&
+        candidate->has_detector_supported_hit() &&
+        recovery_candidates_.triad_confirmed(*key) &&
+        recent_key == key && safe_key == key;
     return candidate &&
         !(config_.detector_target_mode == DetectorTargetMode::kFullObject &&
           recent_key == key && safe_key == key &&
-          !motion_center_aligned(recent) && !motion_center_aligned(safe)) &&
+          !motion_center_aligned(recent) && !motion_center_aligned(safe) &&
+          !verified_detector_triad) &&
         (!config_.recovery_requires_detector_support ||
          candidate->has_detector_supported_hit()) &&
         (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||

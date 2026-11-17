@@ -2140,6 +2140,46 @@ void test_atomic_search_reacquisition_and_template_probation() {
               "second hit outside confirmation window cannot commit");
 }
 
+void test_far_recovery_needs_verified_detector_triad() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.recovery_requires_detector_support = true;
+  config.recovery_confirmation_required = 3;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  const BBox initial{40, 30, 20, 20};
+  const BBox returned{125, 90, 20, 20};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(initial, 0, 0, {240, 160});
+  reject_frame(controller, 1, 40);
+  ControllerOutput output;
+  for (std::uint64_t frame : {2U, 3U, 4U}) {
+    const auto plan = controller.begin_frame(frame, frame * 40, false);
+    if (frame == 2) {
+      const auto detector_key = controller.recovery_candidates_.observe(
+          RecoveryCandidateSource::kDetector, returned, 0.9F,
+          plan.timestamp_ms, 2, false, 0.0F);
+      expect_true(detector_key.has_value(), "returning detector candidate is queued");
+    }
+    output = controller.finish_frame(
+        plan,
+        {reliable_observation(plan, TemplateKind::kRecent, returned, frame),
+         reliable_observation(plan, TemplateKind::kSafe, returned, frame)},
+        std::nullopt);
+    if (frame < 4) {
+      expect_true(!output.accepted && !output.reacquired,
+                  "distant candidate remains provisional before three tracker hits");
+    }
+  }
+  expect_true(output.accepted && output.reacquired &&
+                  output.selected_template == TemplateKind::kRecent &&
+                  output.control_source == ControlSource::kObservation,
+              "unique detector and three agreeing tracker hits override stale motion center");
+}
+
 void test_conflicted_recovery_needs_matching_detector_evidence() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2958,6 +2998,7 @@ int main() {
   test_unified_recovery_candidate_cleanup();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
+  test_far_recovery_needs_verified_detector_triad();
   test_conflicted_recovery_needs_matching_detector_evidence();
   test_recovery_probation_cleanup();
 

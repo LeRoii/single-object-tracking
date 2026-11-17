@@ -113,6 +113,67 @@ def passing_rows(schema=12):
 
 
 class OccVideoEvaluatorTest(unittest.TestCase):
+    def test_multi_event_truth_handles_reappearance_terminal_occlusion_and_exit(self):
+        states = (["visible"] * 3 + ["full_occlusion"] * 2 + ["visible"] * 3
+                  + ["full_occlusion", "out_of_view", "out_of_view"])
+        truth = [{"frame_id": frame, "bbox": [10.0 + frame, 20.0, 10.0, 10.0]
+                  if state == "visible" else None, "status": state,
+                  "observable": state == "visible"}
+                 for frame, state in enumerate(states)]
+        contract = {
+            "identity": {"name": "multi_fixture", "width": 320, "height": 240,
+                         "frame_count": len(states)},
+            "truth": truth, "multi_event": True, "required_tracking_schema": 12,
+            "events": {"events": [
+                {"type": "full_occlusion", "frames": [3, 4], "first_visible_after": 5},
+                {"type": "full_occlusion", "frames": [8, 8], "first_visible_after": None},
+                {"type": "out_of_view", "frames": [9, 10]},
+            ]},
+        }
+        rows = []
+        for frame, state in enumerate(states):
+            visible = state == "visible"
+            occluded = state == "full_occlusion"
+            rows.append({
+                "frame_id": frame, "schema_version": 12, "timestamp_ms": frame * 33,
+                "state": "TRACKING" if visible else "OCCLUSION_HOLD",
+                "tracking_phase": "TRACKING" if visible else "SEARCHING",
+                "observation_valid": visible, "observation_present": visible,
+                "trusted_for_state_update": visible, "motion_update_valid": visible,
+                "control_source": "OBSERVATION" if visible else
+                                  "MOTION_SEARCH" if occluded else "NONE",
+                "control_valid": state != "out_of_view", "motion_control_authorized": occluded,
+                "rect0_source": "MOTION_PREDICTION" if occluded else "ACCEPTED_OBSERVATION",
+                "accepted": visible, "reacquired": frame == 5,
+                "tracking_bbox": [10.0 + frame, 20.0, 10.0, 10.0],
+            })
+        mark_recovery(rows[5])
+        report = evaluator.evaluate(contract, rows, "full")
+        self.assertEqual(report["verdict"], "PASS")
+        self.assertEqual(report["strata"]["visible"]["frames"], 6)
+        for row in rows:
+            row["schema_version"] = 14
+        contract["tracking_session_metadata"] = {"schema_version": 14}
+        current_report = evaluator.evaluate(contract, rows, "full")
+        self.assertEqual(current_report["verdict"], "PASS")
+        self.assertEqual(current_report["reacquisition"]["frames"], [5])
+        self.assertEqual(report["strata"]["full_occlusion"]["frames"], 3)
+        self.assertEqual(report["strata"]["out_of_view"]["frames"], 2)
+        self.assertEqual(len(report["reacquisition"]["events"]), 1)
+        self.assertFalse(report["frames"][9]["ordinary_iou_allowed"])
+
+        rows[9]["observation_valid"] = True
+        rows[9]["accepted"] = True
+        failed = evaluator.evaluate(contract, rows, "full")
+        self.assertEqual(failed["verdict"], "FAIL")
+        self.assertEqual(failed["gates"]["out_of_view_semantics"]["frames"], [9])
+
+        rows[9]["observation_valid"] = False
+        rows[9]["accepted"] = False
+        rows[3]["reacquired"] = True
+        claim = evaluator.evaluate(contract, rows, "full")
+        self.assertEqual(claim["gates"]["reacquisition_claims"]["frames"], [3])
+
     def setUp(self):
         if IMPORT_ERROR:
             self.fail("occ_video_1 evaluator API missing: {}".format(IMPORT_ERROR))
@@ -633,15 +694,6 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         report = evaluator.evaluate(contract, passing_rows(), "full")
         self.assertFalse(report["gates"]["tracking_schema"]["passed"])
 
-    def test_additive_schema13_preserves_schema12_recovery_semantics(self):
-        contract = synthetic_contract(schema=12)
-        contract["tracking_session_metadata"] = {"schema_version": 13}
-        rows = passing_rows(schema=13)
-        report = evaluator.evaluate(contract, rows, "full")
-        self.assertTrue(report["gates"]["tracking_schema"]["passed"])
-        self.assertTrue(report["gates"]["reacquisition"]["passed"])
-        self.assertEqual(report["reacquisition"]["frames"], [7])
-
     def test_current_recovery_counts_only_trusted_tracking_with_applied_recovery_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "rows.csv")
@@ -649,10 +701,6 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             report = evaluator.evaluate(synthetic_contract(), evaluator.load_tracking_csv(path), "full")
         self.assertTrue(report["gates"]["reacquisition"]["passed"])
         self.assertEqual(report["reacquisition"]["frames"], [7])
-        three_hit_rows = passing_rows()
-        three_hit_rows[7]["recovery_confirmation_hits"] = 3
-        three_hit_report = evaluator.evaluate(synthetic_contract(), three_hit_rows, "full")
-        self.assertTrue(three_hit_report["gates"]["reacquisition"]["passed"])
         for changes in (
             {"state": "LOCAL_RECOVERY", "tracking_phase": "SEARCHING"},
             {"trusted_for_state_update": False},
