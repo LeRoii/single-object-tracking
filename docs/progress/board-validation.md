@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T19:32:09+08:00 可选双模板跟踪探针（仅诊断，待板端）
+
+- 起点 `codex/ten-target-smoothness@cfd18f0772535f1431bff41cb89cf6c5f15c5d9c`，工作树干净，上一十目标回放 6/10。剩余四目标失败中 003/004/009/010 均有完全遮挡仍接受观测的帧；其中 009/010 的 Recent PSR 仍较高，单调提高 PSR 门限不具通用性。先收集固定 Safe 模板与 Recent 模板在普通 TRACKING 的同帧响应及 IoU，核查是否有跨目标区分信号。
+- 新配置 `tracking_safe_probe_diagnostic=false` 默认不改变现有运行；显式设为 `true` 时，普通跟踪帧额外运行 Safe head，现有控制器仍按 Recent 决策，输出记录 Safe 原始响应和双模板 IoU。恢复期、probation 及未开启配置的路径不变。配置身份只在开关为真时追加新字段，避免默认配置无行为变化却变更原身份。单测验证配置身份和普通 TRACKING 双模板计划；主机 `cmake --build /tmp/nt-ten-target-build --parallel 4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure` 23/23 PASS，日志 `/tmp/nt-dual-probe-build.log`、`/tmp/nt-dual-probe-ctest.log` SHA-256 `8526b9857d9292ecb328f280917b991f885e4181a4e0ff130fe7e1cd86b1a3cc` / `b499b96f3a29177e7a6f62dcb642ecbeffdccc1b3094af4fcdea81f50dc1fcf9`。下一步在 RK3588 隔离目录开关开启跑失败目标与已通过对照，检查原始 Safe 证据、运行耗时和状态影响；本候选不是判定策略或新基线。
+
 ## 2026-11-17T19:25:05+08:00 保留普通冲突检查的三方候选：RK3588 十目标 6/10
 
 - 源码 `codex/ten-target-smoothness@a1aa4493649db7f196ba7fb83bbe914951a692bc`，包主机 `/tmp/nt-triad-safe-a1aa449.tar`、板端 `/home/neardi/Project/SOT/nt-triad-safe-a1aa449.tar` SHA-256 均 `91de16bbedc27e9af70e3139ded167344b1fc15ff0c1a33ecebc5af311fc81f7`；板端独立根 `/home/neardi/Project/SOT/nt-triad-safe-a1aa449`。原生 CMake 命令及 RKNN include/library 与上节 0be8f30 一致，build/CTest 23/23 PASS；`cmake.log` / `build.log` / `ctest.log` SHA-256 `325ad98ce8f3ad3e54628b9f6cb55b9a569795836524852d33beb536851d6db4` / `925ee2b87977993ad1f2618da2c9b781a9cb1bd2823b794ddf847341629b7863` / `5f45dd7cb2d11464de7f6cb0c617acf89a43eb43d419e85aebcd3d6f2bc41cef`。程序 `build/nanotrack_v3` SHA-256 `234730adcba1d90c4fd56551c8c68d9b1c8b9e3b5913405aaba8bd2778e67982`，运行配置 `runs/headless-on.conf` SHA-256 `7668c319313fdf1c21f583f9b22c8866eb0d06b8c3562c9c670a2a490e042c21`；controller 配置 SHA-256 `62607f7eb3798737fc927a1f997e0d52cc5f78a7250d8df8b23aebfb320d5f44`，视频、模型、manifest、labels 和 RKNN 版本沿用上节同一路径及已核验身份。
