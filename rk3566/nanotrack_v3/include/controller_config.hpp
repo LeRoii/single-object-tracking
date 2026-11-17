@@ -81,6 +81,11 @@ struct ControllerConfig {
   float visual_suspect_min_confidence = 0.40F;
   float visual_suspect_max_center_px = 30.0F;
   int visual_suspect_consecutive_frames = 2;
+  // Experimental detector corroboration of a reliable NanoTrack observation.
+  bool suspected_detector_guard_enabled = false;
+  float suspected_detector_guard_min_confidence = 0.35F;
+  float suspected_detector_guard_min_iou = 0.50F;
+  int suspected_detector_guard_required_hits = 2;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;

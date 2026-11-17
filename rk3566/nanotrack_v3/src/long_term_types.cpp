@@ -200,6 +200,7 @@ const char* to_string(DetectorRequestPurpose value) {
     case DetectorRequestPurpose::kInitialization: return "INITIALIZATION";
     case DetectorRequestPurpose::kDisplayRefresh: return "DISPLAY_REFRESH";
     case DetectorRequestPurpose::kVisualOcclusion: return "VISUAL_OCCLUSION";
+    case DetectorRequestPurpose::kSuspectedValidation: return "SUSPECTED_VALIDATION";
   }
   return "UNKNOWN";
 }

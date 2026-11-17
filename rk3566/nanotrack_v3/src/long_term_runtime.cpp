@@ -223,6 +223,14 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   last_visual_hit_frame_.reset();
   visual_hit_streak_ = 0;
   visual_streak_ambiguous_ = false;
+  guard_observations_.clear();
+  last_guard_request_ms_.reset();
+  last_guard_batch_frame_id_.reset();
+  last_guard_source_ms_.reset();
+  last_guard_candidate_bbox_.reset();
+  last_guard_confidence_.reset();
+  guard_hits_ = 0;
+  guard_stream_active_ = false;
   previous_output_phase_ = TrackingPhase::kTracking;
   last_initialization_ = result;
   initialized_ = true;
@@ -277,6 +285,13 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.detector.ready = detector_.available() && detector_.can_submit();
   result.plan = controller_.begin_frame(frame_id, timestamp_ms,
                                         result.detector.ready);
+  const auto& guard_config = controller_.config();
+  const bool guard_class = result.target_class.target_class_id &&
+      (*result.target_class.target_class_id == 0 ||
+       *result.target_class.target_class_id == 2);
+  const bool guard_stream = guard_config.suspected_detector_guard_enabled &&
+      guard_class && (result.plan.tracking_phase == TrackingPhase::kSuspected ||
+                      guard_stream_active_);
 
   std::optional<DetectorRequest> display_request;
   if (result.plan.request_detector && result.plan.detector_request) {
@@ -290,7 +305,8 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     } catch (const std::exception& error) {
       result.detector.error = error.what();
     }
-  } else if (!(visual_suspect_bright_ratio_ > 0.0F &&
+  } else if (!guard_stream &&
+             !(visual_suspect_bright_ratio_ > 0.0F &&
                previous_output_phase_ == TrackingPhase::kSuspected) &&
              adaptive_display_.should_request(result.plan.tracking_phase,
                                               timestamp_ms,
@@ -425,6 +441,24 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         next_streak >= visual_suspect_consecutive_frames_ +
             (ambiguous_streak ? 1 : 0);
   }
+  if (guard_stream && !visual_blocking_used &&
+      !result.plan.request_detector && result.detector.ready &&
+      (!last_guard_request_ms_ ||
+       timestamp_ms - *last_guard_request_ms_ >= guard_config.detector_interval_ms)) {
+    const DetectorRequest request{frame_id, timestamp_ms,
+        BBox{0.0F, 0.0F, float(image.width), float(image.height)},
+        std::numeric_limits<std::size_t>::max(), 0,
+        DetectorRequestPurpose::kSuspectedValidation};
+    result.detector.request_frame_id = frame_id;
+    result.detector.request_purpose = request.purpose;
+    try {
+      detector_.submit(image, request);
+      result.detector.request_submitted = true;
+      last_guard_request_ms_ = timestamp_ms;
+    } catch (const std::exception& error) {
+      result.detector.error = error.what();
+    }
+  }
   // Poll after inference so a detector result completed while NanoTrack ran
   // can still participate in this frame's recovery decision without waiting.
   std::optional<DetectorBatch> detector_batch;
@@ -450,19 +484,91 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
 
   std::optional<DetectorBatch> recovery_batch;
   std::optional<DetectorBatch> display_batch;
+  std::optional<DetectorBatch> guard_batch;
   if (detector_batch) {
     if (detector_batch->purpose == DetectorRequestPurpose::kDisplayRefresh) {
       display_batch = detector_batch;
     } else if (detector_batch->purpose == DetectorRequestPurpose::kSearchRecovery) {
       recovery_batch = detector_batch;
+    } else if (detector_batch->purpose == DetectorRequestPurpose::kSuspectedValidation) {
+      guard_batch = detector_batch;
     }
   }
+  auto next_guard_hits = guard_hits_;
+  auto next_guard_batch_frame_id = last_guard_batch_frame_id_;
+  auto next_guard_source_ms = last_guard_source_ms_;
+  auto next_guard_candidate_bbox = last_guard_candidate_bbox_;
+  auto next_guard_confidence = last_guard_confidence_;
+  const auto recent = std::find_if(result.observations.begin(),
+      result.observations.end(), [](const TrackerObservation& observation) {
+        return observation.template_kind == TemplateKind::kRecent;
+      });
+  if (guard_batch) {
+    std::optional<BBox> source_recent;
+    if (guard_batch->source_frame_id == frame_id &&
+        recent != result.observations.end()) {
+      source_recent = recent->bbox;
+    } else {
+      const auto source = std::find_if(guard_observations_.begin(),
+          guard_observations_.end(), [&](const GuardObservation& observation) {
+            return observation.frame_id == guard_batch->source_frame_id;
+          });
+      if (source != guard_observations_.end()) source_recent = source->recent_bbox;
+    }
+    const auto age = timestamp_ms - guard_batch->source_timestamp_ms;
+    const bool fresh = guard_class && age >= 0 &&
+        age <= guard_config.detector_stale_ms &&
+        guard_batch->source_frame_id <= frame_id &&
+        (!next_guard_batch_frame_id ||
+         guard_batch->source_frame_id > *next_guard_batch_frame_id);
+    const DetectorCandidate* match = nullptr;
+    int matches = 0;
+    if (fresh && source_recent && recent != result.observations.end()) {
+      for (const auto& candidate : guard_batch->candidates) {
+        if (candidate.class_id != *result.target_class.target_class_id ||
+            !std::isfinite(candidate.confidence) ||
+            candidate.confidence < guard_config.suspected_detector_guard_min_confidence ||
+            bbox_iou(candidate.bbox, *source_recent) <
+                guard_config.suspected_detector_guard_min_iou ||
+            bbox_iou(candidate.bbox, recent->bbox) <
+                guard_config.suspected_detector_guard_min_iou * 0.6F) continue;
+        match = &candidate;
+        ++matches;
+      }
+    }
+    next_guard_batch_frame_id = guard_batch->source_frame_id;
+    if (matches == 1) {
+      next_guard_hits = std::min(next_guard_hits + 1,
+          guard_config.suspected_detector_guard_required_hits);
+      next_guard_source_ms = guard_batch->source_timestamp_ms;
+      next_guard_candidate_bbox = match->bbox;
+      next_guard_confidence = match->confidence;
+    } else {
+      next_guard_hits = 0;
+      next_guard_source_ms.reset();
+      next_guard_candidate_bbox.reset();
+      next_guard_confidence.reset();
+    }
+  }
+  if (guard_stream && recent != result.observations.end() &&
+      next_guard_hits >= guard_config.suspected_detector_guard_required_hits &&
+      next_guard_source_ms && next_guard_candidate_bbox &&
+      timestamp_ms >= *next_guard_source_ms &&
+      timestamp_ms - *next_guard_source_ms <= guard_config.detector_stale_ms &&
+      bbox_iou(*next_guard_candidate_bbox, recent->bbox) >=
+          guard_config.suspected_detector_guard_min_iou * 0.6F) {
+    result.plan.suspected_detector_guard = true;
+  }
+  result.suspected_detector_guard_hits = next_guard_hits;
+  result.suspected_detector_guard_confidence = next_guard_confidence;
   // The finish call updates bounded tracking state in place. Keep its input
   // state until every fallible tracker callback has completed. The controller
   // already holds the pre-prediction checkpoint for the open frame.
   application_checkpoint.emplace(controller_);
   result.output =
       controller_.finish_frame(result.plan, result.observations, recovery_batch);
+  result.suspected_detector_guard_applied =
+      result.plan.suspected_detector_guard && result.output.accepted;
   if (result.plan.visual_occlusion_search &&
       result.output.tracking_phase == TrackingPhase::kSearching) {
     result.output.state_change_reason = "VISUAL_OCCLUSION_SEARCH";
@@ -527,6 +633,23 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     if (trusted_brightness_.size() > 8) trusted_brightness_.pop_front();
   }
   previous_output_phase_ = result.output.tracking_phase;
+  if (recent != result.observations.end()) {
+    guard_observations_.push_back(GuardObservation{frame_id, recent->bbox});
+    while (guard_observations_.size() > 8) guard_observations_.pop_front();
+  }
+  guard_stream_active_ = result.output.tracking_phase == TrackingPhase::kSuspected ||
+                         result.suspected_detector_guard_applied;
+  if (!guard_stream_active_) {
+    next_guard_hits = 0;
+    next_guard_source_ms.reset();
+    next_guard_candidate_bbox.reset();
+    next_guard_confidence.reset();
+  }
+  guard_hits_ = next_guard_hits;
+  last_guard_batch_frame_id_ = next_guard_batch_frame_id;
+  last_guard_source_ms_ = next_guard_source_ms;
+  last_guard_candidate_bbox_ = next_guard_candidate_bbox;
+  last_guard_confidence_ = next_guard_confidence;
   result.template_slot_revocation = pending_template_slot_revocation_;
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
   application_checkpoint.reset();

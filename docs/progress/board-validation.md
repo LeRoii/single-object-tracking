@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T13:09:51+08:00 SUSPECTED detector 佐证实验版：主机阶段
+
+- 分支/工作树 `codex/suspected-detector-guard` / `/home/u20/single-object-tracking/.worktrees/suspected-detector-guard`，起点 `Debug@3f6d9e36933a1802da83fd6ce6c24cee77492c34`，工作区初始干净；本条与实验代码同提交，板端结果另记。只在该分支的 `visible-dual-gt-visual-gate.conf` 启用新门，未改 main/Debug 基线。
+- 输入手测记录 `/tmp/nt-3c8-manual-frames.csv` SHA-256 `cf3dfa3e2bebd4ed62fd0b2d8f9d896fc65bf101c0a89a1b1a47010eb69c8d23`；同视频主机 PT detector 探针 `/tmp/nt-3c8-detector-probe-118-141.json` SHA-256 `09e9460bc62ce15d04fa0df3a7b19c64653380ba6d23191d3ee4ad2ad49d7df9`。原手测 120～141 帧无 detector 请求，主机 PT 在 120～140 帧全部找到与 Recent 原始框中心相距最多 3.2 px 的目标候选。该手点目标没有逐帧真值，主机 PT 不能代替板端 RKNN。
+- 实验实现：SUSPECTED 时异步检测；连续两次新鲜、同类别、唯一且与 Recent 重合的检测仅佐证可靠 NanoTrack 观测，允许其越过相对响应下降门，并维持运动更新；候选框不直接作为控制框。类别不符、位置不符、重复候选、过期结果或无跟踪观测均不得触发。保留现有搜索、遮挡和恢复保护。请求/返回用途记为 `SUSPECTED_VALIDATION`，使用现有运动门原因记 `DETECTOR_SUPPORTED_RECENT` 或 `DETECTOR_SUPPORTED_REANCHOR`。
+- 实际执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-suspected-guard-build -DBUILD_TESTING=ON -DENABLE_RKNN_RUNTIME=OFF -DCMAKE_BUILD_TYPE=Release`、`cmake --build /tmp/nt-suspected-guard-build -j4`、`ctest --test-dir /tmp/nt-suspected-guard-build --output-on-failure -j4`：23/23 PASS；`test_long_term_runtime` SHA-256 `7f9c4899fc7e765c3e29d5201682858840d3768c541743d3e26027d7b844e7e0`。测试包含连续匹配、错误类别/位置、歧义、过期及无跟踪观测。下一步在 RK3588 隔离目录原生编译并对原手点目标和两真值目标闭环回归，核对源码、二进制、模型及输出哈希；此阶段不是板端或吊舱验收。
+
 ## 2026-11-16T00:20:17+08:00 去顶部纹理门集成至 main/Debug
 
 - 根据用户对 car002 第 228 帧提前重捕的明确认可，将任务分支 `codex/remove-recovery-texture-veto@a084819789b2cabb8ba461dc2add2693491a09ee` 的通用算法与本任务进度提交集成：`main` 工作树 `/home/u20/single-object-tracking/.worktrees/occlusion-main-integration` 从 `17ef93287232656667d6d1099ca5cadb3a1b3d21` 依次 cherry-pick 至 `1774bcd`；`Debug` 工作树 `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking` 从 `3d7f579d3ec7bc0be830865615dc0132ca1a673b` fast-forward 至 `a084819`。两边通用 controller/config/runtime/tracking log、对应单测及 `scripts tests` 的 `git diff --quiet` exit 0；`git diff --name-only main Debug -- rk3566/nanotrack_v3 scripts tests` 仅有 CLI、交互控制/覆盖层、主入口、运行配置与三份交互测试共 10 个 Debug 专属文件。

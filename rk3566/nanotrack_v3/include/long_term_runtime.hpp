@@ -72,6 +72,9 @@ struct RuntimeFrameResult {
   std::optional<TemplateSlotRevocation> template_slot_revocation;
   ControllerOutput output{};
   DetectorDiagnostics detector{};
+  bool suspected_detector_guard_applied = false;
+  int suspected_detector_guard_hits = 0;
+  std::optional<float> suspected_detector_guard_confidence;
   float tracker_ms = 0.0F;
   float runtime_ms = 0.0F;
   bool tracker_skipped = false;
@@ -135,6 +138,18 @@ class LongTermRuntime {
   std::optional<std::uint64_t> last_visual_hit_frame_;
   int visual_hit_streak_ = 0;
   bool visual_streak_ambiguous_ = false;
+  struct GuardObservation {
+    std::uint64_t frame_id = 0;
+    BBox recent_bbox{};
+  };
+  std::deque<GuardObservation> guard_observations_;
+  std::optional<std::int64_t> last_guard_request_ms_;
+  std::optional<std::uint64_t> last_guard_batch_frame_id_;
+  std::optional<std::int64_t> last_guard_source_ms_;
+  std::optional<BBox> last_guard_candidate_bbox_;
+  std::optional<float> last_guard_confidence_;
+  int guard_hits_ = 0;
+  bool guard_stream_active_ = false;
   TrackingPhase previous_output_phase_ = TrackingPhase::kInvalid;
 };
 

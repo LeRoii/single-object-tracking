@@ -161,8 +161,10 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
       nanotrack::DetectorBatch batch;
       batch.source_frame_id = request.frame_id;
       batch.source_timestamp_ms = request.timestamp_ms;
+      batch.source_timestamp_ms -= source_age_ms;
       batch.generation = request.generation;
       batch.purpose = request.purpose;
+      batch.candidates = automatic_candidates;
       next_batch = batch;
     }
   }
@@ -202,6 +204,8 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
   bool ready = true;
   bool fail_next_poll = false;
   bool complete_immediately = false;
+  std::int64_t source_age_ms = 0;
+  std::vector<nanotrack::DetectorCandidate> automatic_candidates;
   int submit_calls = 0;
   int poll_calls = 0;
   int blocking_calls = 0;
@@ -1674,6 +1678,99 @@ void test_lower_band_visibility_veto() {
                   std::to_string(blocked.target_class.target_class_id.value_or(-1)));
 }
 
+void test_suspected_detector_guard(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const auto run = [&](bool enabled, BBox detection, int class_id,
+                       std::int64_t detector_age_ms,
+                       bool duplicate = false, bool lose_tracker = false) {
+    ControllerConfig config;
+    config.suspected_detector_guard_enabled = enabled;
+    config.suspected_detector_guard_min_confidence = 0.35F;
+    config.suspected_detector_guard_min_iou = 0.50F;
+    config.suspected_detector_guard_required_hits = 2;
+    config.detector_interval_ms = 40;
+    config.detector_stale_ms = 150;
+    config.reliable_psr = 5.0F;
+    config.reliable_peak_margin = 0.04F;
+    config.response_psr_drop_ratio = 0.20F;
+    config.occlusion_peak_margin_drop = 0.05F;
+    config.stable_frames_for_update = 99;
+    FakeTracker tracker;
+    FakeDetector detector;
+    detector.enabled = true;
+    detector.complete_immediately = true;
+    detector.source_age_ms = detector_age_ms;
+    detector.automatic_candidates = {{detection, 0.80F, class_id}};
+    if (duplicate) {
+      detector.automatic_candidates.push_back({detection, 0.75F, class_id});
+    }
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    const BBox target{40, 30, 20, 20};
+    runtime.initialize(image, target, 0, 0);
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      if (lose_tracker && plan.frame_id >= 8) {
+        tracker.observation_override = std::vector<TrackerObservation>{};
+        return;
+      }
+      const bool degraded = plan.frame_id >= 5;
+      const ResponseMetrics metrics = degraded
+          ? ResponseMetrics{0.92F, 0.90F, 6.0F, 12.0F, 0.05F}
+          : ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F};
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, target,
+                             metrics, TemplateKind::kRecent,
+                             tracker.search_token + 1}};
+    };
+    std::vector<RuntimeFrameResult> frames;
+    for (int frame = 1; frame <= 14; ++frame) {
+      frames.push_back(runtime.process_frame(image, frame, frame * 40));
+    }
+    return frames;
+  };
+  const BBox target{40, 30, 20, 20};
+  const auto supported = run(true, target, 2, 0);
+  const auto baseline = run(false, target, 2, 0);
+  const auto wrong_class = run(true, target, 0, 0);
+  const auto wrong_box = run(true, BBox{110, 30, 20, 20}, 2, 0);
+  const auto stale = run(true, target, 2, 200);
+  const auto ambiguous = run(true, target, 2, 0, true);
+  const auto no_tracker = run(true, target, 2, 0, false, true);
+  expect_true(supported[4].output.tracking_phase == TrackingPhase::kSuspected,
+              "PSR and peak-margin drop first makes the tracker tentative");
+  expect_true(supported[5].detector.request_purpose ==
+                  DetectorRequestPurpose::kSuspectedValidation &&
+                  supported[5].suspected_detector_guard_hits == 1 &&
+                  !supported[5].suspected_detector_guard_applied,
+              "first matching detector result is evidence but cannot clear suspicion");
+  expect_true(supported[6].suspected_detector_guard_applied &&
+                  supported[6].output.accepted &&
+                  supported[6].output.tracking_phase == TrackingPhase::kTracking &&
+                  supported[6].output.motion_update_valid,
+              "second matching detector result permits a reliable NanoTrack observation");
+  expect_true(supported[7].suspected_detector_guard_applied &&
+                  supported[7].output.accepted,
+              "fresh matching detector evidence maintains tracking through low PSR");
+  expect_true(std::none_of(baseline.begin(), baseline.end(),
+                  [](const RuntimeFrameResult& frame) {
+                    return frame.suspected_detector_guard_applied;
+                  }) &&
+                  baseline.back().output.tracking_phase == TrackingPhase::kSearching,
+              "disabled guard preserves the existing search transition");
+  for (const auto* frames : {&wrong_class, &wrong_box, &stale, &ambiguous}) {
+    expect_true(std::none_of(frames->begin(), frames->end(),
+                    [](const RuntimeFrameResult& frame) {
+                      return frame.suspected_detector_guard_applied;
+                    }) &&
+                    frames->back().output.tracking_phase == TrackingPhase::kSearching,
+                "mismatched, ambiguous, or stale detector evidence cannot override low PSR");
+  }
+  expect_true(no_tracker[6].suspected_detector_guard_applied &&
+                  !no_tracker[7].output.accepted &&
+                  !no_tracker[7].suspected_detector_guard_applied,
+              "detector support never authorizes control without a tracker observation");
+}
+
 int main() {
   using namespace nanotrack;
   test_tentative_recent_does_not_commit();
@@ -1683,6 +1780,7 @@ int main() {
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_visual_suspect_gate();
   test_lower_band_visibility_veto();
+  test_suspected_detector_guard(image);
   test_target_class_initialization(image);
   test_click_initialization_class_modes(image);
   test_target_class_session_config(image);

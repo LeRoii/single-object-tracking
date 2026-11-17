@@ -968,6 +968,11 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
       observation.decoded_bbox->height <=
           current_bbox_.height * config_.recent_visibility_height_ratio &&
       recent.center_residual >= config_.recent_visibility_center_residual;
+  if (plan.suspected_detector_guard &&
+      recent.quality == QualityLevel::kReliable && !partial_visibility) {
+    clear_suspicion();
+    return RecentDisposition::kDirect;
+  }
   const bool degraded = isolated_response_dip || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
                         partial_visibility ||
@@ -1651,6 +1656,25 @@ bool LongTermController::motion_input_allows_correction(
     motion_risk_streak_ = 0;
     return !motion_freeze_since_ms_;
   }
+  if (plan.suspected_detector_guard &&
+      selected.quality == QualityLevel::kReliable) {
+    if (motion_freeze_since_ms_ && !motion_last_clean_trend_) return false;
+    if (motion_freeze_since_ms_) {
+      output.motion_freeze_age_ms = plan.timestamp_ms - *motion_freeze_since_ms_;
+      motion_.reanchor_preserving_velocity(output.tracking_bbox,
+          *motion_last_clean_trend_, plan.timestamp_ms);
+      reset_motion_input_gate();
+      motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
+      output.motion_update_valid = true;
+      output.motion_freeze_cleared = true;
+      output.motion_gate_reason = "DETECTOR_SUPPORTED_REANCHOR";
+      return false;
+    }
+    motion_risk_streak_ = 0;
+    motion_response_drop_since_ms_.reset();
+    output.motion_gate_reason = "DETECTOR_SUPPORTED_RECENT";
+    return true;
+  }
   if (!response.reference && !motion_frozen_response_reference_) {
     motion_residual_history_.push_back(selected.center_residual);
     if (motion_residual_history_.size() >
@@ -1814,8 +1838,9 @@ void LongTermController::accept_observation(
       motion_.correct(output.tracking_bbox, plan.timestamp_ms);
       output.motion_update_valid = true;
       output.motion_correction_applied = true;
-      if (!response.psr_drop && !response.apce_drop &&
-          !response.peak_margin_drop) {
+      if (plan.suspected_detector_guard ||
+          (!response.psr_drop && !response.apce_drop &&
+           !response.peak_margin_drop)) {
         motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
       }
     }
@@ -2577,7 +2602,11 @@ ControllerOutput LongTermController::finish_frame(
     accept_observation(plan, *selected, acceptance_path, output, response);
     const bool response_degraded = response.psr_drop || response.apce_drop ||
                                    response.peak_margin_drop;
-    if (response_degraded) {
+    if (plan.suspected_detector_guard) {
+      search_motion_reference_ = motion_.snapshot(plan.timestamp_ms);
+      search_motion_reference_held_ = false;
+      search_motion_clean_since_ms_.reset();
+    } else if (response_degraded) {
       search_motion_reference_held_ = true;
       search_motion_clean_since_ms_.reset();
     } else if (search_motion_reference_held_) {
@@ -2595,7 +2624,9 @@ ControllerOutput LongTermController::finish_frame(
     }
     if (ordinary_recent && !recent_probation_) {
       response_baseline_.resume_tracking();
-      response_baseline_.observe_trusted(selected->observation.metrics);
+      if (!plan.suspected_detector_guard) {
+        response_baseline_.observe_trusted(selected->observation.metrics);
+      }
     }
   } else {
     motion_risk_streak_ = 0;
