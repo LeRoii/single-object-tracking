@@ -3052,7 +3052,7 @@ void test_verified_recovery_blends_fresh_detector_center() {
           plan.timestamp_ms, 2, false, 0.0F);
       expect_true(detector_key.has_value(), "fresh full-object detector seeds recovery");
     }
-    const BBox tracked{128, 90, 20, 20};
+    const BBox tracked{130, 90, 20, 20};
     output = controller.finish_frame(plan,
         {reliable_observation(plan, TemplateKind::kRecent, tracked, frame),
          reliable_observation(plan, TemplateKind::kSafe, tracked, frame)},
@@ -3068,12 +3068,36 @@ void test_verified_recovery_blends_fresh_detector_center() {
                   output.selected_observation_bbox.has_value(),
               "detector center is used only after tracker-verified recovery");
   if (output.accepted && output.selected_observation_bbox) {
-    expect_near(output.selected_observation_bbox->x, 128.0F, 0.01F,
+    expect_near(output.selected_observation_bbox->x, 130.0F, 0.01F,
                 "raw NanoTrack observation stays traceable");
-    expect_near(output.tracking_bbox.x, 126.5F, 0.01F,
+    expect_near(output.tracking_bbox.x, 127.5F, 0.01F,
                 "accepted center is the midpoint of tracker and detector");
     expect_near(output.control_bbox.x, output.tracking_bbox.x, 0.01F,
                 "verified blended center is the control box center");
+  }
+
+  ResolvedControllerFixture near(config);
+  near.initialize({40, 30, 20, 20}, 0, 0, {240, 160});
+  reject_frame(near, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    const auto plan = near.begin_frame(frame, frame * 40, false);
+    if (frame == 2) {
+      near.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
+                                        {125, 90, 20, 20}, 0.9F,
+                                        plan.timestamp_ms, 2, false, 0.0F);
+    }
+    const BBox tracked{128, 90, 20, 20};
+    output = near.finish_frame(plan,
+        {reliable_observation(plan, TemplateKind::kRecent, tracked, frame),
+         reliable_observation(plan, TemplateKind::kSafe, tracked, frame)},
+        std::nullopt);
+  }
+  expect_true(output.accepted && output.reacquired &&
+                  !output.recovery_detector_center_fused,
+              "small detector-tracker center difference keeps NanoTrack output");
+  if (output.accepted) {
+    expect_near(output.tracking_bbox.x, 128.0F, 0.01F,
+                "deadband leaves accepted tracker center unchanged");
   }
 }
 

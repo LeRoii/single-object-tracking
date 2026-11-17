@@ -1640,7 +1640,10 @@ void LongTermController::defer_recovery_acceptance(
   }
   // A detector-supported candidate has already passed the independent
   // NanoTrack confirmation gate. Use its recent full-object center as one
-  // measurement of the confirmed object, while retaining NanoTrack's size.
+  // measurement of the confirmed object when the centers differ materially,
+  // while retaining NanoTrack's size. A small correction needlessly changes
+  // the next tracker crop; half the existing confirmation center tolerance
+  // provides the scale-aware deadband.
   if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
       output.recovery_candidate_key) {
     const auto* candidate = recovery_candidates_.find(*output.recovery_candidate_key);
@@ -1651,7 +1654,9 @@ void LongTermController::defer_recovery_acceptance(
         detector->frame_id <= plan.frame_id &&
         detector->timestamp_ms <= plan.timestamp_ms &&
         plan.timestamp_ms - detector->timestamp_ms <= config_.detector_stale_ms &&
-        recovery_candidates_.geometry_consistent(bbox, detector->bbox)) {
+        recovery_candidates_.geometry_consistent(bbox, detector->bbox) &&
+        normalized_center_distance(bbox, detector->bbox) >=
+            0.5F * config_.detector_confirmation_center_distance) {
       const float tracker_cx = bbox.x + 0.5F * bbox.width;
       const float tracker_cy = bbox.y + 0.5F * bbox.height;
       const float detector_cx = detector->bbox.x + 0.5F * detector->bbox.width;
