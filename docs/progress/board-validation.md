@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T15:57:57+08:00 边缘离画风险修订候选
+
+- 上一候选 `codex/ten-target-smoothness@e6660ea2903e2f988364cde031b181e5cab3e84c` 源码包 `/tmp/nt-ten-target-e6660ea.tar` 与 RK3588 `/home/neardi/Project/SOT/ten-target-e6660ea/source.tar` SHA-256 同为 `6ff4ac0cef3f9c8b10ec4125e44730f9c481bae6df6c0b983bbdee850fec2419`。该隔离目录原生构建程序 SHA-256 `6194a99a813f890e776f4e706c8c227e0994f0d4c5675bb3939b4a6d44f48dda`，CTest 23/23 PASS；板端 cmake/build/CTest 日志 SHA-256 分别为 `5fb09a57de7a2cb1b5cfd3e0145127698c66eff362afd4ba1d7e37e4b4cf8b29` / `e75d8e32cdb066c263846d1c5f11b4a798d900042577b683512d649aefa0a7cc` / `d921bf2a5dc79185471f5cfed93db1c21d2fc74f3142a44221f2e545b7c622b8`。模型、视频和运行时身份见下节，同机不变。
+- 对 `car_004` 使用首帧真值框 `865.609,680.680,39.341,45.069` 分别以 guard 开关配置运行，输出在该板端目录 `runs/car004-on/` 和 `runs/car004-off/`，主机包 `/tmp/nt-e666-car004.tar.gz` SHA-256 `3613ac0b931733d620f6098eba01ba23bf32438fa1caf56ef8f306960097873e`。两者结果相同：第 156 帧恢复正确目标，可见平均 IoU 由上节旧程序 0.420 提高到 0.649；但目标贴下边缘于 241 帧离画后，在 262 帧错误重捕画面内另一辆车，评测 `out_of_view_semantics` 和 `reacquisition_claims` 均 FAIL。此版本不得推广。
+- 本修订在通用恢复确认中增加边缘离画方向门：最后可信框及当前运动预测都已贴同一图像边缘时，若新候选中心大幅反向跳回画面内，则不能把它当作同一目标的恢复；不影响非边缘处的三路恢复，也不把 detector 直接用于控制。加入远离画边界的负例到控制器单测；执行 `cmake --build /tmp/nt-ten-target-build -j4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure -j4`，主机 23/23 PASS。**尚未板端运行本修订**；板端上一候选的十目标 guard-off 全量回放仍在执行，需先完成并归档，再部署本修订进行同协议复测。正式生产 handoff 继续为未批准。
+
+
 ## 2026-11-17T15:48:51+08:00 十目标真值首轮与远距离三路恢复候选
 
 - 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点为已提交实验 `codex/suspected-detector-guard@57ee1acb843196d2368ccec2f2ea7d35c14578c5`；八条新增正式真值来自 `codex/occ-eight-target-ground-truth@acc855d0b45c9d1449e9e25b9e08573be1698c5c`，数据在 `/home/u20/single-object-tracking/data/occ_video_1/ground_truth/car_003` 至 `car_010`，各自 `labels.sha256` 和 `checksums.sha256` 校验均退出 0。视频仍为 SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`。本分支接入八目标多事件评测，并允许当前日志 schema 14 与已有 schema 12 同协议评测；`python3 -m unittest tests.test_evaluate_occ_video_1 -q` 为 24/24 PASS。

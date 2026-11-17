@@ -1285,12 +1285,39 @@ LongTermController::confirm_recovery_candidate(
     return distance <= config_.recovery_dual_template_max_motion_diagonals *
         std::hypot(predicted.width, predicted.height);
   };
+  const auto reverses_clipped_exit = [&](const BBox& bbox) {
+    // Once the last trusted box and coast prediction both touch an image
+    // boundary, a large jump back into the image is a new identity hypothesis.
+    // NanoTrack agreement on that interior object cannot establish that the
+    // original target returned after leaving the field of view.
+    const auto& old = current_bbox_;
+    const auto& predicted = plan.motion_predicted_bbox;
+    const float limit = 0.5F * std::hypot(predicted.width, predicted.height);
+    const float old_x = old.x + 0.5F * old.width;
+    const float old_y = old.y + 0.5F * old.height;
+    const float new_x = bbox.x + 0.5F * bbox.width;
+    const float new_y = bbox.y + 0.5F * bbox.height;
+    const auto at_left = [](const BBox& box) { return box.x <= 1.0F; };
+    const auto at_top = [](const BBox& box) { return box.y <= 1.0F; };
+    const auto at_right = [&](const BBox& box) {
+      return box.x + box.width >= frame_size_.width - 1.0F;
+    };
+    const auto at_bottom = [&](const BBox& box) {
+      return box.y + box.height >= frame_size_.height - 1.0F;
+    };
+    return (at_left(old) && at_left(predicted) && new_x - old_x > limit) ||
+           (at_right(old) && at_right(predicted) && old_x - new_x > limit) ||
+           (at_top(old) && at_top(predicted) && new_y - old_y > limit) ||
+           (at_bottom(old) && at_bottom(predicted) && old_y - new_y > limit);
+  };
   const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
     if (output.recovery_conflict || !key ||
         (!recovery_candidates_.confirmed(*key) &&
          !recovery_candidates_.triad_confirmed(*key)))
       return false;
     const auto* candidate = recovery_candidates_.find(*key);
+    if (candidate && reverses_clipped_exit(candidate->preferred_evidence().bbox))
+      return false;
     // A motion prediction held through occlusion can lag a returning target.
     // Three independent tracker hits at the unique detector region, with
     // fresh Recent/Safe agreement, are stronger evidence than that stale

@@ -2178,6 +2178,27 @@ void test_far_recovery_needs_verified_detector_triad() {
                   output.selected_template == TemplateKind::kRecent &&
                   output.control_source == ControlSource::kObservation,
               "unique detector and three agreeing tracker hits override stale motion center");
+
+  ResolvedControllerFixture exited(config);
+  const BBox edge{40, 140, 20, 20};
+  const BBox other_car{45, 60, 20, 20};
+  exited.initialize(edge, 0, 0, {240, 160});
+  reject_frame(exited, 1, 40);
+  for (std::uint64_t frame : {2U, 3U, 4U}) {
+    const auto plan = exited.begin_frame(frame, frame * 40, false);
+    if (frame == 2) {
+      exited.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
+                                          other_car, 0.9F, plan.timestamp_ms,
+                                          2, false, 0.0F);
+    }
+    output = exited.finish_frame(
+        plan,
+        {reliable_observation(plan, TemplateKind::kRecent, other_car, frame),
+         reliable_observation(plan, TemplateKind::kSafe, other_car, frame)},
+        std::nullopt);
+  }
+  expect_true(!output.accepted && !output.reacquired,
+              "interior object cannot replace a target that coasted at the image edge");
 }
 
 void test_conflicted_recovery_needs_matching_detector_evidence() {
