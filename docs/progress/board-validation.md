@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T22:18:53+08:00 十目标失败帧视觉审计：car004 第 42 帧待真值复核
+
+- 只读分析上一节板端算法源码 `93eb13ef778581a6d4fa5a0887e8fb98be474d26` 的十目标真值初始化输出 `/tmp/nt-frozen-focus-93eb13e-full-gt/runs/ten-target-full/<target>/frames.csv` 与正式多事件真值 `data/occ_video_1/ground_truth/<target>/frames.jsonl`，视频仍为 SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`。失败集合仍是 003/004/009/010；完全遮挡门失败帧分别为 003:130、004:42/131/132、009:115--120、010:149--157。没有修改原真值、评测器或算法。
+- 用 `ffmpeg` 从同一视频抽取原始帧 39--44，并以 Python/Pillow 在 41/42/43 帧绘制同一目标的输出框（红）及可用真值框（绿）；对照图 `/tmp/nt-car004-frame42-audit.png` SHA-256 `2645059790f051e7a40969b40daef3f0e715313bab5e24d21aa3fff7adaee1ae`。car004 的第 42 帧正式真值为 `manual_confirmed_no_bbox/full_occlusion`，前后 41/43 帧均有框；但第 42 帧同一银色车辆在视频中持续可见，跟踪框落在车上，且输出为 `TRACKING/accepted=1`。因此该单帧失败存在标注与画面不一致的强迹象；已请求人工复核，在确认前仍保留正式 FAIL，不把算法调到拒绝可见车辆。
+- 另以 `ffmpeg -f rawvideo -pix_fmt rgb24` 解码同一 271 帧，Python/Numpy 逐帧计算 car002--010 输出框中灰度大于 150 的像素比例，并与近 8 个已接受 TRACKING 框的中位数比较；表 `/tmp/nt-brightness-audit-93eb13e.csv` SHA-256 `a8e8b461585ce8817b18f7e44f90143ebc8d1e5787e0347d93cbdd9b15399a8c`。car009 完全遮挡仍接受的 116--120 帧比值约 0.59/0.63/0.44/0.44/0.42，car010 的 149--155 帧约 0.83/0.76/0.75/0.67/0.69/0.56/0.52；但可见且被接受帧比值低于 0.90 的数量在 car002/003/004/005/006/007/008/009/010 分别为 23/49/16/29/15/15/3/17/7。car004 第 42 帧比值约 0.99。故单独抬高相对亮度门槛会误拒大量可见目标，也不能解决 car004 的待复核单帧；不据此调参。接下来分别研究真实遮挡下的身份/可见性证据，以及待复核真值对评分的影响。
+
 ## 2026-11-17T22:12:00+08:00 最新程序复核手点目标 120--141 帧
 
 - 在板端隔离根 `/home/neardi/Project/SOT/nt-frozen-focus-93eb13e` 使用上一节算法源码 `93eb13ef778581a6d4fa5a0887e8fb98be474d26`、程序 SHA-256 `5407c0f7a05a78bfc9aab88a8b273514485dfde506a06a57291c5bfc93581e98`、运行配置 SHA-256 `58a363afa735d5f1b76d4f3cdd47f66619998749ad6ee9a122694878ce5915ec`；该配置引用的 controller 配置确实有 `suspected_detector_guard_enabled=true`（SHA-256 `62607f7eb3798737fc927a1f997e0d52cc5f78a7250d8df8b23aebfb320d5f44`）。视频、模型、manifest、labels 和 RKNN 版本与下一节同一核验身份。
