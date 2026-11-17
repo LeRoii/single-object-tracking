@@ -1910,24 +1910,31 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
     runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
     const auto first = runtime.process_frame(image, 1, 40);
     const auto second = runtime.process_frame(image, 2, 80);
-    return std::array<float, 5>{first.output.tracking_bbox.width,
+    RuntimeFrameResult last = second;
+    for (int frame = 3; frame <= 12; ++frame) {
+      last = runtime.process_frame(image, frame, frame * 40);
+    }
+    return std::array<float, 6>{first.output.tracking_bbox.width,
         second.output.tracking_bbox.width,
         runtime.controller().current_bbox().width,
         tracker.committed_bbox.width,
-        second.detector_tracking_size_confirmed ? 1.0F : 0.0F};
+        second.detector_tracking_size_confirmed ? 1.0F : 0.0F,
+        last.output.tracking_bbox.width};
   };
   const auto corroborated = run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}});
   expect_true(std::fabs(corroborated[0] - 20.0F) < 0.01F &&
                   corroborated[1] > 20.0F && corroborated[1] <= 21.01F &&
                   std::fabs(corroborated[2] - 20.0F) < 0.01F &&
                   std::fabs(corroborated[3] - 20.0F) < 0.01F &&
-                  corroborated[4] == 1.0F,
+                  corroborated[4] == 1.0F &&
+                  corroborated[5] > 21.0F && corroborated[5] <= 22.01F,
               "two unique detector batches adjust published size without changing the crop: " +
                   std::to_string(corroborated[0]) + "/" +
                   std::to_string(corroborated[1]) + "/" +
                   std::to_string(corroborated[2]) + "/" +
                   std::to_string(corroborated[3]) + "/" +
-                  std::to_string(corroborated[4]));
+                  std::to_string(corroborated[4]) + "/" +
+                  std::to_string(corroborated[5]));
   for (const auto& invalid : {
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 0}}),
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.2F, 2}}),
@@ -1935,7 +1942,8 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2},
                 DetectorCandidate{BBox{38, 28, 24, 24}, 0.7F, 2}}),
            run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}}, 200)}) {
-    expect_true(std::fabs(invalid[1] - 20.0F) < 0.01F && invalid[4] == 0.0F,
+    expect_true(std::fabs(invalid[1] - 20.0F) < 0.01F &&
+                    std::fabs(invalid[5] - 20.0F) < 0.01F && invalid[4] == 0.0F,
                 "wrong class, low confidence, remote, ambiguous or stale batch cannot resize");
   }
 }

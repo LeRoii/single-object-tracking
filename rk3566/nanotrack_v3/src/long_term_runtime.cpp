@@ -836,9 +836,16 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         timestamp_ms - *last_published_support_ms_ <=
             controller_.config().detector_stale_ms &&
         last_supported_published_bbox_;
-    const BBox target = guard_size_supported ? *next_guard_candidate_bbox :
+    BBox target = guard_size_supported ? *next_guard_candidate_bbox :
         tracking_size_supported ? *confirmed_tracking_size_candidate_ :
         support_recent ? *last_supported_published_bbox_ : tracker_box;
+    if (tracking_size_supported && !guard_size_supported) {
+      // Two sensors agree on identity, but their size estimates can still
+      // differ. Give the detector half of the size correction and retain the
+      // NanoTrack center and the existing per-frame scale limit.
+      target.width = 0.5F * (tracker_box.width + target.width);
+      target.height = 0.5F * (tracker_box.height + target.height);
+    }
     const float limit = std::min(0.10F,
         controller_.config().max_accepted_scale_step_ratio);
     const auto next_dimension = [&](float current, float raw, float detector) {
