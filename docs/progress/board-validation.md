@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T01:29:25+08:00 遮挡外观与重捕三路证据反例（仅离线诊断）
+
+- 起点 `codex/ten-target-smoothness@e9efc71fb914ca559a95cf1b4c9b9dd3c632ff0f`，工作树干净；没有改动算法、真值、评测器或板端配置。复用上文已核验的 20 路 `69fae4b` 逐帧记录、271 帧独立 detector 烟测及 `age0` 三路隔离回放。主机实际运行 `python3 /tmp/nt-hog-detector-intersection.py > /tmp/nt-hog-detector-intersection.txt`，脚本/结果 SHA-256 `92f84fe91b224be06ce68211f7fd46317f57e0f8b073bfe522a06b929a218504` / `f81400ab5e0756863b98a6f7ed82c6e5cb155cf0714fcda01bdabb3bb49cbd43`；该脚本将已有 HOG 趋势异常与**同帧独立全帧 detector** 对 Recent 原始框 IoU<0.4 相交，非运行时闭环判定。
+- 相交条件在 GT/detector 初始化路仍分别误触发 **18/12 个可见帧**，同时命中 **21/17 个遮挡帧**。GT 路 car010 的 149 帧命中，但 detector 初始化路的 149 帧没有命中；GT 路 car003 可见 127--129、car004 可见 128--130、car009 可见 110--112 均会被误判。且运行时 detector 在 car010 的 149 帧没有新批次，无法把离线同帧命中直接迁入在线策略。否决该组合的直接判遮挡规则；不能用较少误报掩盖可见目标的连续误冻结。
+- 主机实际运行 `python3 /tmp/nt-recovery-triad-compare.py > /tmp/nt-recovery-triad-compare.txt`，脚本/结果 SHA-256 `7052d9d855d6894cbb758244371b1a234fe91bb04656d212d80df0bed2173800` / `19a9979c22cb203cc17155f1e5a3b40778d6fee3c50e9f9d9a9a34c5eb255f8e`。`age0` 中 car010 首次重新可见的 169 帧仍 `IDENTITY_CONFLICT`，Recent/Safe 相互 IoU `0.952`，但 Recent 与真值仅 `0.319`；本帧尚未收到 169 帧 detector 批次。170/171 帧 detector 与真值 IoU `0.844/0.842`，Recent 与 detector 仅 `0.363/0.339`，说明双模板高度一致也可能共同偏移，当前冲突并非只因距离权重不足。反例 car002 错误候选在 218/219 帧与 Recent IoU `0.729/0.586`、两模板 IoU `0.871/0.852`，但 detector 与运动预测不重叠，且候选中心离预测大；仅放宽三路重叠或减少确认帧会重演 220 帧错捕。下一步需能区分遮挡中的同类近邻与目标的独立身份/可见性证据，再调整冲突裁决；不为 car010 帧号写特例。
+
 ## 2026-11-18T01:21:29+08:00 重捕最短等待归零反例（否决）
 
 - 源码仍为 `codex/ten-target-smoothness@f4044e9c3e5afeae8c52605499c025a0c7cdeb24`，板端隔离目录 `/home/neardi/Project/SOT/nt-center-area-f4044e9`、原生程序 SHA-256 `c6102537dcb0b74eadb393ad3be4fa5137c0ce1e025ae601b45c83a7fd19d455`，视频/模型/环境与下节相同。只把 controller 的 `search_reacquisition_min_age_ms=400` 在新文件 `runs/age0/controller.conf` 改为 `0`，SHA-256 `c4670ce80984f86c3cdbbd75baa7ba9756b7b5523c44854d401f7e914545fe4a`；运行配置 `runs/age0/headless.conf` SHA-256 `b04d1ba534344b7b7165f72985d064430edf5350995512f627de5b97af13c7b5`。原配置未覆盖。
