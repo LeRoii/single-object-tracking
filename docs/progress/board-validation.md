@@ -1,5 +1,19 @@
 # RK3566 开发板验证任务进度
 
+## 2026-11-17T14:57:39+08:00 八目标空框可见性由用户确认
+
+- 基于本分支 `b239ee0656925954f66717629902482d3b1c3917` 的八目标逐帧包，
+  用户确认 1、2 号在第 240 帧后离开画面，其余所有空框帧为完全遮挡。
+  执行 `python3 /tmp/build_occ_eight_visibility.py`，得到 175 条状态：
+  `full_occlusion` 115 条，`out_of_view` 60 条；均无可观测框，不进入普通 IoU。
+  安装到 `/home/u20/single-object-tracking/data/occ_video_1/ground_truth/eight_point_draft/human_confirmed_visibility.csv`，
+  SHA-256 `d3b918ac4473d8ee256f23a5fc725724b057c228ab21136008a0e5e2cdd4adce`。
+  原八个逐帧包保持不变，旧空框字段须与本确认清单联读；尚未生成用于遮挡期可视化的
+  估计轨迹框，也未扩展 evaluator 或运行板端测试。
+- **Handoff**：遮挡期若需要连续显示和云台控制，应由在线运动估计发布独立的
+  prediction bbox；离线双向插值只可作非可观测参考，不可伪装成算法在线输出或普通真值 IoU。
+  1、2 号第 241--270 帧为画面外状态，不应继续输出目标预测框。
+
 ## 2026-11-17T14:45:38+08:00 occ_video_1 八目标已接受框安装，空框待复核
 
 - 分支 `codex/occ-eight-target-ground-truth`，工作树
