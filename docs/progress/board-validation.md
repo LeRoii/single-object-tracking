@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T19:46:41+08:00 远距离逆向重捕身份门候选（待 RK3588）
+
+- 起点 `codex/ten-target-smoothness@e455cd95765b4fcf3e0c164c8cf3db7026b60412`，双模板诊断源码已精确撤回，十目标可信 A/B 基线仍是 `a1aa449` 的 6/10。对该基线重捕帧离线计算“Recent 原始中心相对运动预测中心”距离及与可信速度的夹角：错误 car003 144 帧为 0.65 个预测框对角线、方向余弦 -0.98；正确 car004 156 帧虽然距离 1.15 个对角线，但余弦 +1.00；其他正确重捕 001/002/005/006/007/008/010 的距离均不超过 0.40 个对角线。此区分来自运动几何，而非目标编号、场景位置或车顶外观。
+- 当前候选在重捕确认前，仅当预测仍可信、候选距预测超过半个框对角线、速度超过每秒 0.25 个对角线，且候选位移与速度方向余弦小于 -0.5 时，拒绝该远距离逆向身份；近距离、速度不可靠和顺向远距离候选仍走原有 detector + NanoTrack 验证。拒绝理由记 `MOTION_DIRECTION_CONFLICT`。单测覆盖远距离顺向三次验证可通过及逆向三次验证仍不可通过；主机 `cmake --build /tmp/nt-ten-target-build --parallel 4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure` 23/23 PASS，日志 `/tmp/nt-reverse-motion-build.log` / `/tmp/nt-reverse-motion-ctest.log` SHA-256 `3a7b6ea58524f2b89a1bb6d6293448c9f70906f7bc0c393533d805b67bdad7f4` / `9e607d53661a4c8826495200da708335c2f79940736b1ffcf9d3d1f767162c80`。下一步 RK3588 原生构建、car003/car004 定向回放与十目标 full 回归；单测与离线几何尚不能证明板端改善。
+
 ## 2026-11-17T19:41:56+08:00 双模板普通跟踪探针无身份区分力，撤回诊断开关
 
 - 诊断源码 `codex/ten-target-smoothness@bcbce9b3e95cc4dfba4b5947bc2a700381b634ff`，源码包主机 `/tmp/nt-dualprobe-bcbce9b.tar`、板端 `/home/neardi/Project/SOT/nt-dualprobe-bcbce9b.tar` SHA-256 均 `74a1103fc3e798df8ae5f30925fb094b2a0c6b39c621430d1b5a14696e757c5c`；板端独立目录 `/home/neardi/Project/SOT/nt-dualprobe-bcbce9b` 原生 CMake/build/CTest 23/23 PASS，日志 SHA-256 `727fa07337d83c2e5eaa91444658413c74b762308be279c39e547cb2569c06d1` / `55fd69c8209d2b1b6e31519e193bbbb230f5840b0fde7bf0f1520d92ef31d55c` / `d0793f21742735efaad04cd70d5f0d5217c063d09ec4570ebcad460284ef7cf4`；程序 `build/nanotrack_v3` SHA-256 `29340a162fb5ecacd17fa24a72b3252f589f70c1d2a0112a8a03e6bf45a90270`。显式开启开关的配置 `runs/dual-probe.conf` SHA-256 `774832ed07a8d6934357579703f16ae33dacd09beb26514e1438f533e8bf84a1`、`runs/dual-probe-controller.conf` SHA-256 `49355ef4e5357c438a1091e98b1ddeb8895d7a44248029cb35d7bc98481962ad`；视频、模型、manifest、labels、RKNN 版本沿用上节同一身份。
