@@ -141,6 +141,9 @@ struct ControllerConfig {
   int recovery_confirmation_required = 2;
   bool recovery_requires_detector_support = false;
   bool recovery_restore_initial_aspect = false;
+  // A confirmed full-object detector may pull the recovery center toward its
+  // region. Zero preserves the NanoTrack-only recovery geometry.
+  float recovery_detector_center_blend = 0.0F;
   bool lower_band_visibility_veto = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   std::int64_t motion_search_confidence_ms = 1000;
