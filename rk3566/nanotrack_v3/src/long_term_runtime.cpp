@@ -630,7 +630,12 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   if ((visual_suspect_bright_ratio_ > 0.0F || lower_band_visibility_veto_) &&
       result.output.accepted &&
       result.output.tracking_phase == TrackingPhase::kTracking) {
-    trusted_brightness_.push_back(bright_fraction(image, result.output.tracking_bbox));
+    // The visual veto compares the next raw Recent box against this history.
+    // Keep its sampling footprint in the same coordinate/size domain when a
+    // corroborated detector has adjusted the published tracking dimensions.
+    const BBox& brightness_bbox = recent != result.observations.end()
+        ? recent->bbox : result.output.tracking_bbox;
+    trusted_brightness_.push_back(bright_fraction(image, brightness_bbox));
     if (trusted_brightness_.size() > 8) trusted_brightness_.pop_front();
   }
   previous_output_phase_ = result.output.tracking_phase;
