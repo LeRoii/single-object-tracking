@@ -3,6 +3,7 @@
 #include "tracking_log.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -1876,6 +1877,69 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
               "wrong-class detector cannot change published tracking dimensions");
 }
 
+void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const auto run = [&](std::vector<DetectorCandidate> candidates,
+                       std::int64_t source_age_ms = 0) {
+    ControllerConfig config;
+    config.adaptive_display_enabled = true;
+    config.display_detector_refresh_enabled = true;
+    config.display_detector_min_interval_ms = 40;
+    config.display_detector_initial_interval_ms = 40;
+    config.detector_stale_ms = 150;
+    config.detector_confirmation_iou = 0.50F;
+    config.confirmation_required = 2;
+    config.max_accepted_scale_step_ratio = 0.05F;
+    config.stable_frames_for_update = 99;
+    FakeTracker tracker;
+    tracker.reliable_bbox = BBox{40, 30, 20, 20};
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms,
+                             BBox{40, 30, 20, 20},
+                             ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F},
+                             TemplateKind::kRecent, tracker.search_token + 1}};
+    };
+    FakeDetector detector;
+    detector.enabled = true;
+    detector.complete_immediately = true;
+    detector.source_age_ms = source_age_ms;
+    detector.automatic_candidates = std::move(candidates);
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+    const auto first = runtime.process_frame(image, 1, 40);
+    const auto second = runtime.process_frame(image, 2, 80);
+    return std::array<float, 5>{first.output.tracking_bbox.width,
+        second.output.tracking_bbox.width,
+        runtime.controller().current_bbox().width,
+        tracker.committed_bbox.width,
+        second.detector_tracking_size_confirmed ? 1.0F : 0.0F};
+  };
+  const auto corroborated = run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}});
+  expect_true(std::fabs(corroborated[0] - 20.0F) < 0.01F &&
+                  corroborated[1] > 20.0F && corroborated[1] <= 21.01F &&
+                  std::fabs(corroborated[2] - 20.0F) < 0.01F &&
+                  std::fabs(corroborated[3] - 20.0F) < 0.01F &&
+                  corroborated[4] == 1.0F,
+              "two unique detector batches adjust published size without changing the crop: " +
+                  std::to_string(corroborated[0]) + "/" +
+                  std::to_string(corroborated[1]) + "/" +
+                  std::to_string(corroborated[2]) + "/" +
+                  std::to_string(corroborated[3]) + "/" +
+                  std::to_string(corroborated[4]));
+  for (const auto& invalid : {
+           run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 0}}),
+           run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.2F, 2}}),
+           run({DetectorCandidate{BBox{90, 28, 24, 24}, 0.8F, 2}}),
+           run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2},
+                DetectorCandidate{BBox{38, 28, 24, 24}, 0.7F, 2}}),
+           run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}}, 200)}) {
+    expect_true(std::fabs(invalid[1] - 20.0F) < 0.01F && invalid[4] == 0.0F,
+                "wrong class, low confidence, remote, ambiguous or stale batch cannot resize");
+  }
+}
+
 int main() {
   using namespace nanotrack;
   test_tentative_recent_does_not_commit();
@@ -1887,6 +1951,7 @@ int main() {
   test_guarded_visual_miss_revocation();
   test_lower_band_visibility_veto();
   test_suspected_detector_guard(image);
+  test_tracking_size_detector_evidence(image);
   test_target_class_initialization(image);
   test_click_initialization_class_modes(image);
   test_target_class_session_config(image);

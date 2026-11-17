@@ -74,6 +74,7 @@ struct RuntimeFrameResult {
   DetectorDiagnostics detector{};
   bool suspected_detector_guard_applied = false;
   bool detector_size_output_applied = false;
+  bool detector_tracking_size_confirmed = false;
   bool visual_probe_ran = false;
   bool visual_probe_hit = false;
   int visual_probe_nearby_candidates = 0;
@@ -156,6 +157,11 @@ class LongTermRuntime {
   std::optional<BBox> published_tracking_bbox_;
   std::optional<BBox> last_supported_published_bbox_;
   std::optional<std::int64_t> last_published_support_ms_;
+  std::optional<BBox> pending_tracking_size_candidate_;
+  int tracking_size_candidate_hits_ = 0;
+  std::optional<BBox> confirmed_tracking_size_candidate_;
+  std::optional<std::int64_t> confirmed_tracking_size_source_ms_;
+  std::optional<std::uint64_t> last_tracking_size_batch_frame_id_;
   std::optional<float> last_guard_confidence_;
   struct DetectorMotionSupport {
     std::int64_t timestamp_ms = 0;

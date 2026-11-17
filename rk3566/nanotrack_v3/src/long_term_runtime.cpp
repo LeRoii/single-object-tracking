@@ -45,6 +45,35 @@ float median_brightness(const std::deque<float>& history) {
       0.5F * (values[middle - 1] + values[middle]);
 }
 
+std::optional<BBox> select_tracking_size_candidate(
+    const DetectorBatch& batch, const BBox& tracker_bbox,
+    std::optional<int> target_class_id, const ControllerConfig& config) {
+  if (config.detector_target_mode != DetectorTargetMode::kFullObject ||
+      !target_class_id || (*target_class_id != 0 && *target_class_id != 2)) {
+    return std::nullopt;
+  }
+  const float cx = tracker_bbox.x + 0.5F * tracker_bbox.width;
+  const float cy = tracker_bbox.y + 0.5F * tracker_bbox.height;
+  std::optional<BBox> unique;
+  for (const auto& candidate : batch.candidates) {
+    const auto& box = candidate.bbox;
+    if (candidate.class_id != *target_class_id ||
+        !std::isfinite(candidate.confidence) ||
+        candidate.confidence < config.suspected_detector_guard_min_confidence ||
+        !std::isfinite(box.x) || !std::isfinite(box.y) ||
+        !std::isfinite(box.width) || !std::isfinite(box.height) ||
+        box.width <= 0.0F || box.height <= 0.0F ||
+        cx < box.x || cx > box.x + box.width ||
+        cy < box.y || cy > box.y + box.height ||
+        bbox_iou(box, tracker_bbox) < config.detector_confirmation_iou) {
+      continue;
+    }
+    if (unique) return std::nullopt;
+    unique = box;
+  }
+  return unique;
+}
+
 struct VisualCrop {
   std::vector<std::uint8_t> pixels;
   int left = 0;
@@ -231,6 +260,11 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   published_tracking_bbox_.reset();
   last_supported_published_bbox_.reset();
   last_published_support_ms_.reset();
+  pending_tracking_size_candidate_.reset();
+  tracking_size_candidate_hits_ = 0;
+  confirmed_tracking_size_candidate_.reset();
+  confirmed_tracking_size_source_ms_.reset();
+  last_tracking_size_batch_frame_id_.reset();
   last_guard_confidence_.reset();
   last_display_motion_support_.reset();
   guard_hits_ = 0;
@@ -643,6 +677,45 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.output.display_bbox = adaptive_display_.update(
       result.output, result.target_class, result.adaptive_display);
   result.output.bbox = result.output.display_bbox;
+  // Reuse the periodic detector batch, but arbitrate tracking size separately
+  // from the display envelope. Two unique, consistent full-object detections
+  // can adjust the published size; NanoTrack still owns the center and crop.
+  if (!result.output.accepted || result.output.reacquired ||
+      result.output.tracking_phase != TrackingPhase::kTracking) {
+    pending_tracking_size_candidate_.reset();
+    tracking_size_candidate_hits_ = 0;
+    confirmed_tracking_size_candidate_.reset();
+    confirmed_tracking_size_source_ms_.reset();
+  } else if (display_batch &&
+             (!last_tracking_size_batch_frame_id_ ||
+              display_batch->source_frame_id > *last_tracking_size_batch_frame_id_)) {
+    last_tracking_size_batch_frame_id_ = display_batch->source_frame_id;
+    const auto age_ms = timestamp_ms - display_batch->source_timestamp_ms;
+    const auto candidate =
+        result.output.selected_template == TemplateKind::kRecent &&
+        result.output.quality == QualityLevel::kReliable && age_ms >= 0 &&
+        age_ms <= controller_.config().detector_stale_ms
+        ? select_tracking_size_candidate(*display_batch,
+            result.output.tracking_bbox, result.target_class.target_class_id,
+            controller_.config()) : std::nullopt;
+    if (candidate) {
+      tracking_size_candidate_hits_ = pending_tracking_size_candidate_ &&
+          bbox_iou(*pending_tracking_size_candidate_, *candidate) >=
+              controller_.config().detector_confirmation_iou
+          ? std::min(tracking_size_candidate_hits_ + 1,
+              controller_.config().confirmation_required) : 1;
+      pending_tracking_size_candidate_ = candidate;
+      if (tracking_size_candidate_hits_ >=
+          controller_.config().confirmation_required) {
+        confirmed_tracking_size_candidate_ = candidate;
+        confirmed_tracking_size_source_ms_ = display_batch->source_timestamp_ms;
+        result.detector_tracking_size_confirmed = true;
+      }
+    } else {
+      pending_tracking_size_candidate_.reset();
+      tracking_size_candidate_hits_ = 0;
+    }
+  }
   // Two detector-confirmed display updates bound a tracker displacement
   // without adding detector requests or feeding detector box size into motion.
   // This can replace a stale frozen velocity only when both accepted tracker
@@ -750,14 +823,21 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       result.output.selected_template == TemplateKind::kRecent) {
     const BBox tracker_box = result.output.tracking_bbox;
     const BBox previous = published_tracking_bbox_.value_or(tracker_box);
-    const bool size_supported = result.suspected_detector_guard_applied &&
+    const bool guard_size_supported = result.suspected_detector_guard_applied &&
         next_guard_candidate_bbox.has_value();
+    const bool tracking_size_supported = confirmed_tracking_size_candidate_ &&
+        confirmed_tracking_size_source_ms_ &&
+        timestamp_ms >= *confirmed_tracking_size_source_ms_ &&
+        timestamp_ms - *confirmed_tracking_size_source_ms_ <=
+            controller_.config().detector_stale_ms;
+    const bool size_supported = guard_size_supported || tracking_size_supported;
     const bool support_recent = last_published_support_ms_ &&
         timestamp_ms >= *last_published_support_ms_ &&
         timestamp_ms - *last_published_support_ms_ <=
             controller_.config().detector_stale_ms &&
         last_supported_published_bbox_;
-    const BBox target = size_supported ? *next_guard_candidate_bbox :
+    const BBox target = guard_size_supported ? *next_guard_candidate_bbox :
+        tracking_size_supported ? *confirmed_tracking_size_candidate_ :
         support_recent ? *last_supported_published_bbox_ : tracker_box;
     const float limit = std::min(0.10F,
         controller_.config().max_accepted_scale_step_ratio);
