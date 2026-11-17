@@ -76,7 +76,6 @@ struct RuntimeFrameResult {
   bool detector_size_output_applied = false;
   bool detector_center_output_applied = false;
   bool detector_tracking_size_confirmed = false;
-  bool detector_search_reprobe_applied = false;
   bool visual_probe_ran = false;
   bool visual_probe_hit = false;
   int visual_probe_nearby_candidates = 0;

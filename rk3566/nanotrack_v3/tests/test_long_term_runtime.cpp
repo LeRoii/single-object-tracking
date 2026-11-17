@@ -799,48 +799,6 @@ void test_runtime_target_class_recovery_requests(const nanotrack::ImageView& ima
   }
 }
 
-void test_search_reprobes_fresh_near_detector(const nanotrack::ImageView& image) {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.motion_search_enabled = true;
-  config.search_fresh_detector_reprobe = true;
-  config.detector_interval_ms = 20;
-  FakeTracker tracker;
-  tracker.emit_reliable = false;
-  FakeDetector detector;
-  detector.enabled = true;
-  LongTermRuntime runtime(config, tracker, detector, {2, 1, {}});
-  runtime.initialize(image, {40, 30, 20, 20}, 0, 0);
-  RuntimeFrameResult submitted;
-  std::uint64_t frame_id = 0;
-  for (frame_id = 1; frame_id <= 20; ++frame_id) {
-    submitted = runtime.process_frame(image, frame_id, frame_id * 100);
-    if (submitted.detector.request_submitted &&
-        submitted.detector.request_purpose ==
-            DetectorRequestPurpose::kSearchRecovery) break;
-  }
-  expect_true(frame_id <= 20 && detector.last_request.frame_id == frame_id,
-              "reprobe fixture has a real pending search request");
-  if (frame_id > 20) return;
-  const auto& motion = submitted.plan.motion_predicted_bbox;
-  const BBox near_box{motion.x + 10.0F, motion.y, motion.width, motion.height};
-  DetectorBatch batch{detector.last_request.frame_id,
-                      detector.last_request.timestamp_ms,
-                      {{near_box, 0.9F, 2}}};
-  batch.generation = detector.last_request.generation;
-  detector.next_batch = batch;
-  tracker.emit_reliable = true;
-  const int before = tracker.infer_calls;
-  const auto result = runtime.process_frame(image, frame_id + 1,
-                                            frame_id * 100 + 33);
-  expect_true(result.detector.batch_received &&
-                  result.detector_search_reprobe_applied &&
-                  tracker.infer_calls == before + 2 &&
-                  result.plan.hypothesis_source == HypothesisSource::kDetector &&
-                  !result.output.reacquired,
-              "fresh unique near detection changes this frame's search crop but does not directly reacquire");
-}
-
 void test_late_precoast_batches(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   for (int arrival_age : {5, 12, 13, 14}) {
@@ -2047,7 +2005,6 @@ int main() {
   test_runtime_rolls_back_finished_frames(image);
   test_runtime_reports_unlogged_slot_revocations(image);
   test_runtime_target_class_recovery_requests(image);
-  test_search_reprobes_fresh_near_detector(image);
   test_late_precoast_batches(image);
   test_probe_failure_and_same_frame_reselect(image);
   ControllerConfig config;
