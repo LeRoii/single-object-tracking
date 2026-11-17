@@ -1645,6 +1645,69 @@ void test_visual_suspect_gate() {
               "matching Recent and Safe confirm the first fresh visual hit");
 }
 
+void test_visual_empty_detector_veto() {
+  using namespace nanotrack;
+  const auto run = [](bool severe) {
+    ControllerConfig config;
+    config.suspicion_enter_ms = 1;
+    config.uncertain_ms = 1000;
+    config.local_recovery_ms = 2000;
+    config.assisted_recovery_ms = 3000;
+    config.visual_suspect_bright_ratio = 0.90F;
+    FakeTracker tracker;
+    tracker.emit_recent_safe_roles = true;
+    FakeDetector detector;
+    detector.enabled = true;
+    DetectorBatch initial;
+    initial.candidates.push_back(
+        DetectorCandidate{BBox{265.0F, 239.0F, 54.0F, 54.0F}, 0.9F, 2});
+    detector.blocking_batch = initial;
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+    const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+    for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+      runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+    }
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                             ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                             TemplateKind::kRecent, tracker.search_token + 1}};
+    };
+    if (severe) {
+      std::fill(pixels.begin(), pixels.end(), 0);
+    } else {
+      for (int y = 30; y < 50; ++y) {
+        for (int x = 40; x < 44; ++x) {
+          const auto offset = (y * 200 + x) * 3;
+          pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = 0;
+        }
+      }
+    }
+    detector.blocking_batch = DetectorBatch{};
+    const auto suspect = runtime.process_frame(image, 5, 200);
+    const auto checked = runtime.process_frame(image, 6, 240);
+    return std::pair<RuntimeFrameResult, RuntimeFrameResult>{suspect, checked};
+  };
+  const auto [severe_suspect, severe_checked] = run(true);
+  expect_true(severe_suspect.output.tracking_phase == TrackingPhase::kSuspected &&
+                  severe_checked.detector.batch_purpose ==
+                      DetectorRequestPurpose::kVisualOcclusion &&
+                  severe_checked.plan.visual_occlusion_search &&
+                  severe_checked.output.tracking_phase == TrackingPhase::kSearching &&
+                  !severe_checked.output.accepted,
+              "empty detector crop plus severe appearance loss stops observation");
+  const auto [mild_suspect, mild_checked] = run(false);
+  expect_true(mild_suspect.output.tracking_phase == TrackingPhase::kSuspected &&
+                  mild_checked.detector.batch_purpose ==
+                      DetectorRequestPurpose::kVisualOcclusion &&
+                  !mild_checked.plan.visual_occlusion_search &&
+                  mild_checked.output.tracking_phase == TrackingPhase::kSuspected,
+              "an empty detector crop alone cannot reject a mildly changed target");
+}
+
 void test_lower_band_visibility_veto() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -1801,6 +1864,7 @@ int main() {
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_visual_suspect_gate();
+  test_visual_empty_detector_veto();
   test_lower_band_visibility_veto();
   test_suspected_detector_guard(image);
   test_target_class_initialization(image);

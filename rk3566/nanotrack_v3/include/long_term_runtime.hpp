@@ -149,6 +149,8 @@ class LongTermRuntime {
   std::optional<std::int64_t> last_guard_source_ms_;
   std::optional<BBox> last_guard_candidate_bbox_;
   std::optional<BBox> published_tracking_bbox_;
+  std::optional<BBox> last_supported_published_bbox_;
+  std::optional<std::int64_t> last_published_support_ms_;
   std::optional<float> last_guard_confidence_;
   int guard_hits_ = 0;
   bool guard_stream_active_ = false;

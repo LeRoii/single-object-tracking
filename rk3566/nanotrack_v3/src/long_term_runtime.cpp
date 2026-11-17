@@ -229,6 +229,8 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   last_guard_source_ms_.reset();
   last_guard_candidate_bbox_.reset();
   published_tracking_bbox_.reset();
+  last_supported_published_bbox_.reset();
+  last_published_support_ms_.reset();
   last_guard_confidence_.reset();
   guard_hits_ = 0;
   guard_stream_active_ = false;
@@ -408,6 +410,20 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
               nearest_distance <= visual_suspect_max_center_px_ &&
               nearest_confidence >= visual_suspect_min_confidence_;
           visual_ambiguous = nearby_candidates > 1;
+          // A severe appearance loss and a fresh detector crop containing no
+          // recognizable object are independent evidence against accepting
+          // this frame's Recent box. A mildly changed visible target can also
+          // be missed by the detector, so require a stronger brightness loss
+          // than the threshold that merely starts the visual probe.
+          if (detected->batch.source_frame_id == frame_id &&
+              detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion &&
+              detected->batch.raw_candidate_count == 0 &&
+              detected->batch.candidates.empty() &&
+              bright_fraction(image, recent->bbox) <
+                  0.75F * visual_suspect_bright_ratio_ *
+                      median_brightness(trusted_brightness_)) {
+            result.plan.visual_occlusion_search = true;
+          }
         }
       } catch (const std::exception& error) {
         result.detector.error = error.what();
@@ -661,9 +677,15 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       result.output.selected_template == TemplateKind::kRecent) {
     const BBox tracker_box = result.output.tracking_bbox;
     const BBox previous = published_tracking_bbox_.value_or(tracker_box);
-    const BBox target = result.suspected_detector_guard_applied &&
-        next_guard_candidate_bbox
-        ? *next_guard_candidate_bbox : tracker_box;
+    const bool size_supported = result.suspected_detector_guard_applied &&
+        next_guard_candidate_bbox.has_value();
+    const bool support_recent = last_published_support_ms_ &&
+        timestamp_ms >= *last_published_support_ms_ &&
+        timestamp_ms - *last_published_support_ms_ <=
+            controller_.config().detector_stale_ms &&
+        last_supported_published_bbox_;
+    const BBox target = size_supported ? *next_guard_candidate_bbox :
+        support_recent ? *last_supported_published_bbox_ : tracker_box;
     const float limit = std::min(0.10F,
         controller_.config().max_accepted_scale_step_ratio);
     const auto next_dimension = [&](float current, float raw, float detector) {
@@ -672,9 +694,9 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                         current * (1.0F + limit));
     };
     const float width = next_dimension(previous.width, tracker_box.width,
-        result.suspected_detector_guard_applied ? target.width : tracker_box.width);
+        target.width);
     const float height = next_dimension(previous.height, tracker_box.height,
-        result.suspected_detector_guard_applied ? target.height : tracker_box.height);
+        target.height);
     const float center_x = tracker_box.x + 0.5F * tracker_box.width;
     const float center_y = tracker_box.y + 0.5F * tracker_box.height;
     const BBox published = clip_bbox(
@@ -686,8 +708,14 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     result.output.tracking_bbox = published;
     result.output.control_bbox = published;
     published_tracking_bbox_ = published;
+    if (size_supported) {
+      last_supported_published_bbox_ = published;
+      last_published_support_ms_ = timestamp_ms;
+    }
   } else {
     published_tracking_bbox_.reset();
+    last_supported_published_bbox_.reset();
+    last_published_support_ms_.reset();
   }
   result.template_slot_revocation = pending_template_slot_revocation_;
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
