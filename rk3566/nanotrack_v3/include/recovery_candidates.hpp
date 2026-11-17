@@ -59,8 +59,7 @@ class RecoveryCandidateTable {
       std::optional<std::int64_t> source_timestamp_ms = std::nullopt,
       std::optional<int> detector_class_id = std::nullopt,
       bool tracker_verified = true, float motion_residual = 0.0F,
-      std::optional<BBox> subtarget_region = std::nullopt,
-      std::optional<RecoveryCandidateKey> triad_key = std::nullopt);
+      std::optional<BBox> subtarget_region = std::nullopt);
   const RecoveryCandidate* find(RecoveryCandidateKey key) const noexcept;
   const RecoveryCandidate* select_probe() const noexcept;
   bool focus_detector(RecoveryCandidateKey key) noexcept;

@@ -1247,22 +1247,6 @@ LongTermController::confirm_recovery_candidate(
         recent->observation.bbox, safe->observation.bbox);
   }
   output.recovery_triad_focused = triad_key.has_value();
-  // Only override a duplicate tracker-only candidate when the detector is
-  // also near the motion hypothesis. A distant three-way match may be a
-  // different object after the target has left the scene.
-  std::optional<RecoveryCandidateKey> motion_near_triad_key;
-  if (triad_key) {
-    const auto* focused = recovery_candidates_.find(*triad_key);
-    const auto& detector = focused->from(RecoveryCandidateSource::kDetector);
-    const auto& motion = plan.motion_predicted_bbox;
-    const auto& box = detector->bbox;
-    const float distance = std::hypot(
-        box.x + 0.5F * box.width - motion.x - 0.5F * motion.width,
-        box.y + 0.5F * box.height - motion.y - 0.5F * motion.height);
-    if (distance <= 0.5F * std::hypot(motion.width, motion.height)) {
-      motion_near_triad_key = triad_key;
-    }
-  }
   const auto observe = [&](RecoveryCandidateSource source,
                            const std::optional<EvaluatedObservation>& observation) {
     if (!observation) return std::optional<RecoveryCandidateKey>{};
@@ -1287,8 +1271,7 @@ LongTermController::confirm_recovery_candidate(
     }
     return recovery_candidates_.observe(source, bbox, 0.0F, std::nullopt,
         std::nullopt, !carrier_disagreement,
-        frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_),
-        std::nullopt, motion_near_triad_key);
+        frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_));
   };
   const auto recent_key = observe(RecoveryCandidateSource::kRecent, recent);
   const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
