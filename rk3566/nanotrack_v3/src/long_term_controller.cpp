@@ -2769,13 +2769,40 @@ ControllerOutput LongTermController::finish_frame(
     motion_recent_residuals_.clear();
     motion_clean_since_ms_.reset();
     response_baseline_.freeze();
+    const bool starting_search = !loss_start_ms_;
+    if (starting_search && config_.motion_search_enabled &&
+        config_.motion_search_rebase_min_center_ratio > 0.0F &&
+        motion_freeze_since_ms_ && motion_last_clean_trend_ &&
+        plan.timestamp_ms - last_trusted_timestamp_ms_ <= config_.uncertain_ms) {
+      // Frozen velocity may remain useful while its open-loop position drifts
+      // away from accepted visual observations. Start the coast near the last
+      // accepted box without treating this frame's failed tracker as evidence.
+      const float elapsed = static_cast<float>(
+          plan.timestamp_ms - last_trusted_timestamp_ms_) / 1000.0F;
+      BBox trusted_coast = current_bbox_;
+      trusted_coast.x += motion_last_clean_trend_->velocity_x * elapsed;
+      trusted_coast.y += motion_last_clean_trend_->velocity_y * elapsed;
+      trusted_coast = clip_bbox(trusted_coast, frame_size_.width,
+                                frame_size_.height);
+      const BBox frozen_coast = motion_.current_bbox();
+      const float center_gap = std::hypot(
+          trusted_coast.x + 0.5F * trusted_coast.width -
+              frozen_coast.x - 0.5F * frozen_coast.width,
+          trusted_coast.y + 0.5F * trusted_coast.height -
+              frozen_coast.y - 0.5F * frozen_coast.height);
+      if (center_gap > config_.motion_search_rebase_min_center_ratio *
+                           std::hypot(current_bbox_.width, current_bbox_.height)) {
+        motion_.reanchor_preserving_velocity(trusted_coast,
+            *motion_last_clean_trend_, plan.timestamp_ms);
+        output.motion_gate_reason = "SEARCH_REANCHORED_LAST_TRUSTED";
+      }
+    }
     motion_.freeze_scale(current_bbox_.width, current_bbox_.height);
     output.tracking_bbox = motion_.current_bbox();
     output.display_bbox = output.tracking_bbox;
     output.control_bbox = output.tracking_bbox;
     output.bbox = output.display_bbox;
     ++consecutive_unreliable_frames_;
-    const bool starting_search = !loss_start_ms_;
     if (starting_search) loss_start_ms_ = plan.timestamp_ms;
     if (starting_search) recovery_conflict_seen_ = false;
     if (starting_search) conflict_detector_refresh_sent_ = false;

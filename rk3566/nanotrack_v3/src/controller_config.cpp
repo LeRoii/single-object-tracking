@@ -195,6 +195,7 @@ void set_value(ControllerConfig& config,
   else if (key == "lower_band_visibility_veto") config.lower_band_visibility_veto = parse_bool(key, value);
   else if (key == "search_reacquisition_min_age_ms") config.search_reacquisition_min_age_ms = parse_integer(key, value);
   else if (key == "motion_search_confidence_ms") config.motion_search_confidence_ms = parse_integer(key, value);
+  else if (key == "motion_search_rebase_min_center_ratio") config.motion_search_rebase_min_center_ratio = parse_float(key, value);
   else if (key == "motion_max_speed_diagonals_per_s") config.motion_max_speed_diagonals_per_s = parse_float(key, value);
   else if (key == "motion_max_acceleration_diagonals_per_s2") config.motion_max_acceleration_diagonals_per_s2 = parse_float(key, value);
   else if (key == "motion_scale_rate_limit_per_s") config.motion_scale_rate_limit_per_s = parse_float(key, value);
@@ -518,6 +519,9 @@ void validate_controller_config(const ControllerConfig& config) {
       config.search_probe_interval_ms <= 0) {
     throw std::invalid_argument("motion search timing must be positive");
   }
+  if (!in_unit_interval(config.motion_search_rebase_min_center_ratio)) {
+    throw std::invalid_argument("motion search rebase ratio must be in [0,1]");
+  }
 }
 
 ControllerConfig load_controller_config(const std::string& path) {
@@ -640,8 +644,12 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.recovery_restore_initial_aspect << '|'
          << config.lower_band_visibility_veto << '|'
          << config.search_reacquisition_min_age_ms << '|'
-         << config.motion_search_confidence_ms << '|'
-         << config.motion_max_speed_diagonals_per_s << '|'
+         << config.motion_search_confidence_ms << '|';
+  // Disabled experiments retain the established configuration identity.
+  if (config.motion_search_rebase_min_center_ratio > 0.0F) {
+    stream << "search_rebase=" << config.motion_search_rebase_min_center_ratio << '|';
+  }
+  stream << config.motion_max_speed_diagonals_per_s << '|'
          << config.motion_max_acceleration_diagonals_per_s2 << '|'
          << config.motion_scale_rate_limit_per_s << '|'
          << config.search_probe_interval_ms << '|'

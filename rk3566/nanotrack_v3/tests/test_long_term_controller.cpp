@@ -2841,6 +2841,43 @@ void test_motion_input_freeze_and_reanchor() {
               "confirmed reacquisition starts with a fresh motion-input gate");
 }
 
+void test_frozen_motion_search_starts_near_last_trusted_box() {
+  using namespace nanotrack;
+  const auto run = [](float threshold) {
+    ControllerConfig config;
+    config.motion_search_enabled = true;
+    config.motion_search_rebase_min_center_ratio = threshold;
+    ResolvedControllerFixture controller(config);
+    controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300});
+    // Accepted visual boxes kept moving while a frozen open-loop prediction
+    // remained at the original location. A failed tracker now starts search.
+    controller.current_bbox_ = {130, 80, 20, 20};
+    controller.motion_freeze_since_ms_ = 0;
+    controller.motion_last_clean_trend_ = controller.motion_.snapshot(0);
+    controller.motion_last_clean_trend_->velocity_x = 10.0F;
+    const auto plan = controller.begin_frame(1, 40, false);
+    auto lost = rejected_observation(plan, TemplateKind::kRecent,
+                                     plan.predicted_bbox);
+    lost.metrics.raw_score = 0.10F;
+    return controller.finish_frame(plan, {lost}, std::nullopt);
+  };
+  const auto old = run(0.0F);
+  const auto rebased = run(0.25F);
+  expect_true(old.tracking_bbox.x < 105.0F &&
+                  rebased.tracking_bbox.x > 129.0F &&
+                  rebased.tracking_bbox.x < 132.0F,
+              "opt-in search entry follows recent trusted position instead of stale frozen coast");
+  expect_true(rebased.tracking_phase == TrackingPhase::kSearching &&
+                  !rebased.accepted && !rebased.observation_valid &&
+                  !rebased.motion_update_valid && rebased.motion_input_frozen &&
+                  rebased.control_source == ControlSource::kMotionSearch &&
+                  std::string(rebased.motion_gate_reason) ==
+                      "SEARCH_REANCHORED_LAST_TRUSTED",
+              "search rebase preserves motion-only authorization and frozen-input semantics");
+  expect_near(rebased.motion_velocity_x, 10.0F, 1e-5F,
+              "search rebase preserves trusted horizontal velocity");
+}
+
 void test_recent_safe_transient_and_probation() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3170,6 +3207,7 @@ int main() {
   test_search_uses_last_clean_response_motion_trend();
   test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();
+  test_frozen_motion_search_starts_near_last_trusted_box();
   test_recent_safe_transient_and_probation();
   test_recent_safe_rolling_scale();
   test_production_observation_preserves_collapse();
