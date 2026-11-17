@@ -1063,6 +1063,19 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
     if (!row.note.empty()) row.note += ";";
     row.note += "DETECTOR_VERIFIED_OUTPUT_SIZE";
   }
+  if (result.visual_probe_ran) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "VISUAL_PROBE(hit=";
+    row.note += result.visual_probe_hit ? "1" : "0";
+    row.note += ";near=" + std::to_string(result.visual_probe_nearby_candidates);
+    if (result.visual_probe_nearest_distance_px) {
+      row.note += ";distance=" + number(*result.visual_probe_nearest_distance_px);
+    }
+    if (result.visual_probe_brightness_ratio) {
+      row.note += ";brightness=" + number(*result.visual_probe_brightness_ratio);
+    }
+    row.note += ")";
+  }
   return row;
 }
 

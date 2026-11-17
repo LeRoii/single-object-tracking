@@ -360,9 +360,15 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                                      [](const TrackerObservation& observation) {
                                        return observation.template_kind == TemplateKind::kRecent;
                                      });
+    const float brightness_reference = median_brightness(trusted_brightness_);
+    const float observed_brightness = recent != result.observations.end()
+        ? bright_fraction(image, recent->bbox) : 0.0F;
     if (recent != result.observations.end() &&
-        bright_fraction(image, recent->bbox) <
-            visual_suspect_bright_ratio_ * median_brightness(trusted_brightness_)) {
+        observed_brightness < visual_suspect_bright_ratio_ * brightness_reference) {
+      if (brightness_reference > 0.0F) {
+        result.visual_probe_brightness_ratio = observed_brightness / brightness_reference;
+      }
+      result.visual_probe_ran = true;
       const auto crop = make_visual_crop(image, result.plan.motion_predicted_bbox);
       const ImageView canvas{crop.pixels.data(), 640, 640, 640U * 3U, 3};
       const DetectorRequest request{frame_id, timestamp_ms,
@@ -410,6 +416,11 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
               nearest_distance <= visual_suspect_max_center_px_ &&
               nearest_confidence >= visual_suspect_min_confidence_;
           visual_ambiguous = nearby_candidates > 1;
+          result.visual_probe_hit = visual_hit;
+          result.visual_probe_nearby_candidates = nearby_candidates;
+          if (std::isfinite(nearest_distance)) {
+            result.visual_probe_nearest_distance_px = nearest_distance;
+          }
         }
       } catch (const std::exception& error) {
         result.detector.error = error.what();

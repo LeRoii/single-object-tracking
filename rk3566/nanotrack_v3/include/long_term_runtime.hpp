@@ -74,6 +74,11 @@ struct RuntimeFrameResult {
   DetectorDiagnostics detector{};
   bool suspected_detector_guard_applied = false;
   bool detector_size_output_applied = false;
+  bool visual_probe_ran = false;
+  bool visual_probe_hit = false;
+  int visual_probe_nearby_candidates = 0;
+  std::optional<float> visual_probe_nearest_distance_px;
+  std::optional<float> visual_probe_brightness_ratio;
   int suspected_detector_guard_hits = 0;
   std::optional<float> suspected_detector_guard_confidence;
   float tracker_ms = 0.0F;
