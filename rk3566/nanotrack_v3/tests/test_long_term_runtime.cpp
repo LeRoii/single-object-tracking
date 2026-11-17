@@ -1829,15 +1829,15 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
                          false, false, &internal_width, &committed_width);
   expect_true(supported[4].output.tracking_phase == TrackingPhase::kSuspected,
               "PSR and peak-margin drop first makes the tracker tentative");
-  expect_true(supported[5].detector.request_purpose ==
+  expect_true(supported[4].detector.request_purpose ==
                   DetectorRequestPurpose::kSuspectedValidation &&
-                  supported[5].suspected_detector_guard_hits == 1 &&
-                  !supported[5].suspected_detector_guard_applied,
-              "first matching detector result is evidence but cannot clear suspicion");
-  expect_true(supported[6].suspected_detector_guard_applied &&
-                  supported[6].output.accepted &&
-                  supported[6].output.tracking_phase == TrackingPhase::kTracking &&
-                  supported[6].output.motion_update_valid,
+                  supported[4].suspected_detector_guard_hits == 1 &&
+                  !supported[4].suspected_detector_guard_applied,
+              "response drop starts detector validation before the next frame");
+  expect_true(supported[5].suspected_detector_guard_applied &&
+                  supported[5].output.accepted &&
+                  supported[5].output.tracking_phase == TrackingPhase::kTracking &&
+                  supported[5].output.motion_update_valid,
               "second matching detector result permits a reliable NanoTrack observation");
   expect_true(supported[7].suspected_detector_guard_applied &&
                   supported[7].output.accepted,
@@ -1860,11 +1860,11 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
                   !no_tracker[7].output.accepted &&
                   !no_tracker[7].suspected_detector_guard_applied,
               "detector support never authorizes control without a tracker observation");
-  expect_true(wider[6].detector_size_output_applied &&
-                  wider[6].output.tracking_bbox.width > target.width &&
-                  wider[6].output.tracking_bbox.width <= target.width * 1.1F + 0.01F &&
-                  std::fabs(wider[6].output.tracking_bbox.x +
-                            0.5F * wider[6].output.tracking_bbox.width -
+  expect_true(wider[5].detector_size_output_applied &&
+                  wider[5].output.tracking_bbox.width > target.width &&
+                  wider[5].output.tracking_bbox.width <= target.width * 1.1F + 0.01F &&
+                  std::fabs(wider[5].output.tracking_bbox.x +
+                            0.5F * wider[5].output.tracking_bbox.width -
                             (target.x + 0.5F * target.width)) < 0.01F &&
                   std::fabs(internal_width - target.width) < 0.01F &&
                   std::fabs(committed_width - target.width) < 0.01F,
