@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T18:37:43+08:00 恢复冲突证据诊断候选（主机阶段）
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `85c35cb448bfb03a837a80039c57b54de22b5bee`。当前十目标严格结果仍 5/10。car001 的 188--190 帧已知 Recent/Safe 原始框高度重合、响应分数较高、ROI detector 目标候选靠近预测中心，但运行时均记 `IDENTITY_CONFLICT`，191--192 才确认；car003 在 144 帧重捕后可见框偏上，且上节融合实验证明任意改变内部恢复中心会在该序列引入后续错误身份。不能只凭视觉上最近或 detector 框直接放宽冲突门。
+- 本次只增加 `RECOVERY_EVIDENCE` 日志：记录当前 Recent/Safe 质量级、是否满足三方检验前置条件、是否成功聚焦唯一 detector 候选，以及候选表冲突原因（未表示的多重匹配、未解决溢出、已聚焦候选的对手、多个候选或探针不一致）。不修改候选选择、确认计数、控制授权、跟踪框、配置或模型。只在恢复等待/冲突/提交事件写入 `frames.csv` 的 `note`；现有 schema 不变。实际执行 `cmake --build /tmp/nt-ten-target-build -j4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure -j4`，主机 23/23 PASS；日志 `/tmp/nt-recovery-evidence-build.log` / `/tmp/nt-recovery-evidence-ctest.log` SHA-256 `39aebb9c7bde762ff7424db03feed22374fbc15c8431bb94d24d6e889150c3bd` / `07ce170d62e5bbe4022187e2cffdae0cf21691d840c1ecfff28cc63cf5e4a702`。下一步提交精确源码，在 RK3588 原生编译并以同首帧真值框回放 car001/car003，核对状态与上一版一致后再根据诊断选择安全改法；不合入 main/Debug。
+
 ## 2026-11-17T18:32:52+08:00 恢复中心融合十目标闭环不增通过且触发错误重捕，撤回算法
 
 - 板端测试源码 `codex/ten-target-smoothness@998569a43ed8e5f1f1e8c2d655d405a35395eb80`，源码包主机 `/tmp/nt-blend-998569a.tar`、RK3588 `/home/neardi/Project/SOT/nt-blend-998569a.tar` SHA-256 均 `60472eb992066b5634743fd85598b5ba5d19de68075eb1051e4168e53ddd24ea`；原生目录 `/home/neardi/Project/SOT/nt-blend-998569a`。原生 CMake/build/CTest 使用上节 RKNN 路径及同命令，23/23 PASS；`cmake.log` / `build.log` / `ctest.log` SHA-256 依次 `ab1b1eee27b6b7eea88f7212458792dae60852d82326f4d5f06811c2981684d1` / `98d91c2c2afee48ecbc25d5b6eafc177187e519eccf9850278c70ea7dbaad38b` / `1b287f8da7f5fcc8de2525745fbb04e691b138c2a182de57c7437853f1e99dab`；`build/nanotrack_v3` SHA-256 `d004ea6e8b59bfbfcf0608a364a32739924ba5ef73de5c62acaaf56a2c6ffa86`。运行配置 `runs/headless-on.conf` SHA-256 `728c1b94522b7f442bb8dd7e9452709a4d273b672d723ee9f4ed61c0b5e78029`，仅将上版配置的 controller 路径改为本源码目录；controller 配置为上节 `0.25` 候选。canonical 视频及 tracker/detector 模型身份与 26785db 对照相同。

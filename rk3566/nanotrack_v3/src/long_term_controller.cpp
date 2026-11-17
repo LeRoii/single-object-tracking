@@ -1236,12 +1236,17 @@ LongTermController::confirm_recovery_candidate(
       !recovery_candidates_.geometry_consistent(recent->observation.bbox, safe->observation.bbox);
   const bool probe_conflict = carrier_disagreement;
   std::optional<RecoveryCandidateKey> triad_key;
-  if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
+  output.recovery_recent_quality = recent ? to_string(recent->quality) : "NONE";
+  output.recovery_safe_quality = safe ? to_string(safe->quality) : "NONE";
+  output.recovery_triad_eligible =
+      config_.detector_target_mode == DetectorTargetMode::kFullObject &&
       recent && safe && recent->quality == QualityLevel::kReliable &&
-      safe->quality == QualityLevel::kReliable) {
+      safe->quality == QualityLevel::kReliable;
+  if (output.recovery_triad_eligible) {
     triad_key = recovery_candidates_.focus_triad(
         recent->observation.bbox, safe->observation.bbox);
   }
+  output.recovery_triad_focused = triad_key.has_value();
   const auto observe = [&](RecoveryCandidateSource source,
                            const std::optional<EvaluatedObservation>& observation) {
     if (!observation) return std::optional<RecoveryCandidateKey>{};
@@ -1275,6 +1280,8 @@ LongTermController::confirm_recovery_candidate(
     recovery_candidates_.observe_triad(*triad_key);
   }
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
+  output.recovery_conflict_cause = probe_conflict ? "PROBE_DISAGREEMENT" :
+      recovery_candidates_.conflict_cause();
   const auto motion_center_aligned = [&](const std::optional<EvaluatedObservation>& observation) {
     if (!observation) return false;
     const auto& box = observation->observation.bbox;

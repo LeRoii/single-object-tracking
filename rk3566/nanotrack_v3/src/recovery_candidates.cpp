@@ -502,6 +502,20 @@ bool RecoveryCandidateTable::conflicted() const noexcept {
   return entries_.size() > 1;
 }
 
+const char* RecoveryCandidateTable::conflict_cause() const noexcept {
+  if (unrepresented_conflict_) return "UNREPRESENTED_MATCH";
+  if (!overflow_detectors_.empty() && !triad_overflow_override_)
+    return "UNRESOLVED_OVERFLOW";
+  if (focused_detector_ && find(*focused_detector_)) {
+    return std::any_of(entries_.begin(), entries_.end(),
+        [&](const RecoveryCandidate& candidate) {
+          return candidate.key != *focused_detector_ &&
+                 candidate.hits() == required_hits_;
+        }) ? "FOCUSED_RIVAL" : "NONE";
+  }
+  return entries_.size() > 1 ? "MULTIPLE_CANDIDATES" : "NONE";
+}
+
 bool RecoveryCandidateTable::confirmed(RecoveryCandidateKey key) const noexcept {
   const auto* candidate = find(key);
   return !conflicted() && candidate && candidate->hits() == required_hits_ &&

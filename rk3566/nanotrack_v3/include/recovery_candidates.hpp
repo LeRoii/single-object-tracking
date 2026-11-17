@@ -74,6 +74,7 @@ class RecoveryCandidateTable {
   void advance_subtarget_probe(RecoveryCandidateKey key, const BBox& bbox,
                                std::size_t index, bool final_probe) noexcept;
   bool conflicted() const noexcept;
+  const char* conflict_cause() const noexcept;
   bool confirmed(RecoveryCandidateKey key) const noexcept;
   void mark_identity_conflict() noexcept;
   bool geometry_consistent(const BBox& reference, const BBox& bbox) const noexcept;

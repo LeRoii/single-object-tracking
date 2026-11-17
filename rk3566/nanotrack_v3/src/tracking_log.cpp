@@ -8,6 +8,7 @@
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -1059,6 +1060,22 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.tracker_ms = result.tracker_ms;
   row.runtime_ms = result.runtime_ms;
   row.note = note;
+  if (std::string_view(output.recovery_reason) == "IDENTITY_CONFLICT" ||
+      std::string_view(output.recovery_reason) == "AWAITING_CONFIRMATION" ||
+      std::string_view(output.recovery_reason) == "RECOVERY_STAGED") {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "RECOVERY_EVIDENCE(recent=";
+    row.note += output.recovery_recent_quality;
+    row.note += ";safe=";
+    row.note += output.recovery_safe_quality;
+    row.note += ";triad_eligible=";
+    row.note += (output.recovery_triad_eligible ? "1" : "0");
+    row.note += ";triad_focused=";
+    row.note += (output.recovery_triad_focused ? "1" : "0");
+    row.note += ";conflict=";
+    row.note += output.recovery_conflict_cause;
+    row.note += ")";
+  }
   if (result.detector_size_output_applied) {
     if (!row.note.empty()) row.note += ";";
     row.note += "DETECTOR_VERIFIED_OUTPUT_SIZE";

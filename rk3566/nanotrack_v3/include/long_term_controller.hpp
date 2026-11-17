@@ -121,6 +121,11 @@ struct ControllerOutput {
   const char* template_transition_reason = "NONE";
   const char* state_change_reason = "NONE";
   const char* recovery_reason = "NONE";
+  const char* recovery_recent_quality = "NONE";
+  const char* recovery_safe_quality = "NONE";
+  bool recovery_triad_eligible = false;
+  bool recovery_triad_focused = false;
+  const char* recovery_conflict_cause = "NONE";
   std::optional<ResponseReference> trusted_response_reference;
   std::optional<float> response_psr_relative_delta;
   std::optional<float> response_apce_relative_delta;
