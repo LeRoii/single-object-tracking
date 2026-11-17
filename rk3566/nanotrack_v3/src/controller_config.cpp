@@ -127,7 +127,6 @@ void set_value(ControllerConfig& config,
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
   else if (key == "suspicion_enter_ms") config.suspicion_enter_ms = parse_integer(key, value);
   else if (key == "suspicion_clear_ms") config.suspicion_clear_ms = parse_integer(key, value);
-  else if (key == "tentative_requires_clear_interval") config.tentative_requires_clear_interval = parse_bool(key, value);
   else if (key == "response_psr_drop_ratio") config.response_psr_drop_ratio = parse_float(key, value);
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
@@ -662,8 +661,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.suspected_detector_guard_required_hits << '|'
          << config.visual_suspect_max_center_px << '|'
          << config.visual_suspect_consecutive_frames;
-  if (config.tentative_requires_clear_interval)
-    stream << "|tentative_requires_clear_interval=1";
   return stream.str();
 }
 

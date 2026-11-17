@@ -2850,41 +2850,6 @@ void test_recent_safe_transient_and_probation() {
               "response gating resumes after a fresh ordinary minimum");
 }
 
-void test_tentative_requires_clean_interval_when_enabled() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.tentative_requires_clear_interval = true;
-  config.suspicion_enter_ms = 100;
-  config.suspicion_clear_ms = 100;
-  config.occlusion_min_reference_samples = 3;
-  const BBox bbox{70, 50, 30, 30};
-  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
-  const ResponseMetrics degraded{0.98F, 0.96F, 11, 16, 0.15F};
-  ResolvedControllerFixture controller(config);
-  controller.initialize(bbox, 0, 0, {320, 240});
-  const auto track = [&](std::uint64_t id, const ResponseMetrics& metrics) {
-    const auto plan = controller.begin_frame(id, id * 40, false);
-    auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
-    recent.metrics = metrics;
-    return controller.finish_frame(plan, {recent}, std::nullopt);
-  };
-  for (std::uint64_t id = 1; id <= 3; ++id) track(id, healthy);
-  expect_true(!track(4, degraded).accepted,
-              "a weak response starts tentative tracking");
-  for (std::uint64_t id : {5U, 6U, 7U, 8U, 9U}) {
-    const auto output = track(id, healthy);
-    expect_true(!output.accepted &&
-                    output.tracking_phase == TrackingPhase::kSuspected,
-                "clean responses remain tentative until the configured clear interval");
-  }
-  const auto cleared = track(10, healthy);
-  expect_true(cleared.accepted &&
-                  cleared.tracking_phase == TrackingPhase::kTracking &&
-                  !controller.response_degraded_since_ms_ &&
-                  !controller.response_clean_since_ms_,
-              "continuous clean responses restore tracking after the interval");
-}
-
 void test_production_observation_preserves_collapse() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3031,7 +2996,6 @@ int main() {
   test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();
   test_recent_safe_transient_and_probation();
-  test_tentative_requires_clean_interval_when_enabled();
   test_recent_safe_rolling_scale();
   test_production_observation_preserves_collapse();
   test_tentative_control_envelopes();

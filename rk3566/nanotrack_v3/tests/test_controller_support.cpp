@@ -357,7 +357,6 @@ int main() {
              "assisted_recovery_ms=3000\n"
              "suspicion_enter_ms=120\n"
              "suspicion_clear_ms=180\n"
-             "tentative_requires_clear_interval=true\n"
              "response_psr_drop_ratio=0.15\n"
              "response_apce_drop_ratio=0.35\n"
              "motion_alpha=1.0\n"
@@ -409,8 +408,7 @@ int main() {
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
   expect_true(visible.suspicion_enter_ms == 120 &&
-                  visible.suspicion_clear_ms == 180 &&
-                  visible.tentative_requires_clear_interval,
+                  visible.suspicion_clear_ms == 180,
               "candidate suspicion timings parse explicitly");
   expect_near(visible.response_psr_drop_ratio, 0.15F, 1e-6F,
               "candidate PSR drop ratio parses explicitly");
@@ -467,10 +465,6 @@ int main() {
 
   const std::string default_identity = controller_config_identity(default_visible);
   ControllerConfig identity_variant = default_visible;
-  identity_variant.tentative_requires_clear_interval = true;
-  expect_true(controller_config_identity(identity_variant) != default_identity,
-              "opt-in tentative clear behavior changes the config identity");
-  identity_variant = default_visible;
   identity_variant.accepted_scale_deadband_ratio = 0.03F;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes accepted scale deadband");
