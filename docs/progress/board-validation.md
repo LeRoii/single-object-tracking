@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T16:56:38+08:00 detector 佐证仅修正输出尺寸实验（待板端验证）
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `0a53c77562e1ad83f0e1df17c3e71edc45e5f24c`。离线使用已归档十目标 guard-off 原始 CSV 与正式真值计算：以 NanoTrack 中心和 detector 显示包络尺寸组成的框，已接受可见帧平均 IoU 在 car001/003/004/005/006/007/008/009/010 均上升，但 car002 由 0.894 降至 0.763；显示包络不能直接当算法框或控制框。这是诊断反事实，非运行时效果。
+- 本实验只在原有 SUSPECTED guard 连续两次匹配同类 detector 候选且控制器独立接受 NanoTrack Recent 时，更新**对外发布**的 tracking/control 尺寸；中心取 NanoTrack，每维单帧变化上限为 `min(10%, max_accepted_scale_step_ratio)`，detector 不缩小当前 NanoTrack 尺寸。控制器内部状态、下一帧 NanoTrack 裁剪、模板提交和视觉遮挡亮度历史都先使用原始框，发布尺寸在这些步骤完成后才修改；日志 `note=DETECTOR_VERIFIED_OUTPUT_SIZE` 可追踪应用帧。默认 guard 仍关闭，未接受或非 Recent 的输出不由 detector 授权。主机 `cmake --build /tmp/nt-ten-target-build -j4` 与 `ctest --test-dir /tmp/nt-ten-target-build --output-on-failure -j4` 23/23 PASS，日志 `/tmp/nt-output-fusion-build.log` / `/tmp/nt-output-fusion-ctest.log` SHA-256 `4308d7cf5d8983c20fcd206187516e875f6495e91fe550e8c118567a8ff322b9` / `b79117fe9bcef19080081fe06df89ab3b0bdec85156bd743922a8da2be787cc6`。单测核对输出中心和内部/已提交 NanoTrack 框分离、误类不触发。**尚无板端证据**；下一步同视频/模型/初始框完整十目标回放，并核查遮挡迟判与正确重捕是否保持。不得据主机单测推广或合入 main/Debug。
+
 ## 2026-11-17T16:49:05+08:00 亮度口径复测仍退化；撤回 detector 尺寸修正
 
 - 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`。亮度口径修正源码 `451906ec5363a834c325541eec889dae9212d97c`；源码包 `/tmp/nt-size-451906e.tar` 与 RK3588 `/home/neardi/Project/SOT/nt-size-451906e.tar` SHA-256 均 `8b9aad60fd7507b6c3e79f35d976dafbada6810a51d630358ea933fb86b8f16c`。板端程序 `/home/neardi/Project/SOT/nt-size-451906e/build/nanotrack_v3` SHA-256 `e4e64c9e4c557463fa0f70ea19fba1b4a3a1694472fb0463db2e770a1e6d3d96`；运行配置 `runs/headless-on.conf` SHA-256 `e29a40c83601af12306311be3ba3e17184a939c91eba7d8449433e9697a58108`。原生 CMake/build/CTest 采用上一节相同命令且 23/23 PASS；日志 SHA-256 `358245ab57155affc128da238778b0c85dad838b0788c980439cd7093481d982` / `0baaa083744bdd0513fcb50d58ba1b800d80b5665ea480b0cb2df2eda7db346f` / `a3d575d17a6d0a105af853b073ce1e9acd784a43342386cebefa1b19617829a3`。同一视频与模型身份见下节。

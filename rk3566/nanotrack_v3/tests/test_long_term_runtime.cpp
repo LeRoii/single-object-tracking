@@ -1682,7 +1682,9 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   const auto run = [&](bool enabled, BBox detection, int class_id,
                        std::int64_t detector_age_ms,
-                       bool duplicate = false, bool lose_tracker = false) {
+                       bool duplicate = false, bool lose_tracker = false,
+                       float* internal_width = nullptr,
+                       float* committed_width = nullptr) {
     ControllerConfig config;
     config.suspected_detector_guard_enabled = enabled;
     config.suspected_detector_guard_min_confidence = 0.35F;
@@ -1726,6 +1728,8 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
     for (int frame = 1; frame <= 14; ++frame) {
       frames.push_back(runtime.process_frame(image, frame, frame * 40));
     }
+    if (internal_width) *internal_width = runtime.controller().current_bbox().width;
+    if (committed_width) *committed_width = tracker.committed_bbox.width;
     return frames;
   };
   const BBox target{40, 30, 20, 20};
@@ -1736,6 +1740,10 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
   const auto stale = run(true, target, 2, 200);
   const auto ambiguous = run(true, target, 2, 0, true);
   const auto no_tracker = run(true, target, 2, 0, false, true);
+  float internal_width = 0.0F;
+  float committed_width = 0.0F;
+  const auto wider = run(true, BBox{38, 28, 24, 24}, 2, 0,
+                         false, false, &internal_width, &committed_width);
   expect_true(supported[4].output.tracking_phase == TrackingPhase::kSuspected,
               "PSR and peak-margin drop first makes the tracker tentative");
   expect_true(supported[5].detector.request_purpose ==
@@ -1769,6 +1777,20 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
                   !no_tracker[7].output.accepted &&
                   !no_tracker[7].suspected_detector_guard_applied,
               "detector support never authorizes control without a tracker observation");
+  expect_true(wider[6].detector_size_output_applied &&
+                  wider[6].output.tracking_bbox.width > target.width &&
+                  wider[6].output.tracking_bbox.width <= target.width * 1.1F + 0.01F &&
+                  std::fabs(wider[6].output.tracking_bbox.x +
+                            0.5F * wider[6].output.tracking_bbox.width -
+                            (target.x + 0.5F * target.width)) < 0.01F &&
+                  std::fabs(internal_width - target.width) < 0.01F &&
+                  std::fabs(committed_width - target.width) < 0.01F,
+              "detector-confirmed size is published without changing the tracker crop");
+  expect_true(std::none_of(wrong_class.begin(), wrong_class.end(),
+                  [](const RuntimeFrameResult& frame) {
+                    return frame.detector_size_output_applied;
+                  }),
+              "wrong-class detector cannot change published tracking dimensions");
 }
 
 int main() {

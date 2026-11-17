@@ -228,6 +228,7 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   last_guard_batch_frame_id_.reset();
   last_guard_source_ms_.reset();
   last_guard_candidate_bbox_.reset();
+  published_tracking_bbox_.reset();
   last_guard_confidence_.reset();
   guard_hits_ = 0;
   guard_stream_active_ = false;
@@ -650,6 +651,44 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   last_guard_source_ms_ = next_guard_source_ms;
   last_guard_candidate_bbox_ = next_guard_candidate_bbox;
   last_guard_confidence_ = next_guard_confidence;
+  // The controller and NanoTrack have already committed their own box. Only
+  // the published dimensions use a detector candidate corroborated by both
+  // the detector guard and an accepted Recent observation. This keeps the
+  // next search crop and the visual-occlusion reference independent of the
+  // detector's size measurement.
+  if (result.output.accepted && !result.output.reacquired &&
+      result.output.accepted_observation_path == AcceptedObservationPath::kDirect &&
+      result.output.selected_template == TemplateKind::kRecent) {
+    const BBox tracker_box = result.output.tracking_bbox;
+    const BBox previous = published_tracking_bbox_.value_or(tracker_box);
+    const BBox target = result.suspected_detector_guard_applied &&
+        next_guard_candidate_bbox
+        ? *next_guard_candidate_bbox : tracker_box;
+    const float limit = std::min(0.10F,
+        controller_.config().max_accepted_scale_step_ratio);
+    const auto next_dimension = [&](float current, float raw, float detector) {
+      const float desired = std::max(raw, detector);
+      return std::clamp(desired, current * (1.0F - limit),
+                        current * (1.0F + limit));
+    };
+    const float width = next_dimension(previous.width, tracker_box.width,
+        result.suspected_detector_guard_applied ? target.width : tracker_box.width);
+    const float height = next_dimension(previous.height, tracker_box.height,
+        result.suspected_detector_guard_applied ? target.height : tracker_box.height);
+    const float center_x = tracker_box.x + 0.5F * tracker_box.width;
+    const float center_y = tracker_box.y + 0.5F * tracker_box.height;
+    const BBox published = clip_bbox(
+        BBox{center_x - 0.5F * width, center_y - 0.5F * height,
+             width, height}, image.width, image.height);
+    result.detector_size_output_applied =
+        std::fabs(published.width - tracker_box.width) > 0.01F ||
+        std::fabs(published.height - tracker_box.height) > 0.01F;
+    result.output.tracking_bbox = published;
+    result.output.control_bbox = published;
+    published_tracking_bbox_ = published;
+  } else {
+    published_tracking_bbox_.reset();
+  }
   result.template_slot_revocation = pending_template_slot_revocation_;
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
   application_checkpoint.reset();

@@ -73,6 +73,7 @@ struct RuntimeFrameResult {
   ControllerOutput output{};
   DetectorDiagnostics detector{};
   bool suspected_detector_guard_applied = false;
+  bool detector_size_output_applied = false;
   int suspected_detector_guard_hits = 0;
   std::optional<float> suspected_detector_guard_confidence;
   float tracker_ms = 0.0F;
@@ -147,6 +148,7 @@ class LongTermRuntime {
   std::optional<std::uint64_t> last_guard_batch_frame_id_;
   std::optional<std::int64_t> last_guard_source_ms_;
   std::optional<BBox> last_guard_candidate_bbox_;
+  std::optional<BBox> published_tracking_bbox_;
   std::optional<float> last_guard_confidence_;
   int guard_hits_ = 0;
   bool guard_stream_active_ = false;
