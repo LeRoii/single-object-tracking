@@ -266,6 +266,8 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   last_guard_source_ms_.reset();
   last_guard_candidate_bbox_.reset();
   published_tracking_bbox_.reset();
+  last_published_output_bbox_.reset();
+  search_output_smoothing_active_ = false;
   published_center_offset_x_ = 0.0F;
   published_center_offset_y_ = 0.0F;
   last_supported_published_bbox_.reset();
@@ -795,7 +797,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     trusted_brightness_.push_back(bright_fraction(image, result.output.tracking_bbox));
     if (trusted_brightness_.size() > 8) trusted_brightness_.pop_front();
   }
-  previous_output_phase_ = result.output.tracking_phase;
   if (recent != result.observations.end()) {
     guard_observations_.push_back(GuardObservation{frame_id, recent->bbox});
     while (guard_observations_.size() > 8) guard_observations_.pop_front();
@@ -920,6 +921,40 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     last_supported_published_bbox_.reset();
     last_published_support_ms_.reset();
   }
+  // A frozen motion predictor can be spatially separated from the most
+  // recently published tracker box when search starts. Ease only the outward
+  // prediction toward that independent motion hypothesis; its state, NanoTrack
+  // crop, detector arbitration and recovery evidence remain untouched.
+  const float search_alpha = controller_.config().search_output_smoothing_alpha;
+  const bool searching = result.output.tracking_phase == TrackingPhase::kSearching &&
+      !result.output.accepted && result.output.motion_input_frozen;
+  const BBox internal_box = result.output.tracking_bbox;
+  if (searching && search_alpha > 0.0F && last_published_output_bbox_) {
+    const BBox& previous = *last_published_output_bbox_;
+    const float previous_x = previous.x + 0.5F * previous.width;
+    const float previous_y = previous.y + 0.5F * previous.height;
+    const float internal_x = internal_box.x + 0.5F * internal_box.width;
+    const float internal_y = internal_box.y + 0.5F * internal_box.height;
+    if (previous_output_phase_ != TrackingPhase::kSearching) {
+      const float gap = std::hypot(internal_x - previous_x, internal_y - previous_y);
+      search_output_smoothing_active_ = gap > 0.25F *
+          std::hypot(internal_box.width, internal_box.height);
+    }
+    if (search_output_smoothing_active_) {
+      const float x = previous_x + search_alpha * (internal_x - previous_x);
+      const float y = previous_y + search_alpha * (internal_y - previous_y);
+      const BBox published = clip_bbox(
+          BBox{x - 0.5F * internal_box.width, y - 0.5F * internal_box.height,
+               internal_box.width, internal_box.height}, image.width, image.height);
+      result.output.tracking_bbox = published;
+      result.output.control_bbox = published;
+      result.search_output_smoothed = true;
+    }
+  } else {
+    search_output_smoothing_active_ = false;
+  }
+  last_published_output_bbox_ = result.output.tracking_bbox;
+  previous_output_phase_ = result.output.tracking_phase;
   result.template_slot_revocation = pending_template_slot_revocation_;
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
   application_checkpoint.reset();

@@ -493,6 +493,12 @@ int main() {
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes accepted center correction ratio");
   identity_variant = default_visible;
+  identity_variant.search_output_smoothing_alpha = 0.50F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "enabled search output smoothing changes config identity");
+  expect_true(ControllerConfig{}.search_output_smoothing_alpha == 0.0F,
+              "search output smoothing remains opt-in");
+  identity_variant = default_visible;
   identity_variant.max_reacquisition_center_distance = 0.80F;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes ordinary recovery center distance");
@@ -708,6 +714,24 @@ int main() {
       {"display_center_smoothing_alpha",
        &ControllerConfig::display_center_smoothing_alpha},
   };
+  for (float value : {-0.01F, 0.0F, 0.5F, 1.0F, 1.01F,
+                      std::numeric_limits<float>::quiet_NaN(),
+                      std::numeric_limits<float>::infinity()}) {
+    ControllerConfig candidate = default_visible;
+    candidate.search_output_smoothing_alpha = value;
+    write_file(config_path, "search_output_smoothing_alpha=" +
+                            std::to_string(value) + "\n");
+    if (std::isfinite(value) && value >= 0.0F && value <= 1.0F) {
+      validate_controller_config(candidate);
+      expect_near(load_controller_config(config_path).search_output_smoothing_alpha,
+                  value, 1e-6F, "search output smoothing parses valid alpha");
+    } else {
+      expect_throws([&] { validate_controller_config(candidate); },
+                    "search output smoothing rejects invalid direct alpha");
+      expect_throws([&] { load_controller_config(config_path); },
+                    "search output smoothing rejects invalid file alpha");
+    }
+  }
   for (const NewFloatLimit& limit : new_unit_limits) {
     for (float value : {0.0F, 0.01F, 0.99F, 1.0F, 1.01F, -0.01F,
                         std::numeric_limits<float>::quiet_NaN(),

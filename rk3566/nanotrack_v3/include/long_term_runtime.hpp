@@ -75,6 +75,7 @@ struct RuntimeFrameResult {
   bool suspected_detector_guard_applied = false;
   bool detector_size_output_applied = false;
   bool detector_center_output_applied = false;
+  bool search_output_smoothed = false;
   bool detector_tracking_size_confirmed = false;
   bool visual_probe_ran = false;
   bool visual_probe_hit = false;
@@ -156,6 +157,8 @@ class LongTermRuntime {
   std::optional<std::int64_t> last_guard_source_ms_;
   std::optional<BBox> last_guard_candidate_bbox_;
   std::optional<BBox> published_tracking_bbox_;
+  std::optional<BBox> last_published_output_bbox_;
+  bool search_output_smoothing_active_ = false;
   float published_center_offset_x_ = 0.0F;
   float published_center_offset_y_ = 0.0F;
   std::optional<BBox> last_supported_published_bbox_;

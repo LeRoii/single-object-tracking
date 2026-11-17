@@ -40,6 +40,9 @@ struct ControllerConfig {
   float accepted_scale_output_hysteresis_px = 0.00F;
   float accepted_center_smoothing_alpha = 1.00F;
   float accepted_center_max_correction_ratio = 0.00F;
+  // 0 disables smoothing of a frozen-motion search output. Search crops retain
+  // their independent motion hypothesis regardless of this publication filter.
+  float search_output_smoothing_alpha = 0.00F;
   float max_reacquisition_center_distance = 0.00F;
   // Limit for full-object dual-template recovery, in predicted-box diagonals.
   float recovery_dual_template_max_motion_diagonals = 1.0F;
