@@ -614,6 +614,42 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         self.assertEqual(report["reacquisition"]["frames"], [9])
         self.assertIn(2, report["worst_frames"])
 
+    def test_early_reemergence_recovery_requires_three_visible_identity_checks(self):
+        contract = synthetic_contract()
+        contract["event_frames"].update(
+            estimated_end=6, first_reliable_reappearance=7,
+            stable_reappearance=7, re_emergence_frames=[6, 6]
+        )
+        contract["truth"][6].update(
+            status="partial_occlusion", observable=False, bbox=None
+        )
+        rows = passing_rows()
+        rows[6].update(
+            state="TRACKING", tracking_phase="TRACKING",
+            observation_valid=True, observation_present=True,
+            trusted_for_state_update=True, motion_update_valid=True,
+            control_source="OBSERVATION", motion_control_authorized=False,
+            rect0_source="ACCEPTED_OBSERVATION", accepted=True,
+        )
+        rows[7]["reacquired"] = False
+        mark_recovery(rows[6])
+        report = evaluator.evaluate(contract, rows, "full")
+        self.assertTrue(report["gates"]["reacquisition"]["passed"])
+
+        rows[8]["tracking_bbox"] = [80.0, 20.0, 10.0, 10.0]
+        report = evaluator.evaluate(contract, rows, "full")
+        self.assertFalse(report["gates"]["reacquisition"]["passed"])
+        rows[8]["tracking_bbox"] = [18.0, 20.0, 10.0, 10.0]
+
+        rows[9]["accepted"] = False
+        report = evaluator.evaluate(contract, rows, "full")
+        self.assertFalse(report["gates"]["reacquisition"]["passed"])
+        rows[9]["accepted"] = True
+
+        contract["truth"][6]["status"] = "full_occlusion"
+        report = evaluator.evaluate(contract, rows, "full")
+        self.assertFalse(report["gates"]["reacquisition"]["passed"])
+
     def test_search_prediction_is_not_scored_as_observation_or_identity_claim(self):
         contract = synthetic_contract()
         for item in contract["truth"]:

@@ -181,6 +181,13 @@ def _event_frames(events, frame_count):
             )
         ),
     }
+    if "re_emergence_frames" in event:
+        re_emergence_start, re_emergence_end = pair(
+            "re_emergence_frames", "re_emergence_start_frame", "re_emergence_end_frame"
+        )
+        if not (full_end < re_emergence_start <= re_emergence_end < first_reliable):
+            raise ValueError("re-emergence frame order is invalid")
+        result["re_emergence_frames"] = [re_emergence_start, re_emergence_end]
     if not (
         0 <= estimated_start <= full_start <= full_end <= estimated_end
         < result["first_reliable_reappearance"]
@@ -1142,14 +1149,50 @@ def evaluate(contract, rows, scope):
     reacquisition_frames = sorted(valid_reacquisitions)
     first_reliable = int(events["first_reliable_reappearance"])
     deadline = int(events.get("reacquisition_deadline_exclusive", 190))
+    early_confirmation = []
+    early_reacquisition_ok = False
+    if len(reacquisition_frames) == 1 and "re_emergence_frames" in events:
+        reacquisition_frame = reacquisition_frames[0]
+        re_start, re_end = events["re_emergence_frames"]
+        early_confirmation = list(range(first_reliable, first_reliable + 3))
+        early_reacquisition_ok = (
+            re_start <= reacquisition_frame <= re_end
+            and all(
+                truth_by_frame[frame_id]["status"] == "partial_occlusion"
+                and truth_by_frame[frame_id]["bbox"] is None
+                for frame_id in range(reacquisition_frame, first_reliable)
+            )
+            and all(
+                frame_id < deadline and frame_id in truth_by_frame
+                and truth_by_frame[frame_id]["observable"]
+                and truth_by_frame[frame_id]["bbox"] is not None
+                for frame_id in early_confirmation
+            )
+            and all(
+                rows_by_frame[frame_id]["accepted"]
+                and rows_by_frame[frame_id]["observation_valid"] is True
+                and rows_by_frame[frame_id]["control_valid"] is True
+                and rows_by_frame[frame_id]["control_source"] == "OBSERVATION"
+                and _iou(rows_by_frame[frame_id]["tracking_bbox"],
+                         truth_by_frame[frame_id]["bbox"]) >= 0.70
+                for frame_id in early_confirmation
+            )
+        )
     reacquisition_ok = (
         not invalid_reacquisitions
         and len(reacquisition_frames) == 1
-        and first_reliable <= reacquisition_frames[0] < deadline
+        and (first_reliable <= reacquisition_frames[0] < deadline
+             or early_reacquisition_ok)
     )
     reacquisition_detail = "exactly one reacquisition in [{}, {}) observed {}".format(
         first_reliable, deadline, reacquisition_frames
     )
+    if "re_emergence_frames" in events:
+        reacquisition_detail += (
+            "; early re-emergence {} requires three subsequent visible accepted "
+            "observations with IoU >=0.70, checked {}: {}"
+        ).format(events["re_emergence_frames"], early_confirmation,
+                 early_reacquisition_ok)
     if recent_safe:
         reacquisition_detail += ". Invalid schema claims {}".format(invalid_reacquisitions)
 
