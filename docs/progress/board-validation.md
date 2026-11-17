@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-17T16:33:08+08:00 detector 佐证后的有限尺寸修正候选（待板端验证）
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，基线 `a1d056d69cfec3380c5819cef620bf295ad00631`。研究旧 detector guard 在 120--141 帧可阻止可见目标进入 SEARCH，但十目标 A/B 中 car006/007 由 PASS 变 FAIL；逐帧查到保护后跟踪中心大致正确，跟踪框尺寸约 30--35 px，而 guard-off 后正确重捕的尺寸约 40--46 px。先前对单纯缩短 SUSPECTED 时序的十目标 A/B 已否决，详见下节。
+- 本候选保留 guard 默认关闭。仅在同类别、唯一、近期 detector 两次确认且 NanoTrack Recent 被控制器独立接受时，将该 detector 框作为**尺寸**提示：每维向 detector 尺寸移动一半，单帧最多变化 10%；中心仍取 NanoTrack，未接受观测、误类、歧义和过期框不触发。修改 `long_term_controller.hpp/.cpp`、`long_term_runtime.cpp` 与运行时单测；`cmake --build /tmp/nt-ten-target-build -j4` exit 0，`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure -j4` 23/23 PASS。此处仅是主机行为验证，尚未证明板端真值收益；下一步在 RK3588 隔离目录原生构建，对十目标首帧真值初始化做 guard-on/guard-off 对比。不要合入 main/Debug 或作为新基线，直至 A/B 无有害退化。
+
 ## 2026-11-17T16:18:14+08:00 十目标安全候选完成板端回归；快速时序 A/B 否决
 
 - 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，算法源码提交 `e18067ea641bb0699c945a2ec2e74b7ec1dae6a1`；源码包 `/tmp/nt-ten-target-e18067e.tar` 与 RK3588 `/home/neardi/Project/SOT/ten-target-e18067e/source.tar` SHA-256 均为 `17ac2337009220d68b96620c6789a807371754dbf8a1b547bb624fd16db420db`。板端 Linux 6.1.84、RKNN API 2.1.0、driver 0.9.8，原生二进制 `/home/neardi/Project/SOT/ten-target-e18067e/build/nanotrack_v3` SHA-256 `913fd2e899b60f6d01b12b7bdf6d35e5a8bb2385ec2126c229420927272e40f9`。实际执行 `cmake -S rk3566/nanotrack_v3 -B build -DENABLE_RKNN_RUNTIME=ON -DBUILD_TESTING=ON -DRKNN_INCLUDE_DIR=/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/include -DRKNN_LIBRARY=/usr/lib/librknnrt.so`、`cmake --build build -j4`、`ctest --test-dir build --output-on-failure -j4`，23/23 PASS；板端 cmake/build/CTest 日志 SHA-256 `6951b4323ca49759827927ecd368097196ac80f4e2ec0be8c88f602fb0b5ef32` / `7c919f3f6551cb3afcbb8ec4cb8c86bee6ac2b82bd2323c1351cc91d0bec14b0` / `82d559fcc112786db2c1b54644967aa4a98ebbe5db2512e91b91cf1420141b3f`。

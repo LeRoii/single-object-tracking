@@ -558,6 +558,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       bbox_iou(*next_guard_candidate_bbox, recent->bbox) >=
           guard_config.suspected_detector_guard_min_iou * 0.6F) {
     result.plan.suspected_detector_guard = true;
+    result.plan.suspected_detector_size_hint = *next_guard_candidate_bbox;
   }
   result.suspected_detector_guard_hits = next_guard_hits;
   result.suspected_detector_guard_confidence = next_guard_confidence;

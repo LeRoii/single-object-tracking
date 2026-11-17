@@ -47,6 +47,8 @@ struct SearchPlan {
   bool visual_occlusion_search = false;
   // A fresh detector result corroborates this frame's NanoTrack observation.
   bool suspected_detector_guard = false;
+  // Size evidence only; the accepted NanoTrack observation supplies the center.
+  std::optional<BBox> suspected_detector_size_hint;
   std::optional<SearchHint> search_hint;
   std::int64_t motion_search_age_ms = -1;
   bool motion_prediction_confident = false;

@@ -1837,6 +1837,30 @@ void LongTermController::accept_observation(
     next_width.emitted = scaled_bbox.width;
     next_height.emitted = scaled_bbox.height;
   }
+  if (acceptance_path == AcceptedObservationPath::kDirect &&
+      plan.suspected_detector_guard && plan.suspected_detector_size_hint &&
+      selected.observation.template_kind == TemplateKind::kRecent) {
+    const BBox& hint = *plan.suspected_detector_size_hint;
+    if (hint.width > 0.0F && hint.height > 0.0F &&
+        std::isfinite(hint.width) && std::isfinite(hint.height)) {
+      // The detector already passed the unique, fresh, two-hit guard and
+      // overlaps this Recent observation. Limit each dimension's correction
+      // to 10% so it cannot abruptly replace the tracker's geometry.
+      const float width = std::clamp(
+          0.5F * (scaled_bbox.width + hint.width),
+          scaled_bbox.width * 0.9F, scaled_bbox.width * 1.1F);
+      const float height = std::clamp(
+          0.5F * (scaled_bbox.height + hint.height),
+          scaled_bbox.height * 0.9F, scaled_bbox.height * 1.1F);
+      const float cx = scaled_bbox.x + 0.5F * scaled_bbox.width;
+      const float cy = scaled_bbox.y + 0.5F * scaled_bbox.height;
+      scaled_bbox = clip_bbox(BBox{cx - 0.5F * width, cy - 0.5F * height,
+                                  width, height},
+                              frame_size_.width, frame_size_.height);
+      next_width.emitted = scaled_bbox.width;
+      next_height.emitted = scaled_bbox.height;
+    }
+  }
   output.tracking_bbox = scaled_bbox;
   output.display_bbox = stabilize_accepted_center(
       plan, selected.observation.bbox, scaled_bbox, reacquired, output);

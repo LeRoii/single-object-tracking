@@ -1736,6 +1736,7 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
   const auto stale = run(true, target, 2, 200);
   const auto ambiguous = run(true, target, 2, 0, true);
   const auto no_tracker = run(true, target, 2, 0, false, true);
+  const auto wider_detector = run(true, BBox{38, 28, 24, 24}, 2, 0);
   expect_true(supported[4].output.tracking_phase == TrackingPhase::kSuspected,
               "PSR and peak-margin drop first makes the tracker tentative");
   expect_true(supported[5].detector.request_purpose ==
@@ -1769,6 +1770,13 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
                   !no_tracker[7].output.accepted &&
                   !no_tracker[7].suspected_detector_guard_applied,
               "detector support never authorizes control without a tracker observation");
+  expect_true(wider_detector[6].suspected_detector_guard_applied &&
+                  wider_detector[6].output.tracking_bbox.width > target.width &&
+                  wider_detector[6].output.tracking_bbox.width <= target.width * 1.1F + 0.01F &&
+                  std::fabs(wider_detector[6].output.tracking_bbox.x +
+                            0.5F * wider_detector[6].output.tracking_bbox.width -
+                            (target.x + 0.5F * target.width)) < 0.01F,
+              "corroborated detector adjusts only accepted tracker size with a bounded step");
 }
 
 int main() {
