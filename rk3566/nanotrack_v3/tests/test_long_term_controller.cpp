@@ -2201,6 +2201,47 @@ void test_far_recovery_needs_verified_detector_triad() {
               "interior object cannot replace a target that coasted at the image edge");
 }
 
+void test_detector_corroborates_old_recent_during_recovery_probation() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.max_center_distance = 10.0F;
+  const BBox initial{40, 30, 20, 20};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(initial, 0, 0, {240, 160});
+  reject_frame(controller, 1, 40);
+  ControllerOutput output;
+  for (std::uint64_t frame : {2U, 3U}) {
+    const auto plan = controller.begin_frame(frame, frame * 40, false);
+    output = controller.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, initial, frame)},
+        std::nullopt);
+  }
+  expect_true(output.reacquired && controller.recovery_probation_,
+              "fixture enters staged recovery probation");
+  const BBox detector{40, 34, 20, 20};
+  controller.recovery_detector_reference_ = detector;
+  const auto plan = controller.begin_frame(4, 160, false);
+  const BBox staged{40, 24, 20, 20};
+  output = controller.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kRecent, detector, 4),
+       reliable_observation(plan, TemplateKind::kStaged, staged, 4)},
+      std::nullopt);
+  expect_true(output.accepted && output.selected_template == TemplateKind::kRecent &&
+                  output.template_action == TemplateAction::kRollbackRecent &&
+                  output.template_transition && !output.template_transition->recovery &&
+                  std::string(output.recovery_reason) == "PROBATION_DETECTOR_RECENT" &&
+                  std::fabs(output.tracking_bbox.y - detector.y) < 1.0F,
+              "detector-backed old Recent keeps control while rejecting divergent staged template");
+  const auto next = controller.begin_frame(5, 200, false);
+  expect_true(next.tracking_phase == TrackingPhase::kTracking &&
+                  next.template_run_mode != TemplateRunMode::kStagedAndRecent &&
+                  !controller.recovery_detector_reference_,
+              "discarding only staged template keeps tracking and clears detector reference");
+  controller.abort_frame();
+}
+
 void test_conflicted_recovery_needs_matching_detector_evidence() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3020,6 +3061,7 @@ int main() {
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_far_recovery_needs_verified_detector_triad();
+  test_detector_corroborates_old_recent_during_recovery_probation();
   test_conflicted_recovery_needs_matching_detector_evidence();
   test_recovery_probation_cleanup();
 

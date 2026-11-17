@@ -411,6 +411,7 @@ class LongTermController {
         : motion(config), occlusion_evidence(config) {}
     BBox bbox{};
     BBox display_bbox{};
+    std::optional<BBox> detector_reference;
     MotionEstimator motion;
     OcclusionEvidenceTracker occlusion_evidence;
     OcclusionEvidenceDecision occlusion_decision;
@@ -475,6 +476,7 @@ class LongTermController {
   std::shared_ptr<RecoveryAcceptance> pending_recovery_acceptance_;
   bool recent_probation_ = false;
   bool recovery_probation_ = false;
+  std::optional<BBox> recovery_detector_reference_;
   bool rollback_pending_ = false;
   bool resume_search_after_rollback_ = false;
   bool recovery_conflict_seen_ = false;
