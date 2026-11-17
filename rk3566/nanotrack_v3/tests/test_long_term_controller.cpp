@@ -1902,6 +1902,24 @@ void test_fresh_detector_anchor_survives_unconfirmed_tracker_offset() {
                   plan.search_hint->projected_bbox.y == detector_box.y,
               "unconfirmed tracker offset does not drag the next crop away from detector");
   controller.abort_frame();
+
+  ResolvedControllerFixture small_offset(config);
+  small_offset.initialize(initial, 0, 0, {400, 300}, make_fixed_target_class(2, true));
+  reject_frame(small_offset, 1, 40);
+  plan = small_offset.begin_frame(2, 80, true);
+  if (plan.detector_request) batch.generation = plan.detector_request->generation;
+  small_offset.finish_frame(plan, {}, batch);
+  plan = small_offset.begin_frame(3, 120, false);
+  const BBox near_tracker{101, 101, 40, 40};
+  small_offset.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, near_tracker, 3),
+             reliable_observation(plan, TemplateKind::kSafe, near_tracker, 3)},
+      std::nullopt);
+  plan = small_offset.begin_frame(4, 160, false);
+  expect_true(plan.recovery_probe && plan.predicted_bbox.x == near_tracker.x &&
+                  plan.predicted_bbox.y == near_tracker.y,
+              "small tracker offset retains the existing crop center");
+  small_offset.abort_frame();
 }
 
 void test_subtarget_probe_abort_does_not_advance_cursor() {

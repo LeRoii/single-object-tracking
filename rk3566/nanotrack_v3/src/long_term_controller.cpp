@@ -373,13 +373,33 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
       (config_.detector_target_mode != DetectorTargetMode::kSubtarget ||
        search_reacquisition_eligible(timestamp_ms));
   const RecoveryCandidate* probe = can_plan_probe ? recovery_candidates_.select_probe() : nullptr;
+  bool detector_anchored_probe = false;
   if (probe) {
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
-    // A tracker hit may be offset from the detector region while confirmation
-    // is still pending. Keep probing the fresh detector region instead of
-    // moving the next crop toward an unconfirmed tracker response.
-    predicted = detector && config_.detector_target_mode == DetectorTargetMode::kFullObject
-        ? detector->bbox : probe->preferred_evidence().bbox;
+    const auto& tracker = probe->from(RecoveryCandidateSource::kRecent);
+    bool anchor_detector = false;
+    if (detector && tracker &&
+        config_.detector_target_mode == DetectorTargetMode::kFullObject) {
+      const auto center_distance = [](const BBox& first, const BBox& second) {
+        return std::hypot(first.x + 0.5F * first.width -
+                              second.x - 0.5F * second.width,
+                          first.y + 0.5F * first.height -
+                              second.y - 0.5F * second.height);
+      };
+      const float tracker_drift = center_distance(
+          tracker->bbox, detector->bbox) /
+          std::hypot(detector->bbox.width, detector->bbox.height);
+      const float detector_motion_distance = center_distance(
+          detector->bbox, motion_predicted) /
+          std::hypot(motion_predicted.width, motion_predicted.height);
+      // A fresh detection can prevent an unconfirmed tracker offset from
+      // moving the crop, but only near the held motion hypothesis. Small
+      // offsets keep the tracker crop to avoid changing stable recovery paths.
+      anchor_detector = tracker_drift >= 0.1F &&
+          detector_motion_distance <= 0.5F;
+    }
+    detector_anchored_probe = anchor_detector;
+    predicted = anchor_detector ? detector->bbox : probe->preferred_evidence().bbox;
     if (detector && probe->subtarget_carrier &&
         !probe->from(RecoveryCandidateSource::kRecent) &&
         !probe->from(RecoveryCandidateSource::kSafe)) {
@@ -439,6 +459,12 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     if (probe->hits() > 0) {
       plan.search_hint = search_hint_for(*probe);
       plan.search_hint->used = true;
+      if (detector_anchored_probe) {
+        const auto& detector = *probe->from(RecoveryCandidateSource::kDetector);
+        plan.search_hint->source_frame_id = detector.frame_id;
+        plan.search_hint->source_timestamp_ms = detector.timestamp_ms;
+        plan.search_hint->projected_bbox = detector.bbox;
+      }
     }
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
     if (detector) {
@@ -1185,9 +1211,7 @@ void LongTermController::cancel_probation() noexcept {
 
 SearchHint LongTermController::search_hint_for(
     const RecoveryCandidate& candidate) const {
-  const auto& detector = candidate.from(RecoveryCandidateSource::kDetector);
-  const auto& evidence = detector && config_.detector_target_mode == DetectorTargetMode::kFullObject
-      ? *detector : candidate.preferred_evidence();
+  const auto& evidence = candidate.preferred_evidence();
   const auto& first_hit = candidate.verifications[0]
       ? candidate.verifications[0] : candidate.verifications[1];
   SearchHint hint;
