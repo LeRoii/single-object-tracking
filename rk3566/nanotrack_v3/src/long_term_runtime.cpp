@@ -350,25 +350,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       result.plan.visual_occlusion_search = true;
     }
   }
-  const auto guard_recent = std::find_if(result.observations.begin(),
-      result.observations.end(), [](const TrackerObservation& observation) {
-        return observation.template_kind == TemplateKind::kRecent;
-      });
-  ResponseBaselineEvaluation guard_response;
-  if (guard_recent != result.observations.end()) {
-    guard_response = controller_.response_baseline_.evaluate(guard_recent->metrics);
-  }
-  const int guard_response_drops = static_cast<int>(guard_response.psr_drop) +
-      static_cast<int>(guard_response.apce_drop) +
-      static_cast<int>(guard_response.peak_margin_drop);
-  const bool guard_response_warning = guard_config.suspected_detector_guard_enabled &&
-      guard_class && guard_recent != result.observations.end() &&
-      guard_recent->metrics.raw_score >= guard_config.weak_score &&
-      (guard_response_drops >= 2 ||
-       guard_recent->metrics.psr < guard_config.reliable_psr ||
-       guard_recent->metrics.apce < guard_config.reliable_apce ||
-       guard_recent->metrics.peak_margin < guard_config.reliable_peak_margin);
-  const bool guard_validation_active = guard_stream || guard_response_warning;
   bool visual_hit = false;
   bool visual_ambiguous = false;
   bool visual_blocking_used = false;
@@ -492,7 +473,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   } else {
     guarded_visual_misses_ = 0;
   }
-  if (guard_validation_active && !visual_blocking_used &&
+  if (guard_stream && !visual_blocking_used &&
       !result.plan.request_detector && result.detector.ready &&
       (!last_guard_request_ms_ ||
        timestamp_ms - *last_guard_request_ms_ >= guard_config.detector_interval_ms)) {
@@ -539,7 +520,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   if (detector_batch) {
     if (detector_batch->purpose == DetectorRequestPurpose::kDisplayRefresh) {
       display_batch = detector_batch;
-      if (guard_response_warning) guard_batch = detector_batch;
     } else if (detector_batch->purpose == DetectorRequestPurpose::kSearchRecovery) {
       recovery_batch = detector_batch;
     } else if (detector_batch->purpose == DetectorRequestPurpose::kSuspectedValidation) {
@@ -602,7 +582,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       next_guard_confidence.reset();
     }
   }
-  if (guard_validation_active && recent != result.observations.end() &&
+  if (guard_stream && recent != result.observations.end() &&
       next_guard_hits >= guard_config.suspected_detector_guard_required_hits &&
       next_guard_source_ms && next_guard_candidate_bbox &&
       timestamp_ms >= *next_guard_source_ms &&
@@ -690,8 +670,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     while (guard_observations_.size() > 8) guard_observations_.pop_front();
   }
   guard_stream_active_ = result.output.tracking_phase == TrackingPhase::kSuspected ||
-                         result.suspected_detector_guard_applied ||
-                         guard_response_warning;
+                         result.suspected_detector_guard_applied;
   if (result.output.tracking_phase == TrackingPhase::kSearching ||
       result.output.reacquired) {
     guard_protection_active_ = false;
