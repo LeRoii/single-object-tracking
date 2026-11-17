@@ -1271,7 +1271,8 @@ LongTermController::confirm_recovery_candidate(
     }
     return recovery_candidates_.observe(source, bbox, 0.0F, std::nullopt,
         std::nullopt, !carrier_disagreement,
-        frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_));
+        frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_),
+        std::nullopt, triad_key);
   };
   const auto recent_key = observe(RecoveryCandidateSource::kRecent, recent);
   const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);

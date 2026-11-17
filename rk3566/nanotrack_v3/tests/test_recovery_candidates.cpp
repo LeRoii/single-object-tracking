@@ -234,6 +234,45 @@ int main() {
          "overlapping rival detectors cannot be resolved by the same tracker pair");
   }
   {
+  ControllerConfig duplicate_config = config;
+  duplicate_config.detector_max_candidates = 3;
+  duplicate_config.recovery_confirmation_required = 3;
+  RecoveryCandidateTable duplicate(duplicate_config);
+  const BBox detector_box{40, 30, 20, 20};
+  const BBox tracker_only_box{52, 30, 20, 20};
+  const BBox shared_tracker_box{46, 30, 20, 20};
+  duplicate.expire(90, 3600, 12);
+  const auto target = duplicate.observe(Source::kDetector, detector_box,
+                                        0.85F, 3600, 2, false);
+  const auto duplicate_key = duplicate.observe(Source::kRecent, tracker_only_box);
+  expect(target && duplicate_key && target != duplicate_key &&
+             duplicate.size() == 2,
+         "a tracker-only hypothesis can coexist with a distinct detector key");
+  for (std::uint64_t frame = 91; frame <= 92; ++frame) {
+    duplicate.expire(frame, 3600 + static_cast<std::int64_t>(frame - 90) * 33, 12);
+    expect(duplicate.focus_triad(shared_tracker_box, shared_tracker_box) == target,
+           "both tracker heads uniquely focus the one detector key");
+    const auto observe_triad = [&](Source source) {
+      return duplicate.observe(source, shared_tracker_box, 0.0F,
+          std::nullopt, std::nullopt, true, 0.0F, std::nullopt, target);
+    };
+    expect(observe_triad(Source::kRecent) == target &&
+               observe_triad(Source::kSafe) == target && !duplicate.conflicted(),
+           "a duplicate tracker-only key cannot veto a unique current-frame triad");
+    duplicate.observe_triad(*target);
+  }
+  expect(duplicate.triad_confirmed(*target),
+         "two fresh triads still authorize the ordinary confirmed recovery");
+
+  RecoveryCandidateTable rival_detector(duplicate_config);
+  rival_detector.expire(90, 3600, 12);
+  rival_detector.observe(Source::kDetector, detector_box, 0.85F, 3600, 2, false);
+  rival_detector.observe(Source::kDetector, tracker_only_box, 0.86F,
+                         3600, 2, false);
+  expect(!rival_detector.focus_triad(shared_tracker_box, shared_tracker_box),
+         "two detector identities matching the tracker pair remain ambiguous");
+  }
+  {
   ControllerConfig overflow_config = config;
   overflow_config.recovery_confirmation_required = 3;
   RecoveryCandidateTable overflow(overflow_config);
