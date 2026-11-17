@@ -2987,6 +2987,49 @@ void test_recent_safe_rolling_scale() {
 
 }  // namespace
 
+void test_frozen_motion_single_near_detector_probe() {
+  using namespace nanotrack;
+  const auto inspect = [](bool frozen) {
+    ControllerConfig config;
+    config.motion_search_enabled = true;
+    config.detector_interval_ms = 40;
+    ResolvedControllerFixture controller(config);
+    controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300},
+                          make_fixed_target_class(2, true));
+    reject_frame(controller, 1, 40);
+    const auto plan = controller.begin_frame(2, 80, true);
+    expect_true(plan.motion_prediction_confident && plan.detector_request,
+                "near-detector fixture has a confident detector search");
+    if (!plan.detector_request) return;
+    if (frozen) controller.motion_freeze_since_ms_ = 40;
+    DetectorBatch batch;
+    batch.source_frame_id = plan.detector_request->frame_id;
+    batch.source_timestamp_ms = plan.detector_request->timestamp_ms;
+    batch.generation = plan.detector_request->generation;
+    batch.candidates = {{BBox{105, 80, 20, 20}, 0.80F, 2}};
+    if (frozen) batch.candidates.push_back(
+        DetectorCandidate{BBox{150, 80, 20, 20}, 0.90F, 2});
+    const auto result = controller.finish_frame(plan, {}, batch);
+    expect_true(result.detector_candidate_diagnostics[0].queued &&
+                    controller.recovery_candidates_.focused_detector_.has_value() == frozen &&
+                    (!frozen || (result.detector_candidate_diagnostics[1].rejection ==
+                                      DetectorCandidateRejection::kPositionRejected &&
+                                  !result.detector_candidate_diagnostics[1].queued)) &&
+                    !result.accepted && !result.observation_valid,
+                "only frozen trusted motion focuses the sole near detector seed");
+    if (frozen) {
+      const auto next = controller.begin_frame(3, 120, false);
+      expect_true(next.recovery_probe &&
+                      next.recovery_probe->source == RecoveryCandidateSource::kDetector &&
+                      next.hypothesis_source == HypothesisSource::kDetector,
+                  "focused detector receives a tracker probe on the next frame");
+      controller.abort_frame();
+    }
+  };
+  inspect(true);
+  inspect(false);
+}
+
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
@@ -3017,6 +3060,7 @@ int main() {
   test_target_class_gate();
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
+  test_frozen_motion_single_near_detector_probe();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_far_recovery_needs_verified_detector_triad();
