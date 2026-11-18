@@ -94,11 +94,23 @@ for _target_id, _package_hash in EIGHT_TARGET_PACKAGE_HASHES.items():
     }
 
 TRUTH_VERSIONS = {
+    "car_003_visible_unboxed_v3": {
+        "target_id": "car_003",
+        "annotation_root": "ground_truth_versions/car_003_visible_unboxed_v3",
+        "package_checksums_sha256": "282d0dcb4b018610deae9912e95415e264f59c2490bd08db1f7f4733171f0337",
+        "visible_unboxed_frames": (130,),
+    },
     "car_004_visible_unboxed_v2": {
         "target_id": "car_004",
         "annotation_root": "ground_truth_versions/car_004_visible_unboxed_v2",
         "package_checksums_sha256": "c8c394b41c2cb489f33a1b7e631cd1e9776cd9d75c15a5860ec221e2ddda1126",
         "visible_unboxed_frames": (42,),
+    },
+    "car_004_visible_unboxed_v3": {
+        "target_id": "car_004",
+        "annotation_root": "ground_truth_versions/car_004_visible_unboxed_v3",
+        "package_checksums_sha256": "caf198ced5205640e0899913da16a21947be951991b5e0c37e4019ee6dbe3957",
+        "visible_unboxed_frames": (42, 131, 132),
     },
     "car_009_visible_unboxed_v2": {
         "target_id": "car_009",
@@ -111,6 +123,12 @@ TRUTH_VERSIONS = {
         "annotation_root": "ground_truth_versions/car_010_visible_unboxed_v2",
         "package_checksums_sha256": "364746fb0c93f7bdc264487f40adf2a83c545b9e472881976919f75b9fa0e1bc",
         "visible_unboxed_frames": (149, 150, 151, 152, 153, 154, 155),
+    },
+    "car_010_visible_unboxed_v3": {
+        "target_id": "car_010",
+        "annotation_root": "ground_truth_versions/car_010_visible_unboxed_v3",
+        "package_checksums_sha256": "e5ea0ef17756cb8c4eb765ec558efb4bcab84060efe4ae667eabb4a074910510",
+        "visible_unboxed_frames": (149, 150, 151, 152, 153, 154, 155, 156, 157),
     },
 }
 
