@@ -862,6 +862,23 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     BBox target = guard_size_supported ? *next_guard_candidate_bbox :
         tracking_size_supported ? *confirmed_tracking_size_candidate_ :
         support_recent ? *last_supported_published_bbox_ : tracker_box;
+    const BBox visible_extent = target;
+    // A corroborated detector box clipped by the image boundary describes
+    // the visible in-frame extent. The internal NanoTrack crop keeps its own
+    // full-size estimate; only the published tracking/control box uses this
+    // smaller extent while detector support is fresh.
+    const bool edge_extent_supported = !guard_size_supported &&
+        (tracking_size_supported || support_recent);
+    const bool visible_edge_x = edge_extent_supported &&
+        ((visible_extent.x <= 1.0F && tracker_box.x <= 1.0F) ||
+         (visible_extent.x + visible_extent.width >= image.width - 1.0F &&
+          tracker_box.x + tracker_box.width >= image.width - 1.0F)) &&
+        visible_extent.width <= 0.9F * tracker_box.width;
+    const bool visible_edge_y = edge_extent_supported &&
+        ((visible_extent.y <= 1.0F && tracker_box.y <= 1.0F) ||
+         (visible_extent.y + visible_extent.height >= image.height - 1.0F &&
+          tracker_box.y + tracker_box.height >= image.height - 1.0F)) &&
+        visible_extent.height <= 0.9F * tracker_box.height;
     if (tracking_size_supported && !guard_size_supported) {
       // Two sensors agree on identity, but their size estimates can still
       // differ. Give the detector half of the size correction and retain the
@@ -876,10 +893,10 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       return std::clamp(desired, current * (1.0F - limit),
                         current * (1.0F + limit));
     };
-    const float width = next_dimension(previous.width, tracker_box.width,
-        target.width);
-    const float height = next_dimension(previous.height, tracker_box.height,
-        target.height);
+    const float width = visible_edge_x ? visible_extent.width :
+        next_dimension(previous.width, tracker_box.width, target.width);
+    const float height = visible_edge_y ? visible_extent.height :
+        next_dimension(previous.height, tracker_box.height, target.height);
     const float tracker_center_x = tracker_box.x + 0.5F * tracker_box.width;
     const float tracker_center_y = tracker_box.y + 0.5F * tracker_box.height;
     float desired_offset_x = 0.0F;
@@ -897,6 +914,12 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
           (detector_box.x + 0.5F * detector_box.width - tracker_center_x);
       desired_offset_y = weight *
           (detector_box.y + 0.5F * detector_box.height - tracker_center_y);
+    }
+    if (visible_edge_x) {
+      desired_offset_x = visible_extent.x + 0.5F * visible_extent.width - tracker_center_x;
+    }
+    if (visible_edge_y) {
+      desired_offset_y = visible_extent.y + 0.5F * visible_extent.height - tracker_center_y;
     }
     const float max_offset = controller_.config().accepted_center_max_correction_ratio *
         std::hypot(tracker_box.width, tracker_box.height);
