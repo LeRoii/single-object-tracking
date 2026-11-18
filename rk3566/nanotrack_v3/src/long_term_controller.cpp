@@ -1013,7 +1013,8 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
           current_bbox_.height * config_.recent_visibility_height_ratio &&
       recent.center_residual >= config_.recent_visibility_center_residual;
   if (plan.suspected_detector_guard &&
-      recent.quality == QualityLevel::kReliable && !partial_visibility) {
+      recent.quality == QualityLevel::kReliable &&
+      (!partial_visibility || plan.visual_probe_target_corrob)) {
     clear_suspicion();
     return RecentDisposition::kDirect;
   }

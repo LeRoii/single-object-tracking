@@ -1656,6 +1656,8 @@ void test_visual_probe_corrob_requires_reliable_tracker_response() {
     config.assisted_recovery_ms = 3000;
     config.reliable_psr = 6.5F;
     config.reliable_apce = 8.0F;
+    config.recent_visibility_height_ratio = 0.98F;
+    config.recent_visibility_center_residual = 0.04F;
     config.visual_suspect_bright_ratio = 0.90F;
     FakeTracker tracker;
     tracker.emit_recent_safe_roles = true;
@@ -1676,11 +1678,15 @@ void test_visual_probe_corrob_requires_reliable_tracker_response() {
     tracker.on_infer = [&] {
       const auto& plan = tracker.inferred_plans.back();
       const ResponseMetrics metrics{0.92F, 0.90F, 7.0F, apce, 0.15F};
+      const BBox shrinking{plan.predicted_bbox.x + 2.0F, plan.predicted_bbox.y,
+                           plan.predicted_bbox.width, plan.predicted_bbox.height * 0.95F};
       tracker.observation_override = std::vector<TrackerObservation>{
-          TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
-                             metrics, TemplateKind::kRecent, tracker.search_token + 1},
-          TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
-                             metrics, TemplateKind::kSafe, tracker.search_token + 1}};
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, shrinking,
+                             metrics, TemplateKind::kRecent, tracker.search_token + 1,
+                             shrinking},
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, shrinking,
+                             metrics, TemplateKind::kSafe, tracker.search_token + 1,
+                             shrinking}};
     };
     std::fill(pixels.begin(), pixels.end(), 0);
     const auto suspect = runtime.process_frame(image, 5, 200);

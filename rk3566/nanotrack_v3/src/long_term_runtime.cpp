@@ -555,7 +555,10 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         (safe_crosscheck ||
          next_streak >= visual_suspect_consecutive_frames_ +
              (ambiguous_streak ? 1 : 0));
-    if (visual_target_corrob) result.plan.suspected_detector_guard = true;
+    if (visual_target_corrob) {
+      result.plan.suspected_detector_guard = true;
+      result.plan.visual_probe_target_corrob = true;
+    }
   }
   // Detector support that rescued a visible track must not keep protecting
   // it after the visual probe has failed to find nearby evidence twice in
