@@ -2040,6 +2040,9 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
       DetectorCandidate{BBox{44, 34, 12, 12}, 0.8F, 2}});
   const auto strongly_oversized_tracker = run({
       DetectorCandidate{BBox{45.5F, 35.5F, 9.0F, 9.0F}, 0.8F, 2}});
+  const auto strongly_oversized_dropout = run({
+      DetectorCandidate{BBox{45.5F, 35.5F, 9.0F, 9.0F}, 0.8F, 2}},
+      0, true);
   const auto modestly_smaller = run({
       DetectorCandidate{BBox{42, 32, 16, 16}, 0.8F, 2}});
   const auto shrinking_then_suspected = run({
@@ -2078,6 +2081,12 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
                   std::fabs(strongly_oversized_tracker[3] - 20.0F) < 0.01F,
               "two centered detections at 0.20 IoU can shrink an oversized "
               "published box without changing NanoTrack's crop");
+  expect_true(strongly_oversized_dropout[4] == 1.0F &&
+                  strongly_oversized_dropout[5] < 15.0F &&
+                  std::fabs(strongly_oversized_dropout[2] - 20.0F) < 0.01F &&
+                  std::fabs(strongly_oversized_dropout[3] - 20.0F) < 0.01F,
+              "confirmed detector size continues shrinking through a short "
+              "dropout while NanoTrack's crop remains unchanged");
   expect_true(std::fabs(modestly_smaller[1] - 20.0F) < 0.01F &&
                   std::fabs(modestly_smaller[5] - 20.0F) < 0.01F,
               "a detector area above half the tracker area does not shrink "
