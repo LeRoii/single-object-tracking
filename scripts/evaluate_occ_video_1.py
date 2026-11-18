@@ -100,6 +100,12 @@ TRUTH_VERSIONS = {
         "package_checksums_sha256": "c8c394b41c2cb489f33a1b7e631cd1e9776cd9d75c15a5860ec221e2ddda1126",
         "visible_unboxed_frames": (42,),
     },
+    "car_009_visible_unboxed_v2": {
+        "target_id": "car_009",
+        "annotation_root": "ground_truth_versions/car_009_visible_unboxed_v2",
+        "package_checksums_sha256": "5abb03ff2e995b9c90d964c6e870e51d7e784b348be5ad8261ee80c27e5ba2a7",
+        "visible_unboxed_frames": (115, 116, 117, 118, 119, 120),
+    },
 }
 
 
