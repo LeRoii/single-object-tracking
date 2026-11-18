@@ -1648,7 +1648,7 @@ void test_visual_suspect_gate() {
 
 void test_visual_probe_corrob_requires_reliable_tracker_response() {
   using namespace nanotrack;
-  const auto run = [](float apce, bool expect_corrob) {
+  const auto run = [](float apce, float peak_margin, bool expect_corrob) {
     ControllerConfig config;
     config.suspicion_enter_ms = 1;
     config.uncertain_ms = 1000;
@@ -1656,6 +1656,8 @@ void test_visual_probe_corrob_requires_reliable_tracker_response() {
     config.assisted_recovery_ms = 3000;
     config.reliable_psr = 6.5F;
     config.reliable_apce = 8.0F;
+    config.reliable_peak_margin = 0.02F;
+    config.weak_peak_margin = 0.02F;
     config.recent_visibility_height_ratio = 0.98F;
     config.recent_visibility_center_residual = 0.04F;
     config.visual_suspect_bright_ratio = 0.90F;
@@ -1677,7 +1679,7 @@ void test_visual_probe_corrob_requires_reliable_tracker_response() {
       runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
     tracker.on_infer = [&] {
       const auto& plan = tracker.inferred_plans.back();
-      const ResponseMetrics metrics{0.92F, 0.90F, 7.0F, apce, 0.15F};
+      const ResponseMetrics metrics{0.92F, 0.90F, 7.0F, apce, peak_margin};
       const BBox shrinking{plan.predicted_bbox.x + 2.0F, plan.predicted_bbox.y,
                            plan.predicted_bbox.width, plan.predicted_bbox.height * 0.95F};
       tracker.observation_override = std::vector<TrackerObservation>{
@@ -1708,11 +1710,12 @@ void test_visual_probe_corrob_requires_reliable_tracker_response() {
                       probed.plan.visual_occlusion_search &&
                       !probed.output.accepted &&
                       probed.output.tracking_phase == TrackingPhase::kSearching,
-                  "joint PSR/APCE degradation still forces search despite detector overlap");
+                  "degraded response distinctiveness still forces search despite detector overlap");
     }
   };
-  run(12.0F, true);
-  run(9.0F, false);
+  run(12.0F, 0.15F, true);
+  run(9.0F, 0.15F, false);
+  run(12.0F, 0.04F, false);
 }
 
 void test_guarded_visual_miss_revocation() {

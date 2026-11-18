@@ -522,7 +522,13 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                 (1.0F - 0.5F * controller_.config().response_psr_drop_ratio) &&
             recent->metrics.apce < response.reference->apce *
                 (1.0F - 0.5F * controller_.config().response_apce_drop_ratio);
-        visual_target_corrob = !jointly_degraded;
+        // A detector can agree with a tracker response on an occluder. The
+        // response peak must retain enough of its trusted distinctiveness
+        // before that agreement clears a shrinking-box suspicion.
+        const bool peak_distinct = response.reference->peak_margin > 0.0F &&
+            recent->metrics.peak_margin >=
+                0.25F * response.reference->peak_margin;
+        visual_target_corrob = !jointly_degraded && peak_distinct;
       }
     }
   }
