@@ -132,7 +132,6 @@ void set_value(ControllerConfig& config,
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
   else if (key == "recent_visibility_center_residual") config.recent_visibility_center_residual = parse_float(key, value);
-  else if (key == "recent_visibility_frame_drop_ratio") config.recent_visibility_frame_drop_ratio = parse_float(key, value);
   else if (key == "visual_suspect_bright_ratio") config.visual_suspect_bright_ratio = parse_float(key, value);
   else if (key == "visual_suspect_min_confidence") config.visual_suspect_min_confidence = parse_float(key, value);
   else if (key == "visual_suspect_max_center_px") config.visual_suspect_max_center_px = parse_float(key, value);
@@ -402,10 +401,6 @@ void validate_controller_config(const ControllerConfig& config) {
   if (!visibility_disabled && !visibility_enabled) {
     throw std::invalid_argument("recent visibility gate must be disabled or have two unit-interval thresholds");
   }
-  if (!in_unit_interval(config.recent_visibility_frame_drop_ratio) ||
-      (visibility_disabled && config.recent_visibility_frame_drop_ratio != 0.0F)) {
-    throw std::invalid_argument("recent visibility frame drop requires an enabled visibility gate and a unit-interval ratio");
-  }
   if (!in_unit_interval(config.visual_suspect_bright_ratio) ||
       !in_unit_interval(config.visual_suspect_min_confidence) ||
       config.visual_suspect_max_center_px <= 0.0F ||
@@ -665,7 +660,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.response_apce_drop_ratio << '|'
          << config.recent_visibility_height_ratio << '|'
          << config.recent_visibility_center_residual << '|'
-         << config.recent_visibility_frame_drop_ratio << '|'
          << config.visual_suspect_bright_ratio << '|'
          << config.visual_suspect_min_confidence << '|'
          << config.suspected_detector_guard_enabled << '|'

@@ -2759,51 +2759,6 @@ void test_car_partial_visibility_needs_shrink_and_motion() {
               "other classes and observations without decoded geometry retain their contract");
 }
 
-void test_car_visibility_requires_abrupt_raw_height_drop_when_enabled() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.recent_visibility_height_ratio = 0.98F;
-  config.recent_visibility_center_residual = 0.04F;
-  config.recent_visibility_frame_drop_ratio = 0.95F;
-  config.stable_frames_for_update = 99;
-  const BBox initial{70, 50, 30, 30};
-  const auto run = [&](std::optional<float> prior_raw_height) {
-    ResolvedControllerFixture controller(config);
-    controller.initialize(initial, 0, 0, {320, 240},
-                          make_fixed_target_class(2, false));
-    controller.last_trusted_recent_raw_height_ = prior_raw_height;
-    const auto plan = controller.begin_frame(1, 40, false);
-    auto observation = reliable_observation(
-        plan, TemplateKind::kRecent, {72, 50, 30, 29});
-    observation.decoded_bbox = observation.bbox;
-    return controller.finish_frame(plan, {observation}, std::nullopt);
-  };
-  expect_true(run(std::nullopt).accepted && run(30.0F).accepted,
-              "a first raw sample or gradual height change remains trusted");
-  const auto abrupt = run(32.0F);
-  expect_true(!abrupt.accepted &&
-                  abrupt.tracking_phase == TrackingPhase::kSuspected,
-              "an abrupt raw-height drop still starts partial-visibility suspicion");
-
-  ResolvedControllerFixture sequential(config);
-  sequential.initialize(initial, 0, 0, {320, 240},
-                        make_fixed_target_class(2, false));
-  const auto observe = [&](std::uint64_t frame_id, const BBox& box) {
-    const auto plan = sequential.begin_frame(frame_id, frame_id * 40, false);
-    auto observation = reliable_observation(plan, TemplateKind::kRecent, box);
-    observation.decoded_bbox = box;
-    return sequential.finish_frame(plan, {observation}, std::nullopt);
-  };
-  expect_true(observe(1, {72, 50, 30, 30}).accepted &&
-                  observe(2, {75, 50, 30, 29}).accepted &&
-                  sequential.last_trusted_recent_raw_height_ == 29.0F,
-              "accepted raw heights form the consecutive-frame reference");
-  const auto late_drop = observe(3, {80, 50, 30, 26});
-  expect_true(!late_drop.accepted &&
-                  sequential.last_trusted_recent_raw_height_ == 29.0F,
-              "a suspected drop keeps the preceding trusted raw-height reference");
-}
-
 void test_search_uses_last_clean_response_motion_trend() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3327,7 +3282,6 @@ int main() {
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();
   test_car_partial_visibility_needs_shrink_and_motion();
-  test_car_visibility_requires_abrupt_raw_height_drop_when_enabled();
   test_search_uses_last_clean_response_motion_trend();
   test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();

@@ -79,9 +79,6 @@ struct ControllerConfig {
   // Optional car-only early partial-visibility gate. Zero disables both.
   float recent_visibility_height_ratio = 0.0F;
   float recent_visibility_center_residual = 0.0F;
-  // Optional extra guard: require an abrupt drop from the last trusted raw
-  // NanoTrack height, rather than only a gap to the scale-limited output box.
-  float recent_visibility_frame_drop_ratio = 0.0F;
   // Optional visual evidence gate for an already suspected car. Zero disables.
   float visual_suspect_bright_ratio = 0.0F;
   float visual_suspect_min_confidence = 0.40F;

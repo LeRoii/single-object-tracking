@@ -161,7 +161,6 @@ void LongTermController::initialize(const BBox& initial_bbox,
   last_frame_id_ = frame_id;
   last_timestamp_ms_ = timestamp_ms;
   stable_frames_ = 0;
-  last_trusted_recent_raw_height_.reset();
   last_recent_update_ms_ = timestamp_ms;
   pending_template_transition_.reset();
   pending_recovery_acceptance_.reset();
@@ -1002,10 +1001,6 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
       observation.decoded_bbox &&
       observation.decoded_bbox->height <=
           current_bbox_.height * config_.recent_visibility_height_ratio &&
-      (config_.recent_visibility_frame_drop_ratio == 0.0F ||
-       (last_trusted_recent_raw_height_ &&
-        observation.decoded_bbox->height <= *last_trusted_recent_raw_height_ *
-            config_.recent_visibility_frame_drop_ratio)) &&
       recent.center_residual >= config_.recent_visibility_center_residual;
   if (plan.suspected_detector_guard &&
       recent.quality == QualityLevel::kReliable && !partial_visibility) {
@@ -2810,9 +2805,6 @@ ControllerOutput LongTermController::finish_frame(
     defer_recovery_acceptance(plan, *selected, output);
   } else if (accepted) {
     accept_observation(plan, *selected, acceptance_path, output, response);
-    if (ordinary_recent && recent && recent->observation.decoded_bbox) {
-      last_trusted_recent_raw_height_ = recent->observation.decoded_bbox->height;
-    }
     const bool response_degraded = response.psr_drop || response.apce_drop ||
                                    response.peak_margin_drop;
     if (plan.suspected_detector_guard) {
@@ -2855,7 +2847,6 @@ ControllerOutput LongTermController::finish_frame(
     ++consecutive_unreliable_frames_;
     const bool starting_search = !loss_start_ms_;
     if (starting_search) loss_start_ms_ = plan.timestamp_ms;
-    if (starting_search) last_trusted_recent_raw_height_.reset();
     if (starting_search) recovery_conflict_seen_ = false;
     if (starting_search) conflict_detector_refresh_sent_ = false;
     mode_ = mode_for_timestamp(plan.timestamp_ms);

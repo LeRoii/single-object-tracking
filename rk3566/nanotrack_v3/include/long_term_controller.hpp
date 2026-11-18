@@ -447,7 +447,6 @@ class LongTermController {
   OcclusionEvidenceDecision occlusion_decision_{};
   FrameSize frame_size_{};
   BBox current_bbox_{};
-  std::optional<float> last_trusted_recent_raw_height_;
   BBox initial_bbox_{};
   BBox display_bbox_{};
   DimensionScaleState width_scale_state_{};

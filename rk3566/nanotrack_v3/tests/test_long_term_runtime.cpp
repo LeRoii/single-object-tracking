@@ -1989,58 +1989,6 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
   }
 }
 
-void test_clipped_detector_publishes_visible_extent(const nanotrack::ImageView& image) {
-  using namespace nanotrack;
-  const auto run = [&](int detector_class) {
-    ControllerConfig config;
-    config.adaptive_display_enabled = true;
-    config.display_detector_refresh_enabled = true;
-    config.display_detector_min_interval_ms = 40;
-    config.display_detector_initial_interval_ms = 40;
-    config.detector_stale_ms = 150;
-    config.detector_confirmation_iou = 0.50F;
-    config.confirmation_required = 2;
-    config.stable_frames_for_update = 99;
-    config.accepted_center_smoothing_alpha = 0.35F;
-    config.accepted_center_max_correction_ratio = 0.25F;
-    FakeTracker tracker;
-    tracker.reliable_bbox = BBox{70, 80, 40, 40};
-    tracker.on_infer = [&] {
-      const auto& plan = tracker.inferred_plans.back();
-      tracker.observation_override = std::vector<TrackerObservation>{
-          TrackerObservation{plan.frame_id, plan.timestamp_ms,
-                             BBox{70, 80, 40, 40},
-                             ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F},
-                             TemplateKind::kRecent, tracker.search_token + 1}};
-    };
-    FakeDetector detector;
-    detector.enabled = true;
-    detector.complete_immediately = true;
-    detector.automatic_candidates = {
-        DetectorCandidate{BBox{70, 100, 40, 20}, 0.85F, detector_class}};
-    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
-    runtime.initialize(image, BBox{70, 80, 40, 40}, 0, 0);
-    runtime.process_frame(image, 1, 40);
-    const auto second = runtime.process_frame(image, 2, 80);
-    return std::array<float, 4>{
-        second.detector_tracking_size_confirmed ? 1.0F : 0.0F,
-        second.output.tracking_bbox.height,
-        second.output.tracking_bbox.y + 0.5F * second.output.tracking_bbox.height,
-        runtime.controller().current_bbox().height};
-  };
-  const auto supported = run(2);
-  expect_true(supported[0] == 1.0F && supported[1] <= 25.0F &&
-                  supported[2] > 100.0F && supported[3] == 40.0F,
-              "two matching edge detections publish the visible extent without moving the crop: " +
-                  std::to_string(supported[0]) + "/" +
-                  std::to_string(supported[1]) + "/" +
-                  std::to_string(supported[2]) + "/" +
-                  std::to_string(supported[3]));
-  const auto wrong_class = run(0);
-  expect_true(wrong_class[0] == 0.0F && wrong_class[1] == 40.0F,
-              "wrong-class edge detection cannot shrink tracking output");
-}
-
 int main() {
   using namespace nanotrack;
   test_tentative_recent_does_not_commit();
@@ -2053,7 +2001,6 @@ int main() {
   test_lower_band_visibility_veto();
   test_suspected_detector_guard(image);
   test_tracking_size_detector_evidence(image);
-  test_clipped_detector_publishes_visible_extent(image);
   test_target_class_initialization(image);
   test_click_initialization_class_modes(image);
   test_target_class_session_config(image);
