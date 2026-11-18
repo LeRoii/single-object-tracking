@@ -1104,6 +1104,13 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
     if (result.visual_probe_nearest_distance_px) {
       row.note += ";distance=" + number(*result.visual_probe_nearest_distance_px);
     }
+    if (result.visual_probe_nearest_bbox) {
+      const auto& box = *result.visual_probe_nearest_bbox;
+      row.note += ";bbox=" + number(box.x) + "," + number(box.y) + "," +
+          number(box.width) + "," + number(box.height);
+      row.note += ";confidence=" + number(*result.visual_probe_nearest_confidence);
+      row.note += ";iou_recent=" + number(*result.visual_probe_nearest_iou_recent);
+    }
     if (result.visual_probe_brightness_ratio) {
       row.note += ";brightness=" + number(*result.visual_probe_brightness_ratio);
     }

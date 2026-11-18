@@ -462,6 +462,25 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
             if (distance < nearest_distance) {
               nearest_distance = distance;
               nearest_confidence = candidate.confidence;
+              result.visual_probe_nearest_bbox.reset();
+              result.visual_probe_nearest_confidence.reset();
+              result.visual_probe_nearest_iou_recent.reset();
+              const BBox mapped{
+                  crop.left + (candidate.bbox.x - 160.0F) * factor,
+                  crop.top + (candidate.bbox.y - 160.0F) * factor,
+                  candidate.bbox.width * factor,
+                  candidate.bbox.height * factor};
+              if (std::isfinite(mapped.x) && std::isfinite(mapped.y) &&
+                  std::isfinite(mapped.width) && std::isfinite(mapped.height) &&
+                  mapped.width > 0.0F && mapped.height > 0.0F) {
+                const BBox clipped = clip_bbox(mapped, image.width, image.height);
+                if (clipped.width > 0.0F && clipped.height > 0.0F) {
+                  result.visual_probe_nearest_bbox = clipped;
+                  result.visual_probe_nearest_confidence = candidate.confidence;
+                  result.visual_probe_nearest_iou_recent =
+                      bbox_iou(clipped, recent->bbox);
+                }
+              }
             }
             if (distance <= visual_suspect_max_center_px_ &&
                 candidate.confidence >= visual_suspect_min_confidence_) {

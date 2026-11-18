@@ -81,6 +81,9 @@ struct RuntimeFrameResult {
   bool visual_probe_hit = false;
   int visual_probe_nearby_candidates = 0;
   std::optional<float> visual_probe_nearest_distance_px;
+  std::optional<float> visual_probe_nearest_confidence;
+  std::optional<BBox> visual_probe_nearest_bbox;
+  std::optional<float> visual_probe_nearest_iou_recent;
   std::optional<float> visual_probe_brightness_ratio;
   int suspected_detector_guard_hits = 0;
   std::optional<float> suspected_detector_guard_confidence;

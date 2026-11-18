@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T16:08:07+08:00 视觉探针候选几何可观测性：主机候选
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `8840a406bbc0f62f741daf2fb6a6b6a37c7cf2b3`，工作区起始干净。视觉探针原逐帧 note 只记附近候选中心距离、数量和亮度比，无法核查候选是否真正包住 Recent；上一板测证明单纯推迟 SEARCHING 无法改善已接受轨迹，且会破坏遮挡语义。为评估能否安全复用同一帧的阻塞 detector 结果，本候选只把最近同类候选从 640×640 探针画布映回原图、裁到图内，并记录其置信度、原图框和对 Recent 框 IoU；搜索、接受、控制、模型调用时序均未改变。无有效框时不写几何字段。
+- 主机实际执行 `cmake --build /tmp/nt-ten-target-build --parallel 4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure -j4`，23/23 PASS；日志 `/tmp/nt-visual-probe-geometry-build.log` / `/tmp/nt-visual-probe-geometry-ctest.log` SHA-256 `f92f5de81f93b3f4f456ba42a661027ec592bda6eb81e15e0241c5513cb92f33` / `9b5f2bed918f3f9273ee529b18ae561f5e173a2f0b409a53ff8e845311d3927e`，`git diff --check` PASS。这是诊断日志扩展，尚未有板端逐帧数据；下一步隔离原生构建并在 car004/005 可见误触发及 car008 完全遮挡负例上读取同一管线的候选几何，再决定是否实现 detector 与 NanoTrack 的联合验证。未合入 main/Debug、未批准生产 handoff。
+
 ## 2026-11-18T16:04:56+08:00 视觉探针仅延后搜索的板测失败，撤回算法
 
 - 候选源码 `codex/ten-target-smoothness@a6c2bb796a239c8842e5bf39df6b8c4cebceed4b`，主机/板端源码包 `/tmp/nt-visual-response-a6c2bb7-source.tar.gz` / `/home/neardi/Project/SOT/nt-visual-response-a6c2bb7-source.tar.gz` SHA-256 `a1e819c2bf4d83439414a184dedd7bfa81ca88aeaa28adc7b20b3406784c25ab`。板端隔离根 `/home/neardi/Project/SOT/nt-visual-response-a6c2bb7`；实际运行 `bash /home/neardi/Project/SOT/nt-visual-response-a6c2bb7-setup.sh`，RK3588 原生 CMake/build/CTest 23/23 PASS，程序 SHA-256 `cd8b72a68506db9002dbe1bdaf5a3486f0bf036a8da65ba1d9dd6a4850bbc86f`，运行配置 SHA-256 `559867ac14e3320c33035dfc750aa3419ee01b76d8e76a825290d0ce63a88b63`，cmake/build/CTest 日志 SHA-256 `9cd84f49602490b68cc70c03a2eac147bb337d4d11e62e618f423f6b7b37dda9` / `3e0d91583d3ca3c86956a82221e29a7d1a3c19988d8b784a17dfae9b3cebf3a1` / `02869b64d60cbe248bf0a14e1812b40fa7bb20cf99f929aa6da9a7bce80b08df`。视频、模型与 RKNN 版本未变。
