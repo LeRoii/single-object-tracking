@@ -262,7 +262,6 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   visual_streak_ambiguous_ = false;
   guard_observations_.clear();
   last_guard_request_ms_.reset();
-  pending_detector_request_frame_id_.reset();
   last_guard_batch_frame_id_.reset();
   last_guard_source_ms_.reset();
   last_guard_candidate_bbox_.reset();
@@ -355,7 +354,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     try {
       detector_.submit(image, *result.plan.detector_request);
       result.detector.request_submitted = true;
-      pending_detector_request_frame_id_ = frame_id;
     } catch (const std::exception& error) {
       result.detector.error = error.what();
     }
@@ -372,7 +370,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       detector_.submit(image, *display_request);
       adaptive_display_.mark_request_submitted(timestamp_ms);
       result.detector.request_submitted = true;
-      pending_detector_request_frame_id_ = frame_id;
     } catch (const std::exception& error) {
       result.detector.error = error.what();
     }
@@ -536,7 +533,6 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     try {
       detector_.submit(image, request);
       result.detector.request_submitted = true;
-      pending_detector_request_frame_id_ = frame_id;
       last_guard_request_ms_ = timestamp_ms;
     } catch (const std::exception& error) {
       result.detector.error = error.what();
@@ -547,22 +543,11 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   std::optional<DetectorBatch> detector_batch;
   if (!visual_blocking_used && detector_.available() && result.detector.error.empty()) {
     try {
-      const bool wait_for_previous = pending_detector_request_frame_id_ &&
-          frame_id > *pending_detector_request_frame_id_ &&
-          guard_config.detector_poll_wait_ms > 0;
-      detector_batch = wait_for_previous
-          ? detector_.poll_wait_for(std::chrono::milliseconds(
-                guard_config.detector_poll_wait_ms))
-          : detector_.poll();
+      detector_batch = detector_.poll();
     } catch (const std::exception& error) {
       result.detector.error = error.what();
-      pending_detector_request_frame_id_.reset();
     }
     if (detector_batch) {
-      if (pending_detector_request_frame_id_ &&
-          detector_batch->source_frame_id == *pending_detector_request_frame_id_) {
-        pending_detector_request_frame_id_.reset();
-      }
       result.detector.batch_received = true;
       result.detector.batch_frame_id = detector_batch->source_frame_id;
       result.detector.batch_purpose = detector_batch->purpose;

@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 
@@ -45,6 +46,19 @@ class HumanOcclusionConstraintTests(unittest.TestCase):
         rows = {frame: {"frame_id": str(frame), "reacquired": "1" if frame == 171 else "0"}
                 for frame in (169, 170, 171)}
         self.assertFalse(MODULE.evaluate(check, rows, {169: {"bbox_xywh": [0, 0, 10, 10]}})["passed"])
+
+    def test_car010_deadline_accepts_correct_early_reacquisition(self):
+        constraints = json.loads((SOURCE.parent / "occ_video_1_human_constraints_v1.json").read_text())
+        check = next(item for item in constraints["targets"]["car_010"]
+                     if item["type"] == "reacquisition")
+        self.assertEqual((check["first_frame"], check["last_frame"]), (149, 169))
+        rows = {frame: {"frame_id": str(frame), "reacquired": "0"}
+                for frame in range(149, 170)}
+        rows[168].update({"reacquired": "1", "accepted": "1",
+                          "observation_valid": "1", "recovery_reason": "RECOVERY_STAGED",
+                          "tracking_x": "0", "tracking_y": "0", "tracking_width": "10",
+                          "tracking_height": "10"})
+        self.assertTrue(MODULE.evaluate(check, rows, {168: {"bbox_xywh": [0, 0, 10, 10]}})["passed"])
 
 
 if __name__ == "__main__":

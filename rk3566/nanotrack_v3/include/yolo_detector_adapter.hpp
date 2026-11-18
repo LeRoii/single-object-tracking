@@ -40,8 +40,6 @@ class YoloDetectorAdapter final : public DetectorAdapter {
   void submit(const ImageView& image,
               const DetectorRequest& request) override;
   std::optional<DetectorBatch> poll() override;
-  std::optional<DetectorBatch> poll_wait_for(
-      std::chrono::milliseconds timeout) override;
   std::optional<DetectorBlockingResult> detect_blocking(
       const ImageView& image, const DetectorRequest& request) override;
 

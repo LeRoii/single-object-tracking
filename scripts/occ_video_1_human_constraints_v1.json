@@ -7,7 +7,7 @@
     ],
     "car_010": [
       {"id": "occlusion_by_frame_149", "type": "occlusion_status", "frame": 149},
-      {"id": "correct_reacquisition_by_frame_169", "type": "reacquisition", "first_frame": 169, "last_frame": 169, "minimum_iou": 0.5}
+      {"id": "correct_reacquisition_by_frame_169", "type": "reacquisition", "first_frame": 149, "last_frame": 169, "minimum_iou": 0.5}
     ]
   }
 }

@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -182,12 +181,6 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
     if (result) ready = true;
     return result;
   }
-  std::optional<nanotrack::DetectorBatch> poll_wait_for(
-      std::chrono::milliseconds timeout) override {
-    ++wait_calls;
-    last_wait_ms = timeout.count();
-    return poll();
-  }
   std::optional<nanotrack::DetectorBlockingResult> detect_blocking(
       const nanotrack::ImageView&,
       const nanotrack::DetectorRequest& request) override {
@@ -216,8 +209,6 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
   std::vector<nanotrack::DetectorCandidate> automatic_candidates;
   int submit_calls = 0;
   int poll_calls = 0;
-  int wait_calls = 0;
-  std::int64_t last_wait_ms = 0;
   int blocking_calls = 0;
   bool fail_blocking = false;
   std::uint64_t next_request_id = 9001;
@@ -1886,43 +1877,6 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
               "wrong-class detector cannot change published tracking dimensions");
 }
 
-void test_previous_frame_detector_wait(const nanotrack::ImageView& image) {
-  using namespace nanotrack;
-  ControllerConfig identity_config;
-  const auto default_identity = controller_config_identity(identity_config);
-  identity_config.detector_poll_wait_ms = 50;
-  expect_true(controller_config_identity(identity_config) != default_identity,
-              "enabled poll wait changes the recorded controller identity");
-  for (const std::int64_t invalid : {-1, 201}) {
-    identity_config.detector_poll_wait_ms = invalid;
-    bool rejected = false;
-    try { validate_controller_config(identity_config); }
-    catch (const std::invalid_argument&) { rejected = true; }
-    expect_true(rejected, "poll wait rejects values outside its bounded range");
-  }
-  for (const std::int64_t wait_ms : {0, 50}) {
-    ControllerConfig config;
-    config.adaptive_display_enabled = true;
-    config.display_detector_refresh_enabled = true;
-    config.display_detector_min_interval_ms = 40;
-    config.display_detector_initial_interval_ms = 40;
-    config.detector_poll_wait_ms = wait_ms;
-    config.stable_frames_for_update = 99;
-    FakeTracker tracker;
-    FakeDetector detector;
-    detector.enabled = true;
-    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
-    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
-    const auto first = runtime.process_frame(image, 1, 40);
-    expect_true(first.detector.request_submitted && detector.wait_calls == 0,
-                "a newly submitted detector request is not waited on in its source frame");
-    runtime.process_frame(image, 2, 80);
-    expect_true(detector.wait_calls == (wait_ms > 0 ? 1 : 0) &&
-                    (wait_ms == 0 || detector.last_wait_ms == wait_ms),
-                "only an enabled previous-frame request receives the configured bounded wait");
-  }
-}
-
 void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   const auto run = [&](std::vector<DetectorCandidate> candidates,
@@ -2037,7 +1991,6 @@ int main() {
   test_lower_band_visibility_veto();
   test_suspected_detector_guard(image);
   test_tracking_size_detector_evidence(image);
-  test_previous_frame_detector_wait(image);
   test_target_class_initialization(image);
   test_click_initialization_class_modes(image);
   test_target_class_session_config(image);
