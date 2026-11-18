@@ -112,6 +112,12 @@ TRUTH_VERSIONS = {
         "package_checksums_sha256": "caf198ced5205640e0899913da16a21947be951991b5e0c37e4019ee6dbe3957",
         "visible_unboxed_frames": (42, 131, 132),
     },
+    "car_004_full_estimated_v4": {
+        "target_id": "car_004",
+        "annotation_root": "ground_truth_versions/car_004_full_estimated_v4",
+        "package_checksums_sha256": "816cbc36b339c53d4519e7ca0a2a3774fb16dd96b6991cc1fcd63be2b055df4a",
+        "visible_unboxed_frames": (42, 127, 128, 129, 131, 132),
+    },
     "car_009_visible_unboxed_v2": {
         "target_id": "car_009",
         "annotation_root": "ground_truth_versions/car_009_visible_unboxed_v2",
@@ -131,6 +137,10 @@ TRUTH_VERSIONS = {
         "visible_unboxed_frames": (149, 150, 151, 152, 153, 154, 155, 156, 157),
     },
 }
+FULL_OBJECT_TRUTH_VERSION = "full_object_estimates_v1"
+FULL_OBJECT_OVERLAY_PATH = Path(__file__).resolve().parent / "truth_overlays" / (
+    FULL_OBJECT_TRUTH_VERSION + ".json"
+)
 
 
 def _sha256(path):
@@ -318,6 +328,35 @@ def load_contract(root, target_id="car_001", truth_version=None):
         raise ValueError("dataset root is not a directory: {}".format(root))
     if target_id not in CANONICAL_IDENTITIES:
         raise ValueError("unknown target_id: {}".format(target_id))
+    if truth_version == FULL_OBJECT_TRUTH_VERSION:
+        overlay = _load_json(FULL_OBJECT_OVERLAY_PATH, "full-object truth overlay")
+        if (overlay.get("version") != FULL_OBJECT_TRUTH_VERSION or
+                overlay.get("schema_version") != 1 or
+                overlay.get("video_sha256") != CANONICAL_IDENTITY["hashes"]["video"] or
+                set(overlay.get("targets", {})) != set(CANONICAL_IDENTITIES) or
+                overlay.get("scoring") != {
+                    "ordinary_iou_allowed": False,
+                    "max_center_distance_in_target_diagonals": 1.0,
+                }):
+            raise ValueError("full-object truth overlay identity is invalid")
+        target_overlay = overlay["targets"][target_id]
+        base_version = target_overlay.get("base_truth_version")
+        if base_version == FULL_OBJECT_TRUTH_VERSION:
+            raise ValueError("full-object truth overlay cannot reference itself")
+        contract = load_contract(root, target_id, base_version)
+        hash_field = target_overlay.get("base_hash_field")
+        if (hash_field not in {"package_checksums", "annotation_metadata"} or
+                target_overlay.get("base_sha256") !=
+                contract["identity"]["hashes"].get(hash_field)):
+            raise ValueError("full-object overlay source package identity mismatch")
+        identity = dict(contract["identity"])
+        identity["name"] = "occ_video_1_{}_{}".format(target_id, truth_version)
+        identity["truth_version"] = truth_version
+        identity["base_truth_version"] = base_version
+        identity["full_object_overlay_sha256"] = _sha256(FULL_OBJECT_OVERLAY_PATH)
+        contract["identity"] = identity
+        contract["full_object_overrides"] = target_overlay.get("frames", [])
+        return contract
     expected_identity = (
         CANONICAL_IDENTITY if target_id == "car_001" else CANONICAL_IDENTITIES[target_id]
     )
@@ -526,6 +565,48 @@ def load_truth(contract):
         )
     if observed_unboxed != allowed_unboxed:
         raise ValueError("versioned visible-unboxed frame coverage mismatch")
+    overrides = contract.get("full_object_overrides")
+    if overrides is not None:
+        seen = set()
+        for record in overrides:
+            if not isinstance(record, dict) or not isinstance(record.get("frame_id"), int):
+                raise ValueError("invalid full-object estimate record")
+            frame_id = record["frame_id"]
+            if frame_id in seen or not 0 <= frame_id < len(truth):
+                raise ValueError("duplicate/out-of-range full-object estimate frame")
+            seen.add(frame_id)
+            target = truth[frame_id]
+            if target["status"] not in {"visible", "partial_occlusion"}:
+                raise ValueError("full-object estimate must be partly visible")
+            box = record.get("estimated_full_bbox_xywh")
+            if (not isinstance(box, list) or len(box) != 4 or
+                    not all(isinstance(value, (int, float)) and math.isfinite(value)
+                            for value in box) or
+                    box[2] <= 0 or box[3] <= 0 or box[0] < 0 or box[1] < 0 or
+                    box[0] + box[2] > width or box[1] + box[3] > height):
+                raise ValueError("invalid full-object estimate geometry")
+            visible = record.get("visible_bbox_xywh")
+            if visible is not None and (not isinstance(visible, list) or len(visible) != 4 or
+                                        not all(isinstance(v, (int, float)) and math.isfinite(v)
+                                                for v in visible)):
+                raise ValueError("invalid visible-part geometry")
+            if visible is not None and target["bbox"] is not None and any(
+                    abs(a - b) > 0.03 for a, b in zip(visible, target["bbox"])):
+                raise ValueError("visible-part box differs from source truth")
+            if visible is not None and (visible[0] < box[0] - 0.05 or
+                                        visible[1] < box[1] - 0.05 or
+                                        visible[0] + visible[2] > box[0] + box[2] + 0.05 or
+                                        visible[1] + visible[3] > box[1] + box[3] + 0.05):
+                raise ValueError("full-object estimate excludes visible source pixels")
+            if target["bbox"] is not None and target["observable"] and visible is None:
+                raise ValueError("source visible box must be preserved")
+            target["source_bbox"] = target["bbox"]
+            target["visible_bbox"] = visible
+            target["bbox"] = list(box)
+            target["observable"] = False
+            target["estimated"] = True
+            target["estimated_full"] = True
+            target["estimate_method"] = record.get("method")
     return truth
 
 
@@ -657,6 +738,16 @@ def _center_distance(first, second):
     first_center = _bbox_center(first)
     second_center = _bbox_center(second)
     return math.hypot(first_center[0] - second_center[0], first_center[1] - second_center[1])
+
+
+def _matches_truth(prediction, target):
+    """Use coarse center distance only for an obscured full-object estimate."""
+    box = target["bbox"]
+    if box is None:
+        return False
+    if target.get("estimated_full"):
+        return _center_distance(prediction, box) <= math.hypot(box[2], box[3])
+    return _iou(prediction, box) >= MIN_OBSERVATION_VISIBLE_FRAME_IOU
 
 
 def _iou(first, second):
@@ -814,12 +905,21 @@ def evaluate_multi_event(contract, rows, scope):
     outside_failures = []
     control_failures = []
     identity_failures = []
+    estimated_distance_failures = []
+    estimated_distances = []
     frame_reports = []
     for row in selected:
         frame = row["frame_id"]
         target = truth[frame]
         state = target["status"]
         overlap = _iou(row["tracking_bbox"], target["bbox"]) if target["observable"] else None
+        estimated_distance = None
+        if target.get("estimated_full"):
+            estimated_distance = (_center_distance(row["tracking_bbox"], target["bbox"])
+                                  / math.hypot(target["bbox"][2], target["bbox"][3]))
+            estimated_distances.append(estimated_distance)
+            if estimated_distance > 1.0:
+                estimated_distance_failures.append(frame)
         if overlap is not None:
             visible_ious.append(overlap)
             if row.get("observation_valid") is True:
@@ -861,7 +961,10 @@ def evaluate_multi_event(contract, rows, scope):
             control_failures.append(frame)
         frame_reports.append({
             "frame_id": frame, "truth_status": state, "ordinary_iou_allowed": overlap is not None,
-            "iou": overlap, "tracking_phase": row.get("tracking_phase"),
+            "iou": overlap, "estimated_full_bbox": target["bbox"] if target.get("estimated_full") else None,
+            "visible_bbox": target.get("visible_bbox"),
+            "estimated_normalized_center_error": estimated_distance,
+            "tracking_phase": row.get("tracking_phase"),
             "observation_valid": row.get("observation_valid"),
             "control_source": row.get("control_source"),
             "control_valid": row["control_valid"], "accepted": row["accepted"],
@@ -885,9 +988,7 @@ def evaluate_multi_event(contract, rows, scope):
         recovered = next((frame for frame in range(first, deadline)
                           if frame in by_frame
                           and by_frame[frame].get("observation_valid") is True
-                          and truth[frame]["bbox"] is not None
-                          and _iou(by_frame[frame]["tracking_bbox"], truth[frame]["bbox"])
-                          >= MIN_OBSERVATION_VISIBLE_FRAME_IOU), None)
+                          and _matches_truth(by_frame[frame]["tracking_bbox"], truth[frame])), None)
         item = {"occlusion_frames": event["frames"], "first_visible": first,
                 "deadline_exclusive": deadline, "first_matching_observation": recovered}
         reappearance.append(item)
@@ -931,9 +1032,7 @@ def evaluate_multi_event(contract, rows, scope):
               and max(search_acceleration or [0]) <= acceleration_limit)
     invalid_claims = [row["frame_id"] for row in selected if row["reacquired"]
                       and (truth[row["frame_id"]]["status"] != "visible"
-                           or truth[row["frame_id"]]["bbox"] is None
-                           or _iou(row["tracking_bbox"], truth[row["frame_id"]]["bbox"])
-                           < MIN_OBSERVATION_VISIBLE_FRAME_IOU
+                           or not _matches_truth(row["tracking_bbox"], truth[row["frame_id"]])
                            or not _is_current_reacquisition(
                                row, contract["identity"]["width"],
                                contract["identity"]["height"]))]
@@ -948,6 +1047,10 @@ def evaluate_multi_event(contract, rows, scope):
                                and observation_mean >= MIN_OBSERVATION_VISIBLE_MEAN_IOU,
                                "valid-observation mean IoU {:.6f}; minimum {:.2f}".format(
                                    observation_mean, MIN_OBSERVATION_VISIBLE_MEAN_IOU), visible_failures),
+        "estimated_full_distance": _gate(
+            not estimated_distance_failures,
+            "estimated full-object center distance <=1 target diagonal; no IoU floor",
+            estimated_distance_failures, applicable=bool(estimated_distances)),
         "full_occlusion_semantics": _gate(not occlusion_failures,
                                           "full occlusion must search without accepted observation and retain motion control",
                                           occlusion_failures,
@@ -986,6 +1089,8 @@ def evaluate_multi_event(contract, rows, scope):
                    "full_occlusion": {"frames": sum(truth[frame]["status"] == "full_occlusion" for frame in required),
                                       "semantic_failures": occlusion_failures},
                    "out_of_view": {"frames": sum(truth[frame]["status"] == "out_of_view" for frame in required)},
+                   "estimated_full": {"frames": len(estimated_distances),
+                                      "max_normalized_center_error": max(estimated_distances) if estimated_distances else None},
                    "prediction": {"max_speed_px_per_s": max(search_speed or [0]),
                                   "max_acceleration_px_per_s2": max(search_acceleration or [0])}},
         "reacquisition": {"frames": reacquisition_frames, "events": reappearance},
@@ -1033,6 +1138,8 @@ def evaluate(contract, rows, scope):
     observation_visible_ious = []
     observation_visible_center_errors = []
     estimated_center_errors = []
+    estimated_full_failures = []
+    estimated_full_errors = []
     pre_occlusion_ious = []
     post_reappearance_ious = []
     for row in scoped_rows:
@@ -1059,6 +1166,10 @@ def evaluate(contract, rows, scope):
                 post_reappearance_ious.append(overlap)
         if frame_id in estimated_frames and center_error is not None:
             estimated_center_errors.append(center_error)
+        if target.get("estimated_full") and center_error is not None:
+            estimated_full_errors.append(center_error)
+            if center_error > 1.0:
+                estimated_full_failures.append(frame_id)
         frame_reports.append(
             {
                 "frame_id": frame_id,
@@ -1066,6 +1177,8 @@ def evaluate(contract, rows, scope):
                 "ordinary_iou_allowed": ordinary,
                 "iou": overlap,
                 "normalized_center_error": center_error,
+                "estimated_full_bbox": target["bbox"] if target.get("estimated_full") else None,
+                "visible_bbox": target.get("visible_bbox"),
                 "tracking_phase": row.get("tracking_phase"),
                 "observation_valid": row.get("observation_valid"),
                 "control_source": row.get("control_source"),
@@ -1225,7 +1338,7 @@ def evaluate(contract, rows, scope):
             re_start <= reacquisition_frame <= re_end
             and all(
                 truth_by_frame[frame_id]["status"] == "partial_occlusion"
-                and truth_by_frame[frame_id]["bbox"] is None
+                and not truth_by_frame[frame_id]["observable"]
                 for frame_id in range(reacquisition_frame, first_reliable)
             )
             and all(
@@ -1326,6 +1439,10 @@ def evaluate(contract, rows, scope):
             ),
             visible_failures,
         ),
+        "estimated_full_distance": _gate(
+            not estimated_full_failures,
+            "estimated full-object center distance <=1 target diagonal; no IoU floor",
+            estimated_full_failures, applicable=bool(estimated_full_errors)),
         "full_occlusion_semantics": _gate(
             not semantic_failures,
             "full occlusion must publish SEARCHING/no observation/MOTION_SEARCH control",
@@ -1418,6 +1535,10 @@ def evaluate(contract, rows, scope):
                 "max_normalized_center_error": max(estimated_center_errors) if estimated_center_errors else None,
                 "max_speed_px_per_s": max(predicted_velocity or [0.0]),
                 "max_acceleration_px_per_s2": max(predicted_acceleration or [0.0]),
+            },
+            "estimated_full": {
+                "frames": len(estimated_full_errors),
+                "max_normalized_center_error": max(estimated_full_errors) if estimated_full_errors else None,
             },
             "full_occlusion": {
                 "frames": len(full_frames.intersection(required_frames)),
@@ -1514,7 +1635,7 @@ def main(argv=None):
     parser.add_argument(
         "--target-id", choices=tuple(sorted(CANONICAL_IDENTITIES)), default="car_001"
     )
-    parser.add_argument("--truth-version", choices=tuple(sorted(TRUTH_VERSIONS)))
+    parser.add_argument("--truth-version", choices=tuple(sorted((*TRUTH_VERSIONS, FULL_OBJECT_TRUTH_VERSION))))
     parser.add_argument("--boxes", type=Path, required=True)
     parser.add_argument("--session-metadata", type=Path)
     parser.add_argument("--scope", choices=("development", "holdout", "full"), required=True)

@@ -624,6 +624,29 @@ class OccVideoEvaluatorTest(unittest.TestCase):
             [0, 1, 2, 6, 7, 8, 9, 10],
         )
 
+    def test_estimated_full_object_uses_coarse_distance_without_iou(self):
+        contract = synthetic_contract()
+        contract["truth"][2].update(observable=False, estimated_full=True,
+                                    visible_bbox=[12.0, 20.0, 10.0, 5.0])
+        rows = passing_rows()
+        rows[2]["tracking_bbox"] = [7.0, 15.0, 20.0, 20.0]
+        report = evaluator.evaluate(contract, rows, "full")
+        self.assertTrue(report["gates"]["estimated_full_distance"]["passed"])
+        self.assertFalse(report["frames"][2]["ordinary_iou_allowed"])
+        self.assertIsNone(report["frames"][2]["iou"])
+        self.assertEqual(report["frames"][2]["visible_bbox"], [12.0, 20.0, 10.0, 5.0])
+        rows[2]["tracking_bbox"] = [90.0, 20.0, 10.0, 10.0]
+        far = evaluator.evaluate(contract, rows, "full")
+        self.assertFalse(far["gates"]["estimated_full_distance"]["passed"])
+        self.assertEqual(far["gates"]["estimated_full_distance"]["frames"], [2])
+
+    def test_multi_event_estimate_match_is_distance_only(self):
+        target = {"bbox": [10.0, 20.0, 10.0, 10.0], "estimated_full": True}
+        self.assertTrue(evaluator._matches_truth([7.0, 15.0, 20.0, 20.0], target))
+        self.assertFalse(evaluator._matches_truth([90.0, 20.0, 10.0, 10.0], target))
+        target["estimated_full"] = False
+        self.assertFalse(evaluator._matches_truth([7.0, 15.0, 20.0, 20.0], target))
+
     def test_holdout_ignores_inapplicable_occlusion_gate_but_keeps_global_reacquisition(self):
         contract = synthetic_contract()
         rows = passing_rows()

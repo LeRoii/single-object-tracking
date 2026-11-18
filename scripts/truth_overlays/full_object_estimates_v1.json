@@ -1,0 +1,662 @@
+{
+  "schema_version": 1,
+  "version": "full_object_estimates_v1",
+  "video_sha256": "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d",
+  "bbox_format": "xywh_pixels",
+  "scoring": {
+    "ordinary_iou_allowed": false,
+    "max_center_distance_in_target_diagonals": 1.0
+  },
+  "policy": "Partial-occlusion full-object boxes are estimates; visible-part geometry is preserved. Estimated frames use only a coarse center-distance gate, never ordinary IoU. Full occlusion stays unboxed.",
+  "targets": {
+    "car_001": {
+      "base_truth_version": null,
+      "base_hash_field": "annotation_metadata",
+      "base_sha256": "5641650435a1980694f982cf1fa6715ba959b1515938cee383c8db8ec4aeb076",
+      "frames": [
+        {
+          "frame_id": 169,
+          "estimated_full_bbox_xywh": [
+            854.5,
+            806.71,
+            43.07,
+            47.07
+          ],
+          "visible_bbox_xywh": null,
+          "method": "existing bidirectional full-object interpolation; hidden extent uncertain"
+        },
+        {
+          "frame_id": 170,
+          "estimated_full_bbox_xywh": [
+            854.0,
+            807.43,
+            43.14,
+            47.14
+          ],
+          "visible_bbox_xywh": null,
+          "method": "existing bidirectional full-object interpolation; hidden extent uncertain"
+        },
+        {
+          "frame_id": 171,
+          "estimated_full_bbox_xywh": [
+            853.5,
+            808.14,
+            43.21,
+            47.21
+          ],
+          "visible_bbox_xywh": null,
+          "method": "existing bidirectional full-object interpolation; hidden extent uncertain"
+        },
+        {
+          "frame_id": 181,
+          "estimated_full_bbox_xywh": [
+            848.5,
+            815.29,
+            43.93,
+            47.93
+          ],
+          "visible_bbox_xywh": null,
+          "method": "existing bidirectional full-object interpolation; hidden extent uncertain"
+        }
+      ]
+    },
+    "car_002": {
+      "base_truth_version": null,
+      "base_hash_field": "package_checksums",
+      "base_sha256": "4540ff280903a3e32d8b439f54ddca4497e855095da68ebdbe8fbea044371811",
+      "frames": [
+        {
+          "frame_id": 211,
+          "estimated_full_bbox_xywh": [
+            847.9,
+            685.35,
+            40.55,
+            43.6
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 212,
+          "estimated_full_bbox_xywh": [
+            847.8,
+            685.7,
+            41.1,
+            44.2
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 217,
+          "estimated_full_bbox_xywh": [
+            847.3,
+            687.45,
+            43.85,
+            47.2
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 218,
+          "estimated_full_bbox_xywh": [
+            847.2,
+            687.8,
+            44.4,
+            47.8
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 219,
+          "estimated_full_bbox_xywh": [
+            847.1,
+            688.15,
+            44.95,
+            48.4
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 220,
+          "estimated_full_bbox_xywh": [
+            847.0,
+            688.5,
+            45.5,
+            49.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 221,
+          "estimated_full_bbox_xywh": [
+            846.9,
+            688.85,
+            46.05,
+            49.6
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 222,
+          "estimated_full_bbox_xywh": [
+            846.8,
+            689.2,
+            46.6,
+            50.2
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 223,
+          "estimated_full_bbox_xywh": [
+            846.7,
+            689.55,
+            47.15,
+            50.8
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 224,
+          "estimated_full_bbox_xywh": [
+            846.6,
+            689.9,
+            47.7,
+            51.4
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 225,
+          "estimated_full_bbox_xywh": [
+            846.5,
+            690.25,
+            48.25,
+            52.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 226,
+          "estimated_full_bbox_xywh": [
+            846.4,
+            690.6,
+            48.8,
+            52.6
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 227,
+          "estimated_full_bbox_xywh": [
+            846.3,
+            690.95,
+            49.35,
+            53.2
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 228,
+          "estimated_full_bbox_xywh": [
+            846.2,
+            691.3,
+            49.9,
+            53.8
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        },
+        {
+          "frame_id": 229,
+          "estimated_full_bbox_xywh": [
+            846.1,
+            691.65,
+            50.45,
+            54.4
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear bridge-passage estimate from confirmed frames 210 and 230; hidden edge uncertain"
+        }
+      ]
+    },
+    "car_003": {
+      "base_truth_version": "car_003_visible_unboxed_v3",
+      "base_hash_field": "package_checksums",
+      "base_sha256": "282d0dcb4b018610deae9912e95415e264f59c2490bd08db1f7f4733171f0337",
+      "frames": [
+        {
+          "frame_id": 124,
+          "estimated_full_bbox_xywh": [
+            803.5,
+            884.57,
+            55.0,
+            46.0
+          ],
+          "visible_bbox_xywh": [
+            803.71968,
+            884.57022,
+            52.02048,
+            38.30004
+          ],
+          "method": "visual roof and pre-bridge full-size estimate; hidden edge uncertain"
+        },
+        {
+          "frame_id": 125,
+          "estimated_full_bbox_xywh": [
+            805.0,
+            880.05,
+            55.0,
+            46.0
+          ],
+          "visible_bbox_xywh": [
+            812.22912,
+            880.04988,
+            46.0608,
+            32.16024
+          ],
+          "method": "visual roof and pre-bridge full-size estimate; hidden edge uncertain"
+        },
+        {
+          "frame_id": 126,
+          "estimated_full_bbox_xywh": [
+            806.5,
+            881.3,
+            55.0,
+            46.0
+          ],
+          "visible_bbox_xywh": [
+            809.82912,
+            881.29998,
+            48.51072,
+            30.50028
+          ],
+          "method": "visual roof and pre-bridge full-size estimate; hidden edge uncertain"
+        },
+        {
+          "frame_id": 127,
+          "estimated_full_bbox_xywh": [
+            808.0,
+            886.81,
+            55.0,
+            46.0
+          ],
+          "visible_bbox_xywh": [
+            813.10944,
+            886.8101399999999,
+            45.590399999999995,
+            24.199559999999998
+          ],
+          "method": "visual roof and pre-bridge full-size estimate; hidden edge uncertain"
+        },
+        {
+          "frame_id": 128,
+          "estimated_full_bbox_xywh": [
+            809.5,
+            887.84,
+            55.0,
+            46.0
+          ],
+          "visible_bbox_xywh": [
+            813.3888,
+            887.83992,
+            43.1808,
+            23.37984
+          ],
+          "method": "visual roof and pre-bridge full-size estimate; hidden edge uncertain"
+        },
+        {
+          "frame_id": 129,
+          "estimated_full_bbox_xywh": [
+            811.0,
+            887.84,
+            55.0,
+            46.0
+          ],
+          "visible_bbox_xywh": [
+            813.48096,
+            887.83992,
+            42.9696,
+            24.07968
+          ],
+          "method": "visual roof and pre-bridge full-size estimate; hidden edge uncertain"
+        },
+        {
+          "frame_id": 130,
+          "estimated_full_bbox_xywh": [
+            812.5,
+            888.0,
+            55.0,
+            46.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof and pre-bridge full-size estimate; hidden edge uncertain"
+        }
+      ]
+    },
+    "car_004": {
+      "base_truth_version": "car_004_full_estimated_v4",
+      "base_hash_field": "package_checksums",
+      "base_sha256": "816cbc36b339c53d4519e7ca0a2a3774fb16dd96b6991cc1fcd63be2b055df4a",
+      "frames": [
+        {
+          "frame_id": 126,
+          "estimated_full_bbox_xywh": [
+            731.5,
+            874.8,
+            52.0,
+            53.0
+          ],
+          "visible_bbox_xywh": [
+            734.9596799999999,
+            874.83996,
+            47.460480000000004,
+            32.87952
+          ],
+          "method": "visual roof progression and frame-125 full-object extent; hidden edge uncertain"
+        },
+        {
+          "frame_id": 127,
+          "estimated_full_bbox_xywh": [
+            730.0,
+            876.5,
+            53.0,
+            52.5
+          ],
+          "visible_bbox_xywh": [
+            737.46,
+            876.53,
+            44.92999999999995,
+            30.019999999999982
+          ],
+          "method": "existing v4 visual estimate"
+        },
+        {
+          "frame_id": 128,
+          "estimated_full_bbox_xywh": [
+            730.0,
+            879.0,
+            52.0,
+            51.0
+          ],
+          "visible_bbox_xywh": [
+            737.05,
+            879.03,
+            43.48000000000002,
+            26.06000000000006
+          ],
+          "method": "existing v4 visual estimate"
+        },
+        {
+          "frame_id": 129,
+          "estimated_full_bbox_xywh": [
+            730.0,
+            879.0,
+            52.0,
+            51.0
+          ],
+          "visible_bbox_xywh": [
+            737.1,
+            879.02,
+            43.389999999999986,
+            26.090000000000032
+          ],
+          "method": "existing v4 visual estimate"
+        },
+        {
+          "frame_id": 130,
+          "estimated_full_bbox_xywh": [
+            728.0,
+            881.5,
+            52.0,
+            51.0
+          ],
+          "visible_bbox_xywh": [
+            733.1808000000001,
+            882.4896,
+            43.72992,
+            34.210080000000005
+          ],
+          "method": "visual roof progression and frame-125 full-object extent; hidden edge uncertain"
+        },
+        {
+          "frame_id": 131,
+          "estimated_full_bbox_xywh": [
+            725.0,
+            884.0,
+            52.0,
+            51.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof progression and frame-125 full-object extent; hidden edge uncertain"
+        },
+        {
+          "frame_id": 132,
+          "estimated_full_bbox_xywh": [
+            723.0,
+            886.0,
+            52.0,
+            51.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof progression and frame-125 full-object extent; hidden edge uncertain"
+        }
+      ]
+    },
+    "car_005": {
+      "base_truth_version": null,
+      "base_hash_field": "package_checksums",
+      "base_sha256": "497e7e67f7d70dd127bed2999d03198aa32029c1abfd14f28047a2e403c3e51a",
+      "frames": []
+    },
+    "car_006": {
+      "base_truth_version": null,
+      "base_hash_field": "package_checksums",
+      "base_sha256": "a94b5bbf9ec02a90004d64a5a6ad7fd94e5857795daf2d7df414f0dbab21776d",
+      "frames": []
+    },
+    "car_007": {
+      "base_truth_version": null,
+      "base_hash_field": "package_checksums",
+      "base_sha256": "9a1fe3e6735dd63996d877c826e62836356675d841ff84207096be66aede3d3d",
+      "frames": []
+    },
+    "car_008": {
+      "base_truth_version": null,
+      "base_hash_field": "package_checksums",
+      "base_sha256": "08e767aec2f7fd8b405d6f90c1cbb2ca8e9b9727a784156b374cfdea2c866adb",
+      "frames": []
+    },
+    "car_009": {
+      "base_truth_version": "car_009_visible_unboxed_v2",
+      "base_hash_field": "package_checksums",
+      "base_sha256": "5abb03ff2e995b9c90d964c6e870e51d7e784b348be5ad8261ee80c27e5ba2a7",
+      "frames": [
+        {
+          "frame_id": 115,
+          "estimated_full_bbox_xywh": [
+            942.19,
+            529.97,
+            27.54,
+            36.72
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear between confirmed frames 114 and 121; partly hidden outline"
+        },
+        {
+          "frame_id": 116,
+          "estimated_full_bbox_xywh": [
+            941.93,
+            528.76,
+            28.94,
+            36.63
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear between confirmed frames 114 and 121; partly hidden outline"
+        },
+        {
+          "frame_id": 117,
+          "estimated_full_bbox_xywh": [
+            941.67,
+            527.54,
+            30.34,
+            36.54
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear between confirmed frames 114 and 121; partly hidden outline"
+        },
+        {
+          "frame_id": 118,
+          "estimated_full_bbox_xywh": [
+            941.4,
+            526.33,
+            31.74,
+            36.45
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear between confirmed frames 114 and 121; partly hidden outline"
+        },
+        {
+          "frame_id": 119,
+          "estimated_full_bbox_xywh": [
+            941.14,
+            525.11,
+            33.13,
+            36.36
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear between confirmed frames 114 and 121; partly hidden outline"
+        },
+        {
+          "frame_id": 120,
+          "estimated_full_bbox_xywh": [
+            940.88,
+            523.9,
+            34.53,
+            36.27
+          ],
+          "visible_bbox_xywh": null,
+          "method": "linear between confirmed frames 114 and 121; partly hidden outline"
+        }
+      ]
+    },
+    "car_010": {
+      "base_truth_version": "car_010_visible_unboxed_v3",
+      "base_hash_field": "package_checksums",
+      "base_sha256": "e5ea0ef17756cb8c4eb765ec558efb4bcab84060efe4ae667eabb4a074910510",
+      "frames": [
+        {
+          "frame_id": 149,
+          "estimated_full_bbox_xywh": [
+            984.65,
+            441.55,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        },
+        {
+          "frame_id": 150,
+          "estimated_full_bbox_xywh": [
+            987.1,
+            442.8,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        },
+        {
+          "frame_id": 151,
+          "estimated_full_bbox_xywh": [
+            989.55,
+            444.05,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        },
+        {
+          "frame_id": 152,
+          "estimated_full_bbox_xywh": [
+            992.0,
+            445.3,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        },
+        {
+          "frame_id": 153,
+          "estimated_full_bbox_xywh": [
+            994.45,
+            446.55,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        },
+        {
+          "frame_id": 154,
+          "estimated_full_bbox_xywh": [
+            996.9,
+            447.8,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        },
+        {
+          "frame_id": 155,
+          "estimated_full_bbox_xywh": [
+            999.35,
+            449.05,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        },
+        {
+          "frame_id": 156,
+          "estimated_full_bbox_xywh": [
+            1001.8,
+            450.3,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        },
+        {
+          "frame_id": 157,
+          "estimated_full_bbox_xywh": [
+            1004.25,
+            451.55,
+            31.0,
+            36.0
+          ],
+          "visible_bbox_xywh": null,
+          "method": "visual roof/right-edge motion from frames 148-157; hidden extent highly uncertain"
+        }
+      ]
+    }
+  }
+}
