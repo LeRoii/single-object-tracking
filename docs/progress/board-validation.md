@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T13:20:21+08:00 原始高度参照与双模板确认后的 detector 可见尺寸候选
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `ff0dd2febf6564cbdb868794bc43730d36197a4e`，本节与源码/配置/测试同提交，提交号以 Git 为准。第 115 帧外部轨迹中高度判断把约 74px 原始观测同约 78px 平滑输出直接比较，现记录上一次可信原始高度作同类参照；初始化和重捕时重置。真实原始高度收缩且位置异常仍保留原判据。
+- 仅在 full-object detector 与两路原始 NanoTrack 结果唯一匹配、两帧 NanoTrack 确认并完成 re-center 时，新增可配置的 `recovery_recenter_use_detector_size`：默认 `false` 保持通用旧行为；本次实验配置设 `true`，发布 detector 可见尺寸，中心仍按既有变化死区融合。detector 本身不授予控制。配置身份哈希随该字段变化，session metadata 记录该值；板端实验配置 SHA-256 `4ae8558a043756775c85eb699bdd409033ef1079b62012f87ab80c2fe3f9b13a`。合成控制器测试验证尺寸采用 detector 框、原始高度与平滑高度分离、真实缩高仍进入暂态；旧的部分车身恢复全框回放使用默认 `false`，保持原合同。
+- 实际主机 `cmake --build /tmp/nt-ten-target-build --parallel 4` 和 `ctest --test-dir /tmp/nt-ten-target-build --output-on-failure --parallel 4`，RKNN-off **23/23 PASS**；日志 `/tmp/nt-raw-size-full-{build,ctest}.log` SHA-256 `c7bc3ed5c6f3f542a2147252b42fd019a05b65c22a2f01ccdee34cf701104ce3` / `4a43974503d566e1b80d6f2aa1078f93f465a1e1f3805976942fc54c184c9e73`，`git diff --check` 通过。**Handoff**：此为未上板候选；先在 RK3588 精确提交上测外部 0305/0137 与 car004 GT/DET，再核查完整十目标双初始化轨迹，不以主机测试宣称改善或合 main/Debug。
+
 ## 2026-11-18T13:12:00+08:00 恢复试用期候选板测改善外部轨迹，但十目标 car004 退化
 
 - 分支 `codex/ten-target-smoothness@3e7d5dea1f764496d267d826a9b798026ccae067`，源码 tar 主机/板端 SHA-256 `fbb1f9091a5f3e40e06fcc2d7bb0b22e1c2c06ea93754f96e582e056d76be478`；板端根 `/home/neardi/Project/SOT/nt-recovery-probation-3e7d5de`。实际运行 `/home/neardi/Project/SOT/nt-recovery-probation-setup.sh`（SHA-256 `fd735f7f853d87a0e6d5aee7cec4501de6183454c081f08293c1f92440394957`），RK3588 原生 CMake/build/CTest 23/23 PASS；程序 SHA-256 `e2c4cd28ef75df731db9308c7d325a6c55b0325f157ef5e679d1c943eef68859`，controller/headless 配置 SHA-256 `bb19d2e8e085dd57084653b6ca37bb981b10ea2a0d00bc05d166f8a508c6e26f` / `0bf37ea3448b7c76ac4d73c0061a6b28560339cb1e7a35ae68d72d8a2d664c44`；板端 cmake/build/CTest 日志 SHA-256 `5febc57e589d3528bbe8d22c709c36d9a572cd2509c2847f301de4f147bc3018` / `1e5d42d31c9723c57c88d6953975f1854936f6d7c70df98edfc953142457996e` / `bdee93ebdfca3f2222312078b0ece3a4cfa36f5bf57fb21a4a11242fb1975365`。模型、manifest、labels、视频身份沿用上一节，未更换。

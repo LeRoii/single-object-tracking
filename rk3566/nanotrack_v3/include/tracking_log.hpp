@@ -331,6 +331,7 @@ struct TrackingSessionMetadata {
   int recovery_confirmation_required = 2;
   bool recovery_requires_detector_support = false;
   bool recovery_restore_initial_aspect = false;
+  bool recovery_recenter_use_detector_size = false;
   bool lower_band_visibility_veto = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   int template_bridge_min_stable_frames = 0;

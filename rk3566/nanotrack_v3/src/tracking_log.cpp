@@ -1199,6 +1199,8 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.recovery_confirmation_required = config.recovery_confirmation_required;
   metadata.recovery_requires_detector_support = config.recovery_requires_detector_support;
   metadata.recovery_restore_initial_aspect = config.recovery_restore_initial_aspect;
+  metadata.recovery_recenter_use_detector_size =
+      config.recovery_recenter_use_detector_size;
   metadata.lower_band_visibility_veto = config.lower_band_visibility_veto;
   metadata.search_reacquisition_min_age_ms =
       config.search_reacquisition_min_age_ms;
@@ -1402,6 +1404,9 @@ std::string tracking_session_metadata_json(
          << ",\n"
          << "  \"recovery_restore_initial_aspect\": "
          << (metadata.recovery_restore_initial_aspect ? "true" : "false")
+         << ",\n"
+         << "  \"recovery_recenter_use_detector_size\": "
+         << (metadata.recovery_recenter_use_detector_size ? "true" : "false")
          << ",\n"
          << "  \"lower_band_visibility_veto\": "
          << (metadata.lower_band_visibility_veto ? "true" : "false")
