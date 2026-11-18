@@ -83,7 +83,12 @@ std::optional<BBox> select_tracking_size_candidate(
         cy >= box.y && cy <= box.y + box.height &&
         center_distance <=
             0.5F * config.detector_confirmation_center_distance * diagonal &&
-        overlap >= 0.5F * config.detector_confirmation_iou;
+        // When the tracker envelope is much larger than a centered detector
+        // hit, their IoU is mostly the detector-to-tracker area ratio. Keep
+        // this size-only path available down to 40% of the normal identity
+        // overlap gate; center containment, confidence, uniqueness and two
+        // independent detector batches still have to agree.
+        overlap >= 0.4F * config.detector_confirmation_iou;
     if (cx < box.x || cx > box.x + box.width ||
         cy < box.y || cy > box.y + box.height ||
         center_distance >
