@@ -1,5 +1,10 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T11:48:38+08:00 冻结速度方向的像素分辨率约束主机候选
+
+- 分支 `codex/ten-target-smoothness`、工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `85fd3010642a91f3dd8b895debb9d7c0e4c99168`；本节与源码同提交，提交号以 Git 为准。恢复已板端完整验证过但因 car001 大退步否决的 `ae9d5ec` 组合源码，在冻结趋势方向门增加唯一通用条件：若旧可信速度在两次 detector 确认间的预期位移 `<1px`，视为低于图像分辨率，允许新实测位移更新；旧趋势足够长时仍拒绝反向单次替换。PSR 视觉搜索约束及其他运行时逻辑沿用 `ae9d5ec`，不使用目标 ID、帧号或真值作运行时输入。源码/测试 SHA-256 `389861d6556bc5862491517be4330273a03654afd782333f094875b6ac4b3163` / `c28a08a9eb70de329a3a4f6dfc1988c567672cbe8620e60c3446a6079673f2d0`。
+- 实际 `cmake --build /tmp/nt-ten-target-build --parallel 4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure --parallel 4`，主机 RKNN-off **23/23 PASS**；日志 `/tmp/nt-direction-resolution-host-{build,ctest}.log` SHA-256 `153fd5bb2f9a3dba2bc5e73793afcc9b807a64e337d3e5448ce9ad70a1c36371` / `bbf88e1e5c5449a5056f32ac6e68111a7f784b17e72307d7ac2ddd7b3268ecf7`，`git diff --check` 通过。主机 CTest 不是板端轨迹效果证据。**Handoff**：先隔离 RK3588 原生构建并成对回放 car001/car004 detector 及 GT 初始化；若 car001 保住且 car004 整段收益保留，再补完整 20 路，逐路同时检查全可见 IoU、中心误差、误差步进、遮挡误接受及正式门禁。此前 `ae9d5ec` 不获晋级，main/Debug 和生产 handoff 仍不变。
+
 ## 2026-11-18T11:47:03+08:00 按整段轨迹目标补齐组合候选十目标双初始化
 
 - 分支 `codex/ten-target-smoothness`、干净起点 `fed95499be819daababdbc80b6987271c8c63d95`。用户优先要求十目标逐帧真值贴合、可见期稳定、遮挡后快速正确恢复，149/169 只是参考。复查上轮组合候选 `ae9d5ec608d71c3fba1de38cd630067b5fab0108` 聚焦记录后，不再用单一 PASS/FAIL 否决其 car004 detector 路：相对冻结 `8314980`，该路全部有可观测真值的可见帧平均 IoU `0.7214→0.7555`、中心误差 `7.48→5.11px`、误差步进 P95 `4.92→3.21px`、可见 SEARCHING `57→37`；但 127–129 帧接受的整车高框未缩到部分可见真值，正式 `visible_boxes` 门 FAIL。这个局部收益需要扩到全部目标核查，不以单路代替总体结论。

@@ -394,7 +394,12 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     if (recent != result.observations.end() &&
         bright_fraction(image, recent->bbox) <
             0.9F * median_brightness(trusted_brightness_)) {
-      result.plan.visual_occlusion_search = true;
+      const auto response = controller_.response_baseline_.evaluate(recent->metrics);
+      // A stronger response than the trusted baseline contradicts a visual
+      // occlusion inferred only from the scene line and patch brightness.
+      if (!response.reference || recent->metrics.psr <= response.reference->psr) {
+        result.plan.visual_occlusion_search = true;
+      }
     }
   }
   bool visual_hit = false;
@@ -755,9 +760,17 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                           previous.tracking_bbox.y -
                           0.5F * previous.tracking_bbox.height) / elapsed_s;
         const float diagonal = std::hypot(current.width, current.height);
+        const MotionSnapshot prior_trend = *controller_.motion_last_clean_trend_;
+        const float trend_dot = vx * prior_trend.velocity_x +
+                                vy * prior_trend.velocity_y;
+        // A direction inferred from less than one pixel of expected travel
+        // over this detector-confirmed interval is below image resolution.
+        const float trusted_travel =
+            std::hypot(prior_trend.velocity_x, prior_trend.velocity_y) * elapsed_s;
         if (std::hypot(vx, vy) <=
-            config.motion_max_speed_diagonals_per_s * diagonal) {
-          MotionSnapshot trend = *controller_.motion_last_clean_trend_;
+                config.motion_max_speed_diagonals_per_s * diagonal &&
+            (trusted_travel < 1.0F || trend_dot >= 0.0F)) {
+          MotionSnapshot trend = prior_trend;
           trend.velocity_x += config.motion_alpha * (vx - trend.velocity_x);
           trend.velocity_y += config.motion_alpha * (vy - trend.velocity_y);
           controller_.motion_.reanchor_preserving_velocity(current, trend,
