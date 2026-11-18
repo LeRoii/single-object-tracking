@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T10:41:28+08:00 改以十目标轨迹贴合为主的 detector 中心权重候选
+
+- 分支 `codex/ten-target-smoothness`、工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `35d08857853481c5bd39b58877a188d9af136990`。用户明确第 149 帧判遮挡、第 169 帧重捕只是建议；本轮以每目标全段逐帧轨迹、可见框尺寸和中心贴合为主，仍记录遮挡错误观测与身份风险，不把两帧时点作为单独晋级门。实际 `python3 /tmp/nt-ten-failure-root-audit.py > /tmp/nt-ten-failure-root-audit.json`，脚本/报告 SHA-256 `2e77c1eaed3737f0e45ccd727cf5876f92fd489a753899748c2bdf3673344722` / `7a5925e327abf89b249f15afe214ad0783da9c3331c10dcecfe04b734449716e`；从已冻结 20 路版本真值评分确认：`car003/009/010` 双初始化的失败门均为遮挡期误留观测，`car004` 真值初始化另有 127–129 帧可见部分框不合格；用户确认的 `car004` 第 42 帧可见由版本化真值保留。
+- 实际 `python3 /tmp/nt-output-detector-weight-screen.py > /tmp/nt-output-detector-weight-screen.json`，只读输入为冻结 `8314980d4ce293ee49ec132465677895acc219aa` 的 RK3588 20 路 CSV 和现有真值；脚本/逐帧结果 SHA-256 `9cc28426dbfcd985efa82d71c211fdaefa4781703e6e75db78fdf8344c459d09` / `2e9f2435a223279f9b81cb99ccfdcf5e8166ec6469bbc7cb2be55e3155d1d9b1`。仅在已接受 TRACKING 且 display 来源为双确认 detector 的帧，取 detector 显示框作**离线几何代理**：其面积不小于跟踪发布框时，把中心向该代理移动 25%，尺寸只允许扩大。两个初始化共 10 个目标，18/20 条目标路的这类帧平均 IoU 提高或持平；car002 两路轻微下降，不能把显示框直接当运行时控制框。代理只说明值得测试更强的独立 detector 中心佐证，不是闭环结果。
+- 候选仅把已有“连续两次同类、唯一、近期 detector 框 + 独立可靠 Recent”之后的**发布层**中心权重由 `clamp(area_ratio−1,0,0.5)` 改为 `clamp(3×(area_ratio−1),0,0.5)`。面积不大于 NanoTrack 时仍不按 detector 修正中心；尺寸规则、内部 tracker 框、下一帧裁剪、运动状态、模板提交和 detector 请求均不改。运行时源码 SHA-256 `5bc87f38927118f8cf40eed844dd765ed0fed5e737ff57ba2e3b5986d3e8e4bb`。这是通用面积比例规则，没有目标 ID、帧号或车体纹理特例。
+- 实际 `cmake --build /tmp/nt-ten-target-build --parallel 4 > /tmp/nt-center-gain-host-build.log 2>&1`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure --parallel 4 > /tmp/nt-center-gain-host-ctest.log 2>&1`，RKNN-off 主机构建成功、CTest **23/23 PASS**；日志 SHA-256 `5a480f0c6238407855f573009660bdd3b19cee8dab35820140eb4f68c2384675` / `5bf1891b86f33455968cec38f279607ddb8bbfa408c4dfeb070920869fdeb988`，`git diff --check` PASS。**尚未板端编译或闭环回放，不能据此宣布轨迹改善。** 下一步同模型/视频/两种首帧框在 RK3588 跑完整十目标，按每目标可见平均 IoU、中心误差、连续性和全部正式失败门与 `8314980` 对比；若 car002 或其他目标明显退化则撤回，不合 main/Debug。
+
 ## 2026-11-18T10:32:10+08:00 相邻外观、四帧外观及现成实例分割筛查
 
 - 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `6ffb005b79448ab79c502869ad292455f19832c9`。本节只读主机筛查，输入仍为冻结 `8314980d4ce293ee49ec132465677895acc219aa` 的 RK3588 十目标 GT/detector 双初始化 CSV、正式真值和 SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d` 的视频；未改算法、配置、模型、真值或板端结果。用户确认的 car010 149/169 人工时限保持。
