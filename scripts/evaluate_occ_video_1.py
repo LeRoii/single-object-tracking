@@ -93,6 +93,15 @@ for _target_id, _package_hash in EIGHT_TARGET_PACKAGE_HASHES.items():
                    "package_checksums": _package_hash},
     }
 
+TRUTH_VERSIONS = {
+    "car_004_visible_unboxed_v2": {
+        "target_id": "car_004",
+        "annotation_root": "ground_truth_versions/car_004_visible_unboxed_v2",
+        "package_checksums_sha256": "c8c394b41c2cb489f33a1b7e631cd1e9776cd9d75c15a5860ec221e2ddda1126",
+        "visible_unboxed_frames": (42,),
+    },
+}
+
 
 def _sha256(path):
     digest = hashlib.sha256()
@@ -272,7 +281,7 @@ def _verify_package_checksums(root, manifest):
         raise ValueError("package checksum coverage mismatch")
 
 
-def load_contract(root, target_id="car_001"):
+def load_contract(root, target_id="car_001", truth_version=None):
     """Load and strictly verify the frozen dataset identity and annotations."""
     root = Path(root)
     if not root.is_dir():
@@ -282,6 +291,17 @@ def load_contract(root, target_id="car_001"):
     expected_identity = (
         CANONICAL_IDENTITY if target_id == "car_001" else CANONICAL_IDENTITIES[target_id]
     )
+    if truth_version is not None:
+        version = TRUTH_VERSIONS.get(truth_version)
+        if version is None or version["target_id"] != target_id:
+            raise ValueError("unknown truth version for {}: {}".format(target_id, truth_version))
+        expected_identity = dict(expected_identity)
+        expected_identity["name"] = "occ_video_1_" + truth_version
+        expected_identity["annotation_root"] = version["annotation_root"]
+        expected_identity["truth_version"] = truth_version
+        expected_identity["visible_unboxed_frames"] = version["visible_unboxed_frames"]
+        expected_identity["hashes"] = dict(expected_identity["hashes"])
+        expected_identity["hashes"]["package_checksums"] = version["package_checksums_sha256"]
     annotation_root = root / expected_identity.get("annotation_root", ".")
     files = expected_identity.get("files", {})
     paths = {
@@ -419,6 +439,8 @@ def load_truth(contract):
         return bbox
 
     truth = []
+    allowed_unboxed = set(identity.get("visible_unboxed_frames", ()))
+    observed_unboxed = set()
     estimated_paths = contract.get("estimated_label_paths")
     if estimated_paths is None:
         estimated_paths = [None] * len(contract["label_paths"])
@@ -427,7 +449,8 @@ def load_truth(contract):
         source = status["source"]
         formal_box = read_box(
             path,
-            allow_empty=source in {"manual_confirmed_no_bbox", "estimated_non_observable"},
+            allow_empty=source in {"manual_confirmed_no_bbox", "estimated_non_observable",
+                                   "user_confirmed_visible_unboxed"},
         )
         estimated_box = read_box(estimated_path, allow_empty=True) if estimated_path else None
         if formal_box is not None and estimated_box is not None:
@@ -436,6 +459,14 @@ def load_truth(contract):
             ))
         if source == "manual_confirmed_visible" and formal_box is None:
             raise ValueError("confirmed visible frame lacks a formal label")
+        unboxed = source == "user_confirmed_visible_unboxed"
+        if unboxed:
+            if (status["frame_id"] not in allowed_unboxed or
+                    status["status"] != "visible" or
+                    formal_box is not None or estimated_box is not None):
+                raise ValueError("unboxed visible frame is not authorized at frame {}".format(
+                    status["frame_id"]))
+            observed_unboxed.add(status["frame_id"])
         if source == "manual_confirmed_no_bbox" and (
                 formal_box is not None or estimated_box is not None):
             raise ValueError("confirmed no-bbox frame contains geometry")
@@ -444,8 +475,9 @@ def load_truth(contract):
         bbox = formal_box if formal_box is not None else estimated_box
         state = status["status"]
         if contract.get("multi_event") and (
-                (state == "visible") != (formal_box is not None) or
-                source != ("manual_confirmed_visible" if state == "visible"
+                (state == "visible") != (formal_box is not None or unboxed) or
+                source != ("user_confirmed_visible_unboxed" if unboxed else
+                           "manual_confirmed_visible" if state == "visible"
                            else "manual_confirmed_no_bbox")):
             raise ValueError("confirmed frame state and label disagree at frame {}".format(
                 status["frame_id"]
@@ -462,6 +494,8 @@ def load_truth(contract):
                 "estimated": estimated_box is not None,
             }
         )
+    if observed_unboxed != allowed_unboxed:
+        raise ValueError("versioned visible-unboxed frame coverage mismatch")
     return truth
 
 
@@ -821,6 +855,7 @@ def evaluate_multi_event(contract, rows, scope):
         recovered = next((frame for frame in range(first, deadline)
                           if frame in by_frame
                           and by_frame[frame].get("observation_valid") is True
+                          and truth[frame]["bbox"] is not None
                           and _iou(by_frame[frame]["tracking_bbox"], truth[frame]["bbox"])
                           >= MIN_OBSERVATION_VISIBLE_FRAME_IOU), None)
         item = {"occlusion_frames": event["frames"], "first_visible": first,
@@ -866,6 +901,7 @@ def evaluate_multi_event(contract, rows, scope):
               and max(search_acceleration or [0]) <= acceleration_limit)
     invalid_claims = [row["frame_id"] for row in selected if row["reacquired"]
                       and (truth[row["frame_id"]]["status"] != "visible"
+                           or truth[row["frame_id"]]["bbox"] is None
                            or _iou(row["tracking_bbox"], truth[row["frame_id"]]["bbox"])
                            < MIN_OBSERVATION_VISIBLE_FRAME_IOU
                            or not _is_current_reacquisition(
@@ -1448,6 +1484,7 @@ def main(argv=None):
     parser.add_argument(
         "--target-id", choices=tuple(sorted(CANONICAL_IDENTITIES)), default="car_001"
     )
+    parser.add_argument("--truth-version", choices=tuple(sorted(TRUTH_VERSIONS)))
     parser.add_argument("--boxes", type=Path, required=True)
     parser.add_argument("--session-metadata", type=Path)
     parser.add_argument("--scope", choices=("development", "holdout", "full"), required=True)
@@ -1458,7 +1495,7 @@ def main(argv=None):
     parser.add_argument("--model-sha256")
     args = parser.parse_args(argv)
     try:
-        contract = load_contract(args.dataset_root, args.target_id)
+        contract = load_contract(args.dataset_root, args.target_id, args.truth_version)
         rows = load_tracking_csv(args.boxes)
         if args.session_metadata:
             metadata = _load_json(args.session_metadata, "session metadata")

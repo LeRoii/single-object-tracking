@@ -113,6 +113,81 @@ def passing_rows(schema=12):
 
 
 class OccVideoEvaluatorTest(unittest.TestCase):
+    def test_versioned_visible_unboxed_truth_is_hash_locked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "ground_truth_versions" / "visible_unboxed_fixture"
+            labels = package / "labels"
+            labels.mkdir(parents=True)
+            (root / "1.mp4").write_bytes(b"synthetic-video")
+            write_json(package / "annotation_metadata.json", {
+                "target_id": "car_004", "draft": False,
+                "formal_evaluation_authorized": True, "unresolved_review_count": 0,
+                "video": {"width": 100, "height": 50, "frame_count": 3},
+                "visibility_counts": {"visible": 3, "full_occlusion": 0,
+                                      "out_of_view": 0},
+            })
+            write_json(package / "events.json", {"events": []})
+            with (package / "annotation_status.csv").open("w", newline="",
+                                                           encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=["frame_id", "target_state",
+                                                          "review_status"])
+                writer.writeheader()
+                for frame in range(3):
+                    writer.writerow({"frame_id": frame, "target_state": "visible",
+                                     "review_status": "user_confirmed_visible_unboxed"
+                                     if frame == 1 else "manual_confirmed_visible"})
+            manifest = []
+            for frame in range(3):
+                label = labels / "frame_{:06d}.txt".format(frame)
+                label.write_text("" if frame == 1 else "0 0.5 0.5 0.2 0.4\n",
+                                 encoding="utf-8")
+                manifest.append("{}  labels/{}\n".format(sha256(label), label.name))
+            (package / "labels.sha256").write_text("".join(manifest), encoding="utf-8")
+            checksums = package / "checksums.sha256"
+            checksums.write_text("".join(
+                "{}  {}\n".format(sha256(path), path.relative_to(package).as_posix())
+                for path in sorted(package.rglob("*"),
+                                   key=lambda item: item.relative_to(package).as_posix())
+                if path.is_file() and path != checksums
+            ), encoding="utf-8")
+            identity = {
+                "name": "fixture_car_004", "target_id": "car_004",
+                "annotation_root": "ground_truth/car_004", "frame_count": 3,
+                "width": 100, "height": 50, "class_id": 0,
+                "multi_event": True, "confirmed_package": True,
+                "files": {"video": "1.mp4", "annotation_metadata": "annotation_metadata.json",
+                          "occlusion_events": "events.json",
+                          "annotation_status": "annotation_status.csv",
+                          "labels_manifest": "labels.sha256",
+                          "package_checksums": "checksums.sha256"},
+                "hashes": {"video": sha256(root / "1.mp4"),
+                           "package_checksums": "f" * 64},
+            }
+            version = {"target_id": "car_004",
+                       "annotation_root": "ground_truth_versions/visible_unboxed_fixture",
+                       "package_checksums_sha256": sha256(checksums),
+                       "visible_unboxed_frames": (1,)}
+            with (mock.patch.dict(evaluator.CANONICAL_IDENTITIES,
+                                  {"car_004": identity}),
+                  mock.patch.dict(evaluator.TRUTH_VERSIONS,
+                                  {"visible_unboxed_fixture": version})):
+                contract = evaluator.load_contract(root, "car_004",
+                                                   "visible_unboxed_fixture")
+                truth = evaluator.load_truth(contract)
+                self.assertEqual(contract["identity"]["truth_version"],
+                                 "visible_unboxed_fixture")
+                self.assertEqual(contract["identity"]["hashes"]["package_checksums"],
+                                 sha256(checksums))
+                self.assertEqual([item["observable"] for item in truth],
+                                 [True, False, True])
+                self.assertIsNone(truth[1]["bbox"])
+                with self.assertRaisesRegex(ValueError, "unknown truth version"):
+                    evaluator.load_contract(root, "car_003", "visible_unboxed_fixture")
+                (labels / "frame_000001.txt").write_text("tampered", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                    evaluator.load_contract(root, "car_004", "visible_unboxed_fixture")
+
     def test_multi_event_truth_handles_reappearance_terminal_occlusion_and_exit(self):
         states = (["visible"] * 3 + ["full_occlusion"] * 2 + ["visible"] * 3
                   + ["full_occlusion", "out_of_view", "out_of_view"])
