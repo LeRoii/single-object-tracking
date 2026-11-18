@@ -1,5 +1,11 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T22:46:22+08:00 Project/SOT 内重复归档清理
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `0d251c489410e0fdf78ae4c9905da468fd1ec39b`。用户进一步授权清理 `Project/SOT` 内确认无用的文件。本次再次以已提供账号交互式登录 `LKD3588`，只清理可核验的重复**归档**，不删除未确认备份的历史运行目录、人工记录、输入视频、模型、源码或当前 `nt-ten-target-33f34ba` 程序。先用 `tar -d` 实际逐文件比较 `/home/neardi/Project/SOT/nanotrack_v3_debug_main-1bf657f/inputs/occ_video_1.tar` 与同根 `data/occ_video_1`，以及 `/home/neardi/Project/SOT/dual-gt-safe-head-c3ce34a/runs/safe-probe-text.tar.gz` 与已解包的 `runs/safe-probe`；两次比较均 exit 0、差异输出 0 行。另两份板端包 `/home/neardi/Project/SOT/nt-occlusion-detector-probe.tar.gz`、`/home/neardi/Project/SOT/nt-detector-occlusion-audit.tar.gz` 的 SHA-256 分别为 `053320aff02672cbd953c3e10746cf48b658906c6c227f13944a96fd580139c3` / `38d9f48224f8aaa8ba83814057cf3f15493a47df4029e4dbbce8d9fa604671d9`，与主机保留的 `/tmp/` 同名包逐字节哈希相同；板端已解包的对应诊断目录也保留。
+- 删除前板端将四份完整路径、SHA-256、字节数分别写入持久目录 `/home/neardi/Project/SOT/nt-ten-target-33f34ba/cleanup-duplicate-archives.sha256` / `cleanup-duplicate-archives.sizes`，清单本身 SHA-256 `5ffd02e298d1be8a9da2ec18c5877424a3d93e3a38d1f5f6cc22677611dfd62f` / `513774a84d1994d1d0bde2a7c9c24defd198c965b9a5e456efa0bbb5c7223ce4`，`sha256sum -c` 四项全 OK。四包依次为 `946616320`、`259612070`、`96051859`、`44499241` 字节，合计 `1,346,779,490` 字节（约 `1.25 GiB`）。实际 `rm` 仅删除清单中的四个归档，之后逐一验证文件不存在；板端 `/dev/root` 从约 `4.7G` 可用增至 `6.0G` 可用、使用率 90%。`nt-ten-target-33f34ba/nanotrack_v3` 仍为 SHA-256 `01ce6658dcd57c519897c827e022736ceb4a04bbfd1f5d4c4588afbace7f84e2`，输入视频仍为 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，交互配置仍为 `71d7e1fb610b1c3f75272845e8346db2d0f45b741ad13f552c29d07bef68e3a2`。
+- 其他较大旧归档仍保留：例如 car010 onset detector 包在主机仅有 CSV 子集；`models-rk3588.tar.gz` 与当前模型目录并非同一路径布局；历史运动冻结失败帧包保留原交付身份。本次没有新的板端推理或 GUI 验收，不改算法、`main`/`Debug` 或协调 handoff。
+
 ## 2026-11-18T22:35:44+08:00 RK3588 最新实验程序持久化及旧构建中间文件清理
 
 - 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `e63b4d5772cffa869e3ee37725d2deab8b00c626`。用户指出旧回答给出 `/run/user/1000` 易失程序而非 `Project/SOT`，并要求清理板上无用文件。此前免密 SSH 到 `192.168.1.106` 确实连通但认证失败；这只证明免密方式不可用，不能说开发板无法登录。本次使用用户已提供的账号密码交互式认证成功，密码未保存到命令、脚本、Git 或进度文件。板端 `hostname=LKD3588`，初始 `/dev/root` 57G、已用 55G、可用约 100M、使用率 100%；`/run/user/1000` 为 tmpfs，原程序重启后会消失。
