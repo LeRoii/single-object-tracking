@@ -876,11 +876,9 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       const float tracker_area = tracker_box.width * tracker_box.height;
       const float detector_area = detector_box.width * detector_box.height;
       // A larger detector envelope can expose a tracker center bias caused
-      // by undersizing. Respond to a small size mismatch without requiring
-      // a large one; equal or smaller envelopes keep the tracker center.
+      // by undersizing. Equal or smaller envelopes keep the tracker center.
       // The two-hit identity gate above must already have passed.
-      const float weight = std::clamp(3.0F *
-                                      (detector_area / tracker_area - 1.0F),
+      const float weight = std::clamp(detector_area / tracker_area - 1.0F,
                                       0.0F, 0.5F);
       desired_offset_x = weight *
           (detector_box.x + 0.5F * detector_box.width - tracker_center_x);
