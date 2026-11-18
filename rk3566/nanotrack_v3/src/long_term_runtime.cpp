@@ -508,9 +508,24 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     const bool safe_crosscheck = recent != result.observations.end() &&
         safe != result.observations.end() &&
         bbox_iou(recent->bbox, safe->bbox) >= 0.5F;
-    result.plan.visual_occlusion_search = safe_crosscheck ||
+    // A nearby car can be the still-visible target. A visual hit alone does
+    // not distinguish that car from an occluder while the tracker response
+    // remains intact. The normal suspicion timer still handles other loss
+    // evidence; this only limits the visual probe's forced-search shortcut.
+    bool jointly_degraded = true;
+    if (recent != result.observations.end()) {
+      const auto response = controller_.response_baseline_.evaluate(recent->metrics);
+      if (response.reference) {
+        jointly_degraded = response.psr_drop && response.apce_drop;
+      }
+    }
+    const bool visual_search_evidence = safe_crosscheck ||
         next_streak >= visual_suspect_consecutive_frames_ +
             (ambiguous_streak ? 1 : 0);
+    result.visual_probe_response_guarded = visual_search_evidence &&
+        !jointly_degraded;
+    result.plan.visual_occlusion_search = visual_search_evidence &&
+        jointly_degraded;
   }
   // Detector support that rescued a visible track must not keep protecting
   // it after the visual probe has failed to find nearby evidence twice in

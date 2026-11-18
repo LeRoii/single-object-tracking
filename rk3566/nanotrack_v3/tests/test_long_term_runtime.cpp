@@ -1523,6 +1523,10 @@ void test_visual_suspect_gate() {
   config.local_recovery_ms = 2000;
   config.assisted_recovery_ms = 3000;
   config.visual_suspect_bright_ratio = 0.90F;
+  config.reliable_psr = 3.5F;
+  config.reliable_apce = 5.0F;
+  config.weak_psr = 2.0F;
+  config.weak_apce = 3.0F;
   FakeTracker tracker;
   tracker.emit_recent_safe_roles = true;
   FakeDetector detector;
@@ -1542,7 +1546,7 @@ void test_visual_suspect_gate() {
     const auto& plan = tracker.inferred_plans.back();
     tracker.observation_override = std::vector<TrackerObservation>{
         TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
-                           ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                           ResponseMetrics{0.92F, 0.90F, 4.0F, 6.0F, 0.04F},
                            TemplateKind::kRecent, tracker.search_token + 1}};
   };
   std::fill(pixels.begin(), pixels.end(), 0);
@@ -1591,11 +1595,14 @@ void test_visual_suspect_gate() {
   for (std::uint64_t frame = 1; frame <= 4; ++frame) {
     unique_runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
   }
+  bool unique_dual_drop = false;
   unique_tracker.on_infer = [&] {
     const auto& plan = unique_tracker.inferred_plans.back();
     unique_tracker.observation_override = std::vector<TrackerObservation>{
         TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
-                           ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                           ResponseMetrics{0.92F, 0.90F,
+                                           unique_dual_drop ? 4.0F : 10.0F,
+                                           unique_dual_drop ? 6.0F : 12.0F, 0.04F},
                            TemplateKind::kRecent, unique_tracker.search_token + 1}};
   };
   std::fill(pixels.begin(), pixels.end(), 0);
@@ -1604,9 +1611,15 @@ void test_visual_suspect_gate() {
   const auto unique_second = unique_runtime.process_frame(image, 7, 280);
   expect_true(unique_suspect.output.tracking_phase == TrackingPhase::kSuspected &&
                   unique_first.output.tracking_phase == TrackingPhase::kSuspected &&
-                  unique_second.plan.visual_occlusion_search &&
-                  unique_second.output.tracking_phase == TrackingPhase::kSearching,
-              "a distant second detection does not delay two fresh visual hits");
+                  !unique_second.plan.visual_occlusion_search &&
+                  unique_second.visual_probe_response_guarded &&
+                  unique_second.output.tracking_phase == TrackingPhase::kSuspected,
+              "a nearby detection cannot force search while both response measures remain intact");
+  unique_dual_drop = true;
+  const auto unique_degraded = unique_runtime.process_frame(image, 8, 320);
+  expect_true(unique_degraded.plan.visual_occlusion_search &&
+                  unique_degraded.output.tracking_phase == TrackingPhase::kSearching,
+              "joint PSR and APCE loss enables the visual probe shortcut without a fresh identity claim");
 
   FakeTracker crosschecked_tracker;
   crosschecked_tracker.emit_recent_safe_roles = true;
@@ -1630,10 +1643,10 @@ void test_visual_suspect_gate() {
     const auto& plan = crosschecked_tracker.inferred_plans.back();
     crosschecked_tracker.observation_override = std::vector<TrackerObservation>{
         TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
-                           ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                           ResponseMetrics{0.92F, 0.90F, 4.0F, 6.0F, 0.04F},
                            TemplateKind::kRecent, crosschecked_tracker.search_token + 1},
         TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
-                           ResponseMetrics{0.90F, 0.88F, 9.0F, 11.0F, 0.04F},
+                           ResponseMetrics{0.90F, 0.88F, 4.0F, 6.0F, 0.04F},
                            TemplateKind::kSafe, crosschecked_tracker.search_token + 1}};
   };
   std::fill(pixels.begin(), pixels.end(), 0);
