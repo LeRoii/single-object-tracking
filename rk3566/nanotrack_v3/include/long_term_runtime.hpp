@@ -79,7 +79,6 @@ struct RuntimeFrameResult {
   bool detector_tracking_size_confirmed = false;
   bool visual_probe_ran = false;
   bool visual_probe_hit = false;
-  bool visual_probe_response_guarded = false;
   int visual_probe_nearby_candidates = 0;
   std::optional<float> visual_probe_nearest_distance_px;
   std::optional<float> visual_probe_brightness_ratio;

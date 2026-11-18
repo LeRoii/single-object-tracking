@@ -1107,9 +1107,6 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
     if (result.visual_probe_brightness_ratio) {
       row.note += ";brightness=" + number(*result.visual_probe_brightness_ratio);
     }
-    if (result.visual_probe_response_guarded) {
-      row.note += ";response_guard=1";
-    }
     row.note += ")";
   }
   return row;
