@@ -1967,7 +1967,9 @@ void test_suspected_detector_guard(const nanotrack::ImageView& image) {
 void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
   using namespace nanotrack;
   const auto run = [&](std::vector<DetectorCandidate> candidates,
-                       std::int64_t source_age_ms = 0) {
+                       std::int64_t source_age_ms = 0,
+                       bool detector_dropout = false,
+                       bool degrade_third = false) {
     ControllerConfig config;
     config.adaptive_display_enabled = true;
     config.display_detector_refresh_enabled = true;
@@ -1980,6 +1982,10 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
     config.accepted_center_smoothing_alpha = 0.35F;
     config.accepted_center_max_correction_ratio = 0.25F;
     config.stable_frames_for_update = 99;
+    if (degrade_third) {
+      config.suspicion_enter_ms = 1;
+      config.uncertain_ms = 400;
+    }
     FakeTracker tracker;
     tracker.reliable_bbox = BBox{40, 30, 20, 20};
     tracker.on_infer = [&] {
@@ -1987,7 +1993,9 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
       tracker.observation_override = std::vector<TrackerObservation>{
           TrackerObservation{plan.frame_id, plan.timestamp_ms,
                              BBox{40, 30, 20, 20},
-                             ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F},
+                             degrade_third && plan.frame_id >= 3
+                                 ? ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.08F}
+                                 : ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F},
                              TemplateKind::kRecent, tracker.search_token + 1}};
     };
     FakeDetector detector;
@@ -1999,11 +2007,14 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
     runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
     const auto first = runtime.process_frame(image, 1, 40);
     const auto second = runtime.process_frame(image, 2, 80);
-    RuntimeFrameResult last = second;
-    for (int frame = 3; frame <= 12; ++frame) {
+    if (detector_dropout) detector.enabled = false;
+    const auto third = runtime.process_frame(image, 3, 120);
+    const auto fourth = runtime.process_frame(image, 4, 160);
+    RuntimeFrameResult last = fourth;
+    for (int frame = 5; frame <= 12; ++frame) {
       last = runtime.process_frame(image, frame, frame * 40);
     }
-    return std::array<float, 10>{first.output.tracking_bbox.width,
+    return std::array<float, 16>{first.output.tracking_bbox.width,
         second.output.tracking_bbox.width,
         runtime.controller().current_bbox().width,
         tracker.committed_bbox.width,
@@ -2012,7 +2023,13 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
         first.output.tracking_bbox.x + 0.5F * first.output.tracking_bbox.width,
         second.output.tracking_bbox.x + 0.5F * second.output.tracking_bbox.width,
         last.output.tracking_bbox.x + 0.5F * last.output.tracking_bbox.width,
-        tracker.committed_bbox.x + 0.5F * tracker.committed_bbox.width};
+        tracker.committed_bbox.x + 0.5F * tracker.committed_bbox.width,
+        third.output.tracking_bbox.width,
+        third.detector_size_output_retained ? 1.0F : 0.0F,
+        static_cast<float>(static_cast<int>(fourth.output.tracking_phase)),
+        fourth.output.control_bbox.x + 0.5F * fourth.output.control_bbox.width,
+        fourth.output.tracking_bbox.width,
+        fourth.detector_size_output_retained ? 1.0F : 0.0F};
   };
   const auto corroborated = run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}});
   const auto undersized_tracker = run({
@@ -2021,6 +2038,8 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
       DetectorCandidate{BBox{39, 28, 24, 24}, 0.8F, 2}});
   const auto centered_smaller = run({
       DetectorCandidate{BBox{44, 34, 12, 12}, 0.8F, 2}});
+  const auto shrinking_then_suspected = run({
+      DetectorCandidate{BBox{44, 34, 12, 12}, 0.8F, 2}}, 0, true, true);
   expect_true(std::fabs(corroborated[0] - 20.0F) < 0.01F &&
                   corroborated[1] > 20.0F && corroborated[1] <= 21.01F &&
                   std::fabs(corroborated[2] - 20.0F) < 0.01F &&
@@ -2049,6 +2068,25 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
                   std::fabs(centered_smaller[8] - 50.0F) < 0.01F,
               "two strong centered smaller detections can shrink only the "
               "published size at the configured step limit");
+  expect_true(shrinking_then_suspected[1] < 20.0F &&
+                  shrinking_then_suspected[11] == 1.0F &&
+                  shrinking_then_suspected[12] ==
+                      static_cast<float>(static_cast<int>(TrackingPhase::kSuspected)) &&
+                  shrinking_then_suspected[10] <=
+                      shrinking_then_suspected[1] * 1.05F + 0.01F &&
+                  shrinking_then_suspected[14] <=
+                      shrinking_then_suspected[10] * 1.05F + 0.01F &&
+                  shrinking_then_suspected[15] == 1.0F &&
+                  std::fabs(shrinking_then_suspected[13] - 50.0F) < 0.01F,
+              "freshly confirmed smaller size survives a detector dropout "
+              "and SUSPECTED transition without moving the control center: " +
+                  std::to_string(shrinking_then_suspected[1]) + "/" +
+                  std::to_string(shrinking_then_suspected[10]) + "/" +
+                  std::to_string(shrinking_then_suspected[11]) + "/" +
+                  std::to_string(shrinking_then_suspected[12]) + "/" +
+                  std::to_string(shrinking_then_suspected[13]) + "/" +
+                  std::to_string(shrinking_then_suspected[14]) + "/" +
+                  std::to_string(shrinking_then_suspected[15]));
   expect_true(std::fabs(offset_detector[6] - 50.0F) < 0.01F &&
                   offset_detector[7] > 50.0F &&
                   offset_detector[7] < 50.5F &&

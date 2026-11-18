@@ -920,6 +920,20 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   // the published geometry uses detector evidence corroborated by an accepted
   // Recent observation. The next search crop and visual-occlusion reference
   // continue to use the internal tracker box.
+  const auto& size_config = controller_.config();
+  const std::int64_t size_retention_ms = std::max(
+      size_config.detector_stale_ms,
+      size_config.display_detector_max_interval_ms);
+  const bool retained_size_available = last_supported_published_bbox_ &&
+      last_published_support_ms_ && timestamp_ms >= *last_published_support_ms_ &&
+      timestamp_ms - *last_published_support_ms_ <= size_retention_ms;
+  const float retained_weight = retained_size_available
+      ? 1.0F - static_cast<float>(timestamp_ms - *last_published_support_ms_) /
+          static_cast<float>(size_retention_ms)
+      : 0.0F;
+  const auto retained_dimension = [&](float raw, float confirmed) {
+    return raw - retained_weight * (raw - confirmed);
+  };
   if (result.output.accepted && !result.output.reacquired &&
       result.output.accepted_observation_path == AcceptedObservationPath::kDirect &&
       result.output.selected_template == TemplateKind::kRecent) {
@@ -941,6 +955,20 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     BBox target = guard_size_supported ? *next_guard_candidate_bbox :
         tracking_size_supported ? *confirmed_tracking_size_candidate_ :
         support_recent ? *last_supported_published_bbox_ : tracker_box;
+    const bool retained_smaller_width = !size_supported &&
+        retained_size_available &&
+        last_supported_published_bbox_->width < tracker_box.width;
+    const bool retained_smaller_height = !size_supported &&
+        retained_size_available &&
+        last_supported_published_bbox_->height < tracker_box.height;
+    if (retained_smaller_width) {
+      target.width = retained_dimension(
+          tracker_box.width, last_supported_published_bbox_->width);
+    }
+    if (retained_smaller_height) {
+      target.height = retained_dimension(
+          tracker_box.height, last_supported_published_bbox_->height);
+    }
     if (tracking_size_supported && !guard_size_supported) {
       // Two sensors agree on identity, but their size estimates can still
       // differ. Give the detector half of the size correction and retain the
@@ -960,12 +988,12 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         !guard_size_supported &&
         ((tracking_size_supported &&
           confirmed_tracking_size_candidate_->width < tracker_box.width) ||
-         (support_recent && target.width < tracker_box.width));
+         retained_smaller_width);
     const bool smaller_height_supported =
         !guard_size_supported &&
         ((tracking_size_supported &&
           confirmed_tracking_size_candidate_->height < tracker_box.height) ||
-         (support_recent && target.height < tracker_box.height));
+         retained_smaller_height);
     const float width = next_dimension(previous.width, tracker_box.width,
         target.width, smaller_width_supported);
     const float height = next_dimension(previous.height, tracker_box.height,
@@ -1007,6 +1035,9 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     result.detector_size_output_applied =
         std::fabs(published.width - tracker_box.width) > 0.01F ||
         std::fabs(published.height - tracker_box.height) > 0.01F;
+    result.detector_size_output_retained =
+        result.detector_size_output_applied &&
+        (retained_smaller_width || retained_smaller_height);
     result.detector_center_output_applied =
         std::hypot(published_center_offset_x_,
                    published_center_offset_y_) > 0.01F;
@@ -1018,11 +1049,51 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       last_published_support_ms_ = timestamp_ms;
     }
   } else {
-    published_tracking_bbox_.reset();
+    const BBox tracker_box = result.output.tracking_bbox;
+    const bool retained_smaller_width = !result.output.reacquired &&
+        retained_size_available && published_tracking_bbox_ &&
+        last_supported_published_bbox_->width < tracker_box.width;
+    const bool retained_smaller_height = !result.output.reacquired &&
+        retained_size_available && published_tracking_bbox_ &&
+        last_supported_published_bbox_->height < tracker_box.height;
+    if (retained_smaller_width || retained_smaller_height) {
+      const BBox previous = *published_tracking_bbox_;
+      const float limit = std::min(0.10F,
+          size_config.max_accepted_scale_step_ratio);
+      const auto next_dimension = [&](float current, float target) {
+        return std::clamp(target, current * (1.0F - limit),
+                          current * (1.0F + limit));
+      };
+      const float width = next_dimension(previous.width,
+          retained_smaller_width ? retained_dimension(tracker_box.width,
+              last_supported_published_bbox_->width) : tracker_box.width);
+      const float height = next_dimension(previous.height,
+          retained_smaller_height ? retained_dimension(tracker_box.height,
+              last_supported_published_bbox_->height) : tracker_box.height);
+      const auto resized = [&](const BBox& box) {
+        return clip_bbox(BBox{box.x + 0.5F * (box.width - width),
+                              box.y + 0.5F * (box.height - height),
+                              width, height}, image.width, image.height);
+      };
+      const BBox published = resized(tracker_box);
+      result.output.tracking_bbox = published;
+      if (result.output.control_bbox.width > 0.0F &&
+          result.output.control_bbox.height > 0.0F) {
+        result.output.control_bbox = resized(result.output.control_bbox);
+      }
+      result.detector_size_output_applied =
+          std::fabs(published.width - tracker_box.width) > 0.01F ||
+          std::fabs(published.height - tracker_box.height) > 0.01F;
+      result.detector_size_output_retained =
+          result.detector_size_output_applied;
+      published_tracking_bbox_ = published;
+    } else {
+      published_tracking_bbox_.reset();
+      last_supported_published_bbox_.reset();
+      last_published_support_ms_.reset();
+    }
     published_center_offset_x_ = 0.0F;
     published_center_offset_y_ = 0.0F;
-    last_supported_published_bbox_.reset();
-    last_published_support_ms_.reset();
   }
   // A frozen motion predictor can be spatially separated from the most
   // recently published tracker box when search starts. Ease only the outward

@@ -74,6 +74,7 @@ struct RuntimeFrameResult {
   DetectorDiagnostics detector{};
   bool suspected_detector_guard_applied = false;
   bool detector_size_output_applied = false;
+  bool detector_size_output_retained = false;
   bool detector_center_output_applied = false;
   bool search_output_smoothed = false;
   bool detector_tracking_size_confirmed = false;
