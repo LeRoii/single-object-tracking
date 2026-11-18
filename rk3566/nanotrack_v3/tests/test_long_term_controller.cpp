@@ -2270,19 +2270,17 @@ void test_near_detector_triad_recovers_changed_target_aspect() {
   config.recovery_requires_detector_support = true;
   config.recovery_confirmation_required = 3;
   config.detector_max_candidates = 2;
-  config.recovery_recenter_use_detector_size = true;
   config.recent_visibility_height_ratio = 0.98F;
   config.recent_visibility_center_residual = 0.04F;
   const FrameSize frame{500, 350};
   const BBox committed{100, 100, 60, 120};
   const BBox target{130, 140, 120, 60};
-  const BBox detector_target{135, 143, 110, 54};
   ResolvedControllerFixture controller(config);
   controller.initialize(committed, 0, 0, frame);
   reject_frame(controller, 1, 40);
   auto plan = controller.begin_frame(2, 80, false);
   const auto detector_key = controller.recovery_candidates_.observe(
-      RecoveryCandidateSource::kDetector, detector_target, 0.90F, 80, 2, false, 0.01F);
+      RecoveryCandidateSource::kDetector, target, 0.90F, 80, 2, false, 0.01F);
   controller.recovery_candidates_.observe(
       RecoveryCandidateSource::kDetector, {310, 50, 50, 50},
       0.85F, 80, 2, false, 0.60F);
@@ -2315,10 +2313,8 @@ void test_near_detector_triad_recovers_changed_target_aspect() {
   expect_true(output.accepted && output.reacquired &&
                   output.selected_template == TemplateKind::kRecent &&
                   output.recovery_conflict == false &&
-                  output.recovery_detector_recentered &&
-                  std::fabs(output.tracking_bbox.width - detector_target.width) < 1.0F &&
-                  std::fabs(output.tracking_bbox.height - detector_target.height) < 1.0F,
-              "two fresh NanoTrack heads authorize detector envelope for new-aspect recovery");
+                  std::fabs(output.tracking_bbox.height - target.height) < 1.0F,
+              "second fresh NanoTrack pair recovers the new aspect without detector control");
   plan = controller.begin_frame(5, 200, false);
   const BBox committed_after_recovery = controller.current_bbox();
   const BBox settled{
@@ -2355,6 +2351,30 @@ void test_near_detector_triad_recovers_changed_target_aspect() {
   }
   expect_true(!output.accepted && !output.reacquired,
               "a distant lookalike cannot use detector recentering to bypass the old box clamp");
+
+  const FrameSize edge_frame{500, 260};
+  const BBox edge_committed{100, 100, 60, 120};
+  const BBox edge_target{100, 180, 120, 80};
+  ResolvedControllerFixture edge(config);
+  edge.initialize(edge_committed, 0, 0, edge_frame);
+  reject_frame(edge, 1, 40);
+  plan = edge.begin_frame(2, 80, false);
+  edge.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
+                                    edge_target, 0.95F, 80, 2, false, 0.01F);
+  edge.finish_frame(plan, {}, std::nullopt);
+  for (std::uint64_t id : {3U, 4U}) {
+    plan = edge.begin_frame(id, id * 40, false);
+    auto recent = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kRecent, edge_target, id),
+        edge_committed, edge_frame);
+    auto safe = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kSafe, edge_target, id),
+        edge_committed, edge_frame);
+    output = edge.finish_frame(plan, {recent, safe}, std::nullopt);
+  }
+  expect_true(!output.accepted && !output.reacquired &&
+                  !output.recovery_triad_eligible,
+              "clipped detector box cannot rebase a full-object recovery size");
 }
 
 void test_conflicted_recovery_needs_matching_detector_evidence() {
@@ -2737,32 +2757,6 @@ void test_car_partial_visibility_needs_shrink_and_motion() {
   expect_true(run(0, combined, true).accepted &&
                   run(2, combined, false).accepted,
               "other classes and observations without decoded geometry retain their contract");
-}
-
-void test_car_visibility_uses_prior_raw_height_after_scale_smoothing() {
-  using namespace nanotrack;
-  ControllerConfig config;
-  config.recent_visibility_height_ratio = 0.98F;
-  config.recent_visibility_center_residual = 0.04F;
-  config.stable_frames_for_update = 99;
-  const auto run = [&](float raw_height) {
-    ResolvedControllerFixture controller(config);
-    controller.initialize({70, 50, 30, 32}, 0, 0, {320, 240},
-                          make_fixed_target_class(2, false));
-    // A delayed scale filter can emit 32 px while the last trusted decoder
-    // observed 30 px. Compare like observations before declaring shrinkage.
-    controller.last_trusted_observation_height_ = 30.0F;
-    const auto plan = controller.begin_frame(1, 40, false);
-    auto recent = reliable_observation(
-        plan, TemplateKind::kRecent, {73, 50, 30, raw_height});
-    recent.decoded_bbox = recent.bbox;
-    return controller.finish_frame(plan, {recent}, std::nullopt);
-  };
-  expect_true(run(30.0F).accepted,
-              "stable raw height survives a larger smoothed output height");
-  const auto collapsed = run(27.0F);
-  expect_true(!collapsed.accepted && collapsed.observation_present,
-              "true raw-height contraction remains provisional");
 }
 
 void test_search_uses_last_clean_response_motion_trend() {
@@ -3288,7 +3282,6 @@ int main() {
   test_recent_safe_single_metric_dip_is_tentative();
   test_sustained_dual_response_loss_stops_trusted_observations();
   test_car_partial_visibility_needs_shrink_and_motion();
-  test_car_visibility_uses_prior_raw_height_after_scale_smoothing();
   test_search_uses_last_clean_response_motion_trend();
   test_search_rejects_unverified_velocity_reversal();
   test_motion_input_freeze_and_reanchor();

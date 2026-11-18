@@ -144,7 +144,6 @@ struct ControllerConfig {
   int recovery_confirmation_required = 2;
   bool recovery_requires_detector_support = false;
   bool recovery_restore_initial_aspect = false;
-  bool recovery_recenter_use_detector_size = false;
   bool lower_band_visibility_veto = false;
   std::int64_t search_reacquisition_min_age_ms = 0;
   std::int64_t motion_search_confidence_ms = 1000;

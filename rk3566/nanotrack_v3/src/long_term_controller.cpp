@@ -128,7 +128,6 @@ void LongTermController::initialize(const BBox& initial_bbox,
   initial_bbox_ = initial_bbox;
   display_bbox_ = initial_bbox;
   reset_scale_state(initial_bbox);
-  last_trusted_observation_height_.reset();
   motion_.initialize(initial_bbox, timestamp_ms, frame_size.width, frame_size.height);
   reset_motion_input_gate();
   motion_last_clean_trend_ = motion_.snapshot(timestamp_ms);
@@ -996,14 +995,12 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   // The newly staged recovery template defines a fresh size reference.
   // Applying the old tracking-height cue during its probation can turn normal
   // post-recovery aspect settling into a false occlusion signal.
-  const float observed_height_reference =
-      last_trusted_observation_height_.value_or(current_bbox_.height);
   const bool partial_visibility = !recovery_probation_ &&
       target_class_.target_class_id == 2 &&
       config_.recent_visibility_height_ratio > 0.0F &&
       observation.decoded_bbox &&
       observation.decoded_bbox->height <=
-          observed_height_reference * config_.recent_visibility_height_ratio &&
+          current_bbox_.height * config_.recent_visibility_height_ratio &&
       recent.center_residual >= config_.recent_visibility_center_residual;
   if (plan.suspected_detector_guard &&
       recent.quality == QualityLevel::kReliable && !partial_visibility) {
@@ -1283,6 +1280,12 @@ LongTermController::confirm_recovery_candidate(
     if (detector) {
       const auto& box = detector->bbox;
       const auto& motion = plan.motion_predicted_bbox;
+      // A box clipped by the image boundary cannot establish a new
+      // full-object size or aspect, even if both heads find the visible part.
+      const bool detector_fully_visible =
+          box.x > 1.0F && box.y > 1.0F &&
+          box.x + box.width < frame_size_.width - 1.0F &&
+          box.y + box.height < frame_size_.height - 1.0F;
       const float distance = std::hypot(
           box.x + 0.5F * box.width - motion.x - 0.5F * motion.width,
           box.y + 0.5F * box.height - motion.y - 0.5F * motion.height);
@@ -1305,7 +1308,8 @@ LongTermController::confirm_recovery_candidate(
       // rejects them even when a unique nearby detector agrees with both.
       // Keep the old clamp for every other path, and require fresh NanoTrack
       // confirmation before this detector-supported hypothesis can commit.
-      if (inside_frame(recent_raw) && inside_frame(safe_raw) &&
+      if (detector_fully_visible && inside_frame(recent_raw) &&
+          inside_frame(safe_raw) &&
           distance <= 0.5F * std::hypot(motion.width, motion.height) &&
           recovery_candidates_.unique_detector_agreement(recent_raw, safe_raw) ==
               plan.recovery_probe) {
@@ -1483,9 +1487,6 @@ LongTermController::confirm_recovery_candidate(
   }
   if (recent_confirmed || safe_confirmed) {
     output.recovery_reason = "RECOVERY_CONFIRMED";
-    output.recovery_detector_recentered =
-        (recent_confirmed && detector_recentered_recent.has_value()) ||
-        (!recent_confirmed && safe_confirmed && detector_recentered_safe.has_value());
     return recent_confirmed ? recovery_recent : recovery_safe;
   }
   output.recovery_reason = candidate ? "AWAITING_CONFIRMATION" : "NO_ELIGIBLE_CANDIDATE";
@@ -1738,8 +1739,11 @@ void LongTermController::defer_recovery_acceptance(
     }
   }
   // A detector-supported candidate has already passed the independent
-  // NanoTrack confirmation gate. Its visible dimensions can replace a stale
-  // committed scale only on the decoded two-head recentering path.
+  // NanoTrack confirmation gate. Use its recent full-object center as one
+  // measurement of the confirmed object when the centers differ materially,
+  // while retaining NanoTrack's size. A small correction needlessly changes
+  // the next tracker crop; half the existing confirmation center tolerance
+  // provides the scale-aware deadband.
   if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
       output.recovery_candidate_key) {
     const auto* candidate = recovery_candidates_.find(*output.recovery_candidate_key);
@@ -1750,30 +1754,21 @@ void LongTermController::defer_recovery_acceptance(
         detector->frame_id <= plan.frame_id &&
         detector->timestamp_ms <= plan.timestamp_ms &&
         plan.timestamp_ms - detector->timestamp_ms <= config_.detector_stale_ms &&
-        recovery_candidates_.geometry_consistent(bbox, detector->bbox)) {
-      const bool center_material =
-          normalized_center_distance(bbox, detector->bbox) >=
-          0.5F * config_.detector_confirmation_center_distance;
-      const bool use_detector_size = output.recovery_detector_recentered &&
-          config_.recovery_recenter_use_detector_size;
-      if (center_material || use_detector_size) {
-        const float tracker_cx = bbox.x + 0.5F * bbox.width;
-        const float tracker_cy = bbox.y + 0.5F * bbox.height;
-        const float detector_cx = detector->bbox.x + 0.5F * detector->bbox.width;
-        const float detector_cy = detector->bbox.y + 0.5F * detector->bbox.height;
-        const BBox& size = use_detector_size
-            ? detector->bbox : bbox;
-        bbox = centered_box(center_material ? 0.5F * (tracker_cx + detector_cx) : tracker_cx,
-                            center_material ? 0.5F * (tracker_cy + detector_cy) : tracker_cy,
-                            size, frame_size_);
-        output.recovery_detector_center_fused = center_material;
-      }
+        recovery_candidates_.geometry_consistent(bbox, detector->bbox) &&
+        normalized_center_distance(bbox, detector->bbox) >=
+            0.5F * config_.detector_confirmation_center_distance) {
+      const float tracker_cx = bbox.x + 0.5F * bbox.width;
+      const float tracker_cy = bbox.y + 0.5F * bbox.height;
+      const float detector_cx = detector->bbox.x + 0.5F * detector->bbox.width;
+      const float detector_cy = detector->bbox.y + 0.5F * detector->bbox.height;
+      bbox = centered_box(0.5F * (tracker_cx + detector_cx),
+                          0.5F * (tracker_cy + detector_cy), bbox, frame_size_);
+      output.recovery_detector_center_fused = true;
     }
   }
   recovery->bbox = bbox;
   recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);
-  if (output.recovery_detector_center_fused ||
-      (output.recovery_detector_recentered && config_.recovery_recenter_use_detector_size))
+  if (output.recovery_detector_center_fused)
     output.selected_observation_bbox = selected.observation.bbox;
   recovery->motion.initialize(bbox, plan.timestamp_ms, frame_size_.width, frame_size_.height);
   recovery->occlusion_decision = recovery->occlusion_evidence.observe(
@@ -1805,7 +1800,6 @@ void LongTermController::apply_recovery_acceptance() noexcept {
   occlusion_decision_ = recovery.occlusion_decision;
   width_scale_state_ = std::move(recovery.width_scale);
   height_scale_state_ = std::move(recovery.height_scale);
-  last_trusted_observation_height_.reset();
   current_bbox_ = recovery.bbox;
   display_bbox_ = recovery.display_bbox;
   last_trusted_timestamp_ms_ = last_timestamp_ms_;
@@ -2047,9 +2041,6 @@ void LongTermController::accept_observation(
   width_scale_state_ = std::move(next_width);
   height_scale_state_ = std::move(next_height);
   current_bbox_ = output.tracking_bbox;
-  last_trusted_observation_height_ = selected.observation.decoded_bbox
-      ? selected.observation.decoded_bbox->height
-      : selected.observation.bbox.height;
   last_trusted_timestamp_ms_ = plan.timestamp_ms;
   display_bbox_ = output.display_bbox;
   loss_start_ms_.reset();

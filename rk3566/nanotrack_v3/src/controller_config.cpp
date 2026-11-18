@@ -186,7 +186,6 @@ void set_value(ControllerConfig& config,
   else if (key == "recovery_confirmation_required") config.recovery_confirmation_required = parse_int(key, value);
   else if (key == "recovery_requires_detector_support") config.recovery_requires_detector_support = parse_bool(key, value);
   else if (key == "recovery_restore_initial_aspect") config.recovery_restore_initial_aspect = parse_bool(key, value);
-  else if (key == "recovery_recenter_use_detector_size") config.recovery_recenter_use_detector_size = parse_bool(key, value);
   else if (key == "recovery_min_top_luma_stddev") {
     // Historical run configs may still contain this removed gate. Accept the
     // old numeric value, but do not let it affect tracking or config identity.
@@ -646,7 +645,6 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.recovery_confirmation_required << '|'
          << config.recovery_requires_detector_support << '|'
          << config.recovery_restore_initial_aspect << '|'
-         << config.recovery_recenter_use_detector_size << '|'
          << config.lower_band_visibility_veto << '|'
          << config.search_reacquisition_min_age_ms << '|'
          << config.motion_search_confidence_ms << '|'

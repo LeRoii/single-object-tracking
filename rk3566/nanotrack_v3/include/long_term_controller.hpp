@@ -213,7 +213,6 @@ struct ControllerOutput {
   std::optional<RecoveryCandidateKey> recovery_candidate_key;
   std::size_t recovery_confirmation_hits = 0;
   bool recovery_detector_center_fused = false;
-  bool recovery_detector_recentered = false;
   bool recovery_conflict = false;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};
@@ -452,7 +451,6 @@ class LongTermController {
   BBox display_bbox_{};
   DimensionScaleState width_scale_state_{};
   DimensionScaleState height_scale_state_{};
-  std::optional<float> last_trusted_observation_height_;
   TargetClassState target_class_{};
   TrackingMode mode_ = TrackingMode::kTracking;
   TrackingMode last_output_mode_ = TrackingMode::kTracking;
