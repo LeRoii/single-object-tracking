@@ -2372,31 +2372,9 @@ void test_near_detector_triad_recovers_changed_target_aspect() {
         edge_committed, edge_frame);
     output = edge.finish_frame(plan, {recent, safe}, std::nullopt);
   }
-  expect_true(output.accepted && output.reacquired &&
-                  output.recovery_triad_eligible &&
-                  std::fabs(output.tracking_bbox.height - edge_target.height) < 1.0F,
-              "shared image-edge clipping can recover the visible target after two tracker confirmations");
-
-  ResolvedControllerFixture unmatched_edge(config);
-  unmatched_edge.initialize(edge_committed, 0, 0, edge_frame);
-  reject_frame(unmatched_edge, 1, 40);
-  plan = unmatched_edge.begin_frame(2, 80, false);
-  unmatched_edge.recovery_candidates_.observe(
-      RecoveryCandidateSource::kDetector, edge_target, 0.95F, 80, 2, false, 0.01F);
-  unmatched_edge.finish_frame(plan, {}, std::nullopt);
-  for (std::uint64_t id : {3U, 4U}) {
-    plan = unmatched_edge.begin_frame(id, id * 40, false);
-    auto recent = constrain_tracker_observation(
-        reliable_observation(plan, TemplateKind::kRecent, edge_target, id),
-        edge_committed, edge_frame);
-    auto safe = constrain_tracker_observation(
-        reliable_observation(plan, TemplateKind::kSafe, {100, 174, 120, 80}, id),
-        edge_committed, edge_frame);
-    output = unmatched_edge.finish_frame(plan, {recent, safe}, std::nullopt);
-  }
   expect_true(!output.accepted && !output.reacquired &&
                   !output.recovery_triad_eligible,
-              "one un-clipped tracker head cannot rebase a clipped detector box");
+              "clipped detector box cannot rebase a full-object recovery size");
 }
 
 void test_conflicted_recovery_needs_matching_detector_evidence() {

@@ -1305,22 +1305,6 @@ LongTermController::confirm_recovery_candidate(
       };
       const BBox recent_raw = decoded(*recent);
       const BBox safe_raw = decoded(*safe);
-      const auto common_clipped_edge = [&](const BBox& first,
-                                           const BBox& second,
-                                           const BBox& third) {
-        const auto at_left = [](const BBox& b) { return b.x <= 1.0F; };
-        const auto at_top = [](const BBox& b) { return b.y <= 1.0F; };
-        const auto at_right = [&](const BBox& b) {
-          return b.x + b.width >= frame_size_.width - 1.0F;
-        };
-        const auto at_bottom = [&](const BBox& b) {
-          return b.y + b.height >= frame_size_.height - 1.0F;
-        };
-        return (at_left(first) && at_left(second) && at_left(third)) ||
-               (at_top(first) && at_top(second) && at_top(third)) ||
-               (at_right(first) && at_right(second) && at_right(third)) ||
-               (at_bottom(first) && at_bottom(second) && at_bottom(third));
-      };
       const auto inside_frame = [&](const BBox& raw) {
         return std::isfinite(raw.x) && std::isfinite(raw.y) &&
             std::isfinite(raw.width) && std::isfinite(raw.height) &&
@@ -1329,13 +1313,12 @@ LongTermController::confirm_recovery_candidate(
             raw.x + raw.width <= frame_size_.width &&
             raw.y + raw.height <= frame_size_.height;
       };
-      // A change in viewpoint or clipping at a shared image edge can make
-      // both decoded heads flatter than the old full-object box. Require a
-      // unique nearby detector and fresh NanoTrack confirmation before using
-      // their visible geometry; a single clipped detector cannot commit it.
-      if ((detector_fully_visible ||
-           common_clipped_edge(box, recent_raw, safe_raw)) &&
-          inside_frame(recent_raw) &&
+      // A legitimate change in viewpoint can make both decoded heads much
+      // flatter than the old committed box. The ordinary size clamp then
+      // rejects them even when a unique nearby detector agrees with both.
+      // Keep the old clamp for every other path, and require fresh NanoTrack
+      // confirmation before this detector-supported hypothesis can commit.
+      if (detector_fully_visible && inside_frame(recent_raw) &&
           inside_frame(safe_raw) &&
           distance <= 0.5F * std::hypot(motion.width, motion.height) &&
           recovery_candidates_.unique_detector_agreement(recent_raw, safe_raw) ==
