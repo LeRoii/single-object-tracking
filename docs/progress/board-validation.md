@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T15:08:19+08:00 双响应恢复滞回：主机候选，待 RK3588 回放
+
+- 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `476156f112c5ae0a6cab6ae89e78d1c6646caa25`；本节与代码、单测同提交，结果提交号以 Git 为准。冻结 `526d491` car004 GT 第 130 帧暂态，131 帧 PSR/APCE 相对可信基准仅 `0.765/0.768`，却接受并清除暂态；该帧真值为完全遮挡。检测框在 127–129 帧没有匹配的目标，不能用 detector 解决那三帧可见部分尺寸。
+- 本候选只在**已有连续响应退化**时增加双指标清除滞回：PSR 与 APCE 均未恢复至各自既有下降阈值的一半以内时，保持暂态；任一指标充分恢复则沿用原清除流程。不改变初次进入暂态、搜索最短龄、detector 请求、重捕确认或控制框语义。它不把 car010 第 156 帧提前切到搜索，避免使第 168 帧仍完全遮挡的 detector 候选提前满足 400ms 恢复门；car010 156–157 仍为独立未解问题。
+- 对冻结 `526d491` 十目标 GT/DET 20 路及两段外部 VisDrone 已保存 CSV 实际执行 `python3 /tmp/nt-joint-recovery-screen.py`，脚本/输出 SHA-256 `565c044930bf4af61102c32bc9e27bb49865f00081224b72b4ec3e492c62938f` / `a27bee2f00854b0f7710b2b039c370b9eef92d7e9bc54b466b525c19a6ab2588`。静态命中仅 car004 GT 第 131 帧；这是原轨迹筛查，不能证明改后轨迹或跨场景收益。主机实际 `cmake --build /tmp/nt-ten-target-build --parallel 4`、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure --parallel 4`，RKNN-off 23/23 PASS；日志 SHA-256 `eb7f7ef89675cf54de33a268673936192b02b42f5a3a0c20e268fbe12c593047` / `65551b2cb19b1a1e3d49a0c128978c0158410eafebc2e38d708baa8e9db8fa41`。新增合成测试覆盖双指标未恢复继续暂态、完全恢复清除与单指标恢复不延长暂态。
+- **Handoff/下一步**：先在 RK3588 上原生构建并定向复测 car004/010/003 双初始化和外部 0305/0137；若 car004 第 131–132 帧改善且其他路无回归，再完成十目标双初始化 20 路。同一视频内筛查未替代独立场景验证；未获板端证据前不合 main/Debug、不升级基线。
+
 ## 2026-11-18T14:57:01+08:00 二十路回放否决高度守门组合；car010 可见状态独立版本化
 
 - 分支/工作树 `codex/ten-target-smoothness` / `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`。板端候选精确源码 `34db59b483cf1efadbcc4533f1a83d5ca505f172`，源码 tar SHA-256 `8cd0da510401b6db8b7013cbb69978c3b71311504cd42ff9558c779b5a490bac`，隔离根 `/home/neardi/Project/SOT/nt-edge-extent-34db59b`，原生 CMake/build/CTest 23/23 PASS，程序 SHA-256 `bf240e267b4a2c59f7365fa24d2f9f2b85a3ea0651efa24b74f6fcdca2a651dd`；controller/headless SHA-256 `33ab0765722868329fa07c79bf9bc02c0a7109c0f173b86857e187667fbdd350` / `6eac5fe47bbe82c1e570bfacae45454123c061cd94fd358a8d9693bf4c73a301`。输入视频、tracker manifest、detector RKNN/manifest/labels SHA-256 沿用本文件 13:47 节核验身份：`eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d` / `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261` / `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c` / `ac2b536c3a46761138ecc67a2be865890b8bc0bbe2fb7195c2bb8b12d34049c9` / `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992`；日志 RKNN API 2.1.0、driver 0.9.8。

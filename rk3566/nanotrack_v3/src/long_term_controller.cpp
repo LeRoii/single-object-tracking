@@ -992,6 +992,16 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   const bool response_weak = metrics.psr < config_.reliable_psr ||
                              metrics.apce < config_.reliable_apce ||
                              metrics.peak_margin < config_.reliable_peak_margin;
+  // Once a response dip has made a frame tentative, two response-shape
+  // measures must recover together before clearing it. Half of each configured
+  // drop is the hysteresis boundary; an isolated metric dip may still clear on
+  // the next clean frame. This does not change when search becomes eligible.
+  const bool joint_response_not_recovered = response_degraded_since_ms_ &&
+      response.reference &&
+      metrics.psr < response.reference->psr *
+          (1.0F - 0.5F * config_.response_psr_drop_ratio) &&
+      metrics.apce < response.reference->apce *
+          (1.0F - 0.5F * config_.response_apce_drop_ratio);
   // The newly staged recovery template defines a fresh size reference.
   // Applying the old tracking-height cue during its probation can turn normal
   // post-recovery aspect settling into a false occlusion signal.
@@ -1009,7 +1019,7 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   }
   const bool degraded = isolated_response_dip || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
-                        partial_visibility ||
+                        partial_visibility || joint_response_not_recovered ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
     response_clean_since_ms_.reset();

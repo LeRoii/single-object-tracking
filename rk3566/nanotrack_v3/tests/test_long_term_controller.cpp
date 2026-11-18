@@ -2689,6 +2689,48 @@ void test_recent_safe_single_metric_dip_is_tentative() {
               "one healthy frame clears an isolated pre-entry response dip");
 }
 
+void test_joint_response_recovery_needs_both_metrics() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.suspicion_enter_ms = 100;
+  config.uncertain_ms = 200;
+  const BBox bbox{70, 50, 30, 30};
+  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
+  const ResponseMetrics sharp_drop{0.98F, 0.96F, 14, 20, 0.28F};
+  const ResponseMetrics partial_recovery{0.98F, 0.96F, 15.5F, 23, 0.28F};
+  const ResponseMetrics apce_recovered{0.98F, 0.96F, 15.5F, 30, 0.28F};
+  const auto observe = [&](LongTermController& controller, std::uint64_t id,
+                           const ResponseMetrics& metrics) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    recent.metrics = metrics;
+    return controller.finish_frame(plan, {recent}, std::nullopt);
+  };
+  ResolvedControllerFixture waiting(config);
+  ResolvedControllerFixture clears(config);
+  for (auto* controller : {&waiting, &clears}) {
+    controller->initialize(bbox, 0, 0, {320, 240});
+    for (std::uint64_t id = 1; id <= 3; ++id) {
+      expect_true(observe(*controller, id, healthy).accepted,
+                  "clean response seeds the trusted baseline");
+    }
+    const auto drop = observe(*controller, 4, sharp_drop);
+    expect_true(drop.tracking_phase == TrackingPhase::kSuspected && !drop.accepted,
+                "joint response drop starts a tentative episode");
+  }
+  const auto partial = observe(waiting, 5, partial_recovery);
+  expect_true(partial.tracking_phase == TrackingPhase::kSuspected && !partial.accepted &&
+                  partial.observation_present,
+              "both response measures still below recovery midpoint retain suspicion");
+  const auto restored = observe(waiting, 6, healthy);
+  expect_true(restored.tracking_phase == TrackingPhase::kTracking && restored.accepted,
+              "a fully recovered response clears the pre-entry tentative episode");
+  const auto isolated = observe(clears, 5, apce_recovered);
+  expect_true(isolated.tracking_phase == TrackingPhase::kTracking && isolated.accepted,
+              "one recovered response measure avoids extending a transient dip");
+}
+
 void test_sustained_dual_response_loss_stops_trusted_observations() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3280,6 +3322,7 @@ void test_verified_recovery_blends_fresh_detector_center() {
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
+  test_joint_response_recovery_needs_both_metrics();
   test_sustained_dual_response_loss_stops_trusted_observations();
   test_car_partial_visibility_needs_shrink_and_motion();
   test_search_uses_last_clean_response_motion_trend();
