@@ -1003,8 +1003,7 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
     clear_suspicion();
     return RecentDisposition::kDirect;
   }
-  const bool degraded = plan.visual_probe_clear_veto ||
-                        isolated_response_dip || drops >= 2 ||
+  const bool degraded = isolated_response_dip || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
                         partial_visibility ||
                         (motion_inconsistent && (drops > 0 || response_weak));

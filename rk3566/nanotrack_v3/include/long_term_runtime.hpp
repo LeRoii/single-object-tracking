@@ -139,7 +139,6 @@ class LongTermRuntime {
   std::optional<TemplateSlotRevocation> pending_template_slot_revocation_;
   bool revocation_waiting_for_ack_ = false;
   float visual_suspect_bright_ratio_ = 0.0F;
-  float visual_probe_empty_hold_bright_ratio_ = 0.0F;
   bool lower_band_visibility_veto_ = false;
   float visual_suspect_min_confidence_ = 0.40F;
   float visual_suspect_max_center_px_ = 30.0F;

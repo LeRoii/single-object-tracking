@@ -81,9 +81,6 @@ struct ControllerConfig {
   float recent_visibility_center_residual = 0.0F;
   // Optional visual evidence gate for an already suspected car. Zero disables.
   float visual_suspect_bright_ratio = 0.0F;
-  // A valid empty visual probe may delay SUSPECTED clearing only when the
-  // current/reference brightness ratio is below this threshold. Zero disables.
-  float visual_probe_empty_hold_bright_ratio = 0.0F;
   float visual_suspect_min_confidence = 0.40F;
   float visual_suspect_max_center_px = 30.0F;
   int visual_suspect_consecutive_frames = 2;
