@@ -428,6 +428,27 @@ int main() {
       expect_config_error(config_path, key);
     }
   }
+  write_file(config_path,
+             "recent_visibility_height_ratio=0.98\n"
+             "recent_visibility_center_residual=0.04\n"
+             "recent_visibility_frame_drop_ratio=0.95\n");
+  expect_near(load_controller_config(config_path).recent_visibility_frame_drop_ratio,
+              0.95F, 1e-6F,
+              "raw-height drop guard parses explicitly");
+  for (const std::string& value : {"-0.1", "1.01"}) {
+    write_file(config_path,
+               "recent_visibility_height_ratio=0.98\n"
+               "recent_visibility_center_residual=0.04\n"
+               "recent_visibility_frame_drop_ratio=" + value + "\n");
+    expect_config_error(config_path, "recent visibility frame drop");
+  }
+  write_file(config_path,
+             "recent_visibility_height_ratio=0.98\n"
+             "recent_visibility_center_residual=0.04\n"
+             "recent_visibility_frame_drop_ratio=nan\n");
+  expect_config_error(config_path, "finite number");
+  write_file(config_path, "recent_visibility_frame_drop_ratio=0.95\n");
+  expect_config_error(config_path, "recent visibility frame drop");
   expect_true(visible.motion_search_enabled &&
                   visible.search_reacquisition_min_age_ms == 300 &&
                   visible.motion_search_confidence_ms == 900 &&
@@ -522,6 +543,10 @@ int main() {
   identity_variant.search_reacquisition_min_age_ms = 100;
   expect_true(controller_config_identity(identity_variant) != default_identity,
               "built-in identity includes minimum search recovery age");
+  identity_variant = default_visible;
+  identity_variant.recent_visibility_frame_drop_ratio = 0.95F;
+  expect_true(controller_config_identity(identity_variant) != default_identity,
+              "built-in identity includes raw-height drop guard");
   identity_variant = default_visible;
   identity_variant.motion_search_confidence_ms += 1;
   expect_true(controller_config_identity(identity_variant) != default_identity,
