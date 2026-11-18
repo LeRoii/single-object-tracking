@@ -755,13 +755,9 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                           previous.tracking_bbox.y -
                           0.5F * previous.tracking_bbox.height) / elapsed_s;
         const float diagonal = std::hypot(current.width, current.height);
-        const MotionSnapshot prior_trend = *controller_.motion_last_clean_trend_;
-        const float trend_dot = vx * prior_trend.velocity_x +
-                                vy * prior_trend.velocity_y;
         if (std::hypot(vx, vy) <=
-                config.motion_max_speed_diagonals_per_s * diagonal &&
-            trend_dot >= 0.0F) {
-          MotionSnapshot trend = prior_trend;
+            config.motion_max_speed_diagonals_per_s * diagonal) {
+          MotionSnapshot trend = *controller_.motion_last_clean_trend_;
           trend.velocity_x += config.motion_alpha * (vx - trend.velocity_x);
           trend.velocity_y += config.motion_alpha * (vy - trend.velocity_y);
           controller_.motion_.reanchor_preserving_velocity(current, trend,
