@@ -2270,6 +2270,8 @@ void test_near_detector_triad_recovers_changed_target_aspect() {
   config.recovery_requires_detector_support = true;
   config.recovery_confirmation_required = 3;
   config.detector_max_candidates = 2;
+  config.recent_visibility_height_ratio = 0.98F;
+  config.recent_visibility_center_residual = 0.04F;
   const FrameSize frame{500, 350};
   const BBox committed{100, 100, 60, 120};
   const BBox target{130, 140, 120, 60};
@@ -2313,6 +2315,21 @@ void test_near_detector_triad_recovers_changed_target_aspect() {
                   output.recovery_conflict == false &&
                   std::fabs(output.tracking_bbox.height - target.height) < 1.0F,
               "second fresh NanoTrack pair recovers the new aspect without detector control");
+  plan = controller.begin_frame(5, 200, false);
+  const BBox committed_after_recovery = controller.current_bbox();
+  const BBox settled{
+      committed_after_recovery.x + 8.0F,
+      committed_after_recovery.y + 2.0F,
+      committed_after_recovery.width,
+      committed_after_recovery.height * 0.96F};
+  output = controller.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kRecent, settled, 5),
+       reliable_observation(plan, TemplateKind::kStaged, settled, 5)},
+      std::nullopt);
+  expect_true(output.accepted && output.template_probation_active &&
+                  output.selected_template == TemplateKind::kStaged,
+              "fresh staged and recent agreement survives post-recovery height settling");
 
   ResolvedControllerFixture distant(config);
   distant.initialize(committed, 0, 0, frame);
