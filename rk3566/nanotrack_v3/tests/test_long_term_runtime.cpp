@@ -1731,32 +1731,25 @@ void test_guarded_visual_miss_revocation() {
 
 void test_lower_band_visibility_veto() {
   using namespace nanotrack;
-  const auto run = [](float final_psr) {
-    ControllerConfig config;
-    config.lower_band_visibility_veto = true;
-    FakeTracker tracker;
-    tracker.emit_recent_safe_roles = true;
-    FakeDetector detector;
-    detector.enabled = true;
-    DetectorBatch initial_batch;
-    initial_batch.candidates.push_back(
-        DetectorCandidate{BBox{40.0F, 30.0F, 20.0F, 20.0F}, 0.9F, 2});
-    detector.blocking_batch = initial_batch;
-    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
-    std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
-    const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
-    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
-    for (std::uint64_t frame = 1; frame <= 4; ++frame) {
-      runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
-    }
-    tracker.observation_override = std::vector<TrackerObservation>{
-        TrackerObservation{5, 200, BBox{40, 30, 20, 20},
-                           ResponseMetrics{0.92F, 0.90F, final_psr, 12.0F, 0.20F},
-                           TemplateKind::kRecent, 5}};
-    std::fill(pixels.begin(), pixels.end(), 0);
-    return runtime.process_frame(image, 5, 200, true);
-  };
-  const auto blocked = run(10.0F);
+  ControllerConfig config;
+  config.lower_band_visibility_veto = true;
+  FakeTracker tracker;
+  tracker.emit_recent_safe_roles = true;
+  FakeDetector detector;
+  detector.enabled = true;
+  DetectorBatch initial_batch;
+  initial_batch.candidates.push_back(
+      DetectorCandidate{BBox{40.0F, 30.0F, 20.0F, 20.0F}, 0.9F, 2});
+  detector.blocking_batch = initial_batch;
+  LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+  std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+  runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+  }
+  std::fill(pixels.begin(), pixels.end(), 0);
+  const auto blocked = runtime.process_frame(image, 5, 200, true);
   expect_true(blocked.plan.visual_occlusion_search &&
                   blocked.output.tracking_phase == TrackingPhase::kSearching &&
                   !blocked.output.observation_present &&
@@ -1767,9 +1760,6 @@ void test_lower_band_visibility_veto() {
                   std::to_string(blocked.output.observation_present) + "/" +
                   std::to_string(static_cast<int>(blocked.output.control_source)) + "/" +
                   std::to_string(blocked.target_class.target_class_id.value_or(-1)));
-  const auto supported = run(10.5F);
-  expect_true(!supported.plan.visual_occlusion_search && supported.output.accepted,
-              "improved PSR prevents a scene line from forcing SEARCHING");
 }
 
 void test_suspected_detector_guard(const nanotrack::ImageView& image) {

@@ -394,12 +394,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     if (recent != result.observations.end() &&
         bright_fraction(image, recent->bbox) <
             0.9F * median_brightness(trusted_brightness_)) {
-      const auto response = controller_.response_baseline_.evaluate(recent->metrics);
-      // A stronger response than the trusted baseline contradicts a visual
-      // occlusion inferred only from the scene line and patch brightness.
-      if (!response.reference || recent->metrics.psr <= response.reference->psr) {
-        result.plan.visual_occlusion_search = true;
-      }
+      result.plan.visual_occlusion_search = true;
     }
   }
   bool visual_hit = false;
