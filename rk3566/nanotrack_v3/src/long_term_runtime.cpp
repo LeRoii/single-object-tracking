@@ -1052,7 +1052,11 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     result.output.control_bbox = published;
     published_tracking_bbox_ = published;
     if (size_supported) {
-      last_supported_published_bbox_ = published;
+      // If the correction is still limited by the per-frame scale cap, keep
+      // its corroborated destination for a short detector gap. Remembering
+      // only the intermediate published size would stop shrinking immediately.
+      last_supported_published_bbox_ =
+          strong_shrink_evidence ? target : published;
       last_published_support_ms_ = timestamp_ms;
     }
   } else {
