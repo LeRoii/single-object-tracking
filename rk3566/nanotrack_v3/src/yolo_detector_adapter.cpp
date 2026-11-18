@@ -115,10 +115,23 @@ void YoloDetectorAdapter::submit(const ImageView& image,
 }
 
 std::optional<DetectorBatch> YoloDetectorAdapter::poll() {
+  return poll_wait_for(std::chrono::milliseconds{0});
+}
+
+std::optional<DetectorBatch> YoloDetectorAdapter::poll_wait_for(
+    std::chrono::milliseconds timeout) {
   std::exception_ptr error;
   std::optional<DetectorBatch> batch;
   {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (timeout.count() > 0 && !initialization_exclusive_ &&
+        !completed_ && !pending_error_ && (pending_ || in_flight_)) {
+      changed_.wait_for(lock, timeout, [&] {
+        return stopping_ || disabled_ || initialization_exclusive_ ||
+               completed_.has_value() || pending_error_.has_value() ||
+               (!pending_ && !in_flight_);
+      });
+    }
     if (initialization_exclusive_) return std::nullopt;
     if (pending_error_ && pending_error_->identity.kind == RequestKind::kAsync) {
       error = pending_error_->error;

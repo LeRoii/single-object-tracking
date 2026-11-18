@@ -158,6 +158,7 @@ void set_value(ControllerConfig& config,
   else if (key == "occlusion_confirmation_max_aspect_log_change") config.occlusion_confirmation_max_aspect_log_change = parse_float(key, value);
   else if (key == "detector_interval_ms") config.detector_interval_ms = parse_integer(key, value);
   else if (key == "detector_stale_ms") config.detector_stale_ms = parse_integer(key, value);
+  else if (key == "detector_poll_wait_ms") config.detector_poll_wait_ms = parse_integer(key, value);
   else if (key == "detector_max_candidates") config.detector_max_candidates = static_cast<std::size_t>(parse_integer(key, value));
   else if (key == "detector_candidate_max_center_ratio") config.detector_candidate_max_center_ratio = parse_float(key, value);
   else if (key == "detector_target_mode") config.detector_target_mode = parse_detector_target_mode(value);
@@ -420,6 +421,9 @@ void validate_controller_config(const ControllerConfig& config) {
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
     throw std::invalid_argument("detector limits are invalid");
   }
+  if (config.detector_poll_wait_ms < 0 || config.detector_poll_wait_ms > 200) {
+    throw std::invalid_argument("detector poll wait must be in [0,200] ms");
+  }
   if (config.occlusion_hold_frames < 1 || config.occlusion_hold_frames > 300 ||
       config.occlusion_trigger_consecutive_unreliable < 1 ||
       config.occlusion_trigger_consecutive_unreliable > 10 ||
@@ -671,6 +675,9 @@ std::string controller_config_identity(const ControllerConfig& config) {
   if (config.search_output_smoothing_alpha > 0.0F) {
     stream << "|search_output_smoothing_alpha="
            << config.search_output_smoothing_alpha;
+  }
+  if (config.detector_poll_wait_ms > 0) {
+    stream << "|detector_poll_wait_ms=" << config.detector_poll_wait_ms;
   }
   return stream.str();
 }

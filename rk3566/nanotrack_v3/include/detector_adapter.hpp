@@ -2,6 +2,7 @@
 
 #include "long_term_types.hpp"
 
+#include <chrono>
 #include <optional>
 
 namespace nanotrack {
@@ -13,6 +14,11 @@ class DetectorAdapter {
   virtual bool can_submit() const = 0;
   virtual void submit(const ImageView& image, const DetectorRequest& request) = 0;
   virtual std::optional<DetectorBatch> poll() = 0;
+  virtual std::optional<DetectorBatch> poll_wait_for(
+      std::chrono::milliseconds timeout) {
+    (void)timeout;
+    return poll();
+  }
   virtual std::optional<DetectorBlockingResult> detect_blocking(
       const ImageView&, const DetectorRequest&) { return std::nullopt; }
 };

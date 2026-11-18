@@ -251,6 +251,33 @@ void test_blocking_protocol(const nanotrack::ImageView& image,
   }
 }
 
+void test_bounded_async_poll(const nanotrack::ImageView& image,
+                             const nanotrack::DetectorRequest& request) {
+  using namespace nanotrack;
+  auto state = std::make_shared<EngineState>();
+  state->release = false;
+  YoloDetectorAdapter adapter(std::make_unique<FakeEngine>(state));
+  adapter.submit(image, request);
+  expect_true(wait_for(state, &EngineState::entered),
+              "bounded poll test enters detector inference");
+  expect_true(!adapter.poll_wait_for(std::chrono::milliseconds(10)),
+              "bounded poll times out while inference is still blocked");
+  auto waiting = std::async(std::launch::async, [&] {
+    return adapter.poll_wait_for(std::chrono::milliseconds(1000));
+  });
+  expect_true(waiting.wait_for(std::chrono::milliseconds(10)) ==
+                  std::future_status::timeout,
+              "bounded poll waits for a pending asynchronous result");
+  release_engine(state);
+  expect_true(waiting.wait_for(std::chrono::seconds(1)) ==
+                  std::future_status::ready,
+              "bounded poll wakes when detector inference completes");
+  auto batch = waiting.get();
+  expect_true(batch && batch->source_frame_id == request.frame_id &&
+                  !adapter.poll(),
+              "bounded poll consumes the exact result once");
+}
+
 void test_inflight_exclusivity(const nanotrack::ImageView& image,
                               const nanotrack::DetectorRequest& request) {
   using namespace nanotrack;
@@ -477,6 +504,7 @@ int main() {
   std::vector<std::uint8_t> image_bytes(12, 9);
   const ImageView image{image_bytes.data(), 2, 2, 6, 3};
   test_blocking_protocol(image, request);
+  test_bounded_async_poll(image, request);
   test_inflight_exclusivity(image, request);
   test_failure_and_stop(image, request);
   error_adapter.submit(image, request);

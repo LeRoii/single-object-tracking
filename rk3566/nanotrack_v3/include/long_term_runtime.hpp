@@ -153,6 +153,7 @@ class LongTermRuntime {
   };
   std::deque<GuardObservation> guard_observations_;
   std::optional<std::int64_t> last_guard_request_ms_;
+  std::optional<std::uint64_t> pending_detector_request_frame_id_;
   std::optional<std::uint64_t> last_guard_batch_frame_id_;
   std::optional<std::int64_t> last_guard_source_ms_;
   std::optional<BBox> last_guard_candidate_bbox_;

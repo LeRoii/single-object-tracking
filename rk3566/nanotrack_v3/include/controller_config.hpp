@@ -108,6 +108,8 @@ struct ControllerConfig {
   float occlusion_confirmation_max_aspect_log_change = 0.40F;
   std::int64_t detector_interval_ms = 500;
   std::int64_t detector_stale_ms = 150;
+  // Optional bounded wait for a previous-frame asynchronous detector result.
+  std::int64_t detector_poll_wait_ms = 0;
   std::size_t detector_max_candidates = 3;
   float detector_candidate_max_center_ratio = 0.15F;
   DetectorTargetMode detector_target_mode = DetectorTargetMode::kFullObject;
