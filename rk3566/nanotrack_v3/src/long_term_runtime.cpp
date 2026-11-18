@@ -63,17 +63,36 @@ std::optional<BBox> select_tracking_size_candidate(
         candidate.confidence < config.suspected_detector_guard_min_confidence ||
         !std::isfinite(box.x) || !std::isfinite(box.y) ||
         !std::isfinite(box.width) || !std::isfinite(box.height) ||
-        box.width <= 0.0F || box.height <= 0.0F ||
-        cx < box.x || cx > box.x + box.width ||
+        box.width <= 0.0F || box.height <= 0.0F) {
+      continue;
+    }
+    const float candidate_cx = box.x + 0.5F * box.width;
+    const float candidate_cy = box.y + 0.5F * box.height;
+    const float center_distance = std::hypot(candidate_cx - cx,
+                                             candidate_cy - cy);
+    const float overlap = bbox_iou(box, tracker_bbox);
+    // A receding target can occupy only a small central part of an oversized
+    // NanoTrack box. Permit that scale evidence only when a stronger detector
+    // hit contains the tracker center; the temporal two-hit gate below still
+    // has to confirm the same object before published geometry changes.
+    const bool centered_smaller =
+        box.width < tracker_bbox.width && box.height < tracker_bbox.height &&
+        candidate.confidence >=
+            std::max(config.suspected_detector_guard_min_confidence, 0.5F) &&
+        cx >= box.x && cx <= box.x + box.width &&
+        cy >= box.y && cy <= box.y + box.height &&
+        center_distance <=
+            0.5F * config.detector_confirmation_center_distance * diagonal &&
+        overlap >= 0.5F * config.detector_confirmation_iou;
+    if (cx < box.x || cx > box.x + box.width ||
         cy < box.y || cy > box.y + box.height ||
-        std::hypot(box.x + 0.5F * box.width - cx,
-                   box.y + 0.5F * box.height - cy) >
+        center_distance >
             config.detector_confirmation_center_distance * diagonal ||
         // A detector box 1.5x larger in each dimension has IoU near 0.44
         // with a centered tracker box. Keep that valid scale evidence while
         // the independent center and temporal-confirmation gates protect identity.
-        bbox_iou(box, tracker_bbox) <
-            0.8F * config.detector_confirmation_iou) {
+        (overlap < 0.8F * config.detector_confirmation_iou &&
+         !centered_smaller)) {
       continue;
     }
     if (unique) return std::nullopt;
@@ -931,15 +950,26 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     }
     const float limit = std::min(0.10F,
         controller_.config().max_accepted_scale_step_ratio);
-    const auto next_dimension = [&](float current, float raw, float detector) {
-      const float desired = std::max(raw, detector);
+    const auto next_dimension = [&](float current, float raw, float detector,
+                                    bool smaller_supported) {
+      const float desired = smaller_supported ? detector : std::max(raw, detector);
       return std::clamp(desired, current * (1.0F - limit),
                         current * (1.0F + limit));
     };
+    const bool smaller_width_supported =
+        !guard_size_supported &&
+        ((tracking_size_supported &&
+          confirmed_tracking_size_candidate_->width < tracker_box.width) ||
+         (support_recent && target.width < tracker_box.width));
+    const bool smaller_height_supported =
+        !guard_size_supported &&
+        ((tracking_size_supported &&
+          confirmed_tracking_size_candidate_->height < tracker_box.height) ||
+         (support_recent && target.height < tracker_box.height));
     const float width = next_dimension(previous.width, tracker_box.width,
-        target.width);
+        target.width, smaller_width_supported);
     const float height = next_dimension(previous.height, tracker_box.height,
-        target.height);
+        target.height, smaller_height_supported);
     const float tracker_center_x = tracker_box.x + 0.5F * tracker_box.width;
     const float tracker_center_y = tracker_box.y + 0.5F * tracker_box.height;
     float desired_offset_x = 0.0F;

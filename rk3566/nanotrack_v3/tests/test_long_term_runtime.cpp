@@ -2019,6 +2019,8 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
       DetectorCandidate{BBox{35, 25, 30, 30}, 0.8F, 2}});
   const auto offset_detector = run({
       DetectorCandidate{BBox{39, 28, 24, 24}, 0.8F, 2}});
+  const auto centered_smaller = run({
+      DetectorCandidate{BBox{44, 34, 12, 12}, 0.8F, 2}});
   expect_true(std::fabs(corroborated[0] - 20.0F) < 0.01F &&
                   corroborated[1] > 20.0F && corroborated[1] <= 21.01F &&
                   std::fabs(corroborated[2] - 20.0F) < 0.01F &&
@@ -2036,6 +2038,17 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
                   undersized_tracker[5] > 22.5F &&
                   undersized_tracker[5] <= 25.01F,
               "a centered 1.5x detector box can correct tracker undersizing");
+  expect_true(std::fabs(centered_smaller[0] - 20.0F) < 0.01F &&
+                  centered_smaller[4] == 1.0F &&
+                  centered_smaller[1] < 20.0F &&
+                  centered_smaller[1] >= 18.99F &&
+                  centered_smaller[5] < centered_smaller[1] &&
+                  centered_smaller[5] >= 15.99F &&
+                  std::fabs(centered_smaller[2] - 20.0F) < 0.01F &&
+                  std::fabs(centered_smaller[3] - 20.0F) < 0.01F &&
+                  std::fabs(centered_smaller[8] - 50.0F) < 0.01F,
+              "two strong centered smaller detections can shrink only the "
+              "published size at the configured step limit");
   expect_true(std::fabs(offset_detector[6] - 50.0F) < 0.01F &&
                   offset_detector[7] > 50.0F &&
                   offset_detector[7] < 50.5F &&
@@ -2063,6 +2076,15 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
     expect_true(std::fabs(invalid[1] - 20.0F) < 0.01F &&
                     std::fabs(invalid[5] - 20.0F) < 0.01F && invalid[4] == 0.0F,
                 "wrong class, low confidence, remote, ambiguous or stale batch cannot resize");
+  }
+  for (const auto& invalid_smaller : {
+           run({DetectorCandidate{BBox{44, 34, 12, 12}, 0.45F, 2}}),
+           run({DetectorCandidate{BBox{40, 30, 12, 12}, 0.8F, 2}}),
+           run({DetectorCandidate{BBox{47, 37, 6, 6}, 0.8F, 2}})}) {
+    expect_true(std::fabs(invalid_smaller[1] - 20.0F) < 0.01F &&
+                    std::fabs(invalid_smaller[5] - 20.0F) < 0.01F &&
+                    invalid_smaller[4] == 0.0F,
+                "low-confidence, offset, or tiny boxes cannot shrink tracking");
   }
 }
 
