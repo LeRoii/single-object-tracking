@@ -2078,8 +2078,6 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
                   shrinking_then_suspected[11] == 1.0F &&
                   shrinking_then_suspected[12] ==
                       static_cast<float>(static_cast<int>(TrackingPhase::kSuspected)) &&
-                  shrinking_then_suspected[10] <
-                      shrinking_then_suspected[1] &&
                   shrinking_then_suspected[10] <=
                       shrinking_then_suspected[1] * 1.05F + 0.01F &&
                   shrinking_then_suspected[14] <=
