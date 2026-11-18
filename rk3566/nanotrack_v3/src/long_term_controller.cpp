@@ -1013,7 +1013,8 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
           current_bbox_.height * config_.recent_visibility_height_ratio &&
       recent.center_residual >= config_.recent_visibility_center_residual;
   if (plan.suspected_detector_guard &&
-      recent.quality == QualityLevel::kReliable && !partial_visibility) {
+      recent.quality == QualityLevel::kReliable &&
+      (!partial_visibility || plan.visual_probe_target_corrob)) {
     clear_suspicion();
     return RecentDisposition::kDirect;
   }
@@ -1859,6 +1860,26 @@ bool LongTermController::motion_input_allows_correction(
   }
   if (plan.suspected_detector_guard &&
       selected.quality == QualityLevel::kReliable) {
+    if (plan.visual_probe_target_corrob && motion_last_clean_trend_) {
+      // The detector corroborates the position, not the velocity of a
+      // shrinking Recent observation. Reanchor the crop at that observation
+      // while carrying forward the last clean trajectory.
+      const MotionSnapshot trend = *motion_last_clean_trend_;
+      if (motion_freeze_since_ms_) {
+        output.motion_freeze_age_ms = plan.timestamp_ms - *motion_freeze_since_ms_;
+        output.motion_freeze_cleared = true;
+        reset_motion_input_gate();
+      } else {
+        motion_risk_streak_ = 0;
+        motion_response_drop_since_ms_.reset();
+      }
+      motion_.reanchor_preserving_velocity(output.tracking_bbox,
+                                           trend, plan.timestamp_ms);
+      motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
+      output.motion_update_valid = true;
+      output.motion_gate_reason = "VISUAL_TARGET_REANCHOR";
+      return false;
+    }
     if (motion_freeze_since_ms_ && !motion_last_clean_trend_) return false;
     if (motion_freeze_since_ms_) {
       output.motion_freeze_age_ms = plan.timestamp_ms - *motion_freeze_since_ms_;
