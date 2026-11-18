@@ -133,6 +133,7 @@ void set_value(ControllerConfig& config,
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
   else if (key == "recent_visibility_center_residual") config.recent_visibility_center_residual = parse_float(key, value);
   else if (key == "visual_suspect_bright_ratio") config.visual_suspect_bright_ratio = parse_float(key, value);
+  else if (key == "visual_probe_empty_hold_bright_ratio") config.visual_probe_empty_hold_bright_ratio = parse_float(key, value);
   else if (key == "visual_suspect_min_confidence") config.visual_suspect_min_confidence = parse_float(key, value);
   else if (key == "visual_suspect_max_center_px") config.visual_suspect_max_center_px = parse_float(key, value);
   else if (key == "visual_suspect_consecutive_frames") config.visual_suspect_consecutive_frames = parse_int(key, value);
@@ -402,6 +403,7 @@ void validate_controller_config(const ControllerConfig& config) {
     throw std::invalid_argument("recent visibility gate must be disabled or have two unit-interval thresholds");
   }
   if (!in_unit_interval(config.visual_suspect_bright_ratio) ||
+      !in_unit_interval(config.visual_probe_empty_hold_bright_ratio) ||
       !in_unit_interval(config.visual_suspect_min_confidence) ||
       config.visual_suspect_max_center_px <= 0.0F ||
       config.visual_suspect_max_center_px > 500.0F ||
@@ -661,6 +663,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.recent_visibility_height_ratio << '|'
          << config.recent_visibility_center_residual << '|'
          << config.visual_suspect_bright_ratio << '|'
+         << config.visual_probe_empty_hold_bright_ratio << '|'
          << config.visual_suspect_min_confidence << '|'
          << config.suspected_detector_guard_enabled << '|'
          << config.suspected_detector_guard_min_confidence << '|'

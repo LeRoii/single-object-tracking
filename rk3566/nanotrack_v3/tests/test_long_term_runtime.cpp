@@ -1523,6 +1523,7 @@ void test_visual_suspect_gate() {
   config.local_recovery_ms = 2000;
   config.assisted_recovery_ms = 3000;
   config.visual_suspect_bright_ratio = 0.90F;
+  config.visual_probe_empty_hold_bright_ratio = 0.65F;
   FakeTracker tracker;
   tracker.emit_recent_safe_roles = true;
   FakeDetector detector;
@@ -1644,6 +1645,35 @@ void test_visual_suspect_gate() {
                   crosschecked_first.output.tracking_phase == TrackingPhase::kSearching &&
                   !crosschecked_first.output.observation_present,
               "matching Recent and Safe confirm the first fresh visual hit");
+
+  FakeTracker empty_tracker;
+  empty_tracker.emit_recent_safe_roles = true;
+  FakeDetector empty_detector;
+  empty_detector.enabled = true;
+  empty_detector.blocking_batch = DetectorBatch{};
+  LongTermRuntime empty_runtime(config, empty_tracker, empty_detector, {2, 9, {}});
+  std::fill(pixels.begin(), pixels.end(), 200);
+  empty_runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+    empty_runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+  }
+  empty_tracker.on_infer = [&] {
+    const auto& plan = empty_tracker.inferred_plans.back();
+    empty_tracker.observation_override = std::vector<TrackerObservation>{
+        TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                           ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.04F},
+                           TemplateKind::kRecent, empty_tracker.search_token + 1}};
+  };
+  std::fill(pixels.begin(), pixels.end(), 0);
+  const auto empty_suspect = empty_runtime.process_frame(image, 5, 200);
+  const auto empty_probe = empty_runtime.process_frame(image, 6, 240);
+  expect_true(empty_suspect.output.tracking_phase == TrackingPhase::kSuspected &&
+                  empty_probe.detector.batch_purpose ==
+                      DetectorRequestPurpose::kVisualOcclusion &&
+                  empty_probe.plan.visual_probe_clear_veto &&
+                  !empty_probe.plan.visual_occlusion_search &&
+                  empty_probe.output.tracking_phase == TrackingPhase::kSuspected,
+              "dark valid empty visual probe delays clearing without declaring loss");
 }
 
 void test_guarded_visual_miss_revocation() {

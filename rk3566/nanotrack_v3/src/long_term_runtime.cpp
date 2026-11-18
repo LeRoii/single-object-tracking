@@ -151,6 +151,7 @@ LongTermRuntime::LongTermRuntime(const ControllerConfig& config,
       target_class_config_(target_class_config),
       detector_configured_(detector.available()),
       visual_suspect_bright_ratio_(config.visual_suspect_bright_ratio),
+      visual_probe_empty_hold_bright_ratio_(config.visual_probe_empty_hold_bright_ratio),
       lower_band_visibility_veto_(config.lower_band_visibility_veto),
       visual_suspect_min_confidence_(config.visual_suspect_min_confidence),
       visual_suspect_max_center_px_(config.visual_suspect_max_center_px),
@@ -401,6 +402,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   bool visual_ambiguous = false;
   bool visual_blocking_used = false;
   bool visual_batch_valid = false;
+  bool visual_batch_empty = false;
   if (visual_suspect_bright_ratio_ > 0.0F &&
       previous_output_phase_ == TrackingPhase::kSuspected &&
       result.target_class.target_class_id == 2 &&
@@ -432,6 +434,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         if (detected) {
           visual_batch_valid = detected->batch.source_frame_id == frame_id &&
               detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion;
+          visual_batch_empty = detected->batch.candidates.empty();
           result.detector.request_submitted = true;
           result.detector.batch_received = true;
           result.detector.batch_frame_id = detected->batch.source_frame_id;
@@ -512,6 +515,10 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   // consecutive SUSPECTED frames. Unprotected tracks keep the existing
   // uncertainty budget, since a detector miss alone is not proof of loss.
   if (visual_batch_valid) {
+    result.plan.visual_probe_clear_veto = visual_batch_empty &&
+        result.visual_probe_brightness_ratio &&
+        visual_probe_empty_hold_bright_ratio_ > 0.0F &&
+        *result.visual_probe_brightness_ratio < visual_probe_empty_hold_bright_ratio_;
     guarded_visual_misses_ = visual_hit ? 0 : guarded_visual_misses_ + 1;
     if (guard_protection_active_ && guarded_visual_misses_ >= 2 &&
         previous_output_phase_ == TrackingPhase::kSuspected) {

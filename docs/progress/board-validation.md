@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T08:15:52+08:00 有条件的空视觉探针清除保护，主机阶段
+
+- 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `9824f226d13bb9280f1e26add0d6ee5aeac7df57`；本次提交号以 Git 提交为准。仅在有效同帧视觉探针结果没有任何候选、Recent 框亮度相对可信历史低于 `0.65`、状态已为 SUSPECTED 时延迟清除；不直接宣称遮挡或授权重捕。新参数 `visual_probe_empty_hold_bright_ratio` 默认 `0` 关闭，实验配置 `rk3566/nanotrack_v3/config/visible-dual-gt-visual-gate.conf` 设为 `0.65`，配置 SHA-256 `752e36e05f6972a1ec5a0344d11076a4d685ef86d19a550191a5168aa329cd8b`。输出日志新增 `VISUAL_PROBE_EMPTY_HOLD`。
+- 冻结的板端基线 `8314980d4ce293ee49ec132465677895acc219aa` 共 7 个有效空探针事件：阈值 `<0.65` 离线命中 car004 GT 第 131 帧和 car009 GT 第 116 帧，未命中可见的 car003 第 51 帧；canonical 离线审计脚本/JSON `/tmp/nt-empty-probe-bright-audit.py` / `/tmp/nt-empty-probe-bright-audit.json` SHA-256 `0d8b1b795823c3a6e50251f909791dd8ce385a004da1475ab3bc6ed27bb08ecd` / `bfabf03f032e1a4f43d11d15486d7da50bd786704eefdcecbacf5d0ead2d819a`。仅 7 个事件，不能据此断言泛化。
+- 独立 VisDrone2019-MOT train/val 近似图块亮度筛查脚本 `/tmp/nt-visdrone-bright-ratio.py`、报告 `/tmp/nt-visdrone-bright-ratio.json` SHA-256 `c7d947deaa5aa2fd596cea1addd7bafe3a74de60d625ae78e745d370db9d948a` / `282bdd9c09e567725847446dfc79b453fd849c9af7b74c34447c3317bcc00a42`。独立 val 可见样本 1780 个中 `<0.65` 触发 22 个（1.24%）；部分/重遮挡分别 18/355、19/50。该离线裁剪近似运行时取样，且空探针本身是额外条件。
+- 实际执行 `cmake --build /tmp/nt-ten-target-build --parallel 4` 成功、`ctest --test-dir /tmp/nt-ten-target-build --output-on-failure` 23/23 PASS，新增配置上下界、运行时有效空探针和控制器延迟清除回归。**边界/Handoff**：尚无本候选 RK3588 运行与正式十目标评分；主机测试不是板端证据。下一步在板端原生编译，先对 car002/003/004/006/009/010 两种初始化做聚焦回放；若可见误报或正式门禁退化，撤销候选。car004 第 42 帧按用户修订视为可见；car010 第 149–169 帧大部分遮挡，须在第 149 帧前进入遮挡判定并在第 169 帧前正确重捕，本亮度门未声称能满足该时限。
+
 ## 2026-11-18T08:09:57+08:00 3 倍上下文可见性模型对照否决
 
 - 分支 `codex/ten-target-smoothness`，工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `70d96d40bd08882342fd9ef6cdd21bf813a80081`。本次保持上节独立 VisDrone2019-DET 训练/验证划分、原始样本顺序、ImageNet MobileNetV3 Small 骨干权重和 576→64→1 头结构，只将图块视野由标注框 1.5 倍扩至 3 倍；不使用 canonical 视频训练、选 epoch 或设阈值。实际 `/home/u20/single-object-tracking/.venvs/yolov8-visdrone/bin/python /tmp/nt-wide-context-data.py > /tmp/nt-wide-context-data.log 2>&1`，脚本/日志 SHA-256 `4a443d690682c8de12904e395a0363e707e3daaad97c07b2f3c00f88e741dcd8` / `9f77b0eb4006651439c39a32fab4406e311a7c3fa6006a39d190d51c170ec507`，脚本逐样本断言标签顺序与上节缓存一致。`/tmp/nt-mobilenet-visibility-wide/{train,val}.npz` SHA-256 `a3cda10ec885fc97973d6bda97557cb8a1d94e151c4b101fb3b8621fe25bcba3` / `61fd00ebe55af3876bd152dfb2689beca4e7c550ce79c9c91ffb60c8daba9702`。
