@@ -1268,13 +1268,72 @@ LongTermController::confirm_recovery_candidate(
   std::optional<RecoveryCandidateKey> triad_key;
   output.recovery_recent_quality = recent ? to_string(recent->quality) : "NONE";
   output.recovery_safe_quality = safe ? to_string(safe->quality) : "NONE";
+  std::optional<EvaluatedObservation> detector_recentered_recent;
+  std::optional<EvaluatedObservation> detector_recentered_safe;
+  if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
+      planned_candidate && recent && safe) {
+    const auto& detector = planned_candidate->from(RecoveryCandidateSource::kDetector);
+    if (detector) {
+      const auto& box = detector->bbox;
+      const auto& motion = plan.motion_predicted_bbox;
+      const float distance = std::hypot(
+          box.x + 0.5F * box.width - motion.x - 0.5F * motion.width,
+          box.y + 0.5F * box.height - motion.y - 0.5F * motion.height);
+      const auto decoded = [](const EvaluatedObservation& observation) -> BBox {
+        return observation.observation.decoded_bbox.value_or(
+            observation.observation.bbox);
+      };
+      const BBox recent_raw = decoded(*recent);
+      const BBox safe_raw = decoded(*safe);
+      const auto inside_frame = [&](const BBox& raw) {
+        return std::isfinite(raw.x) && std::isfinite(raw.y) &&
+            std::isfinite(raw.width) && std::isfinite(raw.height) &&
+            raw.x >= 0.0F && raw.y >= 0.0F &&
+            raw.width > 0.0F && raw.height > 0.0F &&
+            raw.x + raw.width <= frame_size_.width &&
+            raw.y + raw.height <= frame_size_.height;
+      };
+      // A legitimate change in viewpoint can make both decoded heads much
+      // flatter than the old committed box. The ordinary size clamp then
+      // rejects them even when a unique nearby detector agrees with both.
+      // Keep the old clamp for every other path, and require fresh NanoTrack
+      // confirmation before this detector-supported hypothesis can commit.
+      if (inside_frame(recent_raw) && inside_frame(safe_raw) &&
+          distance <= 0.5F * std::hypot(motion.width, motion.height) &&
+          recovery_candidates_.unique_detector_agreement(recent_raw, safe_raw) ==
+              plan.recovery_probe) {
+        auto recentered = plan;
+        recentered.predicted_bbox = box;
+        const auto evaluate_decoded = [&](const EvaluatedObservation& source)
+            -> std::optional<EvaluatedObservation> {
+          auto observation = source.observation;
+          observation.bbox = decoded(source);
+          observation.decoded_bbox.reset();
+          auto evaluated = evaluate(observation, recentered);
+          if (evaluated.quality != QualityLevel::kReliable) return std::nullopt;
+          return evaluated;
+        };
+        detector_recentered_recent = evaluate_decoded(*recent);
+        detector_recentered_safe = evaluate_decoded(*safe);
+        if (!detector_recentered_recent || !detector_recentered_safe) {
+          detector_recentered_recent.reset();
+          detector_recentered_safe.reset();
+        } else {
+          output.template_iou = bbox_iou(recent_raw, safe_raw);
+        }
+      }
+    }
+  }
+  const auto& recovery_recent = detector_recentered_recent ? detector_recentered_recent : recent;
+  const auto& recovery_safe = detector_recentered_safe ? detector_recentered_safe : safe;
   output.recovery_triad_eligible =
       config_.detector_target_mode == DetectorTargetMode::kFullObject &&
-      recent && safe && recent->quality == QualityLevel::kReliable &&
-      safe->quality == QualityLevel::kReliable;
+      recovery_recent && recovery_safe &&
+      recovery_recent->quality == QualityLevel::kReliable &&
+      recovery_safe->quality == QualityLevel::kReliable;
   if (output.recovery_triad_eligible) {
     triad_key = recovery_candidates_.focus_triad(
-        recent->observation.bbox, safe->observation.bbox);
+        recovery_recent->observation.bbox, recovery_safe->observation.bbox);
   }
   output.recovery_triad_focused = triad_key.has_value();
   // Only override a duplicate tracker-only candidate when the detector is
@@ -1320,8 +1379,8 @@ LongTermController::confirm_recovery_candidate(
         frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_),
         std::nullopt, motion_near_triad_key);
   };
-  const auto recent_key = observe(RecoveryCandidateSource::kRecent, recent);
-  const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
+  const auto recent_key = observe(RecoveryCandidateSource::kRecent, recovery_recent);
+  const auto safe_key = observe(RecoveryCandidateSource::kSafe, recovery_safe);
   if (probe_conflict) recovery_candidates_.mark_identity_conflict();
   if (triad_key && recent_key == triad_key && safe_key == triad_key) {
     recovery_candidates_.observe_triad(*triad_key);
@@ -1384,7 +1443,7 @@ LongTermController::confirm_recovery_candidate(
     return candidate &&
         !(config_.detector_target_mode == DetectorTargetMode::kFullObject &&
           recent_key == key && safe_key == key &&
-          !motion_center_aligned(recent) && !motion_center_aligned(safe) &&
+          !motion_center_aligned(recovery_recent) && !motion_center_aligned(recovery_safe) &&
           !verified_detector_triad) &&
         (!config_.recovery_requires_detector_support ||
          candidate->has_detector_supported_hit()) &&
@@ -1417,7 +1476,7 @@ LongTermController::confirm_recovery_candidate(
   }
   if (recent_confirmed || safe_confirmed) {
     output.recovery_reason = "RECOVERY_CONFIRMED";
-    return recent_confirmed ? recent : safe;
+    return recent_confirmed ? recovery_recent : recovery_safe;
   }
   output.recovery_reason = candidate ? "AWAITING_CONFIRMATION" : "NO_ELIGIBLE_CANDIDATE";
   return std::nullopt;

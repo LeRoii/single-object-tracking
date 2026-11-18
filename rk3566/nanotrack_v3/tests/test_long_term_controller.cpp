@@ -2262,6 +2262,80 @@ void test_far_recovery_needs_verified_detector_triad() {
               "interior object cannot replace a target that coasted at the image edge");
 }
 
+void test_near_detector_triad_recovers_changed_target_aspect() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.recovery_requires_detector_support = true;
+  config.recovery_confirmation_required = 3;
+  config.detector_max_candidates = 2;
+  const FrameSize frame{500, 350};
+  const BBox committed{100, 100, 60, 120};
+  const BBox target{130, 140, 120, 60};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(committed, 0, 0, frame);
+  reject_frame(controller, 1, 40);
+  auto plan = controller.begin_frame(2, 80, false);
+  const auto detector_key = controller.recovery_candidates_.observe(
+      RecoveryCandidateSource::kDetector, target, 0.90F, 80, 2, false, 0.01F);
+  controller.recovery_candidates_.observe(
+      RecoveryCandidateSource::kDetector, {310, 50, 50, 50},
+      0.85F, 80, 2, false, 0.60F);
+  controller.recovery_candidates_.observe(
+      RecoveryCandidateSource::kDetector, {390, 50, 50, 50},
+      0.80F, 80, 2, false, 0.80F);
+  expect_true(detector_key && controller.recovery_candidates_.conflicted(),
+              "unrelated detector overflow is retained as ambiguity");
+  controller.finish_frame(plan, {}, std::nullopt);
+  ControllerOutput output;
+  for (std::uint64_t id : {3U, 4U}) {
+    plan = controller.begin_frame(id, id * 40, false);
+    expect_true(plan.recovery_probe == detector_key,
+                "nearest detector remains the active recovery probe");
+    auto recent = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kRecent, target, id),
+        committed, frame);
+    auto safe = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kSafe, target, id),
+        committed, frame);
+    expect_true(recent.decoded_bbox && recent.bbox.height > target.height,
+                "ordinary committed-box clamp hides the new target aspect");
+    output = controller.finish_frame(plan, {recent, safe}, std::nullopt);
+    if (id == 3) {
+      expect_true(!output.accepted && output.recovery_triad_eligible &&
+                      output.recovery_triad_focused,
+                  "first detector-supported decoded pair remains provisional");
+    }
+  }
+  expect_true(output.accepted && output.reacquired &&
+                  output.selected_template == TemplateKind::kRecent &&
+                  output.recovery_conflict == false &&
+                  std::fabs(output.tracking_bbox.height - target.height) < 1.0F,
+              "second fresh NanoTrack pair recovers the new aspect without detector control");
+
+  ResolvedControllerFixture distant(config);
+  distant.initialize(committed, 0, 0, frame);
+  reject_frame(distant, 1, 40);
+  plan = distant.begin_frame(2, 80, false);
+  const BBox other{270, 140, 120, 60};
+  distant.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
+                                       other, 0.95F, 80, 2, false, 0.01F);
+  distant.finish_frame(plan, {}, std::nullopt);
+  for (std::uint64_t id : {3U, 4U}) {
+    plan = distant.begin_frame(id, id * 40, false);
+    const auto recent = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kRecent, other, id),
+        committed, frame);
+    const auto safe = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kSafe, other, id),
+        committed, frame);
+    output = distant.finish_frame(plan, {recent, safe}, std::nullopt);
+  }
+  expect_true(!output.accepted && !output.reacquired,
+              "a distant lookalike cannot use detector recentering to bypass the old box clamp");
+}
+
 void test_conflicted_recovery_needs_matching_detector_evidence() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -3198,6 +3272,7 @@ int main() {
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
   test_far_recovery_needs_verified_detector_triad();
+  test_near_detector_triad_recovers_changed_target_aspect();
   test_conflicted_recovery_needs_matching_detector_evidence();
   test_recovery_probation_cleanup();
 
