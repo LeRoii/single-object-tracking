@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T08:55:53+08:00 人工遮挡时限的独立回归检查
+
+- 分支 `codex/ten-target-smoothness`、工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `6426524824e7c191e9fb29cf836ebd0b00a467ae`，本次提交号以 Git 提交为准。新增 `scripts/evaluate_human_occlusion_constraints.py` 与 `scripts/occ_video_1_human_constraints_v1.json`，SHA-256 `37c550f580825ae8511dc8474e09917c76c995062ccef909a5aa2f1d431cdf1d` / `5e97f905940b20e312fc97cfc0c61124a44f488da2d58c3009393f05a6c0b616`。这些是**辅助用户约束检查**，不改正式十目标真值、原 evaluator 或运行时算法；继续保留完整 20 路正式评分。
+- 检查项直接对应已确认人工信息：car004 第 42 帧应发布可见且有效观测（无精确框，不打 IoU）；car010 第 149 帧应已进入 SUSPECTED/SEARCHING 且不接受观测；car010 第 169 帧应有经 `RECOVERY_STAGED` 的正确重捕，须与该帧已有真值框 IoU≥0.5。第 169 帧窗口取现有正式包首次可见帧，避免把遮挡期间的错捕当通过；若人工修订该帧状态，约束版本也必须随之更新。每路输出输入 CSV/真值/约束哈希，确保不混用运行记录。
+- 实际 `python3 scripts/evaluate_human_occlusion_constraints.py --constraints scripts/occ_video_1_human_constraints_v1.json --dataset-root /home/u20/single-object-tracking/data/occ_video_1 --runs-root /tmp/nt-search-output-8314980-full/runs --output-json /tmp/nt-human-constraints-8314980.json`，报告 SHA-256 `4a6d0e2566b3f67a8e217f22b85fd18600a60d9cd93e6823e50e12c2746eecdf`：car004 GT/DET 的第 42 帧均 PASS；car010 GT/DET 的 149 帧遮挡状态和 169 帧正确重捕均 FAIL，与原始 CSV 逐帧诊断一致。实际 `python3 -m unittest discover -s scripts/tests -p 'test_evaluate_human_occlusion_constraints.py' -v` 3/3 PASS，覆盖可见/遮挡状态分离、重捕身份和截止帧；`python3 -m py_compile ...` 与 `git diff --check` PASS。
+- **边界/Handoff**：该辅助检查只固化用户已确认的三项局部约束，不能替代十目标的中心精度、连续性和正式门禁，也不是新的板端运行。正式 car010 149–155 部分可见帧是否需要精确框仍待用户回复；算法、正式双初始化 6/10 基线、main/Debug、生产 handoff 均不变。后续任何候选须同时通过正式全量评测和此人工时限检查。
+
 ## 2026-11-18T08:50:27+08:00 独立训练集合成遮挡增强反例
 
 - 分支 `codex/ten-target-smoothness`、工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `bedfbdd9b91d4eb84b6afa113604d5b472a890d2`；本节仅主机模型训练与只读冻结回放，未修改算法、配置或真值。输入继续复用 VisDrone2019-MOT 按序列严格 train/val 划分的配对图块 `/tmp/nt-paired-visibility-screen/{train,val}.npz`，SHA-256 `1ad9c6b77ae26ca6eb3a62ad2530d6b7e3b123f1e71908fa836fdf54fe517e97` / `81a44caade11b045e193a885d8d02654dfbd3c66e04172f5b239dce2051dff08`；canonical 视频不用于训练、选 epoch 或定阈值。
