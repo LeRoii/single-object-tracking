@@ -946,13 +946,13 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
         timestamp_ms >= *confirmed_tracking_size_source_ms_ &&
         timestamp_ms - *confirmed_tracking_size_source_ms_ <=
             controller_.config().detector_stale_ms;
-    // A modestly smaller detector box may simply use a different envelope
-    // convention from a well-sized tracker. Shrink only when the disagreement
-    // is large enough to indicate an oversized tracker response.
+    // A smaller detector box may simply use a different envelope convention
+    // from a well-sized tracker. Require at least a 2:1 area disagreement
+    // before treating it as evidence of an oversized tracker response.
     const bool strong_shrink_evidence = tracking_size_supported &&
         confirmed_tracking_size_candidate_->width *
             confirmed_tracking_size_candidate_->height <=
-            0.65F * tracker_box.width * tracker_box.height;
+            0.50F * tracker_box.width * tracker_box.height;
     const bool size_supported = guard_size_supported || tracking_size_supported;
     const bool support_recent = last_published_support_ms_ &&
         timestamp_ms >= *last_published_support_ms_ &&

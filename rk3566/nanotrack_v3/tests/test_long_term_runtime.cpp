@@ -2039,7 +2039,7 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
   const auto centered_smaller = run({
       DetectorCandidate{BBox{44, 34, 12, 12}, 0.8F, 2}});
   const auto modestly_smaller = run({
-      DetectorCandidate{BBox{41, 31, 18, 18}, 0.8F, 2}});
+      DetectorCandidate{BBox{42, 32, 16, 16}, 0.8F, 2}});
   const auto shrinking_then_suspected = run({
       DetectorCandidate{BBox{44, 34, 12, 12}, 0.8F, 2}}, 0, true, true);
   expect_true(std::fabs(corroborated[0] - 20.0F) < 0.01F &&
@@ -2072,8 +2072,8 @@ void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
               "published size at the configured step limit");
   expect_true(std::fabs(modestly_smaller[1] - 20.0F) < 0.01F &&
                   std::fabs(modestly_smaller[5] - 20.0F) < 0.01F,
-              "a modest detector envelope difference does not shrink a "
-              "well-sized tracking box");
+              "a detector area above half the tracker area does not shrink "
+              "a well-sized tracking box");
   expect_true(shrinking_then_suspected[1] < 20.0F &&
                   shrinking_then_suspected[11] == 1.0F &&
                   shrinking_then_suspected[12] ==
