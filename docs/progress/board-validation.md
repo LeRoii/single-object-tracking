@@ -1,5 +1,12 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T09:03:58+08:00 car010 人工遮挡语义与板端检测漏检反例
+
+- 分支 `codex/ten-target-smoothness`、工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `642ebc95021a0f77eb3bfdcc958318268014b25f`；本节只读分析，未改算法、配置或正式真值。用户再次确认新增第 2 目标 `car_004` 第 42 帧可见；`car_010` 第 149–169 帧大部分被遮挡，要求最迟 149 帧判遮挡、最迟 169 帧正确重捕。这是定性可见性和时限裁决，不提供 149–168 帧逐帧可观测精确框；沿用独立人工时限检查，不把原包的 `full_occlusion` 标签或新插值框当作用户确认的逐帧几何真值。
+- 实际运行 `python3 /tmp/nt-rknn-batch-gap.py > /tmp/nt-rknn-batch-gap.log`。脚本/日志 SHA-256 `9dfbcecd7718f89795d6434006a99aef9b9e29b1a10f80a2d3f4277e50cbed95` / `c3fa8b39fae60746b6318084ec3cd88bd143b8e4570a0366214590ac07b017d8`；输入 RK3588 ROI 检测全帧回放包 `/tmp/nt-detector-presence-26785db-results.tar.gz` SHA-256 `d2297da269df15520558bb3ec06cfff60c38957b894272848e95b6762ab2e3a2`，以及原始 20 路算法 CSV 包 `/tmp/nt-search-output-8314980-full.tar.gz` SHA-256 `bf9cb97661d1a1cbc18dea566a69debb22b75f2474a24df68da4f6d9e240e3b4`。取运行时实际到达的检测批次帧号，在该批次源帧跟踪中心半个对角线内寻找 `confidence>=0.25` 的车框；前六批至少四批命中、接着连续两批无命中时记为候选遮挡信号。ROI 回放沿用较早 `26785db` 的预测位置，此项只是板端 RKNN 检测结果与 `8314980` 算法记录的离线对照，不是同程序闭环。
+- `car_010` GT/DET 双初始化在源帧 142 的近框置信度约 `0.38`，145/147 帧降至 `0.16/0.11`；按当前算法实际批次到达时刻，该候选信号最早在第 148 帧出现，早于人工第 149 帧期限。不过相同规则在正式可见且被接受的帧上，GT/DET 路分别误触发 `8/9` 个帧路，涉及 `car_002` 第 74/77 帧、`car_003` 第 200 帧、`car_009` 第 44/47 和 122/125 等；`car_002` 的漏检前近框仍有约 `0.65` 置信度，第 74–77 帧不能仅据漏检否决跟踪。重复计数也可能属于同一事件，不能把 `8/9` 当独立事件率。
+- **裁决/Handoff**：单独的两批 detector 漏检虽能给 `car_010` 149 帧时限提供早期线索，却会拒绝其他正确可见帧，不并入运行时。`car_010` 第 169 帧重捕还需 NanoTrack 当前帧独立验证；这项漏检线索不解决重捕门。正式 6/10 双初始化、辅助人工时限失败、`main`/`Debug` 和生产 handoff 均不变；继续寻找能区分遮挡与检测漏检的独立身份/可见性信息。
+
 ## 2026-11-18T08:55:53+08:00 人工遮挡时限的独立回归检查
 
 - 分支 `codex/ten-target-smoothness`、工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `6426524824e7c191e9fb29cf836ebd0b00a467ae`，本次提交号以 Git 提交为准。新增 `scripts/evaluate_human_occlusion_constraints.py` 与 `scripts/occ_video_1_human_constraints_v1.json`，SHA-256 `37c550f580825ae8511dc8474e09917c76c995062ccef909a5aa2f1d431cdf1d` / `5e97f905940b20e312fc97cfc0c61124a44f488da2d58c3009393f05a6c0b616`。这些是**辅助用户约束检查**，不改正式十目标真值、原 evaluator 或运行时算法；继续保留完整 20 路正式评分。
