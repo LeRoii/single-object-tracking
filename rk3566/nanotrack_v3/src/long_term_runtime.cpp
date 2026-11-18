@@ -503,37 +503,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       }
     }
   }
-  bool visual_target_corrob = false;
-  if (visual_hit && !visual_ambiguous && result.visual_probe_nearest_bbox) {
-    const auto recent = std::find_if(result.observations.begin(),
-                                     result.observations.end(),
-                                     [frame_id](const TrackerObservation& observation) {
-                                       return observation.frame_id == frame_id &&
-                                           observation.template_kind == TemplateKind::kRecent;
-                                     });
-    if (recent != result.observations.end() &&
-        bbox_iou(*result.visual_probe_nearest_bbox, recent->bbox) >=
-            controller_.config().detector_confirmation_iou &&
-        controller_.evaluate(*recent, result.plan).quality == QualityLevel::kReliable) {
-      const auto response = controller_.response_baseline_.evaluate(recent->metrics);
-      if (response.reference) {
-        const bool jointly_degraded =
-            recent->metrics.psr < response.reference->psr *
-                (1.0F - 0.5F * controller_.config().response_psr_drop_ratio) &&
-            recent->metrics.apce < response.reference->apce *
-                (1.0F - 0.5F * controller_.config().response_apce_drop_ratio);
-        // A detector can agree with a tracker response on an occluder. The
-        // response peak must retain enough of its trusted distinctiveness
-        // before that agreement clears a shrinking-box suspicion.
-        const bool peak_distinct = response.reference->peak_margin > 0.0F &&
-            recent->metrics.peak_margin >=
-                0.25F * response.reference->peak_margin;
-        visual_target_corrob = !jointly_degraded && peak_distinct;
-      }
-    }
-  }
   if (visual_hit) {
-    result.visual_probe_target_corrob = visual_target_corrob;
     const bool consecutive = last_visual_hit_frame_ &&
         *last_visual_hit_frame_ + 1 == frame_id;
     const int next_streak = consecutive ? visual_hit_streak_ + 1 : 1;
@@ -557,14 +527,9 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     const bool safe_crosscheck = recent != result.observations.end() &&
         safe != result.observations.end() &&
         bbox_iou(recent->bbox, safe->bbox) >= 0.5F;
-    result.plan.visual_occlusion_search = !visual_target_corrob &&
-        (safe_crosscheck ||
-         next_streak >= visual_suspect_consecutive_frames_ +
-             (ambiguous_streak ? 1 : 0));
-    if (visual_target_corrob) {
-      result.plan.suspected_detector_guard = true;
-      result.plan.visual_probe_target_corrob = true;
-    }
+    result.plan.visual_occlusion_search = safe_crosscheck ||
+        next_streak >= visual_suspect_consecutive_frames_ +
+            (ambiguous_streak ? 1 : 0);
   }
   // Detector support that rescued a visible track must not keep protecting
   // it after the visual probe has failed to find nearby evidence twice in
