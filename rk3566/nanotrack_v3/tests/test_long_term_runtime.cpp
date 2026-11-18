@@ -1646,6 +1646,69 @@ void test_visual_suspect_gate() {
               "matching Recent and Safe confirm the first fresh visual hit");
 }
 
+void test_visual_probe_corrob_requires_reliable_tracker_response() {
+  using namespace nanotrack;
+  const auto run = [](float apce, bool expect_corrob) {
+    ControllerConfig config;
+    config.suspicion_enter_ms = 1;
+    config.uncertain_ms = 1000;
+    config.local_recovery_ms = 2000;
+    config.assisted_recovery_ms = 3000;
+    config.reliable_psr = 6.5F;
+    config.reliable_apce = 8.0F;
+    config.visual_suspect_bright_ratio = 0.90F;
+    FakeTracker tracker;
+    tracker.emit_recent_safe_roles = true;
+    FakeDetector detector;
+    detector.enabled = true;
+    DetectorBatch batch;
+    // The 120-pixel visual crop maps this canvas box back to the 20x20
+    // tracker observation around (40,30).
+    batch.candidates.push_back(
+        DetectorCandidate{BBox{267.0F, 240.0F, 53.0F, 53.0F}, 0.8F, 2});
+    detector.blocking_batch = batch;
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+    const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+    for (std::uint64_t frame = 1; frame <= 4; ++frame)
+      runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      const ResponseMetrics metrics{0.92F, 0.90F, 7.0F, apce, 0.15F};
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                             metrics, TemplateKind::kRecent, tracker.search_token + 1},
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, plan.predicted_bbox,
+                             metrics, TemplateKind::kSafe, tracker.search_token + 1}};
+    };
+    std::fill(pixels.begin(), pixels.end(), 0);
+    const auto suspect = runtime.process_frame(image, 5, 200);
+    expect_true(suspect.output.tracking_phase == TrackingPhase::kSuspected,
+                "response dip enters SUSPECTED before the visual probe");
+    const auto probed = runtime.process_frame(image, 6, 240);
+    expect_true(probed.visual_probe_hit,
+                "same-frame detector sees the tracker-sized target");
+    if (expect_corrob) {
+      expect_true(probed.visual_probe_target_corrob &&
+                      probed.plan.suspected_detector_guard &&
+                      !probed.plan.visual_occlusion_search &&
+                      probed.output.accepted &&
+                      probed.output.tracking_phase == TrackingPhase::kTracking,
+                  "independent detector agreement restores a reliable Recent observation");
+    } else {
+      expect_true(!probed.visual_probe_target_corrob &&
+                      !probed.plan.suspected_detector_guard &&
+                      probed.plan.visual_occlusion_search &&
+                      !probed.output.accepted &&
+                      probed.output.tracking_phase == TrackingPhase::kSearching,
+                  "joint PSR/APCE degradation still forces search despite detector overlap");
+    }
+  };
+  run(12.0F, true);
+  run(9.0F, false);
+}
+
 void test_guarded_visual_miss_revocation() {
   using namespace nanotrack;
   const auto run = [](bool guard_enabled) {
@@ -1997,6 +2060,7 @@ int main() {
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_visual_suspect_gate();
+  test_visual_probe_corrob_requires_reliable_tracker_response();
   test_guarded_visual_miss_revocation();
   test_lower_band_visibility_veto();
   test_suspected_detector_guard(image);
