@@ -1,5 +1,13 @@
 # 开发板验证任务进度（当前 RK3588）
 
+## 2026-11-18T10:22:33+08:00 car010 人工遮挡边界与恢复时序复核
+
+- 分支 `codex/ten-target-smoothness`、工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，干净起点 `8167d1c59eee2b60bbc92acf99bd0682d6086cbe`。用户进一步确认今天新增第 2 个目标 `car_004` 第 42 帧可见，且 `car_010` 第 149–169 帧大部分被遮挡，要求不晚于第 149 帧识别遮挡、不晚于第 169 帧正确重捕。`car_004_visible_unboxed_v2` 已单独保留该可见语义；本轮未凭肉眼补造 `car_010` 的逐帧真值框，也未改 canonical 包、运行时算法或 main/Debug。
+- 实际 `python3 /tmp/nt-car010-deadline-audit.py > /tmp/nt-car010-deadline-audit.json`，只读输入为已归档冻结源码 `8314980d4ce293ee49ec132465677895acc219aa` 的 RK3588 十目标双初始化 CSV 与现有真值。脚本/报告 SHA-256 `3fc39fc45ec804fbd0ce3dd1c70fffc14ff43ff4a14b1552cdd740fc691ababb` / `d8159ea2ef6884eb9524665e1fe30e5d57d03499b083d95e049ecf16cf0ef5c8`；`car_010` GT/DET 原始 CSV SHA-256 `cbe415cb3098bcbdd1416d9db245405692af6f6f959294f6da9382b31b85b1f1` / `0e4ea7a19e99ebb3fc3b60158b0f7028beeb7f00fde3a55fc66bfa2fce3f0f87`。原始运行命令、模型/视频身份及板端输出路径见冻结 `8314980` 的十目标章节。
+- 两路第 149 帧仍 TRACKING 且 `accepted=1`，Recent PSR `8.175/8.182`，与第 148 帧 `8.029/7.996` 接近；第 156 帧才 SUSPECTED，第 158 帧 SEARCHING。第 169 帧按现有正式真值首次重新可见，搜索年龄 `366ms`，被 `SEARCH_MIN_AGE` 拒绝；GT/DET Recent IoU `0.358/0.392`，Safe IoU `0.363/0.384`，没有可直接接受的准确跟踪框。第 170 帧年龄 `400ms`，三路证据首次进入 `AWAITING_CONFIRMATION`，detector 框对真值 IoU `0.844/0.857`；第 171 帧第二次确认后 `RECOVERY_STAGED`。因此缩短等待时间本身不能证明第 169 帧正确重捕。
+- 对同一 20 路的第 `300–399ms` 搜索年龄窗口只读筛查：GT/DET 各有 8 个“因最小年龄拒绝且缓存 detector 置信度非零”的正式全遮挡帧，分布在 car003/005/006/008/010（GT）及 car003/005/006/007/010（DET）。缓存置信度并不等于当帧已通过身份验证，这些是放松年龄门必须核查的反例，不是直接证明会误重捕。此前单独设置 `333ms` 以及与同帧二次搜索组合的候选均已在板端回归中被否决；不据此数据调整阈值。
+- **裁决/Handoff**：人工两项期限仍未达到，当前正式十目标 GT/DET 均 6/10 PASS、`car004` 修订真值 GT 6/10/DET 7/10 的既有结果不变。本轮只形成定位证据，不声称新算法或板端通过。下一候选必须有独立实例可见性信号使第 149 帧提前退出，并在第 169 帧有足够准确的候选与身份确认；需在同一板端视频的全部十目标双初始化回放及外部反例中验证，才可考虑更新基线。
+
 ## 2026-11-18T10:14:55+08:00 搜索发布速度反事实与外部四帧可见性模型否决
 
 - 分支 `codex/ten-target-smoothness`、工作树 `/home/u20/.codex/worktrees/suspected-detector-guard/single-object-tracking`，起点 `c5259f0b87d4e327cfa4f69bf087d2ba24904e3e`，开始时干净。本节仅主机离线实验，未改运行时、模型配置、正式真值、main/Debug 或板端程序。对冻结 `8314980d4ce293ee49ec132465677895acc219aa` 的 RK3588 十目标 GT/detector 双初始化完整 20 路 CSV，实际 `PYTHONPATH=. python3 /tmp/nt-search-output-velocity-screen.py > /tmp/nt-search-output-velocity-screen.log`。脚本/日志/逐帧 JSON SHA-256 `98682535cce6811962b9a7b99a0772338bb3d763f1d3ca6545f104f940b09b69` / `a814cf4b7fa5fdc784e5cadfc1e495ad7289c175ed116302bffba055e0b49feb` / `f5c0617f1b03e9fc1031a8fe2652b4d4c102a006c6eea2585c2f486672358247`。用最近八次已接受的 TRACKING 框的相邻速度中值，从最后接受位置外推 SEARCHING 发布中心；只读反事实不改变搜索 ROI/控制。197 个有可观测真值的搜索帧路，中心均误差 `19.85→20.09px`，car004 GT `22.85→31.43px` 而 DET `23.81→18.70px`，对两种初始化方向不一致，故不接入此发布规则。
