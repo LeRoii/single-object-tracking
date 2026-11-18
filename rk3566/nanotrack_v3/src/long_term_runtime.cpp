@@ -504,7 +504,12 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     }
   }
   bool visual_target_corrob = false;
-  if (visual_hit && !visual_ambiguous && result.visual_probe_nearest_bbox) {
+  // Clearing a suspicion needs stronger independent evidence than merely
+  // detecting a nearby object during the occlusion probe.
+  if (visual_hit && !visual_ambiguous && result.visual_probe_nearest_bbox &&
+      result.visual_probe_nearest_confidence &&
+      *result.visual_probe_nearest_confidence >=
+          std::max(visual_suspect_min_confidence_, 0.5F)) {
     const auto recent = std::find_if(result.observations.begin(),
                                      result.observations.end(),
                                      [frame_id](const TrackerObservation& observation) {

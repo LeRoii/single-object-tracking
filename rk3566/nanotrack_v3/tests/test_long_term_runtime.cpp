@@ -1648,7 +1648,8 @@ void test_visual_suspect_gate() {
 
 void test_visual_probe_corrob_requires_reliable_tracker_response() {
   using namespace nanotrack;
-  const auto run = [](float apce, float peak_margin, bool expect_corrob) {
+  const auto run = [](float apce, float peak_margin,
+                      float detector_confidence, bool expect_corrob) {
     ControllerConfig config;
     config.suspicion_enter_ms = 1;
     config.uncertain_ms = 1000;
@@ -1669,7 +1670,8 @@ void test_visual_probe_corrob_requires_reliable_tracker_response() {
     // The 120-pixel visual crop maps this canvas box back to the 20x20
     // tracker observation around (40,30).
     batch.candidates.push_back(
-        DetectorCandidate{BBox{267.0F, 240.0F, 53.0F, 53.0F}, 0.8F, 2});
+        DetectorCandidate{BBox{267.0F, 240.0F, 53.0F, 53.0F},
+                          detector_confidence, 2});
     detector.blocking_batch = batch;
     LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
     std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
@@ -1715,9 +1717,10 @@ void test_visual_probe_corrob_requires_reliable_tracker_response() {
                   "degraded response distinctiveness still forces search despite detector overlap");
     }
   };
-  run(12.0F, 0.15F, true);
-  run(9.0F, 0.15F, false);
-  run(12.0F, 0.04F, false);
+  run(12.0F, 0.15F, 0.8F, true);
+  run(9.0F, 0.15F, 0.8F, false);
+  run(12.0F, 0.04F, 0.8F, false);
+  run(12.0F, 0.15F, 0.45F, false);
 }
 
 void test_guarded_visual_miss_revocation() {
