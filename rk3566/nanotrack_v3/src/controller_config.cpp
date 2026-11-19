@@ -128,6 +128,10 @@ void set_value(ControllerConfig& config,
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
   else if (key == "suspicion_enter_ms") config.suspicion_enter_ms = parse_integer(key, value);
   else if (key == "suspicion_clear_ms") config.suspicion_clear_ms = parse_integer(key, value);
+  else if (key == "unknown_response_grace_ms") config.unknown_response_grace_ms = parse_integer(key, value);
+  else if (key == "unknown_response_recovery_ms") config.unknown_response_recovery_ms = parse_integer(key, value);
+  else if (key == "unknown_response_stable_recovery_ms") config.unknown_response_stable_recovery_ms = parse_integer(key, value);
+  else if (key == "unknown_search_seed_min_ms") config.unknown_search_seed_min_ms = parse_integer(key, value);
   else if (key == "response_psr_drop_ratio") config.response_psr_drop_ratio = parse_float(key, value);
   else if (key == "response_apce_drop_ratio") config.response_apce_drop_ratio = parse_float(key, value);
   else if (key == "recent_visibility_height_ratio") config.recent_visibility_height_ratio = parse_float(key, value);
@@ -383,6 +387,18 @@ void validate_controller_config(const ControllerConfig& config) {
   }
   if (config.suspicion_clear_ms <= 0) {
     throw std::invalid_argument("suspicion_clear_ms must be positive");
+  }
+  if (config.unknown_response_grace_ms < 0) {
+    throw std::invalid_argument("unknown_response_grace_ms must be nonnegative");
+  }
+  if (config.unknown_response_recovery_ms <= 0) {
+    throw std::invalid_argument("unknown_response_recovery_ms must be positive");
+  }
+  if (config.unknown_response_stable_recovery_ms < 0) {
+    throw std::invalid_argument("unknown_response_stable_recovery_ms must be nonnegative");
+  }
+  if (config.unknown_search_seed_min_ms < 0) {
+    throw std::invalid_argument("unknown_search_seed_min_ms must be nonnegative");
   }
   if (!in_unit_interval(config.response_psr_drop_ratio) ||
       config.response_psr_drop_ratio == 0.0F) {
@@ -656,6 +672,10 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << to_string(config.recovery_policy) << '|'
          << config.suspicion_enter_ms << '|'
          << config.suspicion_clear_ms << '|'
+         << config.unknown_response_grace_ms << '|'
+         << config.unknown_response_recovery_ms << '|'
+         << config.unknown_response_stable_recovery_ms << '|'
+         << config.unknown_search_seed_min_ms << '|'
          << config.response_psr_drop_ratio << '|'
          << config.response_apce_drop_ratio << '|'
          << config.recent_visibility_height_ratio << '|'

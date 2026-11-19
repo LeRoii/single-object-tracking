@@ -52,7 +52,7 @@ if grep -Eqi 'GTK|selectROI|imshow|cannot open display|RKNN:.*(error|unsupported
   exit 1
 fi
 
-python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-14}" <<'PY'
+python3 - "$artifact_dir" "$model_dir" "$expected_frames" "$frame_width" "$frame_height" "$detector_model" "$detector_manifest" "$detector_labels" "$expected_rknn_target" "${EXPECTED_TRACKING_SCHEMA:-16}" <<'PY'
 import csv
 import hashlib
 import json
@@ -71,8 +71,8 @@ detector_manifest_path = pathlib.Path(sys.argv[7]) if sys.argv[7] else None
 detector_labels = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
 expected_rknn_target = sys.argv[9]
 EXPECTED_TRACKING_SCHEMA = int(sys.argv[10])
-if EXPECTED_TRACKING_SCHEMA not in {10, 11, 12, 13, 14}:
-    raise SystemExit("expected tracking schema must be 10, 11, 12, 13, or 14")
+if EXPECTED_TRACKING_SCHEMA not in {10, 11, 12, 13, 14, 15, 16}:
+    raise SystemExit("expected tracking schema must be 10, 11, 12, 13, 14, 15, or 16")
 VALID_TARGET_MODES = {"FULL_OBJECT", "SUBTARGET"}
 metadata = json.loads((artifact_dir / "session-metadata.json").read_text())
 for key, low, high in [
@@ -429,6 +429,13 @@ if EXPECTED_TRACKING_SCHEMA >= 14:
         "motion_freeze_started", "motion_freeze_cleared",
         "motion_freeze_age_ms", "motion_gate_reason",
     }
+if EXPECTED_TRACKING_SCHEMA >= 15:
+    required |= {
+        "unknown_grace_active", "unknown_grace_age_ms",
+        "unknown_grace_reliable_ms", "unknown_grace_exit_reason",
+    }
+if EXPECTED_TRACKING_SCHEMA >= 16:
+    required |= {"unknown_grace_stable_ms", "unknown_grace_peak_clean_frames"}
 missing = required - set(rows[0])
 if missing:
     raise SystemExit(f"CSV header is missing: {sorted(missing)}")

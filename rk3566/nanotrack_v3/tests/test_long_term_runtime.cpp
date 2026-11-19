@@ -437,6 +437,70 @@ void test_runtime_atomic_search_commit(const nanotrack::ImageView& image) {
               "later ordinary tracking cannot repeat the reacquired pulse or stage");
 }
 
+void test_ordinary_probation_preserves_reliable_recent(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  // Use the deployed thresholds and the failing run's response values. Only
+  // shorten the update schedule so each fixture reaches ordinary probation.
+  for (int scenario = 0; scenario < 6; ++scenario) {
+    ControllerConfig config;
+    config.reliable_psr = 4.2F;
+    config.reliable_peak_margin = 0.04F;
+    config.weak_psr = 4.0F;
+    config.weak_peak_margin = 0.02F;
+    config.stable_frames_for_update = 1;
+    config.recent_update_interval_ms = 1;
+    config.recent_probation_frames = 2;
+    FakeTracker tracker;
+    tracker.emit_recent_safe_roles = true;
+    FakeDetector detector;
+    LongTermRuntime runtime(config, tracker, detector, {0, 1, {}});
+    const BBox bbox{40, 30, 20, 20};
+    runtime.initialize(image, bbox, 0, 0);
+    const auto prepared = runtime.process_frame(image, 1, 40);
+    expect_true(prepared.output.accepted && tracker.pending_template_id &&
+                    tracker.stage_calls == 1,
+                "ordinary update prepares a new slot while keeping recent committed");
+    const auto slot = tracker.pending_template_id;
+    const auto generation = tracker.recent_template_generation;
+    const ResponseMetrics reliable{0.999421F, 0.966561F, 5.595691F, 13.985470F, 0.151307F};
+    ResponseMetrics trial{0.998890F, 0.945427F, 6.218279F, 18.156029F, 0.010054F};
+    if (scenario == 1) trial.peak_margin = 0.03F;  // Weak new template.
+    ResponseMetrics old = reliable;
+    if (scenario == 2) old = trial;  // Both rejected.
+    if (scenario == 3) old.peak_margin = 0.03F;  // Old only weak.
+    const BBox trial_bbox = scenario == 4 ? BBox{52, 30, 20, 20} : bbox;
+    if (scenario == 4) trial = reliable;  // Reliable heads disagree geometrically.
+    tracker.observation_override = std::vector<TrackerObservation>{
+        {2, 80, bbox, old, TemplateKind::kRecent, 2}};
+    if (scenario != 5) {  // Missing staged observation remains fail-closed.
+      tracker.observation_override->push_back(
+          {2, 80, trial_bbox, trial, TemplateKind::kStaged, 2});
+    }
+    const auto result = runtime.process_frame(image, 2, 80);
+    const bool keep_recent = scenario < 2;
+    expect_true(result.output.accepted == keep_recent &&
+                    result.output.template_action == TemplateAction::kRollbackRecent &&
+                    result.output.template_transition_result == TemplateTransitionResult::kApplied &&
+                    !result.output.template_probation_active &&
+                    !tracker.pending_template_id && tracker.last_abort_id == slot &&
+                    tracker.rollback_calls == 1 && tracker.recent_commit_calls == 0 &&
+                    tracker.recent_template_generation == generation,
+                "ordinary failed trial aborts only staged slot; reliable recent alone may continue");
+    if (keep_recent) {
+      expect_true(result.output.mode == TrackingMode::kTracking &&
+                      result.output.control_valid && !result.output.reacquired &&
+                      tracker.commit_calls == 2 && same_bbox(tracker.committed_bbox, bbox),
+                  "rollback frame still commits reliable old-head location and keeps tracking");
+      tracker.observation_override.reset();
+      const auto next = runtime.process_frame(image, 3, 120);
+      expect_true(next.plan.template_run_mode == TemplateRunMode::kRecentOnly &&
+                      next.output.accepted && !next.output.reacquired &&
+                      next.output.mode == TrackingMode::kTracking,
+                  "following frame uses surviving recent without entering reacquisition");
+    }
+  }
+}
+
 void test_controller_rejects_stale_transition_acknowledgements() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2171,6 +2235,7 @@ int main() {
   test_uncertain_runtime_cadence(image);
   test_motion_search_detector_failure_isolation(image);
   test_runtime_atomic_search_commit(image);
+  test_ordinary_probation_preserves_reliable_recent(image);
   test_controller_rejects_stale_transition_acknowledgements();
   test_runtime_transition_failures(image);
   test_runtime_rolls_back_finished_frames(image);

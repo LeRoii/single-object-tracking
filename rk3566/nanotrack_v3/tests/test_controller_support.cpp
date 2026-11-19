@@ -357,6 +357,10 @@ int main() {
              "assisted_recovery_ms=3000\n"
              "suspicion_enter_ms=120\n"
              "suspicion_clear_ms=180\n"
+             "unknown_response_grace_ms=800\n"
+             "unknown_response_recovery_ms=60\n"
+             "unknown_response_stable_recovery_ms=120\n"
+             "unknown_search_seed_min_ms=120\n"
              "response_psr_drop_ratio=0.15\n"
              "response_apce_drop_ratio=0.35\n"
              "motion_alpha=1.0\n"
@@ -408,8 +412,31 @@ int main() {
                   visible.assisted_recovery_ms == 3000,
               "state timing overrides");
   expect_true(visible.suspicion_enter_ms == 120 &&
-                  visible.suspicion_clear_ms == 180,
+                  visible.suspicion_clear_ms == 180 &&
+                  visible.unknown_response_grace_ms == 800 &&
+                  visible.unknown_response_recovery_ms == 60 &&
+                  visible.unknown_response_stable_recovery_ms == 120 &&
+                  visible.unknown_search_seed_min_ms == 120,
               "candidate suspicion timings parse explicitly");
+  ControllerConfig no_grace = visible;
+  no_grace.unknown_response_grace_ms = 0;
+  expect_true(controller_config_identity(no_grace) != controller_config_identity(visible),
+              "UNKNOWN grace changes the controller configuration fingerprint");
+  ControllerConfig slower_recovery = visible;
+  slower_recovery.unknown_response_recovery_ms = 100;
+  expect_true(controller_config_identity(slower_recovery) !=
+                  controller_config_identity(visible),
+              "UNKNOWN recovery duration changes the controller configuration fingerprint");
+  ControllerConfig no_stable_recovery = visible;
+  no_stable_recovery.unknown_response_stable_recovery_ms = 0;
+  expect_true(controller_config_identity(no_stable_recovery) !=
+                  controller_config_identity(visible),
+              "UNKNOWN stable recovery changes the configuration fingerprint");
+  ControllerConfig no_search_seed = visible;
+  no_search_seed.unknown_search_seed_min_ms = 0;
+  expect_true(controller_config_identity(no_search_seed) !=
+                  controller_config_identity(visible),
+              "UNKNOWN search seed changes the configuration fingerprint");
   expect_near(visible.response_psr_drop_ratio, 0.15F, 1e-6F,
               "candidate PSR drop ratio parses explicitly");
   expect_near(visible.response_apce_drop_ratio, 0.35F, 1e-6F,
@@ -417,6 +444,19 @@ int main() {
 
   for (const std::string& key : {"suspicion_enter_ms", "suspicion_clear_ms"}) {
     for (const std::string& value : {"0", "-1", "1.5"}) {
+      write_file(config_path, key + "=" + value + "\n");
+      expect_config_error(config_path, key);
+    }
+  }
+  write_file(config_path, "unknown_response_grace_ms=-1\n");
+  expect_config_error(config_path, "unknown_response_grace_ms");
+  for (const std::string& value : {"0", "-1", "1.5"}) {
+    write_file(config_path, "unknown_response_recovery_ms=" + value + "\n");
+    expect_config_error(config_path, "unknown_response_recovery_ms");
+  }
+  for (const std::string& key : {"unknown_response_stable_recovery_ms",
+                                 "unknown_search_seed_min_ms"}) {
+    for (const std::string& value : {"-1", "1.5"}) {
       write_file(config_path, key + "=" + value + "\n");
       expect_config_error(config_path, key);
     }

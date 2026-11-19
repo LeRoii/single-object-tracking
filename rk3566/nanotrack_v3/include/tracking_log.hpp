@@ -11,7 +11,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 14;
+constexpr int kTrackingSchemaVersion = 16;
 
 class MonotonicVideoClock {
  public:
@@ -43,6 +43,12 @@ struct TrackingLogRow {
   std::int64_t motion_freeze_age_ms = 0;
   const char* motion_gate_reason = "NONE";
   const char* state_change_reason = "NONE";
+  bool unknown_grace_active = false;
+  std::int64_t unknown_grace_age_ms = 0;
+  std::int64_t unknown_grace_reliable_ms = 0;
+  std::int64_t unknown_grace_stable_ms = 0;
+  int unknown_grace_peak_clean_frames = 0;
+  const char* unknown_grace_exit_reason = "NONE";
   const char* rect0_source = "MOTION_PREDICTION";
   ControlSource control_source = ControlSource::kNone;
   AcceptedObservationPath accepted_observation_path =
@@ -326,6 +332,10 @@ struct TrackingSessionMetadata {
   std::int64_t uncertain_ms = 0;
   std::int64_t local_recovery_ms = 0;
   std::int64_t assisted_recovery_ms = 0;
+  std::int64_t unknown_response_grace_ms = 0;
+  std::int64_t unknown_response_recovery_ms = 0;
+  std::int64_t unknown_response_stable_recovery_ms = 0;
+  std::int64_t unknown_search_seed_min_ms = 0;
   bool motion_search_enabled = false;
   bool search_reacquisition_requires_detector = false;
   int recovery_confirmation_required = 2;

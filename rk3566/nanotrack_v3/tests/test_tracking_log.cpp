@@ -216,6 +216,8 @@ void test_recent_safe_serialization() {
   output.template_transition_result = TemplateTransitionResult::kTrackerRejected;
   output.template_transition_reason = "PROBATION_REJECTED";
   output.state_change_reason = "RESPONSE_DEGRADED";
+  output.unknown_grace_stable_ms = 120;
+  output.unknown_grace_peak_clean_frames = 2;
   output.trusted_response_reference = ResponseReference{10.0F, 16.0F, 0.25F};
   output.response_psr_relative_delta = -0.20F;
   output.response_apce_relative_delta = -0.25F;
@@ -227,7 +229,7 @@ void test_recent_safe_serialization() {
   const auto csv = tracking_csv_header();
   const auto json = tracking_frame_json(row);
   for (const auto& expected : {
-           "\"schema_version\":14", "\"tracking_phase\":\"SUSPECTED\"",
+           "\"schema_version\":16", "\"tracking_phase\":\"SUSPECTED\"",
            "\"observation_valid\":false", "\"observation_present\":true",
            "\"trusted_for_state_update\":false", "\"control_source\":\"OBSERVATION\"",
            "\"rect0_source\":\"RECENT_OBSERVATION\"", "\"active_template\":\"RECENT\"",
@@ -235,6 +237,7 @@ void test_recent_safe_serialization() {
            "\"safe_raw_penalized_peak\":0.650000", "\"staged_head_executed\":false",
            "\"trusted_baseline_psr\":10.000000", "\"response_psr_relative_delta\":-0.200000",
            "\"response_peak_margin_absolute_delta\":-0.150000", "\"template_transaction_id\":8",
+           "\"unknown_grace_stable_ms\":120", "\"unknown_grace_peak_clean_frames\":2",
            "\"template_slot_id\":6", "\"template_transition_result\":\"TRACKER_REJECTED\"",
            "\"template_transition_applied\":false", "\"candidate_source\":\"SAFE\"",
            "\"candidate_id\":9", "\"recovery_probe_source\":\"DETECTOR\"",
@@ -260,13 +263,15 @@ void test_recent_safe_profile_metadata() {
   apply_controller_config_metadata(metadata, config);
   const auto json = tracking_session_metadata_json(metadata);
 
-  expect_true(contains(json, "\"schema_version\": 14,\n") &&
+  expect_true(contains(json, "\"schema_version\": 16,\n") &&
                   contains(json, "\"template_policy\": \"recent_safe_v1\",\n") &&
                   contains(json, "\"recovery_policy\": \"unified_candidates_v1\",\n") &&
                   contains(json, "|recent_safe_v1|unified_candidates_v1|") &&
                   contains(json, "  \"calibrated\": false,\n"),
               "v12 session metadata identifies the uncalibrated recent-safe profile");
   expect_true(contains(json, "\"search_reacquisition_requires_detector\": false,\n") &&
+                  contains(json, "\"unknown_response_stable_recovery_ms\": 0,\n") &&
+                  contains(json, "\"unknown_search_seed_min_ms\": 0,\n") &&
                   contains(json, "\"template_bridge_min_stable_frames\": 0,\n") &&
                   contains(json, "\"template_bridge_max_duration_ms\": 0,\n"),
               "v12 recent-safe session metadata reports inactive legacy recovery settings");
@@ -421,12 +426,15 @@ void test_adaptive_coast_serialization() {
 }  // namespace
 
 int main() {
-  expect_true(nanotrack::kTrackingSchemaVersion == 14 &&
+  expect_true(nanotrack::kTrackingSchemaVersion == 16 &&
                   nanotrack::tracking_csv_header().find("template_transition_result") != std::string::npos &&
                   nanotrack::tracking_csv_header().find("trusted_for_state_update") != std::string::npos &&
                   nanotrack::tracking_csv_header().find("motion_update_valid") != std::string::npos &&
-                  nanotrack::tracking_csv_header().find("motion_gate_reason") != std::string::npos,
-              "schema v14 exposes independent motion-update trust and gate diagnostics");
+                  nanotrack::tracking_csv_header().find("motion_gate_reason") != std::string::npos &&
+                  nanotrack::tracking_csv_header().find("unknown_grace_exit_reason") != std::string::npos &&
+                  nanotrack::tracking_csv_header().find("unknown_grace_stable_ms") != std::string::npos &&
+                  nanotrack::tracking_csv_header().find("unknown_grace_peak_clean_frames") != std::string::npos,
+              "schema v16 exposes UNKNOWN corroborated recovery diagnostics");
 
   using namespace nanotrack;
   test_tracking_artifact_paths();
@@ -559,7 +567,7 @@ int main() {
         "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("14,", 0) == 0 && kTrackingSchemaVersion == 14,
+  expect_true(encoded.rfind("16,", 0) == 0 && kTrackingSchemaVersion == 16,
               "tracking rows carry schema version 12 exactly once");
   expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
               "CSV writes established class and recovery gate");
@@ -841,7 +849,7 @@ int main() {
                   contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
                   contains(json, "\"detector_ms\": 15.000000"),
               "same-frame initialization history retains order, result diagnostics and null optionals");
-  expect_true(contains(json, "\"schema_version\": 14") &&
+  expect_true(contains(json, "\"schema_version\": 16") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&

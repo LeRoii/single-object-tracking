@@ -74,6 +74,13 @@ struct ControllerConfig {
   // Candidate defaults pending calibration.
   std::int64_t suspicion_enter_ms = 100;
   std::int64_t suspicion_clear_ms = 100;
+  // Zero preserves the ordinary response-quality search policy.
+  std::int64_t unknown_response_grace_ms = 0;
+  // Continuous reliable response needed to clear UNKNOWN grace only.
+  std::int64_t unknown_response_recovery_ms = 100;
+  // Zero disables the corroborated response path and provisional search seed.
+  std::int64_t unknown_response_stable_recovery_ms = 0;
+  std::int64_t unknown_search_seed_min_ms = 0;
   float response_psr_drop_ratio = 0.25F;
   float response_apce_drop_ratio = 0.30F;
   // Optional car-only early partial-visibility gate. Zero disables both.
@@ -138,10 +145,11 @@ struct ControllerConfig {
   std::int64_t motion_max_dt_ms = 200;
   bool motion_search_enabled = false;
   bool search_reacquisition_requires_detector = false;
-  // After an identity conflict, require independent detector evidence on the
-  // same NanoTrack-confirmed recovery candidate. Default preserves behavior.
+  // For known classes, require independent detector evidence after an identity
+  // conflict. UNKNOWN uses tracker-only confirmation once current conflicts clear.
   bool recovery_conflict_requires_detector = false;
   int recovery_confirmation_required = 2;
+  // Applies to known classes; UNKNOWN cannot request class-matched detection.
   bool recovery_requires_detector_support = false;
   bool recovery_restore_initial_aspect = false;
   bool lower_band_visibility_veto = false;
