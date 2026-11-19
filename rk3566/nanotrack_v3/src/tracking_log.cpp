@@ -267,6 +267,12 @@ void visit_observability_fields(const TrackingLogRow& row, Field field) {
   field("motion_freeze_age_ms", row.motion_freeze_age_ms);
   field("motion_gate_reason", row.motion_gate_reason);
   field("state_change_reason", row.state_change_reason);
+  field("unknown_grace_active", row.unknown_grace_active);
+  field("unknown_grace_age_ms", row.unknown_grace_age_ms);
+  field("unknown_grace_reliable_ms", row.unknown_grace_reliable_ms);
+  field("unknown_grace_stable_ms", row.unknown_grace_stable_ms);
+  field("unknown_grace_peak_clean_frames", row.unknown_grace_peak_clean_frames);
+  field("unknown_grace_exit_reason", row.unknown_grace_exit_reason);
   field("rect0_source", row.rect0_source);
   field("active_template", "RECENT");
   field("safe_template_used", row.template_heads.safe || row.template_heads.safe_reused_recent);
@@ -875,6 +881,12 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.motion_freeze_age_ms = output.motion_freeze_age_ms;
   row.motion_gate_reason = output.motion_gate_reason;
   row.state_change_reason = output.state_change_reason;
+  row.unknown_grace_active = output.unknown_grace_active;
+  row.unknown_grace_age_ms = output.unknown_grace_age_ms;
+  row.unknown_grace_reliable_ms = output.unknown_grace_reliable_ms;
+  row.unknown_grace_stable_ms = output.unknown_grace_stable_ms;
+  row.unknown_grace_peak_clean_frames = output.unknown_grace_peak_clean_frames;
+  row.unknown_grace_exit_reason = output.unknown_grace_exit_reason;
   row.rect0_source = output.accepted ? "ACCEPTED_OBSERVATION" :
       output.observation_present ? "RECENT_OBSERVATION" : "MOTION_PREDICTION";
   row.control_source = output.control_source;
@@ -1207,6 +1219,11 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.max_reacquisition_center_distance =
       config.max_reacquisition_center_distance;
   metadata.motion_search_enabled = config.motion_search_enabled;
+  metadata.unknown_response_grace_ms = config.unknown_response_grace_ms;
+  metadata.unknown_response_recovery_ms = config.unknown_response_recovery_ms;
+  metadata.unknown_response_stable_recovery_ms =
+      config.unknown_response_stable_recovery_ms;
+  metadata.unknown_search_seed_min_ms = config.unknown_search_seed_min_ms;
   metadata.search_reacquisition_requires_detector =
       config.search_reacquisition_requires_detector;
   metadata.recovery_confirmation_required = config.recovery_confirmation_required;
@@ -1405,6 +1422,14 @@ std::string tracking_session_metadata_json(
          << ",\n"
          << "  \"motion_search_enabled\": "
          << (metadata.motion_search_enabled ? "true" : "false") << ",\n"
+         << "  \"unknown_response_grace_ms\": "
+         << metadata.unknown_response_grace_ms << ",\n"
+         << "  \"unknown_response_recovery_ms\": "
+         << metadata.unknown_response_recovery_ms << ",\n"
+         << "  \"unknown_response_stable_recovery_ms\": "
+         << metadata.unknown_response_stable_recovery_ms << ",\n"
+         << "  \"unknown_search_seed_min_ms\": "
+         << metadata.unknown_search_seed_min_ms << ",\n"
          << "  \"search_reacquisition_requires_detector\": "
          << (metadata.search_reacquisition_requires_detector ? "true" : "false")
          << ",\n"

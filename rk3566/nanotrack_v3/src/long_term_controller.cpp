@@ -139,6 +139,7 @@ void LongTermController::initialize(const BBox& initial_bbox,
   tentative_control_.reset();
   response_baseline_.reset_after_recovery();
   clear_suspicion();
+  clear_unknown_grace();
   search_motion_reference_ = motion_.snapshot(timestamp_ms);
   search_motion_reference_held_ = false;
   search_motion_clean_since_ms_.reset();
@@ -237,6 +238,10 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
         ? "frame id must be strictly increasing"
         : "frame timestamp must be strictly increasing");
   }
+  if (unknown_grace_since_ms_ &&
+      timestamp_ms - last_timestamp_ms_ > config_.motion_max_dt_ms) {
+    unknown_grace_gap_pending_ = true;
+  }
   if (uses_unified_recovery()) {
     if (frame_id - last_frame_id_ > 2 ||
         static_cast<std::uint64_t>(timestamp_ms) -
@@ -266,7 +271,9 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   try {
     prediction_checkpoint_.emplace(PredictionCheckpoint{
         motion_, shadow_motion_, tentative_control_, response_degraded_since_ms_,
-        suspected_since_ms_, response_clean_since_ms_, motion_residual_history_,
+        suspected_since_ms_, response_clean_since_ms_, unknown_grace_since_ms_,
+        unknown_grace_reliable_since_ms_, unknown_grace_bbox_, unknown_grace_trace_,
+        unknown_grace_gap_pending_, motion_residual_history_,
         motion_recent_residuals_,
         motion_freeze_since_ms_, motion_clean_since_ms_,
         motion_frozen_response_reference_, motion_last_clean_trend_,
@@ -340,6 +347,13 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
   coast_probe_candidate_.reset();
   mode_ = timestamp_mode;
   BBox predicted = motion_predicted;
+  if (unknown_grace_since_ms_ && unknown_grace_bbox_ &&
+      !unknown_grace_gap_pending_ && mode_ == TrackingMode::kSuspected) {
+    const auto& temporary = *unknown_grace_bbox_;
+    predicted = centered_box(temporary.x + 0.5F * temporary.width,
+                             temporary.y + 0.5F * temporary.height,
+                             current_bbox_, frame_size_);
+  }
   // Keep NanoTrack's next crop tied to the last accepted visual box while the
   // independent motion state coasts. This does not correct motion derivatives.
   if (motion_freeze_since_ms_ && mode_ == TrackingMode::kTracking &&
@@ -720,6 +734,14 @@ void LongTermController::clear_suspicion() noexcept {
   response_clean_since_ms_.reset();
 }
 
+void LongTermController::clear_unknown_grace() noexcept {
+  unknown_grace_since_ms_.reset();
+  unknown_grace_reliable_since_ms_.reset();
+  unknown_grace_bbox_.reset();
+  unknown_grace_trace_.reset();
+  unknown_grace_gap_pending_ = false;
+}
+
 void LongTermController::promote_shadow_prediction() noexcept {
   if (shadow_motion_) {
     motion_ = std::move(*shadow_motion_);
@@ -736,6 +758,11 @@ void LongTermController::restore_prediction_checkpoint() noexcept {
   response_degraded_since_ms_ = checkpoint.degraded_since_ms;
   suspected_since_ms_ = checkpoint.suspected_since_ms;
   response_clean_since_ms_ = checkpoint.clean_since_ms;
+  unknown_grace_since_ms_ = checkpoint.unknown_grace_since_ms;
+  unknown_grace_reliable_since_ms_ = checkpoint.unknown_grace_reliable_since_ms;
+  unknown_grace_bbox_ = checkpoint.unknown_grace_bbox;
+  unknown_grace_trace_ = checkpoint.unknown_grace_trace;
+  unknown_grace_gap_pending_ = checkpoint.unknown_grace_gap_pending;
   motion_residual_history_ = std::move(checkpoint.motion_residual_history);
   motion_recent_residuals_ = std::move(checkpoint.motion_recent_residuals);
   motion_freeze_since_ms_ = checkpoint.motion_freeze_since_ms;
@@ -1047,6 +1074,129 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
     return RecentDisposition::kTentative;
   }
   return RecentDisposition::kDirect;
+}
+
+LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
+    const SearchPlan& plan, const EvaluatedObservation& recent,
+    const std::optional<EvaluatedObservation>& safe,
+    const ResponseBaselineEvaluation& response, ControllerOutput& output) {
+  // This path is selected only for an UNKNOWN initialization and an ordinary
+  // committed recent template. Geometry and the raw-score floor remain hard.
+  const auto& observation = recent.observation;
+  const auto& metrics = observation.metrics;
+  const auto bounded = constrain_tracker_observation_dimensions(
+      observation.bbox, current_bbox_, frame_size_);
+  const bool hard_failure = plan.visual_occlusion_search ||
+      unknown_grace_gap_pending_ || !recent.center_gate || !recent.area_gate ||
+      !recent.aspect_gate || metrics.raw_score < config_.weak_score ||
+      observation.bbox.width < bounded.width ||
+      observation.bbox.height < bounded.height ||
+      (observation.decoded_bbox &&
+       (observation.decoded_bbox->width <
+            constrain_tracker_observation_dimensions(*observation.decoded_bbox,
+                                                     current_bbox_, frame_size_).width ||
+        observation.decoded_bbox->height <
+            constrain_tracker_observation_dimensions(*observation.decoded_bbox,
+                                                     current_bbox_, frame_size_).height));
+  if (hard_failure) {
+    output.unknown_grace_exit_reason = unknown_grace_gap_pending_ ? "INPUT_GAP" :
+        plan.visual_occlusion_search ? "VISUAL_OCCLUSION" :
+        metrics.raw_score < config_.weak_score ? "SCORE_FLOOR" : "GEOMETRY";
+    clear_unknown_grace();
+    return RecentDisposition::kSearch;
+  }
+
+  const RecentDisposition ordinary = assess_recent(plan, recent, response);
+  const bool reliable = recent.quality == QualityLevel::kReliable &&
+      !response.psr_drop && !response.apce_drop &&
+      !response.peak_margin_drop &&
+      !response_baseline_.sustained_dual_drop(metrics) &&
+      (!response.reference ||
+       metrics.psr >= response.reference->psr *
+           (1.0F - 0.5F * config_.response_psr_drop_ratio) ||
+       metrics.apce >= response.reference->apce *
+           (1.0F - 0.5F * config_.response_apce_drop_ratio));
+  if (!unknown_grace_since_ms_) {
+    if (ordinary == RecentDisposition::kDirect) return ordinary;
+    unknown_grace_since_ms_ = plan.timestamp_ms;
+  }
+  output.unknown_grace_age_ms = plan.timestamp_ms - *unknown_grace_since_ms_;
+  // The other response measures and box continuity corroborate an isolated
+  // peak-margin fluctuation. A second reliable head may veto disagreement;
+  // a reused Recent head does not provide independent identity evidence.
+  const bool safe_conflict = safe && safe->quality == QualityLevel::kReliable &&
+      bbox_iou(safe->observation.bbox, observation.bbox) <
+          config_.template_agreement_iou;
+  const bool stable_response =
+      metrics.raw_score >= config_.reliable_score &&
+      metrics.psr >= config_.reliable_psr &&
+      metrics.apce >= config_.reliable_apce &&
+      metrics.peak_margin >= config_.weak_peak_margin &&
+      !response.psr_drop && !response.apce_drop && !safe_conflict &&
+      !response_baseline_.sustained_dual_drop(metrics);
+  if (stable_response) {
+    const bool continues = unknown_grace_trace_ &&
+        plan.timestamp_ms - unknown_grace_trace_->last_ms <= config_.motion_max_dt_ms &&
+        bbox_iou(unknown_grace_trace_->bbox, observation.bbox) >=
+            config_.template_agreement_iou;
+    if (!continues) {
+      unknown_grace_trace_ = UnknownGraceTrace{observation.bbox,
+          plan.timestamp_ms, plan.timestamp_ms, 0, 0};
+    }
+    unknown_grace_trace_->bbox = observation.bbox;
+    unknown_grace_trace_->last_ms = plan.timestamp_ms;
+    ++unknown_grace_trace_->frames;
+    if (metrics.peak_margin >= config_.reliable_peak_margin &&
+        !response.peak_margin_drop) {
+      ++unknown_grace_trace_->peak_clean_frames;
+    }
+  } else if (output.unknown_grace_age_ms < config_.unknown_response_grace_ms) {
+    unknown_grace_trace_.reset();
+  }
+  if (unknown_grace_trace_) {
+    output.unknown_grace_stable_ms =
+        unknown_grace_trace_->last_ms - unknown_grace_trace_->since_ms;
+    output.unknown_grace_peak_clean_frames =
+        unknown_grace_trace_->peak_clean_frames;
+  }
+  if (reliable) {
+    if (!unknown_grace_reliable_since_ms_)
+      unknown_grace_reliable_since_ms_ = plan.timestamp_ms;
+    output.unknown_grace_reliable_ms =
+        plan.timestamp_ms - *unknown_grace_reliable_since_ms_;
+    if (output.unknown_grace_reliable_ms >= config_.unknown_response_recovery_ms) {
+      output.unknown_grace_exit_reason = "RECOVERED";
+      clear_unknown_grace();
+      clear_suspicion();
+      return RecentDisposition::kDirect;
+    }
+  } else {
+    unknown_grace_reliable_since_ms_.reset();
+  }
+  // One weak peak-margin sample no longer erases a sustained, spatially
+  // coherent run. Require two separate clean-margin frames before trusting
+  // the alternative recovery path; all ordinary hard gates remain active.
+  if (config_.unknown_response_stable_recovery_ms > 0 && stable_response &&
+      recent.quality == QualityLevel::kReliable && unknown_grace_trace_ &&
+      unknown_grace_trace_->frames >= 3 &&
+      output.unknown_grace_stable_ms >=
+          config_.unknown_response_stable_recovery_ms &&
+      unknown_grace_trace_->peak_clean_frames >= 2) {
+    output.unknown_grace_exit_reason = "RECOVERED_STABLE_RESPONSE";
+    clear_unknown_grace();
+    clear_suspicion();
+    return RecentDisposition::kDirect;
+  }
+  // Keep the next frame in the ordinary tracking path, even if assess_recent
+  // rejected multiple response metrics immediately.
+  if (!suspected_since_ms_) suspected_since_ms_ = plan.timestamp_ms;
+  if (output.unknown_grace_age_ms >= config_.unknown_response_grace_ms) {
+    output.unknown_grace_exit_reason = "TIMEOUT";
+    return RecentDisposition::kSearch;
+  }
+  output.unknown_grace_active = true;
+  unknown_grace_bbox_ = observation.bbox;
+  return RecentDisposition::kTentative;
 }
 
 BBox LongTermController::bound_recent_scale(const BBox& bbox,
@@ -1445,6 +1595,11 @@ LongTermController::confirm_recovery_candidate(
            (at_top(old) && at_top(predicted) && new_y - old_y > limit) ||
            (at_bottom(old) && at_bottom(predicted) && old_y - new_y > limit);
   };
+  // UNKNOWN sessions cannot schedule class-matched detector recovery. Requiring
+  // detector evidence here would deadlock an otherwise verified tracker-only
+  // candidate, including after an old conflict has expired. Current conflicts,
+  // confirmation counts and geometry gates below still apply to every class.
+  const bool known_target_class = target_class_.status != TargetClassStatus::kUnknown;
   const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
     if (output.recovery_conflict || !key ||
         (!recovery_candidates_.confirmed(*key) &&
@@ -1467,9 +1622,9 @@ LongTermController::confirm_recovery_candidate(
           recent_key == key && safe_key == key &&
           !motion_center_aligned(recovery_recent) && !motion_center_aligned(recovery_safe) &&
           !verified_detector_triad) &&
-        (!config_.recovery_requires_detector_support ||
+        (!known_target_class || !config_.recovery_requires_detector_support ||
          candidate->has_detector_supported_hit()) &&
-        (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
+        (!known_target_class || !config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
          candidate->has_detector_supported_hit());
   };
   const bool recent_confirmed = can_confirm(recent_key);
@@ -2489,6 +2644,7 @@ ControllerOutput LongTermController::finish_frame(
   const bool ordinary_recent =
       (!legacy_anchor_observations_ || recovery_probation_) && !loss_start_ms_ &&
       (plan.mode == TrackingMode::kTracking || plan.mode == TrackingMode::kSuspected);
+  std::optional<BBox> unknown_grace_search_seed;
   const auto& probation_template =
       legacy_anchor_observations_ && !recovery_probation_ ? anchor : staged;
   const bool probation_templates_agree =
@@ -2509,7 +2665,32 @@ ControllerOutput LongTermController::finish_frame(
         (probation_templates_agree &&
          recovery_candidates_.geometry_consistent(
              probation_template->observation.bbox, recent->observation.bbox));
+    // An ordinary update is speculative: a low-quality staged response must
+    // not veto the still-reliable committed recent template. Assess recent
+    // through the normal gates; the disagreement below will roll back staged.
+    // Keep recovery probation, missing observations and reliable-head geometry
+    // conflicts on their existing paths.
+    const bool ordinary_trial_quality_failure =
+        recent_probation_ && !recovery_probation_ && recent && staged &&
+        recent->quality == QualityLevel::kReliable &&
+        staged->quality != QualityLevel::kReliable;
+    // A speculative staged template cannot veto an UNKNOWN target merely
+    // because the committed recent head has a response-quality dip. The
+    // heads must still agree on position; assess_unknown_grace retains the
+    // raw-score floor and geometry hard gates and rolls the trial back.
+    const bool ordinary_trial_recent_grace =
+        recent_probation_ && !recovery_probation_ &&
+        config_.unknown_response_grace_ms > 0 &&
+        target_class_.status == TargetClassStatus::kUnknown && recent && staged &&
+        recent->quality != QualityLevel::kReliable &&
+        staged->quality == QualityLevel::kReliable &&
+        output.template_iou >= config_.template_agreement_iou &&
+        recovery_candidates_.geometry_consistent(
+            staged->observation.bbox, recent->observation.bbox);
     RecentDisposition disposition = RecentDisposition::kSearch;
+    if (!recent && unknown_grace_since_ms_) {
+      output.unknown_grace_exit_reason = "NO_OBSERVATION";
+    }
     if (recovery_probation_) {
       // The staged recovery template has already passed the two-hit identity
       // gate. Keep it authoritative while recent proves it can follow the same
@@ -2519,8 +2700,13 @@ ControllerOutput LongTermController::finish_frame(
         selected = staged;
         disposition = assess_recent(plan, *staged, response);
       }
-    } else if (recent && probation_geometry_allows_acceptance) {
-      disposition = assess_recent(plan, *recent, response);
+    } else if (recent && (probation_geometry_allows_acceptance ||
+                          ordinary_trial_quality_failure ||
+                          ordinary_trial_recent_grace)) {
+      disposition = config_.unknown_response_grace_ms > 0 &&
+                            target_class_.status == TargetClassStatus::kUnknown
+          ? assess_unknown_grace(plan, *recent, safe, response, output)
+          : assess_recent(plan, *recent, response);
     }
     if (disposition == RecentDisposition::kTentative) {
       publish_tentative(plan, *selected, output);
@@ -2530,8 +2716,29 @@ ControllerOutput LongTermController::finish_frame(
     if (disposition == RecentDisposition::kSearch && selected) {
       selected->quality = QualityLevel::kRejected;
     }
+    if (config_.unknown_search_seed_min_ms > 0 && recent &&
+        std::string(output.unknown_grace_exit_reason) == "TIMEOUT" &&
+        unknown_grace_trace_ && unknown_grace_trace_->frames >= 3 &&
+        unknown_grace_trace_->peak_clean_frames >= 1 &&
+        unknown_grace_trace_->last_ms - unknown_grace_trace_->since_ms >=
+            config_.unknown_search_seed_min_ms &&
+        plan.timestamp_ms - unknown_grace_trace_->last_ms <=
+            config_.motion_max_dt_ms &&
+        bbox_iou(unknown_grace_trace_->bbox, recent->observation.bbox) >=
+            config_.template_agreement_iou) {
+      const auto& candidate = unknown_grace_trace_->bbox;
+      unknown_grace_search_seed = centered_box(
+          candidate.x + 0.5F * candidate.width,
+          candidate.y + 0.5F * candidate.height,
+          current_bbox_, frame_size_);
+    }
+    if (unknown_grace_since_ms_ &&
+        std::string(output.unknown_grace_exit_reason) == "NONE") {
+      output.unknown_grace_exit_reason = "TRACKING_GATE";
+    }
     promote_shadow_prediction();
     clear_suspicion();
+    clear_unknown_grace();
   } else if (anchor && recent) {
     output.template_iou = bbox_iou(anchor->observation.bbox, recent->observation.bbox);
     if (anchor->quality == QualityLevel::kReliable &&
@@ -2870,13 +3077,30 @@ ControllerOutput LongTermController::finish_frame(
     motion_recent_residuals_.clear();
     motion_clean_since_ms_.reset();
     response_baseline_.freeze();
+    const bool starting_search = !loss_start_ms_;
+    if (starting_search && ordinary_recent &&
+        target_class_.status == TargetClassStatus::kUnknown &&
+        config_.unknown_response_grace_ms > 0 &&
+        (unknown_grace_search_seed ||
+         normalized_center_distance(motion_.current_bbox(), current_bbox_) >
+             config_.max_center_distance)) {
+      // A coherent recent trace seeds search without becoming trusted control
+      // or a template update. Hard failures retain the last-trusted fallback.
+      motion_.initialize(unknown_grace_search_seed.value_or(current_bbox_), plan.timestamp_ms,
+                         frame_size_.width, frame_size_.height);
+      search_motion_reference_.reset();
+      search_motion_reference_held_ = false;
+      search_motion_clean_since_ms_.reset();
+      output.motion_gate_reason = unknown_grace_search_seed
+          ? "SEARCH_REANCHORED_GRACE_TRACE"
+          : "SEARCH_REANCHORED_LAST_TRUSTED";
+    }
     motion_.freeze_scale(current_bbox_.width, current_bbox_.height);
     output.tracking_bbox = motion_.current_bbox();
     output.display_bbox = output.tracking_bbox;
     output.control_bbox = output.tracking_bbox;
     output.bbox = output.display_bbox;
     ++consecutive_unreliable_frames_;
-    const bool starting_search = !loss_start_ms_;
     if (starting_search) loss_start_ms_ = plan.timestamp_ms;
     if (starting_search) recovery_conflict_seen_ = false;
     if (starting_search) conflict_detector_refresh_sent_ = false;

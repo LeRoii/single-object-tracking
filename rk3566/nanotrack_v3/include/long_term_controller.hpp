@@ -122,6 +122,12 @@ struct ControllerOutput {
   bool template_probation_active = false;
   const char* template_transition_reason = "NONE";
   const char* state_change_reason = "NONE";
+  bool unknown_grace_active = false;
+  std::int64_t unknown_grace_age_ms = 0;
+  std::int64_t unknown_grace_reliable_ms = 0;
+  std::int64_t unknown_grace_stable_ms = 0;
+  int unknown_grace_peak_clean_frames = 0;
+  const char* unknown_grace_exit_reason = "NONE";
   const char* recovery_reason = "NONE";
   const char* recovery_recent_quality = "NONE";
   const char* recovery_safe_quality = "NONE";
@@ -325,6 +331,12 @@ class LongTermController {
   RecentDisposition assess_recent(const SearchPlan& plan,
                                   const EvaluatedObservation& recent,
                                   const ResponseBaselineEvaluation& response);
+  RecentDisposition assess_unknown_grace(const SearchPlan& plan,
+                                         const EvaluatedObservation& recent,
+                                         const std::optional<EvaluatedObservation>& safe,
+                                         const ResponseBaselineEvaluation& response,
+                                         ControllerOutput& output);
+  void clear_unknown_grace() noexcept;
   void publish_tentative(const SearchPlan& plan,
                          const EvaluatedObservation& recent,
                          ControllerOutput& output);
@@ -391,6 +403,14 @@ class LongTermController {
     std::int64_t timestamp_ms;
   };
 
+  struct UnknownGraceTrace {
+    BBox bbox{};
+    std::int64_t since_ms = 0;
+    std::int64_t last_ms = 0;
+    int frames = 0;
+    int peak_clean_frames = 0;
+  };
+
   struct PredictionCheckpoint {
     MotionEstimator motion;
     std::optional<MotionEstimator> shadow_motion;
@@ -398,6 +418,11 @@ class LongTermController {
     std::optional<std::int64_t> degraded_since_ms;
     std::optional<std::int64_t> suspected_since_ms;
     std::optional<std::int64_t> clean_since_ms;
+    std::optional<std::int64_t> unknown_grace_since_ms;
+    std::optional<std::int64_t> unknown_grace_reliable_since_ms;
+    std::optional<BBox> unknown_grace_bbox;
+    std::optional<UnknownGraceTrace> unknown_grace_trace;
+    bool unknown_grace_gap_pending;
     std::vector<float> motion_residual_history;
     std::vector<float> motion_recent_residuals;
     std::optional<std::int64_t> motion_freeze_since_ms;
@@ -430,6 +455,11 @@ class LongTermController {
   std::optional<std::int64_t> response_degraded_since_ms_;
   std::optional<std::int64_t> suspected_since_ms_;
   std::optional<std::int64_t> response_clean_since_ms_;
+  std::optional<std::int64_t> unknown_grace_since_ms_;
+  std::optional<std::int64_t> unknown_grace_reliable_since_ms_;
+  std::optional<BBox> unknown_grace_bbox_;
+  std::optional<UnknownGraceTrace> unknown_grace_trace_;
+  bool unknown_grace_gap_pending_ = false;
   std::optional<MotionSnapshot> search_motion_reference_;
   bool search_motion_reference_held_ = false;
   std::optional<std::int64_t> search_motion_clean_since_ms_;

@@ -1,10 +1,20 @@
 # 生产交叉编译任务进度
 
-- 任务状态：`candidate_cross_compile_succeeded_handoff_unapproved`
-- 最近核对：`2026-10-31T16:24:12+08:00`
-- 核对分支/工作树：`codex/cross-compile-main-b827` / `/home/u20/single-object-tracking/.worktrees/cross-compile-main-b827`
-- 核对基线：`main@b827c0a6d8916e9c0832c748e30722f6f2fe5563`
+- 任务状态：`unknown_grace_source_integrated_main_debug_human_test_pending`
+- 最近核对：`2026-11-20T00:54:49+08:00`
+- 核对分支/工作树：`main` / `/home/u20/single-object-tracking/.worktrees/occlusion-main-integration`；`Debug` / `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking`
+- 核对基线：`main@4eea40485298561b2f187f07e48879a6cf132956`、`Debug@417a265e318bc1861703b80677e6fa7bb2dbfd1e`；通用源码消费 `073efdc578f50117119e9beebb251c6b410cc6b8`
 - 责任边界：确认能够取得协调对话指定的最新开发板验证结果，并使用现有交叉编译流程成功生成生产产物。
+
+## 2026-11-20T00:54:49+08:00 UNKNOWN 通用源码集成至 main 与 Debug
+
+- 用户要求把本轮改动合入两个分支。精确消费 `codex/rk3588-a8-cross-compile@073efdc578f50117119e9beebb251c6b410cc6b8` 的 15 个通用算法、日志、测试、评测及板端校验文件；目标干净基线为 `main@4eea40485298561b2f187f07e48879a6cf132956`、`Debug@417a265e318bc1861703b80677e6fa7bb2dbfd1e`。本节在两个目标分支分别随集成源码提交，结果提交可由各分支 `git log -1 --format=%H -- docs/progress/cross-compile.md` 查询。Debug 专有交互文件及跨编译分支的部署包、旧日志未并入；其他任务新候选未消费。
+- `git diff 073efdc --` 对上述 15 个文件在两个目标工作树均为零字节差异；`git diff --check` 通过。各自执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-merge-unknown-{main,debug} -DENABLE_RKNN_RUNTIME=OFF`、`cmake --build ... --parallel 2`，构建成功。两边顺序执行 `ctest --test-dir ... --output-on-failure -j2` 均 **23/23 PASS**；`python3 -m unittest tests.test_evaluate_occ_video_1 scripts.tests.test_evaluate_human_occlusion_constraints -q` 均 **32/32 PASS**。没有新模型转换、开发板原生运行或吊舱人工验收。
+- 主机测试工件 `/tmp/nt-merge-unknown-main/test_long_term_controller` SHA-256 `2f9fd7e2a10c73efdfa57b73d5075d3dfd333857bf2aff4ec5491d66a33323b8`，`/tmp/nt-merge-unknown-debug/test_long_term_controller` SHA-256 `285514ce8f6595998cf86fb2c557f2a859bca585dd5e4804d890e87808fbad0c`。CTest 日志 `/tmp/nt-merge-unknown-main-ctest.log` / `/tmp/nt-merge-unknown-debug-ctest.log` SHA-256 `366e44460b900baf98612ab31bc47de13b723017d61369528fee1dcd35efa05d` / `1fb9a54a90ef440ca1fda11f10ba57d738380c82170d7196fa7a35ffcb9cc1a9`；评测单测日志 `/tmp/nt-merge-unknown-main-python.log` / `/tmp/nt-merge-unknown-debug-python.log` SHA-256 `ff81eae61feca71af26a2dba50d78ef09962b57399b0f2e9f8dea2ee69ae5da6` / `e6de5bc1a80250ec48218466ed3f977fc8702096a840cc781f85a9cbb0d42db8`。这些是主机回归证据，不是 RK3588 运行程序身份。
+
+### Handoff
+
+- 请协调对话重新核对并接收两分支集成提交及源码/测试身份。合入源码不改变候选吊舱程序 SHA-256 `72eb81ff6c8485afd8a4a46fed407072c3bd0a108ac1aa7bf863c83b5165fd42`、模型清单 SHA-256 `1ff2ad62b3ac7090bc650ff66d677b19a6d5249b89da4c6007abd71caabf5508` 或其人工验收边界。已观察到最后一次吊舱点击后宿主无新算法回调却持续发送旧伺服指令，该问题尚未修复；源码合并不表示板端或吊舱通过，也不自动更新共享契约。
 
 ## 前置条件
 

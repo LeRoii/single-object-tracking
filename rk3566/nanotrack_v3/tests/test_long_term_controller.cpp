@@ -2386,7 +2386,7 @@ void test_conflicted_recovery_needs_matching_detector_evidence() {
   const BBox target{40, 30, 20, 20};
 
   ResolvedControllerFixture conflicted(config);
-  conflicted.initialize(target, 0, 0, {240, 160});
+  conflicted.initialize(target, 0, 0, {240, 160}, make_fixed_target_class(2, true));
   reject_frame(conflicted, 1, 40);
   conflicted.recovery_conflict_seen_ = true;
   ControllerOutput output;
@@ -2457,6 +2457,70 @@ void test_conflicted_recovery_needs_matching_detector_evidence() {
   expect_true(!plan.request_detector,
               "conflict-free tracker hit cannot bypass detector cadence");
   no_conflict_refresh.abort_frame();
+}
+
+void test_unknown_class_tracker_only_recovery() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.recovery_requires_detector_support = true;
+  config.recovery_conflict_requires_detector = true;
+  config.recovery_confirmation_required = 3;
+  config.search_reacquisition_min_age_ms = 400;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  const BBox target{40, 30, 20, 20};
+  auto established = make_fixed_target_class(2, true);
+  established.status = TargetClassStatus::kEstablished;
+  for (const auto& state : {make_unknown_target_class(TargetClassReason::kNoMatch),
+                            make_fixed_target_class(2, true), established}) {
+    for (bool past_conflict : {false, true}) {
+      ResolvedControllerFixture controller(config);
+      controller.initialize(target, 0, 0, {240, 160}, state);
+      reject_frame(controller, 1, 40);
+      controller.recovery_conflict_seen_ = past_conflict;
+      auto plan = controller.begin_frame(2, 80, true);
+      auto output = controller.finish_frame(plan,
+          {reliable_observation(plan, TemplateKind::kRecent, target, 2)}, std::nullopt);
+      expect_true(!output.accepted && !output.reacquired,
+                  "unknown recovery still respects minimum search age");
+      for (std::uint64_t id : {3U, 4U, 5U}) {
+        plan = controller.begin_frame(id, 440 + (id - 3) * 40, true);
+        if (state.status == TargetClassStatus::kUnknown)
+          expect_true(!plan.request_detector, "unknown recovery needs no detector request");
+        output = controller.finish_frame(plan,
+            {reliable_observation(plan, TemplateKind::kRecent, target, id),
+             reliable_observation(plan, TemplateKind::kSafe, target, id)}, std::nullopt);
+        const bool should_recover = id == 5 && state.status == TargetClassStatus::kUnknown;
+        expect_true(output.accepted == should_recover && output.reacquired == should_recover,
+                    "only UNKNOWN bypasses detector support after three tracker confirmations");
+        if (should_recover)
+          expect_true(output.observation_valid && output.control_valid &&
+                          output.accepted_observation_path == AcceptedObservationPath::kSearchReacquisition,
+                      "tracker-only recovery publishes verified observation and control");
+      }
+    }
+  }
+
+  ResolvedControllerFixture ambiguous(config);
+  ambiguous.initialize(target, 0, 0, {240, 160},
+      make_unknown_target_class(TargetClassReason::kNoMatch));
+  reject_frame(ambiguous, 1, 40);
+  for (std::uint64_t id : {2U, 3U, 4U, 5U}) {
+    const auto plan = ambiguous.begin_frame(id, 440 + (id - 2) * 40, false);
+    const auto output = ambiguous.finish_frame(plan,
+        {reliable_observation(plan, TemplateKind::kRecent, target, id),
+         reliable_observation(plan, TemplateKind::kSafe, {60, 30, 20, 20}, id)}, std::nullopt);
+    expect_true(output.recovery_conflict && !output.accepted && !output.reacquired,
+                "UNKNOWN never bypasses an active identity conflict");
+  }
+  for (std::uint64_t id : {6U, 7U, 8U}) {
+    const auto plan = ambiguous.begin_frame(id, 1000 + (id - 6) * 40, false);
+    const auto output = ambiguous.finish_frame(plan,
+        {reliable_observation(plan, TemplateKind::kRecent, target, id),
+         reliable_observation(plan, TemplateKind::kSafe, target, id)}, std::nullopt);
+    expect_true(output.reacquired == (id == 8) && output.accepted == (id == 8),
+                "expired UNKNOWN conflict requires three fresh tracker hits without detector");
+  }
 }
 
 void test_recovery_probation_cleanup() {
@@ -3319,7 +3383,585 @@ void test_verified_recovery_blends_fresh_detector_center() {
   }
 }
 
+void test_unknown_response_grace() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.unknown_response_grace_ms = 800;
+  config.suspicion_clear_ms = 100;
+  config.motion_max_dt_ms = 200;
+  config.stable_frames_for_update = 50;
+  const BBox initial{100, 80, 30, 30};
+  const BBox moved{103, 80, 30, 30};
+  const ResponseMetrics multi_drop{0.802246F, 0.80F, 2.650636F, 6.066662F, 0.036895F};
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  const auto run = [&](ResolvedControllerFixture& controller, std::uint64_t id,
+                       std::int64_t timestamp, const ResponseMetrics& metrics) {
+    auto plan = controller.begin_frame(id, timestamp, false);
+    auto obs = reliable_observation(plan, TemplateKind::kRecent, moved, id);
+    obs.metrics = metrics;
+    return controller.finish_frame(plan, {obs}, std::nullopt);
+  };
+
+  ResolvedControllerFixture holds(config);
+  holds.initialize(initial, 0, 0, {400, 300}, unknown);
+  const auto first = run(holds, 1, 40, multi_drop);
+  expect_true(first.tracking_phase == TrackingPhase::kSuspected &&
+                  first.unknown_grace_active && !first.accepted &&
+                  first.observation_present && !first.trusted_for_state_update &&
+                  first.tracking_bbox.x == moved.x &&
+                  holds.current_bbox().x == initial.x,
+              "26730 multi-metric event is temporary UNKNOWN evidence, not trusted state");
+  auto next = holds.begin_frame(2, 80, false);
+  expect_near(next.predicted_bbox.x, moved.x, 0.01F,
+              "UNKNOWN grace moves the next crop center at trusted size");
+  expect_near(next.predicted_bbox.width, initial.width, 0.01F,
+              "UNKNOWN grace preserves last trusted crop size");
+  auto obs = reliable_observation(next, TemplateKind::kRecent, moved, 2);
+  obs.metrics = multi_drop;
+  holds.finish_frame(next, {obs}, std::nullopt);
+  for (std::uint64_t id = 3; id <= 21; ++id) {
+    const auto out = run(holds, id, static_cast<std::int64_t>(id * 40), multi_drop);
+    if (id < 21) {
+      expect_true(out.unknown_grace_active && !out.accepted,
+                  "UNKNOWN grace persists until 800 ms from first decline");
+    } else {
+      expect_true(out.tracking_phase == TrackingPhase::kSearching &&
+                      std::string(out.unknown_grace_exit_reason) == "TIMEOUT",
+                  "UNKNOWN grace expires at 800 ms");
+    }
+  }
+
+  ResolvedControllerFixture recovers(config);
+  recovers.initialize(initial, 0, 0, {400, 300}, unknown);
+  run(recovers, 1, 40, multi_drop);
+  const ResponseMetrics healthy{0.98F, 0.96F, 10.0F, 12.0F, 0.20F};
+  expect_true(run(recovers, 2, 80, healthy).unknown_grace_active,
+              "one reliable response cannot clear grace");
+  run(recovers, 3, 120, multi_drop);
+  expect_true(run(recovers, 4, 160, healthy).unknown_grace_active &&
+                  run(recovers, 5, 200, healthy).unknown_grace_active,
+              "intermittent reliable response does not renew or clear the budget");
+  const auto recovered = run(recovers, 6, 280, healthy);
+  expect_true(recovered.accepted && !recovered.reacquired &&
+                  std::string(recovered.unknown_grace_exit_reason) == "RECOVERED",
+              "100 ms continuous reliable evidence restores ordinary tracking");
+
+  ResolvedControllerFixture intermittent(config);
+  intermittent.initialize(initial, 0, 0, {400, 300}, unknown);
+  run(intermittent, 1, 40, multi_drop);
+  for (std::uint64_t id = 2; id <= 21; ++id) {
+    const auto metrics = id % 3 == 0 ? healthy : multi_drop;
+    const auto out = run(intermittent, id, static_cast<std::int64_t>(id * 40), metrics);
+    if (id == 21) {
+      expect_true(out.tracking_phase == TrackingPhase::kSearching &&
+                      std::string(out.unknown_grace_exit_reason) == "TIMEOUT",
+                  "isolated reliable frames cannot renew the original 800 ms deadline");
+    }
+  }
+
+  ResolvedControllerFixture floor(config);
+  floor.initialize(initial, 0, 0, {400, 300}, unknown);
+  run(floor, 1, 40, multi_drop);
+  auto low = multi_drop;
+  low.raw_score = 0.54F;
+  expect_true(std::string(run(floor, 2, 80, low).unknown_grace_exit_reason) ==
+                  "SCORE_FLOOR",
+              "raw score below weak_score exits grace");
+  ResolvedControllerFixture gap(config);
+  gap.initialize(initial, 0, 0, {400, 300}, unknown);
+  run(gap, 1, 40, multi_drop);
+  const auto interrupted = run(gap, 2, 250, multi_drop);
+  expect_true(interrupted.tracking_phase == TrackingPhase::kSearching &&
+                  std::string(interrupted.unknown_grace_exit_reason) == "INPUT_GAP",
+              "input gap above motion_max_dt_ms exits grace");
+
+  ResolvedControllerFixture missing(config);
+  missing.initialize(initial, 0, 0, {400, 300}, unknown);
+  run(missing, 1, 40, multi_drop);
+  auto missing_plan = missing.begin_frame(2, 80, false);
+  const auto absent = missing.finish_frame(missing_plan, {}, std::nullopt);
+  expect_true(absent.tracking_phase == TrackingPhase::kSearching &&
+                  std::string(absent.unknown_grace_exit_reason) == "NO_OBSERVATION",
+              "missing observation exits grace");
+  missing.initialize(initial, 3, 120, {400, 300}, unknown);
+  expect_true(!missing.unknown_grace_since_ms_ && !missing.unknown_grace_bbox_,
+              "a new click clears provisional state");
+
+  ResolvedControllerFixture geometry(config);
+  geometry.initialize(initial, 0, 0, {400, 300}, unknown);
+  run(geometry, 1, 40, multi_drop);
+  auto far_plan = geometry.begin_frame(2, 80, false);
+  auto far = reliable_observation(far_plan, TemplateKind::kRecent,
+                                  {350, 250, 30, 30}, 2);
+  far.metrics = multi_drop;
+  const auto invalid = geometry.finish_frame(far_plan, {far}, std::nullopt);
+  expect_true(invalid.tracking_phase == TrackingPhase::kSearching &&
+                  std::string(invalid.unknown_grace_exit_reason) == "GEOMETRY",
+              "position geometry failure exits grace");
+
+  ResolvedControllerFixture single(config);
+  single.initialize(initial, 0, 0, {400, 300}, unknown);
+  auto one_drop = healthy;
+  one_drop.psr = 3.8F;
+  expect_true(run(single, 1, 40, one_drop).unknown_grace_active,
+              "one response-quality drop enters UNKNOWN grace");
+  auto retry = single.begin_frame(2, 80, false);
+  const auto saved_grace_start = single.unknown_grace_since_ms_;
+  const auto saved_temporary = single.unknown_grace_bbox_;
+  single.abort_frame();
+  expect_true(single.unknown_grace_since_ms_ == saved_grace_start &&
+                  single.unknown_grace_bbox_.has_value() &&
+                  saved_temporary.has_value() &&
+                  single.unknown_grace_bbox_->x == saved_temporary->x,
+              "aborted frame restores the prior provisional state without adding a sample");
+  retry = single.begin_frame(2, 80, false);
+  auto shrunk = reliable_observation(retry, TemplateKind::kRecent,
+                                     {103, 80, 1, 1}, 2);
+  shrunk.metrics = multi_drop;
+  const auto collapsed = single.finish_frame(retry, {shrunk}, std::nullopt);
+  expect_true(collapsed.tracking_phase == TrackingPhase::kSearching &&
+                  std::string(collapsed.unknown_grace_exit_reason) == "GEOMETRY",
+              "abnormal shrink exits grace");
+
+  for (const auto& state : {make_fixed_target_class(2, true), unknown}) {
+    ControllerConfig baseline = config;
+    baseline.unknown_response_grace_ms = 0;
+    ResolvedControllerFixture old_policy(baseline);
+    old_policy.initialize(initial, 0, 0, {400, 300}, state);
+    const auto old = run(old_policy, 1, 40, multi_drop);
+    expect_true(old.tracking_phase == TrackingPhase::kSearching &&
+                    !old.unknown_grace_active,
+                "disabled grace preserves old immediate-search behavior");
+  }
+  ResolvedControllerFixture known(config);
+  known.initialize(initial, 0, 0, {400, 300}, make_fixed_target_class(2, true));
+  expect_true(run(known, 1, 40, multi_drop).tracking_phase == TrackingPhase::kSearching,
+              "known target retains old response-quality policy");
+}
+
+void test_unknown_grace_independent_recovery_timing() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.unknown_response_grace_ms = 1200;
+  config.unknown_response_recovery_ms = 60;
+  config.suspicion_clear_ms = 100;
+  config.stable_frames_for_update = 50;
+  const BBox target{100, 80, 30, 30};
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  const ResponseMetrics weak{0.80F, 0.78F, 3.0F, 6.0F, 0.03F};
+  const ResponseMetrics strong{0.98F, 0.96F, 10.0F, 12.0F, 0.20F};
+  const auto step = [&](ResolvedControllerFixture& controller, std::uint64_t id,
+                        std::int64_t timestamp, const ResponseMetrics& metrics) {
+    const auto plan = controller.begin_frame(id, timestamp, false);
+    auto observation = reliable_observation(plan, TemplateKind::kRecent, target, id);
+    observation.metrics = metrics;
+    return controller.finish_frame(plan, {observation}, std::nullopt);
+  };
+
+  ResolvedControllerFixture recovered(config);
+  recovered.initialize(target, 0, 0, {400, 300}, unknown);
+  expect_true(step(recovered, 1, 40, weak).unknown_grace_active,
+              "UNKNOWN quality dip enters the 1200 ms grace");
+  expect_true(step(recovered, 2, 70, strong).unknown_grace_active &&
+                  step(recovered, 3, 100, strong).unknown_grace_active,
+              "30 ms of continuous reliable response cannot clear 60 ms grace recovery");
+  const auto restored = step(recovered, 4, 130, strong);
+  expect_true(restored.accepted && !restored.unknown_grace_active &&
+                  std::string(restored.unknown_grace_exit_reason) == "RECOVERED",
+              "60 ms of continuous reliable response clears UNKNOWN grace without changing general suspicion timing");
+
+  ResolvedControllerFixture expires(config);
+  expires.initialize(target, 0, 0, {400, 300}, unknown);
+  for (std::uint64_t id = 1; id <= 31; ++id) {
+    const auto out = step(expires, id, static_cast<std::int64_t>(id * 40),
+                          id % 3 == 0 ? strong : weak);
+    if (id < 31) {
+      expect_true(out.unknown_grace_active,
+                  "intermittent reliable frames do not renew the 1200 ms deadline");
+    } else {
+      expect_true(out.tracking_phase == TrackingPhase::kSearching &&
+                      std::string(out.unknown_grace_exit_reason) == "TIMEOUT" &&
+                      out.unknown_grace_age_ms == 1200,
+                  "UNKNOWN grace expires at 1200 ms without a 60 ms recovery run");
+    }
+  }
+}
+
+void test_unknown_ordinary_probation_grace_and_search_anchor() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.unknown_response_grace_ms = 800;
+  config.stable_frames_for_update = 1;
+  config.recent_update_interval_ms = 1;
+  config.motion_search_enabled = true;
+  const FrameSize frame{3840, 2160};
+  const BBox trusted{1898, 1076, 119, 129};
+  const BBox recent_box{1898, 1076, 119, 129};
+  const BBox staged_box{1908, 1080, 119, 129};
+  // The committed head's metrics reproduce the decisive 31458 response dip.
+  const ResponseMetrics dipped{0.997704F, 0.99F, 6.005731F,
+                               16.639647F, 0.036033F};
+  const auto run_trial = [&](const ControllerConfig& policy,
+                             const TargetClassState& target,
+                             ResponseMetrics recent_metrics,
+                             BBox recent_position,
+                             BBox staged_position) {
+    ResolvedControllerFixture controller(policy);
+    controller.initialize(trusted, 0, 0, frame, target);
+    auto plan = controller.begin_frame(1, 40, false);
+    auto staged_request = controller.finish_frame(
+        plan, {reliable_observation(plan, TemplateKind::kRecent, trusted)},
+        std::nullopt);
+    expect_true(staged_request.template_action == TemplateAction::kStageRecent &&
+                    controller.recent_probation_,
+                "ordinary trial fixture stages a real template transaction");
+    plan = controller.begin_frame(2, 80, false);
+    auto recent = reliable_observation(plan, TemplateKind::kRecent,
+                                       recent_position, 2);
+    recent.metrics = recent_metrics;
+    const auto output = controller.finish_frame(
+        plan, {recent, reliable_observation(plan, TemplateKind::kStaged,
+                                            staged_position, 2)},
+        std::nullopt);
+    return std::make_tuple(output, controller.current_bbox());
+  };
+
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  auto [held, held_trusted] = run_trial(config, unknown, dipped,
+                                       recent_box, staged_box);
+  expect_true(held.tracking_phase == TrackingPhase::kSuspected &&
+                  held.unknown_grace_active && !held.accepted &&
+                  held.template_action == TemplateAction::kRollbackRecent &&
+                  held.tracking_bbox.x == recent_box.x &&
+                  held_trusted.x == trusted.x,
+              "31458 ordinary trial keeps agreeing UNKNOWN observation temporarily and rolls back staged");
+
+  auto low_score = dipped;
+  low_score.raw_score = 0.54F;
+  const auto [floor, floor_trusted] = run_trial(config, unknown, low_score,
+                                               recent_box, staged_box);
+  expect_true(floor.tracking_phase == TrackingPhase::kSearching &&
+                  std::string(floor.unknown_grace_exit_reason) == "SCORE_FLOOR",
+              "ordinary trial still enforces raw-score floor");
+  const auto [conflict, conflict_trusted] = run_trial(
+      config, unknown, dipped, recent_box, BBox{2300, 1076, 119, 129});
+  expect_true(conflict.tracking_phase == TrackingPhase::kSearching &&
+                  !conflict.unknown_grace_active,
+              "ordinary trial position conflict cannot enter grace");
+  const auto [geometry, geometry_trusted] = run_trial(
+      config, unknown, dipped, BBox{2400, 1076, 119, 129},
+      BBox{2405, 1080, 119, 129});
+  expect_true(geometry.tracking_phase == TrackingPhase::kSearching &&
+                  !geometry.unknown_grace_active,
+              "ordinary trial still enforces motion-relative geometry");
+  const auto [known, known_trusted] = run_trial(
+      config, make_fixed_target_class(2, true), dipped, recent_box, staged_box);
+  expect_true(known.tracking_phase == TrackingPhase::kSearching,
+              "known target retains ordinary trial behavior");
+  ControllerConfig disabled = config;
+  disabled.unknown_response_grace_ms = 0;
+  const auto [off, off_trusted] = run_trial(disabled, unknown, dipped,
+                                           recent_box, staged_box);
+  expect_true(off.tracking_phase == TrackingPhase::kSearching,
+              "disabled UNKNOWN grace retains ordinary trial behavior");
+
+  ResolvedControllerFixture reanchor(config);
+  reanchor.initialize(trusted, 0, 0, frame, unknown);
+  reanchor.motion_.initialize(BBox{2642, 1269, 119, 129}, 0,
+                              frame.width, frame.height);
+  const auto lost = reject_frame(reanchor, 1, 40);
+  expect_true(lost.tracking_phase == TrackingPhase::kSearching &&
+                  std::string(lost.motion_gate_reason) ==
+                      "SEARCH_REANCHORED_LAST_TRUSTED",
+              "stale UNKNOWN motion estimate is reanchored at search entry");
+  expect_near(lost.tracking_bbox.x, trusted.x, 0.01F,
+              "first search output uses last trusted position");
+  const auto next = reanchor.begin_frame(2, 80, false);
+  expect_near(next.predicted_bbox.x, trusted.x, 0.01F,
+              "next search crop remains at last trusted position");
+  reanchor.abort_frame();
+}
+
+void test_unknown_stable_response_recovery() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.unknown_response_grace_ms = 1500;
+  config.unknown_response_recovery_ms = 60;
+  config.unknown_response_stable_recovery_ms = 120;
+  config.unknown_search_seed_min_ms = 120;
+  config.stable_frames_for_update = 50;
+  config.reliable_psr = 4.2F;
+  config.weak_psr = 4.0F;
+  config.reliable_peak_margin = 0.04F;
+  config.weak_peak_margin = 0.02F;
+  const BBox target{100, 80, 30, 30};
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  const ResponseMetrics weak_margin{0.95F, 0.94F, 5.4F, 15.0F, 0.03F};
+  const ResponseMetrics clean_margin{0.95F, 0.94F, 5.4F, 15.0F, 0.09F};
+  const ResponseMetrics relative_dip{0.95F, 0.94F, 5.4F, 15.0F, 0.06F};
+  const ResponseMetrics sequence[] = {
+      weak_margin, clean_margin, weak_margin, relative_dip, clean_margin};
+  const auto seed_reference = [&](ResolvedControllerFixture& controller) {
+    for (int i = 0; i < config.occlusion_reference_window; ++i) {
+      controller.response_baseline_.observe_trusted(
+          {0.95F, 0.94F, 5.7F, 16.0F, 0.10F});
+    }
+  };
+  const auto step = [&](ResolvedControllerFixture& controller, int id,
+                        const ResponseMetrics& metrics) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto observation = reliable_observation(plan, TemplateKind::kRecent,
+                                            target, id);
+    observation.metrics = metrics;
+    return controller.finish_frame(plan, {observation}, std::nullopt);
+  };
+
+  ResolvedControllerFixture candidate(config);
+  candidate.initialize(target, 0, 0, {400, 300}, unknown);
+  seed_reference(candidate);
+  for (int id = 1; id < 5; ++id) {
+    const auto out = step(candidate, id, sequence[id - 1]);
+    expect_true(out.tracking_phase == TrackingPhase::kSuspected &&
+                    !out.accepted && out.unknown_grace_active,
+                "an isolated clean peak cannot prematurely end UNKNOWN grace");
+  }
+  const auto recovered = step(candidate, 5, sequence[4]);
+  expect_true(recovered.accepted && !recovered.reacquired &&
+                  std::string(recovered.unknown_grace_exit_reason) ==
+                      "RECOVERED_STABLE_RESPONSE" &&
+                  recovered.unknown_grace_stable_ms == 160 &&
+                  recovered.unknown_grace_peak_clean_frames == 2,
+              "two clean peaks plus stable geometry recover despite intermittent margin dips");
+
+  ControllerConfig previous = config;
+  previous.unknown_response_stable_recovery_ms = 0;
+  previous.unknown_search_seed_min_ms = 0;
+  ResolvedControllerFixture baseline(previous);
+  baseline.initialize(target, 0, 0, {400, 300}, unknown);
+  seed_reference(baseline);
+  for (int id = 1; id <= 5; ++id) {
+    const auto out = step(baseline, id, sequence[id - 1]);
+    if (id == 5) {
+      expect_true(out.unknown_grace_active && !out.accepted,
+                  "turning off both fixes preserves the old recovery behavior");
+    }
+  }
+
+  ResolvedControllerFixture disagreement(config);
+  disagreement.initialize(target, 0, 0, {400, 300}, unknown);
+  seed_reference(disagreement);
+  for (int id = 1; id < 5; ++id) {
+    step(disagreement, id, sequence[id - 1]);
+  }
+  const auto conflict_plan = disagreement.begin_frame(5, 200, false);
+  auto recent = reliable_observation(conflict_plan, TemplateKind::kRecent,
+                                     target, 5);
+  recent.metrics = clean_margin;
+  auto safe = reliable_observation(conflict_plan, TemplateKind::kSafe,
+                                   {120, 80, 30, 30}, 5);
+  safe.metrics = clean_margin;
+  const auto conflicted = disagreement.finish_frame(conflict_plan,
+      {recent, safe}, std::nullopt);
+  expect_true(conflicted.tracking_phase == TrackingPhase::kSuspected &&
+                  !conflicted.accepted && !disagreement.unknown_grace_trace_,
+              "disagreeing reliable Safe head vetoes stable UNKNOWN recovery");
+
+  ResolvedControllerFixture known_candidate(config);
+  ResolvedControllerFixture known_baseline(previous);
+  const auto fixed = make_fixed_target_class(2, true);
+  known_candidate.initialize(target, 0, 0, {400, 300}, fixed);
+  known_baseline.initialize(target, 0, 0, {400, 300}, fixed);
+  seed_reference(known_candidate);
+  seed_reference(known_baseline);
+  for (int id = 1; id <= 5; ++id) {
+    const auto on = step(known_candidate, id, sequence[id - 1]);
+    const auto off = step(known_baseline, id, sequence[id - 1]);
+    expect_true(on.tracking_phase == off.tracking_phase &&
+                    on.accepted == off.accepted &&
+                    on.tracking_bbox.x == off.tracking_bbox.x,
+                "known-class tracking is unchanged by UNKNOWN-only fixes");
+  }
+}
+
+void test_unknown_provisional_search_seed() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.unknown_response_grace_ms = 200;
+  config.unknown_response_stable_recovery_ms = 0;
+  config.unknown_search_seed_min_ms = 120;
+  config.stable_frames_for_update = 50;
+  config.motion_search_enabled = true;
+  config.reliable_psr = 4.2F;
+  config.weak_psr = 4.0F;
+  config.reliable_peak_margin = 0.04F;
+  config.weak_peak_margin = 0.02F;
+  const BBox trusted{100, 80, 30, 30};
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  const ResponseMetrics weak_margin{0.95F, 0.94F, 5.4F, 15.0F, 0.03F};
+  const ResponseMetrics clean_margin{0.95F, 0.94F, 5.4F, 15.0F, 0.09F};
+  const auto step = [&](ResolvedControllerFixture& controller, int id,
+                        const ResponseMetrics& metrics) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto observation = reliable_observation(
+        plan, TemplateKind::kRecent,
+        BBox{100.0F + 12.0F * id, 80, 30, 30}, id);
+    observation.metrics = metrics;
+    return controller.finish_frame(plan, {observation}, std::nullopt);
+  };
+  ResolvedControllerFixture candidate(config);
+  candidate.initialize(trusted, 0, 0, {400, 300}, unknown);
+  for (int id = 1; id <= 4; ++id) {
+    const auto out = step(candidate, id, id == 2 ? clean_margin : weak_margin);
+    expect_true(out.unknown_grace_active && !out.accepted,
+                "spatially coherent weak-margin observations remain provisional");
+  }
+  const auto saved_trace = candidate.unknown_grace_trace_;
+  candidate.begin_frame(5, 200, false);
+  candidate.abort_frame();
+  expect_true(candidate.unknown_grace_trace_.has_value() && saved_trace &&
+                  candidate.unknown_grace_trace_->bbox.x == saved_trace->bbox.x &&
+                  candidate.unknown_grace_trace_->frames == saved_trace->frames,
+              "aborted frame restores provisional search evidence");
+  step(candidate, 5, weak_margin);
+  const auto lost = step(candidate, 6, weak_margin);
+  expect_true(lost.tracking_phase == TrackingPhase::kSearching &&
+                  !lost.accepted &&
+                  std::string(lost.unknown_grace_exit_reason) == "TIMEOUT" &&
+                  std::string(lost.motion_gate_reason) ==
+                      "SEARCH_REANCHORED_GRACE_TRACE" &&
+                  lost.unknown_grace_stable_ms == 200,
+              "UNKNOWN timeout seeds search from a sustained provisional trace");
+  expect_near(lost.tracking_bbox.x, 172.0F, 0.01F,
+              "search starts at the recent provisional position");
+  expect_near(candidate.current_bbox().x, trusted.x, 0.01F,
+              "provisional search seed never commits a trusted observation");
+  auto next = candidate.begin_frame(7, 280, false);
+  expect_near(next.predicted_bbox.x, 172.0F, 0.01F,
+              "next search crop remains near the provisional trace");
+  candidate.abort_frame();
+  candidate.initialize(trusted, 8, 320, {400, 300}, unknown);
+  expect_true(!candidate.unknown_grace_trace_,
+              "new click clears provisional search evidence");
+
+  ResolvedControllerFixture hard_failure(config);
+  hard_failure.initialize(trusted, 0, 0, {400, 300}, unknown);
+  for (int id = 1; id <= 5; ++id) {
+    step(hard_failure, id, id == 2 ? clean_margin : weak_margin);
+  }
+  auto floor = weak_margin;
+  floor.raw_score = 0.54F;
+  const auto rejected = step(hard_failure, 6, floor);
+  expect_true(rejected.tracking_phase == TrackingPhase::kSearching &&
+                  std::string(rejected.unknown_grace_exit_reason) == "SCORE_FLOOR" &&
+                  std::string(rejected.motion_gate_reason) !=
+                      "SEARCH_REANCHORED_GRACE_TRACE" &&
+                  !hard_failure.unknown_grace_trace_,
+              "hard score failure cannot reuse a provisional search seed");
+
+  ResolvedControllerFixture interrupted(config);
+  interrupted.initialize(trusted, 0, 0, {400, 300}, unknown);
+  for (int id = 1; id <= 5; ++id) {
+    step(interrupted, id, id == 2 ? clean_margin : weak_margin);
+  }
+  const auto gap_plan = interrupted.begin_frame(6, 450, false);
+  auto gap_observation = reliable_observation(
+      gap_plan, TemplateKind::kRecent, {172, 80, 30, 30}, 6);
+  gap_observation.metrics = weak_margin;
+  const auto gap = interrupted.finish_frame(gap_plan,
+      {gap_observation}, std::nullopt);
+  expect_true(gap.tracking_phase == TrackingPhase::kSearching &&
+                  std::string(gap.unknown_grace_exit_reason) == "INPUT_GAP" &&
+                  std::string(gap.motion_gate_reason) !=
+                      "SEARCH_REANCHORED_GRACE_TRACE",
+              "input gap hard exit cannot use the provisional search seed");
+}
+
+void test_unknown_grace_observed_response_patterns() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.unknown_response_grace_ms = 1500;
+  config.unknown_response_recovery_ms = 60;
+  config.unknown_response_stable_recovery_ms = 120;
+  config.unknown_search_seed_min_ms = 120;
+  config.reliable_psr = 4.2F;
+  config.weak_psr = 4.0F;
+  config.reliable_peak_margin = 0.04F;
+  config.weak_peak_margin = 0.02F;
+  config.stable_frames_for_update = 50;
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  struct Sample {
+    float x;
+    float y;
+    float score;
+    float psr;
+    float apce;
+    float margin;
+  };
+  const auto run = [&](const BBox& initial,
+                       const ResponseMetrics& reference,
+                       const std::vector<Sample>& samples) {
+    ResolvedControllerFixture controller(config);
+    controller.initialize(initial, 0, 0, {3840, 2160}, unknown);
+    for (int i = 0; i < config.occlusion_reference_window; ++i) {
+      controller.response_baseline_.observe_trusted(reference);
+    }
+    ControllerOutput output;
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+      const auto plan = controller.begin_frame(i + 1, (i + 1) * 40, false);
+      const auto& sample = samples[i];
+      auto observation = reliable_observation(plan, TemplateKind::kRecent,
+          {sample.x, sample.y, 128, 128}, i + 1);
+      observation.metrics = {sample.score, 0.95F, sample.psr,
+                             sample.apce, sample.margin};
+      output = controller.finish_frame(plan, {observation}, std::nullopt);
+      if (i + 1 < samples.size()) {
+        expect_true(output.unknown_grace_active && !output.accepted,
+                    "observed response event stays provisional until corroborated");
+      }
+    }
+    return output;
+  };
+  // Response metrics and positions are from pod run 5768, fifth click frames
+  // 966-972 and sixth click frames 1049-1053. This is an observation-event
+  // fixture, not a replay of the saved 4K images or servo behavior.
+  const auto fifth = run({1832, 1026, 128, 128},
+      {0.95F, 0.94F, 5.686291F, 16.057356F, 0.101624F},
+      {{1832.102F, 1025.850F, 0.870487F, 5.077776F, 14.538689F, 0.023077F},
+       {1836.833F, 1017.141F, 0.958809F, 5.210990F, 15.881196F, 0.039383F},
+       {1834.949F, 1026.743F, 0.963643F, 5.669362F, 16.162535F, 0.088248F},
+       {1839.540F, 1017.242F, 0.907722F, 5.184151F, 16.034981F, 0.027614F},
+       {1837.134F, 1026.662F, 0.959837F, 5.563218F, 15.820706F, 0.069950F},
+       {1839.206F, 1015.337F, 0.943243F, 5.002119F, 15.113911F, 0.041262F},
+       {1838.741F, 1026.336F, 0.981040F, 5.684579F, 15.808685F, 0.101392F}});
+  expect_true(fifth.accepted &&
+                  std::string(fifth.unknown_grace_exit_reason) ==
+                      "RECOVERED_STABLE_RESPONSE",
+              "fifth-click response pattern can clear UNKNOWN grace without extending 1500 ms");
+
+  const auto sixth = run({1920, 971, 128, 128},
+      {0.99F, 0.99F, 7.590561F, 20.354029F, 0.228539F},
+      {{1920.084F, 971.517F, 0.994820F, 6.096973F, 18.378151F, 0.025252F},
+       {1923.064F, 964.739F, 0.999392F, 6.958699F, 17.377211F, 0.144089F},
+       {1919.509F, 959.857F, 0.999651F, 7.217295F, 17.733030F, 0.330901F},
+       {1914.932F, 967.807F, 0.999312F, 6.576555F, 16.542660F, 0.135543F},
+       {1910.073F, 965.460F, 0.999521F, 6.855650F, 17.086241F, 0.305656F}});
+  expect_true(sixth.accepted &&
+                  std::string(sixth.unknown_grace_exit_reason) ==
+                      "RECOVERED_STABLE_RESPONSE",
+              "sixth-click alternating peak margin can clear UNKNOWN grace: accepted=" +
+                  std::to_string(sixth.accepted) + " reason=" +
+                  sixth.unknown_grace_exit_reason + " stable=" +
+                  std::to_string(sixth.unknown_grace_stable_ms) + " peaks=" +
+                  std::to_string(sixth.unknown_grace_peak_clean_frames));
+}
+
 int main() {
+  test_unknown_response_grace();
+  test_unknown_grace_independent_recovery_timing();
+  test_unknown_ordinary_probation_grace_and_search_anchor();
+  test_unknown_stable_response_recovery();
+  test_unknown_provisional_search_seed();
+  test_unknown_grace_observed_response_patterns();
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
   test_joint_response_recovery_needs_both_metrics();
@@ -3358,6 +4000,7 @@ int main() {
   test_far_recovery_needs_verified_detector_triad();
   test_near_detector_triad_recovers_changed_target_aspect();
   test_conflicted_recovery_needs_matching_detector_evidence();
+  test_unknown_class_tracker_only_recovery();
   test_recovery_probation_cleanup();
 
   const auto expect_enum_name = [](auto value, const char* expected) {

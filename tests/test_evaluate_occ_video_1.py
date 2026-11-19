@@ -226,11 +226,12 @@ class OccVideoEvaluatorTest(unittest.TestCase):
         report = evaluator.evaluate(contract, rows, "full")
         self.assertEqual(report["verdict"], "PASS")
         self.assertEqual(report["strata"]["visible"]["frames"], 6)
-        for row in rows:
-            row["schema_version"] = 14
-        contract["tracking_session_metadata"] = {"schema_version": 14}
-        current_report = evaluator.evaluate(contract, rows, "full")
-        self.assertEqual(current_report["verdict"], "PASS")
+        for schema in (14, 15, 16):
+            for row in rows:
+                row["schema_version"] = schema
+            contract["tracking_session_metadata"] = {"schema_version": schema}
+            current_report = evaluator.evaluate(contract, rows, "full")
+            self.assertEqual(current_report["verdict"], "PASS")
         self.assertEqual(current_report["reacquisition"]["frames"], [5])
         rows[5]["recovery_confirmation_hits"] = 3
         self.assertEqual(evaluator.evaluate(contract, rows, "full")["verdict"], "PASS")

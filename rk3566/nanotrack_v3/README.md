@@ -13,6 +13,23 @@ The thresholds in `config/visible-default.conf` and
 They are not product thresholds and must be calibrated independently for the
 two modalities.
 
+## Recovery for unknown target classes
+
+An `UNKNOWN` target can recover through NanoTrack candidate verification without
+detector support. Both `recovery_requires_detector_support` and
+`recovery_conflict_requires_detector` apply only to known (`FIXED` or
+`ESTABLISHED`) classes. They do not make an UNKNOWN session wait for detector
+requests that its class policy cannot issue.
+
+UNKNOWN recovery still requires the configured minimum search age, repeated
+reliable observations of one consistent candidate, and the existing geometry
+and template checks. Current identity conflicts reject recovery. After competing
+evidence expires, fresh tracker confirmations can recover without detector
+evidence, even if a conflict occurred earlier. The full-object distance guard
+continues to reject distant unsupported lookalikes. Template application must
+succeed before the recovered observation is committed. This changes recovery
+eligibility only; the response thresholds that enter search remain unchanged.
+
 ## Clean-checkout host verification
 
 From this directory, build and test the RKNN-independent logic with:
@@ -72,7 +89,7 @@ For RK3588 recent/safe candidate verification, build the committed tree with
 -DCMAKE_CXX_FLAGS=-Werror=switch` and the board's RKNN headers and runtime.
 Run the complete native CTest suite before running the video. The candidate
 uses `config/visible-recent-safe-v1.conf` (`calibrated=false`) and writes
-tracking schema v14. Run each target with its own initial ROI and output
+tracking schema v16. Run each target with its own initial ROI and output
 directory, then run `scripts/verify_board.sh` with `EXPECTED_RKNN_TARGET=rk3588`
 and the repository's `scripts/evaluate_occ_video_1.py` with the matching
 `--target-id` and `--scope full`. The v12 verifier checks the optional JSONL
