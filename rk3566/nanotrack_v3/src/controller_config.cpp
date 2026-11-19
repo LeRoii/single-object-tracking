@@ -100,6 +100,7 @@ void set_value(ControllerConfig& config,
   else if (key == "accepted_scale_output_hysteresis_px") config.accepted_scale_output_hysteresis_px = parse_float(key, value);
   else if (key == "accepted_center_smoothing_alpha") config.accepted_center_smoothing_alpha = parse_float(key, value);
   else if (key == "accepted_center_max_correction_ratio") config.accepted_center_max_correction_ratio = parse_float(key, value);
+  else if (key == "search_output_smoothing_alpha") config.search_output_smoothing_alpha = parse_float(key, value);
   else if (key == "max_reacquisition_center_distance") config.max_reacquisition_center_distance = parse_float(key, value);
   else if (key == "recovery_dual_template_max_motion_diagonals") config.recovery_dual_template_max_motion_diagonals = parse_float(key, value);
   else if (key == "adaptive_display_enabled") config.adaptive_display_enabled = parse_bool(key, value);
@@ -135,6 +136,10 @@ void set_value(ControllerConfig& config,
   else if (key == "visual_suspect_min_confidence") config.visual_suspect_min_confidence = parse_float(key, value);
   else if (key == "visual_suspect_max_center_px") config.visual_suspect_max_center_px = parse_float(key, value);
   else if (key == "visual_suspect_consecutive_frames") config.visual_suspect_consecutive_frames = parse_int(key, value);
+  else if (key == "suspected_detector_guard_enabled") config.suspected_detector_guard_enabled = parse_bool(key, value);
+  else if (key == "suspected_detector_guard_min_confidence") config.suspected_detector_guard_min_confidence = parse_float(key, value);
+  else if (key == "suspected_detector_guard_min_iou") config.suspected_detector_guard_min_iou = parse_float(key, value);
+  else if (key == "suspected_detector_guard_required_hits") config.suspected_detector_guard_required_hits = parse_int(key, value);
   else if (key == "occlusion_hold_frames") config.occlusion_hold_frames = parse_int(key, value);
   else if (key == "occlusion_trigger_consecutive_unreliable") config.occlusion_trigger_consecutive_unreliable = parse_int(key, value);
   else if (key == "occlusion_trigger_min_dimension_ratio") config.occlusion_trigger_min_dimension_ratio = parse_float(key, value);
@@ -316,6 +321,12 @@ void validate_controller_config(const ControllerConfig& config) {
     throw std::invalid_argument(
         "accepted center correction ratio must be finite and non-negative");
   }
+  if (!std::isfinite(config.search_output_smoothing_alpha) ||
+      config.search_output_smoothing_alpha < 0.0F ||
+      config.search_output_smoothing_alpha > 1.0F) {
+    throw std::invalid_argument(
+        "search output smoothing alpha must be finite and in [0,1]");
+  }
   if (!std::isfinite(config.max_reacquisition_center_distance) ||
       config.max_reacquisition_center_distance < 0.0F) {
     throw std::invalid_argument(
@@ -397,6 +408,13 @@ void validate_controller_config(const ControllerConfig& config) {
       config.visual_suspect_consecutive_frames < 2 ||
       config.visual_suspect_consecutive_frames > 10) {
     throw std::invalid_argument("visual suspect gate limits are invalid");
+  }
+  if (!in_unit_interval(config.suspected_detector_guard_min_confidence) ||
+      !in_unit_interval(config.suspected_detector_guard_min_iou) ||
+      config.suspected_detector_guard_min_iou == 0.0F ||
+      config.suspected_detector_guard_required_hits < 2 ||
+      config.suspected_detector_guard_required_hits > 5) {
+    throw std::invalid_argument("suspected detector guard limits are invalid");
   }
   if (config.detector_interval_ms <= 0 || config.detector_stale_ms < 0 ||
       config.detector_max_candidates == 0 || config.detector_max_candidates > 3) {
@@ -644,8 +662,16 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.recent_visibility_center_residual << '|'
          << config.visual_suspect_bright_ratio << '|'
          << config.visual_suspect_min_confidence << '|'
+         << config.suspected_detector_guard_enabled << '|'
+         << config.suspected_detector_guard_min_confidence << '|'
+         << config.suspected_detector_guard_min_iou << '|'
+         << config.suspected_detector_guard_required_hits << '|'
          << config.visual_suspect_max_center_px << '|'
          << config.visual_suspect_consecutive_frames;
+  if (config.search_output_smoothing_alpha > 0.0F) {
+    stream << "|search_output_smoothing_alpha="
+           << config.search_output_smoothing_alpha;
+  }
   return stream.str();
 }
 

@@ -1861,6 +1861,67 @@ void test_unified_recovery_candidate_cleanup() {
               "a stale completion cannot carry either candidate or detector history through the frame");
 }
 
+void test_fresh_detector_anchor_survives_unconfirmed_tracker_offset() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.detector_interval_ms = 20;
+  config.detector_candidate_max_center_ratio = 1.0F;
+  config.search_reacquisition_min_age_ms = 0;
+  config.recovery_confirmation_required = 3;
+  ResolvedControllerFixture controller(config);
+  const BBox initial{100, 100, 40, 40};
+  const BBox detector_box{102, 102, 40, 40};
+  controller.initialize(initial, 0, 0, {400, 300}, make_fixed_target_class(2, true));
+  reject_frame(controller, 1, 40);
+  auto plan = controller.begin_frame(2, 80, true);
+  expect_true(plan.detector_request.has_value(),
+              "detector anchor fixture requests a candidate after loss");
+  DetectorBatch batch{2, 80, {{detector_box, 0.9F, 2}}};
+  if (plan.detector_request) batch.generation = plan.detector_request->generation;
+  controller.finish_frame(plan, {}, batch);
+
+  plan = controller.begin_frame(3, 120, false);
+  expect_true(plan.recovery_probe && plan.predicted_bbox.x == detector_box.x &&
+                  plan.predicted_bbox.y == detector_box.y,
+              "fresh detector supplies the first confirmation crop");
+  const BBox offset{96, 96, 40, 40};
+  const auto output = controller.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, offset, 3),
+             reliable_observation(plan, TemplateKind::kSafe, offset, 3)},
+      std::nullopt);
+  expect_true(!output.accepted && output.recovery_confirmation_hits == 1,
+              "one offset tracker response cannot authorize recovery");
+
+  plan = controller.begin_frame(4, 160, false);
+  expect_true(plan.recovery_probe && plan.predicted_bbox.x == detector_box.x &&
+                  plan.predicted_bbox.y == detector_box.y &&
+                  plan.search_hint &&
+                  plan.search_hint->projected_bbox.x == detector_box.x &&
+                  plan.search_hint->projected_bbox.y == detector_box.y,
+              "unconfirmed tracker offset does not drag the next crop away from detector");
+  controller.abort_frame();
+
+  ResolvedControllerFixture small_offset(config);
+  small_offset.initialize(initial, 0, 0, {400, 300}, make_fixed_target_class(2, true));
+  reject_frame(small_offset, 1, 40);
+  plan = small_offset.begin_frame(2, 80, true);
+  if (plan.detector_request) batch.generation = plan.detector_request->generation;
+  small_offset.finish_frame(plan, {}, batch);
+  plan = small_offset.begin_frame(3, 120, false);
+  const BBox near_tracker{101, 101, 40, 40};
+  small_offset.finish_frame(
+      plan, {reliable_observation(plan, TemplateKind::kRecent, near_tracker, 3),
+             reliable_observation(plan, TemplateKind::kSafe, near_tracker, 3)},
+      std::nullopt);
+  plan = small_offset.begin_frame(4, 160, false);
+  expect_true(plan.recovery_probe && plan.predicted_bbox.x == near_tracker.x &&
+                  plan.predicted_bbox.y == near_tracker.y,
+              "small tracker offset retains the existing crop center");
+  small_offset.abort_frame();
+}
+
 void test_subtarget_probe_abort_does_not_advance_cursor() {
   using namespace nanotrack;
   ControllerConfig config;
@@ -2138,6 +2199,182 @@ void test_atomic_search_reacquisition_and_template_probation() {
       std::nullopt);
   expect_true(!output.accepted && !output.reacquired,
               "second hit outside confirmation window cannot commit");
+}
+
+void test_far_recovery_needs_verified_detector_triad() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.recovery_requires_detector_support = true;
+  config.recovery_confirmation_required = 3;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  const BBox initial{40, 30, 20, 20};
+  const BBox returned{125, 90, 20, 20};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(initial, 0, 0, {240, 160});
+  reject_frame(controller, 1, 40);
+  ControllerOutput output;
+  for (std::uint64_t frame : {2U, 3U, 4U}) {
+    const auto plan = controller.begin_frame(frame, frame * 40, false);
+    if (frame == 2) {
+      const auto detector_key = controller.recovery_candidates_.observe(
+          RecoveryCandidateSource::kDetector, returned, 0.9F,
+          plan.timestamp_ms, 2, false, 0.0F);
+      expect_true(detector_key.has_value(), "returning detector candidate is queued");
+    }
+    output = controller.finish_frame(
+        plan,
+        {reliable_observation(plan, TemplateKind::kRecent, returned, frame),
+         reliable_observation(plan, TemplateKind::kSafe, returned, frame)},
+        std::nullopt);
+    if (frame < 4) {
+      expect_true(!output.accepted && !output.reacquired,
+                  "distant candidate remains provisional before three tracker hits");
+    }
+  }
+  expect_true(output.accepted && output.reacquired &&
+                  output.selected_template == TemplateKind::kRecent &&
+                  output.control_source == ControlSource::kObservation,
+              "unique detector and three agreeing tracker hits override stale motion center");
+
+  ResolvedControllerFixture exited(config);
+  const BBox edge{40, 140, 20, 20};
+  const BBox other_car{45, 60, 20, 20};
+  exited.initialize(edge, 0, 0, {240, 160});
+  reject_frame(exited, 1, 40);
+  for (std::uint64_t frame : {2U, 3U, 4U}) {
+    const auto plan = exited.begin_frame(frame, frame * 40, false);
+    if (frame == 2) {
+      exited.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
+                                          other_car, 0.9F, plan.timestamp_ms,
+                                          2, false, 0.0F);
+    }
+    output = exited.finish_frame(
+        plan,
+        {reliable_observation(plan, TemplateKind::kRecent, other_car, frame),
+         reliable_observation(plan, TemplateKind::kSafe, other_car, frame)},
+        std::nullopt);
+  }
+  expect_true(!output.accepted && !output.reacquired,
+              "interior object cannot replace a target that coasted at the image edge");
+}
+
+void test_near_detector_triad_recovers_changed_target_aspect() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.recovery_requires_detector_support = true;
+  config.recovery_confirmation_required = 3;
+  config.detector_max_candidates = 2;
+  config.recent_visibility_height_ratio = 0.98F;
+  config.recent_visibility_center_residual = 0.04F;
+  const FrameSize frame{500, 350};
+  const BBox committed{100, 100, 60, 120};
+  const BBox target{130, 140, 120, 60};
+  ResolvedControllerFixture controller(config);
+  controller.initialize(committed, 0, 0, frame);
+  reject_frame(controller, 1, 40);
+  auto plan = controller.begin_frame(2, 80, false);
+  const auto detector_key = controller.recovery_candidates_.observe(
+      RecoveryCandidateSource::kDetector, target, 0.90F, 80, 2, false, 0.01F);
+  controller.recovery_candidates_.observe(
+      RecoveryCandidateSource::kDetector, {310, 50, 50, 50},
+      0.85F, 80, 2, false, 0.60F);
+  controller.recovery_candidates_.observe(
+      RecoveryCandidateSource::kDetector, {390, 50, 50, 50},
+      0.80F, 80, 2, false, 0.80F);
+  expect_true(detector_key && controller.recovery_candidates_.conflicted(),
+              "unrelated detector overflow is retained as ambiguity");
+  controller.finish_frame(plan, {}, std::nullopt);
+  ControllerOutput output;
+  for (std::uint64_t id : {3U, 4U}) {
+    plan = controller.begin_frame(id, id * 40, false);
+    expect_true(plan.recovery_probe == detector_key,
+                "nearest detector remains the active recovery probe");
+    auto recent = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kRecent, target, id),
+        committed, frame);
+    auto safe = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kSafe, target, id),
+        committed, frame);
+    expect_true(recent.decoded_bbox && recent.bbox.height > target.height,
+                "ordinary committed-box clamp hides the new target aspect");
+    output = controller.finish_frame(plan, {recent, safe}, std::nullopt);
+    if (id == 3) {
+      expect_true(!output.accepted && output.recovery_triad_eligible &&
+                      output.recovery_triad_focused,
+                  "first detector-supported decoded pair remains provisional");
+    }
+  }
+  expect_true(output.accepted && output.reacquired &&
+                  output.selected_template == TemplateKind::kRecent &&
+                  output.recovery_conflict == false &&
+                  std::fabs(output.tracking_bbox.height - target.height) < 1.0F,
+              "second fresh NanoTrack pair recovers the new aspect without detector control");
+  plan = controller.begin_frame(5, 200, false);
+  const BBox committed_after_recovery = controller.current_bbox();
+  const BBox settled{
+      committed_after_recovery.x + 8.0F,
+      committed_after_recovery.y + 2.0F,
+      committed_after_recovery.width,
+      committed_after_recovery.height * 0.96F};
+  output = controller.finish_frame(
+      plan,
+      {reliable_observation(plan, TemplateKind::kRecent, settled, 5),
+       reliable_observation(plan, TemplateKind::kStaged, settled, 5)},
+      std::nullopt);
+  expect_true(output.accepted && output.template_probation_active &&
+                  output.selected_template == TemplateKind::kStaged,
+              "fresh staged and recent agreement survives post-recovery height settling");
+
+  ResolvedControllerFixture distant(config);
+  distant.initialize(committed, 0, 0, frame);
+  reject_frame(distant, 1, 40);
+  plan = distant.begin_frame(2, 80, false);
+  const BBox other{270, 140, 120, 60};
+  distant.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
+                                       other, 0.95F, 80, 2, false, 0.01F);
+  distant.finish_frame(plan, {}, std::nullopt);
+  for (std::uint64_t id : {3U, 4U}) {
+    plan = distant.begin_frame(id, id * 40, false);
+    const auto recent = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kRecent, other, id),
+        committed, frame);
+    const auto safe = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kSafe, other, id),
+        committed, frame);
+    output = distant.finish_frame(plan, {recent, safe}, std::nullopt);
+  }
+  expect_true(!output.accepted && !output.reacquired,
+              "a distant lookalike cannot use detector recentering to bypass the old box clamp");
+
+  const FrameSize edge_frame{500, 260};
+  const BBox edge_committed{100, 100, 60, 120};
+  const BBox edge_target{100, 180, 120, 80};
+  ResolvedControllerFixture edge(config);
+  edge.initialize(edge_committed, 0, 0, edge_frame);
+  reject_frame(edge, 1, 40);
+  plan = edge.begin_frame(2, 80, false);
+  edge.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
+                                    edge_target, 0.95F, 80, 2, false, 0.01F);
+  edge.finish_frame(plan, {}, std::nullopt);
+  for (std::uint64_t id : {3U, 4U}) {
+    plan = edge.begin_frame(id, id * 40, false);
+    auto recent = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kRecent, edge_target, id),
+        edge_committed, edge_frame);
+    auto safe = constrain_tracker_observation(
+        reliable_observation(plan, TemplateKind::kSafe, edge_target, id),
+        edge_committed, edge_frame);
+    output = edge.finish_frame(plan, {recent, safe}, std::nullopt);
+  }
+  expect_true(!output.accepted && !output.reacquired &&
+                  !output.recovery_triad_eligible,
+              "clipped detector box cannot rebase a full-object recovery size");
 }
 
 void test_conflicted_recovery_needs_matching_detector_evidence() {
@@ -2450,6 +2687,48 @@ void test_recent_safe_single_metric_dip_is_tentative() {
   expect_true(output.tracking_phase == TrackingPhase::kTracking && output.accepted &&
                   output.trusted_for_state_update && output.control_valid,
               "one healthy frame clears an isolated pre-entry response dip");
+}
+
+void test_joint_response_recovery_needs_both_metrics() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.suspicion_enter_ms = 100;
+  config.uncertain_ms = 200;
+  const BBox bbox{70, 50, 30, 30};
+  const ResponseMetrics healthy{0.98F, 0.96F, 20, 30, 0.28F};
+  const ResponseMetrics sharp_drop{0.98F, 0.96F, 14, 20, 0.28F};
+  const ResponseMetrics partial_recovery{0.98F, 0.96F, 15.5F, 23, 0.28F};
+  const ResponseMetrics apce_recovered{0.98F, 0.96F, 15.5F, 30, 0.28F};
+  const auto observe = [&](LongTermController& controller, std::uint64_t id,
+                           const ResponseMetrics& metrics) {
+    const auto plan = controller.begin_frame(id, id * 40, false);
+    auto recent = reliable_observation(plan, TemplateKind::kRecent, bbox);
+    recent.metrics = metrics;
+    return controller.finish_frame(plan, {recent}, std::nullopt);
+  };
+  ResolvedControllerFixture waiting(config);
+  ResolvedControllerFixture clears(config);
+  for (auto* controller : {&waiting, &clears}) {
+    controller->initialize(bbox, 0, 0, {320, 240});
+    for (std::uint64_t id = 1; id <= 3; ++id) {
+      expect_true(observe(*controller, id, healthy).accepted,
+                  "clean response seeds the trusted baseline");
+    }
+    const auto drop = observe(*controller, 4, sharp_drop);
+    expect_true(drop.tracking_phase == TrackingPhase::kSuspected && !drop.accepted,
+                "joint response drop starts a tentative episode");
+  }
+  const auto partial = observe(waiting, 5, partial_recovery);
+  expect_true(partial.tracking_phase == TrackingPhase::kSuspected && !partial.accepted &&
+                  partial.observation_present,
+              "both response measures still below recovery midpoint retain suspicion");
+  const auto restored = observe(waiting, 6, healthy);
+  expect_true(restored.tracking_phase == TrackingPhase::kTracking && restored.accepted,
+              "a fully recovered response clears the pre-entry tentative episode");
+  const auto isolated = observe(clears, 5, apce_recovered);
+  expect_true(isolated.tracking_phase == TrackingPhase::kTracking && isolated.accepted,
+              "one recovered response measure avoids extending a transient dip");
 }
 
 void test_sustained_dual_response_loss_stops_trusted_observations() {
@@ -2926,9 +3205,124 @@ void test_recent_safe_rolling_scale() {
 
 }  // namespace
 
+void test_frozen_motion_single_near_detector_probe() {
+  using namespace nanotrack;
+  const auto inspect = [](bool frozen) {
+    ControllerConfig config;
+    config.motion_search_enabled = true;
+    config.detector_interval_ms = 40;
+    ResolvedControllerFixture controller(config);
+    controller.initialize({100, 80, 20, 20}, 0, 0, {400, 300},
+                          make_fixed_target_class(2, true));
+    reject_frame(controller, 1, 40);
+    const auto plan = controller.begin_frame(2, 80, true);
+    expect_true(plan.motion_prediction_confident && plan.detector_request,
+                "near-detector fixture has a confident detector search");
+    if (!plan.detector_request) return;
+    if (frozen) controller.motion_freeze_since_ms_ = 40;
+    DetectorBatch batch;
+    batch.source_frame_id = plan.detector_request->frame_id;
+    batch.source_timestamp_ms = plan.detector_request->timestamp_ms;
+    batch.generation = plan.detector_request->generation;
+    batch.candidates = {{BBox{105, 80, 20, 20}, 0.80F, 2}};
+    if (frozen) batch.candidates.push_back(
+        DetectorCandidate{BBox{150, 80, 20, 20}, 0.90F, 2});
+    const auto result = controller.finish_frame(plan, {}, batch);
+    expect_true(result.detector_candidate_diagnostics[0].queued &&
+                    controller.recovery_candidates_.focused_detector_.has_value() == frozen &&
+                    (!frozen || (result.detector_candidate_diagnostics[1].rejection ==
+                                      DetectorCandidateRejection::kPositionRejected &&
+                                  !result.detector_candidate_diagnostics[1].queued)) &&
+                    !result.accepted && !result.observation_valid,
+                "only frozen trusted motion focuses the sole near detector seed");
+    if (frozen) {
+      const auto next = controller.begin_frame(3, 120, false);
+      expect_true(next.recovery_probe &&
+                      next.recovery_probe->source == RecoveryCandidateSource::kDetector &&
+                      next.hypothesis_source == HypothesisSource::kDetector,
+                  "focused detector receives a tracker probe on the next frame");
+      controller.abort_frame();
+    }
+  };
+  inspect(true);
+  inspect(false);
+}
+
+void test_verified_recovery_blends_fresh_detector_center() {
+  using namespace nanotrack;
+  ControllerConfig config;
+  config.motion_search_enabled = true;
+  config.detector_target_mode = DetectorTargetMode::kFullObject;
+  config.recovery_requires_detector_support = true;
+  config.recovery_confirmation_required = 2;
+  config.max_center_distance = 10.0F;
+  config.max_area_log_change = 10.0F;
+  config.max_aspect_log_change = 10.0F;
+  ResolvedControllerFixture controller(config);
+  controller.initialize({40, 30, 20, 20}, 0, 0, {240, 160});
+  reject_frame(controller, 1, 40);
+  ControllerOutput output;
+  for (std::uint64_t frame : {2U, 3U}) {
+    const auto plan = controller.begin_frame(frame, frame * 40, false);
+    if (frame == 2) {
+      const auto detector_key = controller.recovery_candidates_.observe(
+          RecoveryCandidateSource::kDetector, {125, 90, 20, 20}, 0.9F,
+          plan.timestamp_ms, 2, false, 0.0F);
+      expect_true(detector_key.has_value(), "fresh full-object detector seeds recovery");
+    }
+    const BBox tracked{130, 90, 20, 20};
+    output = controller.finish_frame(plan,
+        {reliable_observation(plan, TemplateKind::kRecent, tracked, frame),
+         reliable_observation(plan, TemplateKind::kSafe, tracked, frame)},
+        std::nullopt);
+    if (frame == 2) {
+      expect_true(!output.accepted && !output.reacquired &&
+                      !output.recovery_detector_center_fused,
+                  "one detector-supported tracker hit cannot authorize control");
+    }
+  }
+  expect_true(output.accepted && output.reacquired &&
+                  output.recovery_detector_center_fused &&
+                  output.selected_observation_bbox.has_value(),
+              "detector center is used only after tracker-verified recovery");
+  if (output.accepted && output.selected_observation_bbox) {
+    expect_near(output.selected_observation_bbox->x, 130.0F, 0.01F,
+                "raw NanoTrack observation stays traceable");
+    expect_near(output.tracking_bbox.x, 127.5F, 0.01F,
+                "accepted center is the midpoint of tracker and detector");
+    expect_near(output.control_bbox.x, output.tracking_bbox.x, 0.01F,
+                "verified blended center is the control box center");
+  }
+
+  ResolvedControllerFixture near(config);
+  near.initialize({40, 30, 20, 20}, 0, 0, {240, 160});
+  reject_frame(near, 1, 40);
+  for (std::uint64_t frame : {2U, 3U}) {
+    const auto plan = near.begin_frame(frame, frame * 40, false);
+    if (frame == 2) {
+      near.recovery_candidates_.observe(RecoveryCandidateSource::kDetector,
+                                        {125, 90, 20, 20}, 0.9F,
+                                        plan.timestamp_ms, 2, false, 0.0F);
+    }
+    const BBox tracked{128, 90, 20, 20};
+    output = near.finish_frame(plan,
+        {reliable_observation(plan, TemplateKind::kRecent, tracked, frame),
+         reliable_observation(plan, TemplateKind::kSafe, tracked, frame)},
+        std::nullopt);
+  }
+  expect_true(output.accepted && output.reacquired &&
+                  !output.recovery_detector_center_fused,
+              "small detector-tracker center difference keeps NanoTrack output");
+  if (output.accepted) {
+    expect_near(output.tracking_bbox.x, 128.0F, 0.01F,
+                "deadband leaves accepted tracker center unchanged");
+  }
+}
+
 int main() {
   test_recent_safe_tentative_tracking();
   test_recent_safe_single_metric_dip_is_tentative();
+  test_joint_response_recovery_needs_both_metrics();
   test_sustained_dual_response_loss_stops_trusted_observations();
   test_car_partial_visibility_needs_shrink_and_motion();
   test_search_uses_last_clean_response_motion_trend();
@@ -2956,8 +3350,13 @@ int main() {
   test_target_class_gate();
   test_time_based_motion_search_control();
   test_unified_recovery_candidate_cleanup();
+  test_fresh_detector_anchor_survives_unconfirmed_tracker_offset();
+  test_frozen_motion_single_near_detector_probe();
+  test_verified_recovery_blends_fresh_detector_center();
   test_subtarget_probe_abort_does_not_advance_cursor();
   test_atomic_search_reacquisition_and_template_probation();
+  test_far_recovery_needs_verified_detector_triad();
+  test_near_detector_triad_recovers_changed_target_aspect();
   test_conflicted_recovery_needs_matching_detector_evidence();
   test_recovery_probation_cleanup();
 

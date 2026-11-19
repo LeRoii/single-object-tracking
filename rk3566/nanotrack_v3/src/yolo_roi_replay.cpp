@@ -14,9 +14,13 @@
 
 int main(int argc, char** argv) {
   try {
-    if (argc != 7) {
+    if (argc != 7 && argc != 8) {
       throw std::invalid_argument(
-          "usage: yolo_roi_replay MODEL MANIFEST LABELS VIDEO ROIS OUTPUT.csv");
+          "usage: yolo_roi_replay MODEL MANIFEST LABELS VIDEO ROIS OUTPUT.csv [fill]");
+    }
+    const bool fill_canvas = argc == 8 && std::string(argv[7]) == "fill";
+    if (argc == 8 && !fill_canvas) {
+      throw std::invalid_argument("unknown ROI canvas mode");
     }
     nanotrack::YoloRknnEngineConfig config;
     config.model_path = argv[1];
@@ -63,9 +67,11 @@ int main(int argc, char** argv) {
           static_cast<int>(std::lround(center_y - 0.5F * size)),
           0, frame.rows - size);
       cv::Mat canvas(640, 640, CV_8UC3, cv::Scalar(114, 114, 114));
+      const int content_size = fill_canvas ? 640 : 320;
+      const int inset = (640 - content_size) / 2;
       cv::resize(frame(cv::Rect(left, top, size, size)),
-                 canvas(cv::Rect(160, 160, 320, 320)),
-                 cv::Size(320, 320));
+                 canvas(cv::Rect(inset, inset, content_size, content_size)),
+                 cv::Size(content_size, content_size));
       const nanotrack::ImageView view{
           canvas.data, canvas.cols, canvas.rows, canvas.step,
           canvas.channels()};
@@ -77,11 +83,11 @@ int main(int argc, char** argv) {
       std::size_t rank = 0;
       for (const auto& candidate : result.candidates) {
         const auto& box = candidate.bbox;
-        const float factor = static_cast<float>(size) / 320.0F;
+        const float factor = static_cast<float>(size) / content_size;
         output << frame_id << ',' << rank++ << ','
                << candidate.confidence << ','
-               << left + (box.x - 160.0F) * factor << ','
-               << top + (box.y - 160.0F) * factor << ','
+               << left + (box.x - inset) * factor << ','
+               << top + (box.y - inset) * factor << ','
                << box.width * factor << ',' << box.height * factor << ','
                << result.timing.preprocess_ms << ','
                << result.timing.inference_ms << ','

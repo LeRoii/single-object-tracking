@@ -3,6 +3,7 @@
 #include "tracking_log.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -161,8 +162,10 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
       nanotrack::DetectorBatch batch;
       batch.source_frame_id = request.frame_id;
       batch.source_timestamp_ms = request.timestamp_ms;
+      batch.source_timestamp_ms -= source_age_ms;
       batch.generation = request.generation;
       batch.purpose = request.purpose;
+      batch.candidates = automatic_candidates;
       next_batch = batch;
     }
   }
@@ -202,6 +205,8 @@ class FakeDetector final : public nanotrack::DetectorAdapter {
   bool ready = true;
   bool fail_next_poll = false;
   bool complete_immediately = false;
+  std::int64_t source_age_ms = 0;
+  std::vector<nanotrack::DetectorCandidate> automatic_candidates;
   int submit_calls = 0;
   int poll_calls = 0;
   int blocking_calls = 0;
@@ -1641,27 +1646,194 @@ void test_visual_suspect_gate() {
               "matching Recent and Safe confirm the first fresh visual hit");
 }
 
+void test_visual_probe_corrob_requires_reliable_tracker_response() {
+  using namespace nanotrack;
+  const auto run = [](float apce, float peak_margin,
+                      float detector_confidence, bool expect_corrob) {
+    ControllerConfig config;
+    config.suspicion_enter_ms = 1;
+    config.uncertain_ms = 1000;
+    config.local_recovery_ms = 2000;
+    config.assisted_recovery_ms = 3000;
+    config.reliable_psr = 6.5F;
+    config.reliable_apce = 8.0F;
+    config.reliable_peak_margin = 0.02F;
+    config.weak_peak_margin = 0.02F;
+    config.recent_visibility_height_ratio = 0.98F;
+    config.recent_visibility_center_residual = 0.04F;
+    config.visual_suspect_bright_ratio = 0.90F;
+    FakeTracker tracker;
+    tracker.emit_recent_safe_roles = true;
+    FakeDetector detector;
+    detector.enabled = true;
+    DetectorBatch batch;
+    // The 120-pixel visual crop maps this canvas box back to the 20x20
+    // tracker observation around (40,30).
+    batch.candidates.push_back(
+        DetectorCandidate{BBox{267.0F, 240.0F, 53.0F, 53.0F},
+                          detector_confidence, 2});
+    detector.blocking_batch = batch;
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+    const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+    for (std::uint64_t frame = 1; frame <= 4; ++frame)
+      runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      const ResponseMetrics metrics{0.92F, 0.90F, 7.0F, apce, peak_margin};
+      const BBox shrinking{plan.predicted_bbox.x + 2.0F, plan.predicted_bbox.y,
+                           plan.predicted_bbox.width, plan.predicted_bbox.height * 0.95F};
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, shrinking,
+                             metrics, TemplateKind::kRecent, tracker.search_token + 1,
+                             shrinking},
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, shrinking,
+                             metrics, TemplateKind::kSafe, tracker.search_token + 1,
+                             shrinking}};
+    };
+    std::fill(pixels.begin(), pixels.end(), 0);
+    const auto suspect = runtime.process_frame(image, 5, 200);
+    expect_true(suspect.output.tracking_phase == TrackingPhase::kSuspected,
+                "response dip enters SUSPECTED before the visual probe");
+    const auto probed = runtime.process_frame(image, 6, 240);
+    expect_true(probed.visual_probe_hit,
+                "same-frame detector sees the tracker-sized target");
+    if (expect_corrob) {
+      expect_true(probed.visual_probe_target_corrob &&
+                      probed.plan.suspected_detector_guard &&
+                      !probed.plan.visual_occlusion_search &&
+                      probed.output.accepted &&
+                      std::string(probed.output.motion_gate_reason) ==
+                          "VISUAL_TARGET_REANCHOR" &&
+                      probed.output.tracking_phase == TrackingPhase::kTracking,
+                  "independent detector agreement restores a reliable Recent observation");
+    } else {
+      expect_true(!probed.visual_probe_target_corrob &&
+                      !probed.plan.suspected_detector_guard &&
+                      probed.plan.visual_occlusion_search &&
+                      !probed.output.accepted &&
+                      probed.output.tracking_phase == TrackingPhase::kSearching,
+                  "degraded response distinctiveness still forces search despite detector overlap");
+    }
+  };
+  run(12.0F, 0.15F, 0.8F, true);
+  run(9.0F, 0.15F, 0.8F, false);
+  run(12.0F, 0.04F, 0.8F, false);
+  run(12.0F, 0.15F, 0.45F, false);
+}
+
+void test_guarded_visual_miss_revocation() {
+  using namespace nanotrack;
+  const auto run = [](bool guard_enabled) {
+    ControllerConfig config;
+    config.suspected_detector_guard_enabled = guard_enabled;
+    config.suspected_detector_guard_required_hits = 2;
+    config.detector_interval_ms = 40;
+    config.detector_stale_ms = 150;
+    config.suspicion_enter_ms = 1;
+    config.uncertain_ms = 1000;
+    config.local_recovery_ms = 2000;
+    config.assisted_recovery_ms = 3000;
+    config.visual_suspect_bright_ratio = 0.90F;
+    config.reliable_psr = 5.0F;
+    config.reliable_peak_margin = 0.04F;
+    config.response_psr_drop_ratio = 0.20F;
+    config.occlusion_peak_margin_drop = 0.05F;
+    config.stable_frames_for_update = 99;
+    FakeTracker tracker;
+    FakeDetector detector;
+    detector.enabled = true;
+    detector.complete_immediately = true;
+    detector.automatic_candidates = {{BBox{40, 30, 20, 20}, 0.80F, 2}};
+    DetectorBatch initial;
+    initial.candidates.push_back(
+        DetectorCandidate{BBox{265, 239, 54, 54}, 0.9F, 2});
+    detector.blocking_batch = initial;
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+    const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      const bool degraded = plan.frame_id >= 5;
+      const ResponseMetrics metrics = degraded
+          ? ResponseMetrics{0.92F, 0.90F, 6.0F, 12.0F, 0.05F}
+          : ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F};
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms,
+                             BBox{40, 30, 20, 20}, metrics,
+                             TemplateKind::kRecent, tracker.search_token + 1}};
+    };
+    std::vector<RuntimeFrameResult> frames;
+    for (int frame = 1; frame <= 7; ++frame) {
+      frames.push_back(runtime.process_frame(image, frame, frame * 40));
+    }
+    detector.automatic_candidates.clear();
+    detector.blocking_batch = DetectorBatch{};
+    std::fill(pixels.begin(), pixels.end(), 0);
+    for (int frame = 8; frame <= 16; ++frame) {
+      frames.push_back(runtime.process_frame(image, frame, frame * 40));
+      if (frames.back().output.tracking_phase == TrackingPhase::kSearching) break;
+    }
+    return frames;
+  };
+  const auto guarded = run(true);
+  expect_true(std::any_of(guarded.begin(), guarded.end(),
+                  [](const RuntimeFrameResult& frame) {
+                    return frame.suspected_detector_guard_applied;
+                  }), "test fixture must first corroborate a visible NanoTrack target");
+  int misses = 0;
+  bool two_misses_searched = false;
+  for (const auto& frame : guarded) {
+    if (frame.visual_probe_ran && !frame.visual_probe_hit) {
+      ++misses;
+      if (misses == 2 && frame.plan.visual_occlusion_search &&
+          frame.output.tracking_phase == TrackingPhase::kSearching) {
+        two_misses_searched = true;
+      }
+    } else {
+      misses = 0;
+    }
+  }
+  expect_true(two_misses_searched,
+              "two fresh visual misses revoke prior detector guard support");
+  const auto unguarded = run(false);
+  expect_true(std::none_of(unguarded.begin(), unguarded.end(),
+                  [](const RuntimeFrameResult& frame) {
+                    return frame.plan.visual_occlusion_search;
+                  }),
+              "visual misses alone cannot force an unprotected track to search");
+}
+
 void test_lower_band_visibility_veto() {
   using namespace nanotrack;
-  ControllerConfig config;
-  config.lower_band_visibility_veto = true;
-  FakeTracker tracker;
-  tracker.emit_recent_safe_roles = true;
-  FakeDetector detector;
-  detector.enabled = true;
-  DetectorBatch initial_batch;
-  initial_batch.candidates.push_back(
-      DetectorCandidate{BBox{40.0F, 30.0F, 20.0F, 20.0F}, 0.9F, 2});
-  detector.blocking_batch = initial_batch;
-  LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
-  std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
-  const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
-  runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
-  for (std::uint64_t frame = 1; frame <= 4; ++frame) {
-    runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
-  }
-  std::fill(pixels.begin(), pixels.end(), 0);
-  const auto blocked = runtime.process_frame(image, 5, 200, true);
+  const auto run = [](float final_psr) {
+    ControllerConfig config;
+    config.lower_band_visibility_veto = true;
+    FakeTracker tracker;
+    tracker.emit_recent_safe_roles = true;
+    FakeDetector detector;
+    detector.enabled = true;
+    DetectorBatch initial_batch;
+    initial_batch.candidates.push_back(
+        DetectorCandidate{BBox{40.0F, 30.0F, 20.0F, 20.0F}, 0.9F, 2});
+    detector.blocking_batch = initial_batch;
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    std::vector<std::uint8_t> pixels(200 * 120 * 3, 200);
+    const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
+    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+    for (std::uint64_t frame = 1; frame <= 4; ++frame) {
+      runtime.process_frame(image, frame, static_cast<std::int64_t>(frame * 40));
+    }
+    tracker.observation_override = std::vector<TrackerObservation>{
+        TrackerObservation{5, 200, BBox{40, 30, 20, 20},
+                           ResponseMetrics{0.92F, 0.90F, final_psr, 12.0F, 0.20F},
+                           TemplateKind::kRecent, 5}};
+    std::fill(pixels.begin(), pixels.end(), 0);
+    return runtime.process_frame(image, 5, 200, true);
+  };
+  const auto blocked = run(10.0F);
   expect_true(blocked.plan.visual_occlusion_search &&
                   blocked.output.tracking_phase == TrackingPhase::kSearching &&
                   !blocked.output.observation_present &&
@@ -1672,6 +1844,309 @@ void test_lower_band_visibility_veto() {
                   std::to_string(blocked.output.observation_present) + "/" +
                   std::to_string(static_cast<int>(blocked.output.control_source)) + "/" +
                   std::to_string(blocked.target_class.target_class_id.value_or(-1)));
+  const auto supported = run(10.5F);
+  expect_true(!supported.plan.visual_occlusion_search && supported.output.accepted,
+              "improved PSR prevents a scene line from forcing SEARCHING");
+}
+
+void test_suspected_detector_guard(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const auto run = [&](bool enabled, BBox detection, int class_id,
+                       std::int64_t detector_age_ms,
+                       bool duplicate = false, bool lose_tracker = false,
+                       float* internal_width = nullptr,
+                       float* committed_width = nullptr) {
+    ControllerConfig config;
+    config.suspected_detector_guard_enabled = enabled;
+    config.suspected_detector_guard_min_confidence = 0.35F;
+    config.suspected_detector_guard_min_iou = 0.50F;
+    config.suspected_detector_guard_required_hits = 2;
+    config.detector_interval_ms = 40;
+    config.detector_stale_ms = 150;
+    config.reliable_psr = 5.0F;
+    config.reliable_peak_margin = 0.04F;
+    config.response_psr_drop_ratio = 0.20F;
+    config.occlusion_peak_margin_drop = 0.05F;
+    config.stable_frames_for_update = 99;
+    FakeTracker tracker;
+    FakeDetector detector;
+    detector.enabled = true;
+    detector.complete_immediately = true;
+    detector.source_age_ms = detector_age_ms;
+    detector.automatic_candidates = {{detection, 0.80F, class_id}};
+    if (duplicate) {
+      detector.automatic_candidates.push_back({detection, 0.75F, class_id});
+    }
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    const BBox target{40, 30, 20, 20};
+    runtime.initialize(image, target, 0, 0);
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      if (lose_tracker && plan.frame_id >= 8) {
+        tracker.observation_override = std::vector<TrackerObservation>{};
+        return;
+      }
+      const bool degraded = plan.frame_id >= 5;
+      const ResponseMetrics metrics = degraded
+          ? ResponseMetrics{0.92F, 0.90F, 6.0F, 12.0F, 0.05F}
+          : ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F};
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms, target,
+                             metrics, TemplateKind::kRecent,
+                             tracker.search_token + 1}};
+    };
+    std::vector<RuntimeFrameResult> frames;
+    for (int frame = 1; frame <= 14; ++frame) {
+      frames.push_back(runtime.process_frame(image, frame, frame * 40));
+    }
+    if (internal_width) *internal_width = runtime.controller().current_bbox().width;
+    if (committed_width) *committed_width = tracker.committed_bbox.width;
+    return frames;
+  };
+  const BBox target{40, 30, 20, 20};
+  const auto supported = run(true, target, 2, 0);
+  const auto baseline = run(false, target, 2, 0);
+  const auto wrong_class = run(true, target, 0, 0);
+  const auto wrong_box = run(true, BBox{110, 30, 20, 20}, 2, 0);
+  const auto stale = run(true, target, 2, 200);
+  const auto ambiguous = run(true, target, 2, 0, true);
+  const auto no_tracker = run(true, target, 2, 0, false, true);
+  float internal_width = 0.0F;
+  float committed_width = 0.0F;
+  const auto wider = run(true, BBox{38, 28, 24, 24}, 2, 0,
+                         false, false, &internal_width, &committed_width);
+  expect_true(supported[4].output.tracking_phase == TrackingPhase::kSuspected,
+              "PSR and peak-margin drop first makes the tracker tentative");
+  expect_true(supported[5].detector.request_purpose ==
+                  DetectorRequestPurpose::kSuspectedValidation &&
+                  supported[5].suspected_detector_guard_hits == 1 &&
+                  !supported[5].suspected_detector_guard_applied,
+              "first matching detector result is evidence but cannot clear suspicion");
+  expect_true(supported[6].suspected_detector_guard_applied &&
+                  supported[6].output.accepted &&
+                  supported[6].output.tracking_phase == TrackingPhase::kTracking &&
+                  supported[6].output.motion_update_valid,
+              "second matching detector result permits a reliable NanoTrack observation");
+  expect_true(supported[7].suspected_detector_guard_applied &&
+                  supported[7].output.accepted,
+              "fresh matching detector evidence maintains tracking through low PSR");
+  expect_true(std::none_of(baseline.begin(), baseline.end(),
+                  [](const RuntimeFrameResult& frame) {
+                    return frame.suspected_detector_guard_applied;
+                  }) &&
+                  baseline.back().output.tracking_phase == TrackingPhase::kSearching,
+              "disabled guard preserves the existing search transition");
+  for (const auto* frames : {&wrong_class, &wrong_box, &stale, &ambiguous}) {
+    expect_true(std::none_of(frames->begin(), frames->end(),
+                    [](const RuntimeFrameResult& frame) {
+                      return frame.suspected_detector_guard_applied;
+                    }) &&
+                    frames->back().output.tracking_phase == TrackingPhase::kSearching,
+                "mismatched, ambiguous, or stale detector evidence cannot override low PSR");
+  }
+  expect_true(no_tracker[6].suspected_detector_guard_applied &&
+                  !no_tracker[7].output.accepted &&
+                  !no_tracker[7].suspected_detector_guard_applied,
+              "detector support never authorizes control without a tracker observation");
+  expect_true(wider[6].detector_size_output_applied &&
+                  wider[6].output.tracking_bbox.width > target.width &&
+                  wider[6].output.tracking_bbox.width <= target.width * 1.1F + 0.01F &&
+                  std::fabs(wider[6].output.tracking_bbox.x +
+                            0.5F * wider[6].output.tracking_bbox.width -
+                            (target.x + 0.5F * target.width)) < 0.01F &&
+                  std::fabs(internal_width - target.width) < 0.01F &&
+                  std::fabs(committed_width - target.width) < 0.01F,
+              "detector-confirmed size is published without changing the tracker crop");
+  expect_true(std::none_of(wrong_class.begin(), wrong_class.end(),
+                  [](const RuntimeFrameResult& frame) {
+                    return frame.detector_size_output_applied;
+                  }),
+              "wrong-class detector cannot change published tracking dimensions");
+}
+
+void test_tracking_size_detector_evidence(const nanotrack::ImageView& image) {
+  using namespace nanotrack;
+  const auto run = [&](std::vector<DetectorCandidate> candidates,
+                       std::int64_t source_age_ms = 0,
+                       bool detector_dropout = false,
+                       bool degrade_third = false) {
+    ControllerConfig config;
+    config.adaptive_display_enabled = true;
+    config.display_detector_refresh_enabled = true;
+    config.display_detector_min_interval_ms = 40;
+    config.display_detector_initial_interval_ms = 40;
+    config.detector_stale_ms = 150;
+    config.detector_confirmation_iou = 0.50F;
+    config.confirmation_required = 2;
+    config.max_accepted_scale_step_ratio = 0.05F;
+    config.accepted_center_smoothing_alpha = 0.35F;
+    config.accepted_center_max_correction_ratio = 0.25F;
+    config.stable_frames_for_update = 99;
+    if (degrade_third) {
+      config.suspicion_enter_ms = 1;
+      config.uncertain_ms = 400;
+    }
+    FakeTracker tracker;
+    tracker.reliable_bbox = BBox{40, 30, 20, 20};
+    tracker.on_infer = [&] {
+      const auto& plan = tracker.inferred_plans.back();
+      tracker.observation_override = std::vector<TrackerObservation>{
+          TrackerObservation{plan.frame_id, plan.timestamp_ms,
+                             BBox{40, 30, 20, 20},
+                             degrade_third && plan.frame_id >= 3
+                                 ? ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.08F}
+                                 : ResponseMetrics{0.92F, 0.90F, 10.0F, 12.0F, 0.20F},
+                             TemplateKind::kRecent, tracker.search_token + 1}};
+    };
+    FakeDetector detector;
+    detector.enabled = true;
+    detector.complete_immediately = true;
+    detector.source_age_ms = source_age_ms;
+    detector.automatic_candidates = std::move(candidates);
+    LongTermRuntime runtime(config, tracker, detector, {2, 9, {}});
+    runtime.initialize(image, BBox{40, 30, 20, 20}, 0, 0);
+    const auto first = runtime.process_frame(image, 1, 40);
+    const auto second = runtime.process_frame(image, 2, 80);
+    if (detector_dropout) detector.enabled = false;
+    const auto third = runtime.process_frame(image, 3, 120);
+    const auto fourth = runtime.process_frame(image, 4, 160);
+    RuntimeFrameResult last = fourth;
+    for (int frame = 5; frame <= 12; ++frame) {
+      last = runtime.process_frame(image, frame, frame * 40);
+    }
+    return std::array<float, 16>{first.output.tracking_bbox.width,
+        second.output.tracking_bbox.width,
+        runtime.controller().current_bbox().width,
+        tracker.committed_bbox.width,
+        second.detector_tracking_size_confirmed ? 1.0F : 0.0F,
+        last.output.tracking_bbox.width,
+        first.output.tracking_bbox.x + 0.5F * first.output.tracking_bbox.width,
+        second.output.tracking_bbox.x + 0.5F * second.output.tracking_bbox.width,
+        last.output.tracking_bbox.x + 0.5F * last.output.tracking_bbox.width,
+        tracker.committed_bbox.x + 0.5F * tracker.committed_bbox.width,
+        third.output.tracking_bbox.width,
+        third.detector_size_output_retained ? 1.0F : 0.0F,
+        static_cast<float>(static_cast<int>(fourth.output.tracking_phase)),
+        fourth.output.control_bbox.x + 0.5F * fourth.output.control_bbox.width,
+        fourth.output.tracking_bbox.width,
+        fourth.detector_size_output_retained ? 1.0F : 0.0F};
+  };
+  const auto corroborated = run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}});
+  const auto undersized_tracker = run({
+      DetectorCandidate{BBox{35, 25, 30, 30}, 0.8F, 2}});
+  const auto offset_detector = run({
+      DetectorCandidate{BBox{39, 28, 24, 24}, 0.8F, 2}});
+  const auto centered_smaller = run({
+      DetectorCandidate{BBox{44, 34, 12, 12}, 0.8F, 2}});
+  const auto strongly_oversized_tracker = run({
+      DetectorCandidate{BBox{45.5F, 35.5F, 9.0F, 9.0F}, 0.8F, 2}});
+  const auto strongly_oversized_dropout = run({
+      DetectorCandidate{BBox{45.5F, 35.5F, 9.0F, 9.0F}, 0.8F, 2}},
+      0, true);
+  const auto modestly_smaller = run({
+      DetectorCandidate{BBox{42, 32, 16, 16}, 0.8F, 2}});
+  const auto shrinking_then_suspected = run({
+      DetectorCandidate{BBox{44, 34, 12, 12}, 0.8F, 2}}, 0, true, true);
+  expect_true(std::fabs(corroborated[0] - 20.0F) < 0.01F &&
+                  corroborated[1] > 20.0F && corroborated[1] <= 21.01F &&
+                  std::fabs(corroborated[2] - 20.0F) < 0.01F &&
+                  std::fabs(corroborated[3] - 20.0F) < 0.01F &&
+                  corroborated[4] == 1.0F &&
+                  corroborated[5] > 21.0F && corroborated[5] <= 22.01F,
+              "two unique detector batches adjust published size without changing the crop: " +
+                  std::to_string(corroborated[0]) + "/" +
+                  std::to_string(corroborated[1]) + "/" +
+                  std::to_string(corroborated[2]) + "/" +
+                  std::to_string(corroborated[3]) + "/" +
+                  std::to_string(corroborated[4]) + "/" +
+                  std::to_string(corroborated[5]));
+  expect_true(undersized_tracker[4] == 1.0F &&
+                  undersized_tracker[5] > 22.5F &&
+                  undersized_tracker[5] <= 25.01F,
+              "a centered 1.5x detector box can correct tracker undersizing");
+  expect_true(std::fabs(centered_smaller[0] - 20.0F) < 0.01F &&
+                  centered_smaller[4] == 1.0F &&
+                  centered_smaller[1] < 20.0F &&
+                  centered_smaller[1] >= 18.99F &&
+                  centered_smaller[5] < centered_smaller[1] &&
+                  centered_smaller[5] >= 15.99F &&
+                  std::fabs(centered_smaller[2] - 20.0F) < 0.01F &&
+                  std::fabs(centered_smaller[3] - 20.0F) < 0.01F &&
+                  std::fabs(centered_smaller[8] - 50.0F) < 0.01F,
+              "two strong centered smaller detections can shrink only the "
+              "published size at the configured step limit");
+  expect_true(strongly_oversized_tracker[4] == 1.0F &&
+                  strongly_oversized_tracker[1] < 20.0F &&
+                  std::fabs(strongly_oversized_tracker[2] - 20.0F) < 0.01F &&
+                  std::fabs(strongly_oversized_tracker[3] - 20.0F) < 0.01F,
+              "two centered detections at 0.20 IoU can shrink an oversized "
+              "published box without changing NanoTrack's crop");
+  expect_true(strongly_oversized_dropout[4] == 1.0F &&
+                  strongly_oversized_dropout[5] < 15.0F &&
+                  std::fabs(strongly_oversized_dropout[2] - 20.0F) < 0.01F &&
+                  std::fabs(strongly_oversized_dropout[3] - 20.0F) < 0.01F,
+              "confirmed detector size continues shrinking through a short "
+              "dropout while NanoTrack's crop remains unchanged");
+  expect_true(std::fabs(modestly_smaller[1] - 20.0F) < 0.01F &&
+                  std::fabs(modestly_smaller[5] - 20.0F) < 0.01F,
+              "a detector area above half the tracker area does not shrink "
+              "a well-sized tracking box");
+  expect_true(shrinking_then_suspected[1] < 20.0F &&
+                  shrinking_then_suspected[11] == 1.0F &&
+                  shrinking_then_suspected[12] ==
+                      static_cast<float>(static_cast<int>(TrackingPhase::kSuspected)) &&
+                  shrinking_then_suspected[10] <=
+                      shrinking_then_suspected[1] * 1.05F + 0.01F &&
+                  shrinking_then_suspected[14] <=
+                      shrinking_then_suspected[10] * 1.05F + 0.01F &&
+                  shrinking_then_suspected[15] == 1.0F &&
+                  std::fabs(shrinking_then_suspected[13] - 50.0F) < 0.01F,
+              "freshly confirmed smaller size survives a detector dropout "
+              "and SUSPECTED transition without moving the control center: " +
+                  std::to_string(shrinking_then_suspected[1]) + "/" +
+                  std::to_string(shrinking_then_suspected[10]) + "/" +
+                  std::to_string(shrinking_then_suspected[11]) + "/" +
+                  std::to_string(shrinking_then_suspected[12]) + "/" +
+                  std::to_string(shrinking_then_suspected[13]) + "/" +
+                  std::to_string(shrinking_then_suspected[14]) + "/" +
+                  std::to_string(shrinking_then_suspected[15]));
+  expect_true(std::fabs(offset_detector[6] - 50.0F) < 0.01F &&
+                  offset_detector[7] > 50.0F &&
+                  offset_detector[7] < 50.5F &&
+                  offset_detector[8] >= offset_detector[7] &&
+                  offset_detector[8] <= 50.5F &&
+                  std::fabs(offset_detector[9] - 50.0F) < 0.01F &&
+                  std::fabs(corroborated[8] - 50.0F) < 0.01F,
+              "confirmed larger detector envelope smoothly corrects only the published center: " +
+                  std::to_string(offset_detector[6]) + "/" +
+                  std::to_string(offset_detector[7]) + "/" +
+                  std::to_string(offset_detector[8]) + "/" +
+                  std::to_string(offset_detector[9]) + "/" +
+                  std::to_string(corroborated[8]) + "/" +
+                  std::to_string(offset_detector[1]) + "/" +
+                  std::to_string(offset_detector[4]) + "/" +
+                  std::to_string(offset_detector[5]));
+  for (const auto& invalid : {
+           run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 0}}),
+           run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.2F, 2}}),
+           run({DetectorCandidate{BBox{90, 28, 24, 24}, 0.8F, 2}}),
+           run({DetectorCandidate{BBox{33, 23, 34, 34}, 0.8F, 2}}),
+           run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2},
+                DetectorCandidate{BBox{38, 28, 24, 24}, 0.7F, 2}}),
+           run({DetectorCandidate{BBox{38, 28, 24, 24}, 0.8F, 2}}, 200)}) {
+    expect_true(std::fabs(invalid[1] - 20.0F) < 0.01F &&
+                    std::fabs(invalid[5] - 20.0F) < 0.01F && invalid[4] == 0.0F,
+                "wrong class, low confidence, remote, ambiguous or stale batch cannot resize");
+  }
+  for (const auto& invalid_smaller : {
+           run({DetectorCandidate{BBox{44, 34, 12, 12}, 0.45F, 2}}),
+           run({DetectorCandidate{BBox{40, 30, 12, 12}, 0.8F, 2}}),
+           run({DetectorCandidate{BBox{47, 37, 6, 6}, 0.8F, 2}})}) {
+    expect_true(std::fabs(invalid_smaller[1] - 20.0F) < 0.01F &&
+                    std::fabs(invalid_smaller[5] - 20.0F) < 0.01F &&
+                    invalid_smaller[4] == 0.0F,
+                "low-confidence, offset, or tiny boxes cannot shrink tracking");
+  }
 }
 
 int main() {
@@ -1682,7 +2157,11 @@ int main() {
   std::vector<std::uint8_t> pixels(200 * 120 * 3, 0);
   const ImageView image{pixels.data(), 200, 120, 200 * 3, 3};
   test_visual_suspect_gate();
+  test_visual_probe_corrob_requires_reliable_tracker_response();
+  test_guarded_visual_miss_revocation();
   test_lower_band_visibility_veto();
+  test_suspected_detector_guard(image);
+  test_tracking_size_detector_evidence(image);
   test_target_class_initialization(image);
   test_click_initialization_class_modes(image);
   test_target_class_session_config(image);

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "provenance": "User confirmed car_004 frame 42 visible and car_010 occlusion by frame 149, correct reacquisition by frame 169 on 2026-11-18. This is an auxiliary check and does not replace the canonical annotations.",
+  "targets": {
+    "car_004": [
+      {"id": "visible_frame_42", "type": "visible_observation", "frame": 42}
+    ],
+    "car_010": [
+      {"id": "occlusion_by_frame_149", "type": "occlusion_status", "frame": 149},
+      {"id": "correct_reacquisition_by_frame_169", "type": "reacquisition", "first_frame": 149, "last_frame": 169, "minimum_iou": 0.5}
+    ]
+  }
+}

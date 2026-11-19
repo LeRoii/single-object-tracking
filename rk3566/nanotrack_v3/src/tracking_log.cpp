@@ -8,6 +8,7 @@
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -1059,6 +1060,68 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.tracker_ms = result.tracker_ms;
   row.runtime_ms = result.runtime_ms;
   row.note = note;
+  if (std::string_view(output.recovery_reason) == "IDENTITY_CONFLICT" ||
+      std::string_view(output.recovery_reason) == "AWAITING_CONFIRMATION" ||
+      std::string_view(output.recovery_reason) == "RECOVERY_STAGED") {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "RECOVERY_EVIDENCE(recent=";
+    row.note += output.recovery_recent_quality;
+    row.note += ";safe=";
+    row.note += output.recovery_safe_quality;
+    row.note += ";triad_eligible=";
+    row.note += (output.recovery_triad_eligible ? "1" : "0");
+    row.note += ";triad_focused=";
+    row.note += (output.recovery_triad_focused ? "1" : "0");
+    row.note += ";conflict=";
+    row.note += output.recovery_conflict_cause;
+    row.note += ")";
+  }
+  if (result.detector_size_output_applied) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "DETECTOR_VERIFIED_OUTPUT_SIZE";
+  }
+  if (result.detector_size_output_retained) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "DETECTOR_SIZE_RETAINED";
+  }
+  if (result.detector_center_output_applied) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "DETECTOR_VERIFIED_OUTPUT_CENTER";
+  }
+  if (result.search_output_smoothed) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "SEARCH_OUTPUT_SMOOTHED";
+  }
+  if (result.detector_tracking_size_confirmed) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "DETECTOR_TRACKING_SIZE_CONFIRMED";
+  }
+  if (output.recovery_detector_center_fused) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "RECOVERY_DETECTOR_CENTER_FUSED";
+  }
+  if (result.visual_probe_ran) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "VISUAL_PROBE(hit=";
+    row.note += result.visual_probe_hit ? "1" : "0";
+    row.note += ";target_corrob=";
+    row.note += result.visual_probe_target_corrob ? "1" : "0";
+    row.note += ";near=" + std::to_string(result.visual_probe_nearby_candidates);
+    if (result.visual_probe_nearest_distance_px) {
+      row.note += ";distance=" + number(*result.visual_probe_nearest_distance_px);
+    }
+    if (result.visual_probe_nearest_bbox) {
+      const auto& box = *result.visual_probe_nearest_bbox;
+      row.note += ";bbox=" + number(box.x) + "," + number(box.y) + "," +
+          number(box.width) + "," + number(box.height);
+      row.note += ";confidence=" + number(*result.visual_probe_nearest_confidence);
+      row.note += ";iou_recent=" + number(*result.visual_probe_nearest_iou_recent);
+    }
+    if (result.visual_probe_brightness_ratio) {
+      row.note += ";brightness=" + number(*result.visual_probe_brightness_ratio);
+    }
+    row.note += ")";
+  }
   return row;
 }
 
