@@ -61,7 +61,7 @@ struct RecoveryCandidateKey {
 
 enum class DetectorTargetMode { kFullObject, kSubtarget };
 enum class DetectorRequestPurpose { kNone, kSearchRecovery, kInitialization, kDisplayRefresh,
-                                    kVisualOcclusion };
+                                    kVisualOcclusion, kSuspectedValidation };
 enum class DisplayBoxSource {
   kControllerFallback,
   kTrackerPropagated,

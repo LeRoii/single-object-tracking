@@ -373,9 +373,33 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
       (config_.detector_target_mode != DetectorTargetMode::kSubtarget ||
        search_reacquisition_eligible(timestamp_ms));
   const RecoveryCandidate* probe = can_plan_probe ? recovery_candidates_.select_probe() : nullptr;
+  bool detector_anchored_probe = false;
   if (probe) {
-    predicted = probe->preferred_evidence().bbox;
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
+    const auto& tracker = probe->from(RecoveryCandidateSource::kRecent);
+    bool anchor_detector = false;
+    if (detector && tracker &&
+        config_.detector_target_mode == DetectorTargetMode::kFullObject) {
+      const auto center_distance = [](const BBox& first, const BBox& second) {
+        return std::hypot(first.x + 0.5F * first.width -
+                              second.x - 0.5F * second.width,
+                          first.y + 0.5F * first.height -
+                              second.y - 0.5F * second.height);
+      };
+      const float tracker_drift = center_distance(
+          tracker->bbox, detector->bbox) /
+          std::hypot(detector->bbox.width, detector->bbox.height);
+      const float detector_motion_distance = center_distance(
+          detector->bbox, motion_predicted) /
+          std::hypot(motion_predicted.width, motion_predicted.height);
+      // A fresh detection can prevent an unconfirmed tracker offset from
+      // moving the crop, but only near the held motion hypothesis. Small
+      // offsets keep the tracker crop to avoid changing stable recovery paths.
+      anchor_detector = tracker_drift >= 0.1F &&
+          detector_motion_distance <= 0.5F;
+    }
+    detector_anchored_probe = anchor_detector;
+    predicted = anchor_detector ? detector->bbox : probe->preferred_evidence().bbox;
     if (detector && probe->subtarget_carrier &&
         !probe->from(RecoveryCandidateSource::kRecent) &&
         !probe->from(RecoveryCandidateSource::kSafe)) {
@@ -435,6 +459,12 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
     if (probe->hits() > 0) {
       plan.search_hint = search_hint_for(*probe);
       plan.search_hint->used = true;
+      if (detector_anchored_probe) {
+        const auto& detector = *probe->from(RecoveryCandidateSource::kDetector);
+        plan.search_hint->source_frame_id = detector.frame_id;
+        plan.search_hint->source_timestamp_ms = detector.timestamp_ms;
+        plan.search_hint->projected_bbox = detector.bbox;
+      }
     }
     const auto& detector = probe->from(RecoveryCandidateSource::kDetector);
     if (detector) {
@@ -962,15 +992,35 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   const bool response_weak = metrics.psr < config_.reliable_psr ||
                              metrics.apce < config_.reliable_apce ||
                              metrics.peak_margin < config_.reliable_peak_margin;
-  const bool partial_visibility = target_class_.target_class_id == 2 &&
+  // Once a response dip has made a frame tentative, two response-shape
+  // measures must recover together before clearing it. Half of each configured
+  // drop is the hysteresis boundary; an isolated metric dip may still clear on
+  // the next clean frame. This does not change when search becomes eligible.
+  const bool joint_response_not_recovered = response_degraded_since_ms_ &&
+      response.reference &&
+      metrics.psr < response.reference->psr *
+          (1.0F - 0.5F * config_.response_psr_drop_ratio) &&
+      metrics.apce < response.reference->apce *
+          (1.0F - 0.5F * config_.response_apce_drop_ratio);
+  // The newly staged recovery template defines a fresh size reference.
+  // Applying the old tracking-height cue during its probation can turn normal
+  // post-recovery aspect settling into a false occlusion signal.
+  const bool partial_visibility = !recovery_probation_ &&
+      target_class_.target_class_id == 2 &&
       config_.recent_visibility_height_ratio > 0.0F &&
       observation.decoded_bbox &&
       observation.decoded_bbox->height <=
           current_bbox_.height * config_.recent_visibility_height_ratio &&
       recent.center_residual >= config_.recent_visibility_center_residual;
+  if (plan.suspected_detector_guard &&
+      recent.quality == QualityLevel::kReliable &&
+      (!partial_visibility || plan.visual_probe_target_corrob)) {
+    clear_suspicion();
+    return RecentDisposition::kDirect;
+  }
   const bool degraded = isolated_response_dip || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
-                        partial_visibility ||
+                        partial_visibility || joint_response_not_recovered ||
                         (motion_inconsistent && (drops > 0 || response_weak));
   if (degraded || (suspected_since_ms_ && recent.quality != QualityLevel::kReliable)) {
     response_clean_since_ms_.reset();
@@ -1231,11 +1281,98 @@ LongTermController::confirm_recovery_candidate(
       !recovery_candidates_.geometry_consistent(recent->observation.bbox, safe->observation.bbox);
   const bool probe_conflict = carrier_disagreement;
   std::optional<RecoveryCandidateKey> triad_key;
+  output.recovery_recent_quality = recent ? to_string(recent->quality) : "NONE";
+  output.recovery_safe_quality = safe ? to_string(safe->quality) : "NONE";
+  std::optional<EvaluatedObservation> detector_recentered_recent;
+  std::optional<EvaluatedObservation> detector_recentered_safe;
   if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
-      recent && safe && recent->quality == QualityLevel::kReliable &&
-      safe->quality == QualityLevel::kReliable) {
+      planned_candidate && recent && safe) {
+    const auto& detector = planned_candidate->from(RecoveryCandidateSource::kDetector);
+    if (detector) {
+      const auto& box = detector->bbox;
+      const auto& motion = plan.motion_predicted_bbox;
+      // A box clipped by the image boundary cannot establish a new
+      // full-object size or aspect, even if both heads find the visible part.
+      const bool detector_fully_visible =
+          box.x > 1.0F && box.y > 1.0F &&
+          box.x + box.width < frame_size_.width - 1.0F &&
+          box.y + box.height < frame_size_.height - 1.0F;
+      const float distance = std::hypot(
+          box.x + 0.5F * box.width - motion.x - 0.5F * motion.width,
+          box.y + 0.5F * box.height - motion.y - 0.5F * motion.height);
+      const auto decoded = [](const EvaluatedObservation& observation) -> BBox {
+        return observation.observation.decoded_bbox.value_or(
+            observation.observation.bbox);
+      };
+      const BBox recent_raw = decoded(*recent);
+      const BBox safe_raw = decoded(*safe);
+      const auto inside_frame = [&](const BBox& raw) {
+        return std::isfinite(raw.x) && std::isfinite(raw.y) &&
+            std::isfinite(raw.width) && std::isfinite(raw.height) &&
+            raw.x >= 0.0F && raw.y >= 0.0F &&
+            raw.width > 0.0F && raw.height > 0.0F &&
+            raw.x + raw.width <= frame_size_.width &&
+            raw.y + raw.height <= frame_size_.height;
+      };
+      // A legitimate change in viewpoint can make both decoded heads much
+      // flatter than the old committed box. The ordinary size clamp then
+      // rejects them even when a unique nearby detector agrees with both.
+      // Keep the old clamp for every other path, and require fresh NanoTrack
+      // confirmation before this detector-supported hypothesis can commit.
+      if (detector_fully_visible && inside_frame(recent_raw) &&
+          inside_frame(safe_raw) &&
+          distance <= 0.5F * std::hypot(motion.width, motion.height) &&
+          recovery_candidates_.unique_detector_agreement(recent_raw, safe_raw) ==
+              plan.recovery_probe) {
+        auto recentered = plan;
+        recentered.predicted_bbox = box;
+        const auto evaluate_decoded = [&](const EvaluatedObservation& source)
+            -> std::optional<EvaluatedObservation> {
+          auto observation = source.observation;
+          observation.bbox = decoded(source);
+          observation.decoded_bbox.reset();
+          auto evaluated = evaluate(observation, recentered);
+          if (evaluated.quality != QualityLevel::kReliable) return std::nullopt;
+          return evaluated;
+        };
+        detector_recentered_recent = evaluate_decoded(*recent);
+        detector_recentered_safe = evaluate_decoded(*safe);
+        if (!detector_recentered_recent || !detector_recentered_safe) {
+          detector_recentered_recent.reset();
+          detector_recentered_safe.reset();
+        } else {
+          output.template_iou = bbox_iou(recent_raw, safe_raw);
+        }
+      }
+    }
+  }
+  const auto& recovery_recent = detector_recentered_recent ? detector_recentered_recent : recent;
+  const auto& recovery_safe = detector_recentered_safe ? detector_recentered_safe : safe;
+  output.recovery_triad_eligible =
+      config_.detector_target_mode == DetectorTargetMode::kFullObject &&
+      recovery_recent && recovery_safe &&
+      recovery_recent->quality == QualityLevel::kReliable &&
+      recovery_safe->quality == QualityLevel::kReliable;
+  if (output.recovery_triad_eligible) {
     triad_key = recovery_candidates_.focus_triad(
-        recent->observation.bbox, safe->observation.bbox);
+        recovery_recent->observation.bbox, recovery_safe->observation.bbox);
+  }
+  output.recovery_triad_focused = triad_key.has_value();
+  // Only override a duplicate tracker-only candidate when the detector is
+  // also near the motion hypothesis. A distant three-way match may be a
+  // different object after the target has left the scene.
+  std::optional<RecoveryCandidateKey> motion_near_triad_key;
+  if (triad_key) {
+    const auto* focused = recovery_candidates_.find(*triad_key);
+    const auto& detector = focused->from(RecoveryCandidateSource::kDetector);
+    const auto& motion = plan.motion_predicted_bbox;
+    const auto& box = detector->bbox;
+    const float distance = std::hypot(
+        box.x + 0.5F * box.width - motion.x - 0.5F * motion.width,
+        box.y + 0.5F * box.height - motion.y - 0.5F * motion.height);
+    if (distance <= 0.5F * std::hypot(motion.width, motion.height)) {
+      motion_near_triad_key = triad_key;
+    }
   }
   const auto observe = [&](RecoveryCandidateSource source,
                            const std::optional<EvaluatedObservation>& observation) {
@@ -1261,15 +1398,18 @@ LongTermController::confirm_recovery_candidate(
     }
     return recovery_candidates_.observe(source, bbox, 0.0F, std::nullopt,
         std::nullopt, !carrier_disagreement,
-        frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_));
+        frame_normalized_center_distance(bbox, plan.motion_predicted_bbox, frame_size_),
+        std::nullopt, motion_near_triad_key);
   };
-  const auto recent_key = observe(RecoveryCandidateSource::kRecent, recent);
-  const auto safe_key = observe(RecoveryCandidateSource::kSafe, safe);
+  const auto recent_key = observe(RecoveryCandidateSource::kRecent, recovery_recent);
+  const auto safe_key = observe(RecoveryCandidateSource::kSafe, recovery_safe);
   if (probe_conflict) recovery_candidates_.mark_identity_conflict();
   if (triad_key && recent_key == triad_key && safe_key == triad_key) {
     recovery_candidates_.observe_triad(*triad_key);
   }
   output.recovery_conflict = probe_conflict || recovery_candidates_.conflicted();
+  output.recovery_conflict_cause = probe_conflict ? "PROBE_DISAGREEMENT" :
+      recovery_candidates_.conflict_cause();
   const auto motion_center_aligned = [&](const std::optional<EvaluatedObservation>& observation) {
     if (!observation) return false;
     const auto& box = observation->observation.bbox;
@@ -1280,16 +1420,53 @@ LongTermController::confirm_recovery_candidate(
     return distance <= config_.recovery_dual_template_max_motion_diagonals *
         std::hypot(predicted.width, predicted.height);
   };
+  const auto reverses_clipped_exit = [&](const BBox& bbox) {
+    // Once the last trusted box and coast prediction both touch an image
+    // boundary, a large jump back into the image is a new identity hypothesis.
+    // NanoTrack agreement on that interior object cannot establish that the
+    // original target returned after leaving the field of view.
+    const auto& old = current_bbox_;
+    const auto& predicted = plan.motion_predicted_bbox;
+    const float limit = 0.5F * std::hypot(predicted.width, predicted.height);
+    const float old_x = old.x + 0.5F * old.width;
+    const float old_y = old.y + 0.5F * old.height;
+    const float new_x = bbox.x + 0.5F * bbox.width;
+    const float new_y = bbox.y + 0.5F * bbox.height;
+    const auto at_left = [](const BBox& box) { return box.x <= 1.0F; };
+    const auto at_top = [](const BBox& box) { return box.y <= 1.0F; };
+    const auto at_right = [&](const BBox& box) {
+      return box.x + box.width >= frame_size_.width - 1.0F;
+    };
+    const auto at_bottom = [&](const BBox& box) {
+      return box.y + box.height >= frame_size_.height - 1.0F;
+    };
+    return (at_left(old) && at_left(predicted) && new_x - old_x > limit) ||
+           (at_right(old) && at_right(predicted) && old_x - new_x > limit) ||
+           (at_top(old) && at_top(predicted) && new_y - old_y > limit) ||
+           (at_bottom(old) && at_bottom(predicted) && old_y - new_y > limit);
+  };
   const auto can_confirm = [&](const std::optional<RecoveryCandidateKey>& key) {
     if (output.recovery_conflict || !key ||
         (!recovery_candidates_.confirmed(*key) &&
          !recovery_candidates_.triad_confirmed(*key)))
       return false;
     const auto* candidate = recovery_candidates_.find(*key);
+    if (candidate && reverses_clipped_exit(candidate->preferred_evidence().bbox))
+      return false;
+    // A motion prediction held through occlusion can lag a returning target.
+    // Three independent tracker hits at the unique detector region, with
+    // fresh Recent/Safe agreement, are stronger evidence than that stale
+    // center. The detector box itself still cannot authorize control.
+    const bool verified_detector_triad = candidate &&
+        candidate->hits() >= static_cast<std::size_t>(config_.recovery_confirmation_required) &&
+        candidate->has_detector_supported_hit() &&
+        recovery_candidates_.triad_confirmed(*key) &&
+        recent_key == key && safe_key == key;
     return candidate &&
         !(config_.detector_target_mode == DetectorTargetMode::kFullObject &&
           recent_key == key && safe_key == key &&
-          !motion_center_aligned(recent) && !motion_center_aligned(safe)) &&
+          !motion_center_aligned(recovery_recent) && !motion_center_aligned(recovery_safe) &&
+          !verified_detector_triad) &&
         (!config_.recovery_requires_detector_support ||
          candidate->has_detector_supported_hit()) &&
         (!config_.recovery_conflict_requires_detector || !recovery_conflict_seen_ ||
@@ -1321,7 +1498,7 @@ LongTermController::confirm_recovery_candidate(
   }
   if (recent_confirmed || safe_confirmed) {
     output.recovery_reason = "RECOVERY_CONFIRMED";
-    return recent_confirmed ? recent : safe;
+    return recent_confirmed ? recovery_recent : recovery_safe;
   }
   output.recovery_reason = candidate ? "AWAITING_CONFIRMATION" : "NO_ELIGIBLE_CANDIDATE";
   return std::nullopt;
@@ -1572,8 +1749,38 @@ void LongTermController::defer_recovery_acceptance(
                           BBox{0.0F, 0.0F, bbox.width, restored_height}, frame_size_);
     }
   }
+  // A detector-supported candidate has already passed the independent
+  // NanoTrack confirmation gate. Use its recent full-object center as one
+  // measurement of the confirmed object when the centers differ materially,
+  // while retaining NanoTrack's size. A small correction needlessly changes
+  // the next tracker crop; half the existing confirmation center tolerance
+  // provides the scale-aware deadband.
+  if (config_.detector_target_mode == DetectorTargetMode::kFullObject &&
+      output.recovery_candidate_key) {
+    const auto* candidate = recovery_candidates_.find(*output.recovery_candidate_key);
+    const auto* detector = candidate &&
+        candidate->from(RecoveryCandidateSource::kDetector)
+        ? &*candidate->from(RecoveryCandidateSource::kDetector) : nullptr;
+    if (candidate && candidate->has_detector_supported_hit() && detector &&
+        detector->frame_id <= plan.frame_id &&
+        detector->timestamp_ms <= plan.timestamp_ms &&
+        plan.timestamp_ms - detector->timestamp_ms <= config_.detector_stale_ms &&
+        recovery_candidates_.geometry_consistent(bbox, detector->bbox) &&
+        normalized_center_distance(bbox, detector->bbox) >=
+            0.5F * config_.detector_confirmation_center_distance) {
+      const float tracker_cx = bbox.x + 0.5F * bbox.width;
+      const float tracker_cy = bbox.y + 0.5F * bbox.height;
+      const float detector_cx = detector->bbox.x + 0.5F * detector->bbox.width;
+      const float detector_cy = detector->bbox.y + 0.5F * detector->bbox.height;
+      bbox = centered_box(0.5F * (tracker_cx + detector_cx),
+                          0.5F * (tracker_cy + detector_cy), bbox, frame_size_);
+      output.recovery_detector_center_fused = true;
+    }
+  }
   recovery->bbox = bbox;
   recovery->display_bbox = stabilize_accepted_center(plan, bbox, bbox, true, output);
+  if (output.recovery_detector_center_fused)
+    output.selected_observation_bbox = selected.observation.bbox;
   recovery->motion.initialize(bbox, plan.timestamp_ms, frame_size_.width, frame_size_.height);
   recovery->occlusion_decision = recovery->occlusion_evidence.observe(
       OcclusionEvidenceInput{bbox, bbox, selected.observation.metrics, true, false, false});
@@ -1650,6 +1857,45 @@ bool LongTermController::motion_input_allows_correction(
   if (selected.observation.template_kind != TemplateKind::kRecent) {
     motion_risk_streak_ = 0;
     return !motion_freeze_since_ms_;
+  }
+  if (plan.suspected_detector_guard &&
+      selected.quality == QualityLevel::kReliable) {
+    if (plan.visual_probe_target_corrob && motion_last_clean_trend_) {
+      // The detector corroborates the position, not the velocity of a
+      // shrinking Recent observation. Reanchor the crop at that observation
+      // while carrying forward the last clean trajectory.
+      const MotionSnapshot trend = *motion_last_clean_trend_;
+      if (motion_freeze_since_ms_) {
+        output.motion_freeze_age_ms = plan.timestamp_ms - *motion_freeze_since_ms_;
+        output.motion_freeze_cleared = true;
+        reset_motion_input_gate();
+      } else {
+        motion_risk_streak_ = 0;
+        motion_response_drop_since_ms_.reset();
+      }
+      motion_.reanchor_preserving_velocity(output.tracking_bbox,
+                                           trend, plan.timestamp_ms);
+      motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
+      output.motion_update_valid = true;
+      output.motion_gate_reason = "VISUAL_TARGET_REANCHOR";
+      return false;
+    }
+    if (motion_freeze_since_ms_ && !motion_last_clean_trend_) return false;
+    if (motion_freeze_since_ms_) {
+      output.motion_freeze_age_ms = plan.timestamp_ms - *motion_freeze_since_ms_;
+      motion_.reanchor_preserving_velocity(output.tracking_bbox,
+          *motion_last_clean_trend_, plan.timestamp_ms);
+      reset_motion_input_gate();
+      motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
+      output.motion_update_valid = true;
+      output.motion_freeze_cleared = true;
+      output.motion_gate_reason = "DETECTOR_SUPPORTED_REANCHOR";
+      return false;
+    }
+    motion_risk_streak_ = 0;
+    motion_response_drop_since_ms_.reset();
+    output.motion_gate_reason = "DETECTOR_SUPPORTED_RECENT";
+    return true;
   }
   if (!response.reference && !motion_frozen_response_reference_) {
     motion_residual_history_.push_back(selected.center_residual);
@@ -1814,8 +2060,9 @@ void LongTermController::accept_observation(
       motion_.correct(output.tracking_bbox, plan.timestamp_ms);
       output.motion_update_valid = true;
       output.motion_correction_applied = true;
-      if (!response.psr_drop && !response.apce_drop &&
-          !response.peak_margin_drop) {
+      if (plan.suspected_detector_guard ||
+          (!response.psr_drop && !response.apce_drop &&
+           !response.peak_margin_drop)) {
         motion_last_clean_trend_ = motion_.snapshot(plan.timestamp_ms);
       }
     }
@@ -1971,8 +2218,17 @@ LongTermController::ingest_detector_batch(
     const float center_ratio = frame_normalized_center_distance(
         projected, plan.motion_predicted_bbox, frame_size_);
     diagnostic.center_ratio = center_ratio;
-    if (unified || center_ratio <=
-        config_.detector_candidate_max_center_ratio + kPositionGateEpsilon) {
+    const float center_distance = std::hypot(
+        projected.x + 0.5F * projected.width - current_center_x,
+        projected.y + 0.5F * projected.height - current_center_y);
+    const float confident_motion_limit = 0.5F * std::hypot(
+        plan.motion_predicted_bbox.width, plan.motion_predicted_bbox.height);
+    const bool position_allowed = unified
+        ? (!plan.motion_prediction_confident || !motion_freeze_since_ms_ ||
+           center_distance <= confident_motion_limit + kPositionGateEpsilon)
+        : center_ratio <=
+              config_.detector_candidate_max_center_ratio + kPositionGateEpsilon;
+    if (position_allowed) {
       diagnostic.position_gate_pass = true;
       positioned.push_back(PositionedCandidate{index, center_ratio});
     } else {
@@ -2046,7 +2302,12 @@ LongTermController::ingest_detector_batch(
           batch->source_timestamp_ms, candidate.class_id, false, item.center_ratio,
           subtarget_region);
     }
-    if (dominant_near_detector && keys.front()) {
+    // After a frozen-motion proximity gate leaves one detector hypothesis,
+    // give that hypothesis a tracker probe. It still needs fresh Recent/Safe
+    // verification; being the sole nearby detection cannot authorize control.
+    const bool sole_frozen_near_detector = motion_freeze_since_ms_ &&
+        plan.motion_prediction_confident && positioned.size() == 1;
+    if ((dominant_near_detector || sole_frozen_near_detector) && keys.front()) {
       recovery_candidates_.focus_detector(*keys.front());
     }
     for (std::size_t index = 0; index < positioned.size(); ++index) {
@@ -2577,7 +2838,11 @@ ControllerOutput LongTermController::finish_frame(
     accept_observation(plan, *selected, acceptance_path, output, response);
     const bool response_degraded = response.psr_drop || response.apce_drop ||
                                    response.peak_margin_drop;
-    if (response_degraded) {
+    if (plan.suspected_detector_guard) {
+      search_motion_reference_ = motion_.snapshot(plan.timestamp_ms);
+      search_motion_reference_held_ = false;
+      search_motion_clean_since_ms_.reset();
+    } else if (response_degraded) {
       search_motion_reference_held_ = true;
       search_motion_clean_since_ms_.reset();
     } else if (search_motion_reference_held_) {
@@ -2595,7 +2860,9 @@ ControllerOutput LongTermController::finish_frame(
     }
     if (ordinary_recent && !recent_probation_) {
       response_baseline_.resume_tracking();
-      response_baseline_.observe_trusted(selected->observation.metrics);
+      if (!plan.suspected_detector_guard) {
+        response_baseline_.observe_trusted(selected->observation.metrics);
+      }
     }
   } else {
     motion_risk_streak_ = 0;

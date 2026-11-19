@@ -40,6 +40,9 @@ struct ControllerConfig {
   float accepted_scale_output_hysteresis_px = 0.00F;
   float accepted_center_smoothing_alpha = 1.00F;
   float accepted_center_max_correction_ratio = 0.00F;
+  // 0 disables smoothing of a frozen-motion search output. Search crops retain
+  // their independent motion hypothesis regardless of this publication filter.
+  float search_output_smoothing_alpha = 0.00F;
   float max_reacquisition_center_distance = 0.00F;
   // Limit for full-object dual-template recovery, in predicted-box diagonals.
   float recovery_dual_template_max_motion_diagonals = 1.0F;
@@ -81,6 +84,11 @@ struct ControllerConfig {
   float visual_suspect_min_confidence = 0.40F;
   float visual_suspect_max_center_px = 30.0F;
   int visual_suspect_consecutive_frames = 2;
+  // Experimental detector corroboration of a reliable NanoTrack observation.
+  bool suspected_detector_guard_enabled = false;
+  float suspected_detector_guard_min_confidence = 0.35F;
+  float suspected_detector_guard_min_iou = 0.50F;
+  int suspected_detector_guard_required_hits = 2;
   int occlusion_hold_frames = 12;
   // Legacy parsing/metadata compatibility; adaptive coast uses size evidence.
   int occlusion_trigger_consecutive_unreliable = 2;

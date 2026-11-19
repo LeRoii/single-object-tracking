@@ -45,6 +45,10 @@ struct SearchPlan {
   OcclusionProbeType occlusion_probe_type = OcclusionProbeType::kNone;
   bool motion_control_authorized = false;
   bool visual_occlusion_search = false;
+  // A fresh detector result corroborates this frame's NanoTrack observation.
+  bool suspected_detector_guard = false;
+  // The visual probe itself corroborated a reliable, shrinking Recent box.
+  bool visual_probe_target_corrob = false;
   std::optional<SearchHint> search_hint;
   std::int64_t motion_search_age_ms = -1;
   bool motion_prediction_confident = false;
@@ -119,6 +123,11 @@ struct ControllerOutput {
   const char* template_transition_reason = "NONE";
   const char* state_change_reason = "NONE";
   const char* recovery_reason = "NONE";
+  const char* recovery_recent_quality = "NONE";
+  const char* recovery_safe_quality = "NONE";
+  bool recovery_triad_eligible = false;
+  bool recovery_triad_focused = false;
+  const char* recovery_conflict_cause = "NONE";
   std::optional<ResponseReference> trusted_response_reference;
   std::optional<float> response_psr_relative_delta;
   std::optional<float> response_apce_relative_delta;
@@ -205,6 +214,7 @@ struct ControllerOutput {
   float motion_scale_velocity_height = 0.0F;
   std::optional<RecoveryCandidateKey> recovery_candidate_key;
   std::size_t recovery_confirmation_hits = 0;
+  bool recovery_detector_center_fused = false;
   bool recovery_conflict = false;
   std::vector<DetectorCandidateDiagnostic> detector_candidate_diagnostics;
   TargetClassState target_class{};

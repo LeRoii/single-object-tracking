@@ -59,7 +59,8 @@ class RecoveryCandidateTable {
       std::optional<std::int64_t> source_timestamp_ms = std::nullopt,
       std::optional<int> detector_class_id = std::nullopt,
       bool tracker_verified = true, float motion_residual = 0.0F,
-      std::optional<BBox> subtarget_region = std::nullopt);
+      std::optional<BBox> subtarget_region = std::nullopt,
+      std::optional<RecoveryCandidateKey> triad_key = std::nullopt);
   const RecoveryCandidate* find(RecoveryCandidateKey key) const noexcept;
   const RecoveryCandidate* select_probe() const noexcept;
   bool focus_detector(RecoveryCandidateKey key) noexcept;
@@ -74,6 +75,7 @@ class RecoveryCandidateTable {
   void advance_subtarget_probe(RecoveryCandidateKey key, const BBox& bbox,
                                std::size_t index, bool final_probe) noexcept;
   bool conflicted() const noexcept;
+  const char* conflict_cause() const noexcept;
   bool confirmed(RecoveryCandidateKey key) const noexcept;
   void mark_identity_conflict() noexcept;
   bool geometry_consistent(const BBox& reference, const BBox& bbox) const noexcept;

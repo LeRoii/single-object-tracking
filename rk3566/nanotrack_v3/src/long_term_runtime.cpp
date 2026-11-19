@@ -45,6 +45,67 @@ float median_brightness(const std::deque<float>& history) {
       0.5F * (values[middle - 1] + values[middle]);
 }
 
+std::optional<BBox> select_tracking_size_candidate(
+    const DetectorBatch& batch, const BBox& tracker_bbox,
+    std::optional<int> target_class_id, const ControllerConfig& config) {
+  if (config.detector_target_mode != DetectorTargetMode::kFullObject ||
+      !target_class_id || (*target_class_id != 0 && *target_class_id != 2)) {
+    return std::nullopt;
+  }
+  const float cx = tracker_bbox.x + 0.5F * tracker_bbox.width;
+  const float cy = tracker_bbox.y + 0.5F * tracker_bbox.height;
+  const float diagonal = std::hypot(tracker_bbox.width, tracker_bbox.height);
+  std::optional<BBox> unique;
+  for (const auto& candidate : batch.candidates) {
+    const auto& box = candidate.bbox;
+    if (candidate.class_id != *target_class_id ||
+        !std::isfinite(candidate.confidence) ||
+        candidate.confidence < config.suspected_detector_guard_min_confidence ||
+        !std::isfinite(box.x) || !std::isfinite(box.y) ||
+        !std::isfinite(box.width) || !std::isfinite(box.height) ||
+        box.width <= 0.0F || box.height <= 0.0F) {
+      continue;
+    }
+    const float candidate_cx = box.x + 0.5F * box.width;
+    const float candidate_cy = box.y + 0.5F * box.height;
+    const float center_distance = std::hypot(candidate_cx - cx,
+                                             candidate_cy - cy);
+    const float overlap = bbox_iou(box, tracker_bbox);
+    // A receding target can occupy only a small central part of an oversized
+    // NanoTrack box. Permit that scale evidence only when a stronger detector
+    // hit contains the tracker center; the temporal two-hit gate below still
+    // has to confirm the same object before published geometry changes.
+    const bool centered_smaller =
+        box.width < tracker_bbox.width && box.height < tracker_bbox.height &&
+        candidate.confidence >=
+            std::max(config.suspected_detector_guard_min_confidence, 0.5F) &&
+        cx >= box.x && cx <= box.x + box.width &&
+        cy >= box.y && cy <= box.y + box.height &&
+        center_distance <=
+            0.5F * config.detector_confirmation_center_distance * diagonal &&
+        // When the tracker envelope is much larger than a centered detector
+        // hit, their IoU is mostly the detector-to-tracker area ratio. Keep
+        // this size-only path available down to 40% of the normal identity
+        // overlap gate; center containment, confidence, uniqueness and two
+        // independent detector batches still have to agree.
+        overlap >= 0.4F * config.detector_confirmation_iou;
+    if (cx < box.x || cx > box.x + box.width ||
+        cy < box.y || cy > box.y + box.height ||
+        center_distance >
+            config.detector_confirmation_center_distance * diagonal ||
+        // A detector box 1.5x larger in each dimension has IoU near 0.44
+        // with a centered tracker box. Keep that valid scale evidence while
+        // the independent center and temporal-confirmation gates protect identity.
+        (overlap < 0.8F * config.detector_confirmation_iou &&
+         !centered_smaller)) {
+      continue;
+    }
+    if (unique) return std::nullopt;
+    unique = box;
+  }
+  return unique;
+}
+
 struct VisualCrop {
   std::vector<std::uint8_t> pixels;
   int left = 0;
@@ -223,6 +284,29 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   last_visual_hit_frame_.reset();
   visual_hit_streak_ = 0;
   visual_streak_ambiguous_ = false;
+  guard_observations_.clear();
+  last_guard_request_ms_.reset();
+  last_guard_batch_frame_id_.reset();
+  last_guard_source_ms_.reset();
+  last_guard_candidate_bbox_.reset();
+  published_tracking_bbox_.reset();
+  last_published_output_bbox_.reset();
+  search_output_smoothing_active_ = false;
+  published_center_offset_x_ = 0.0F;
+  published_center_offset_y_ = 0.0F;
+  last_supported_published_bbox_.reset();
+  last_published_support_ms_.reset();
+  pending_tracking_size_candidate_.reset();
+  tracking_size_candidate_hits_ = 0;
+  confirmed_tracking_size_candidate_.reset();
+  confirmed_tracking_size_source_ms_.reset();
+  last_tracking_size_batch_frame_id_.reset();
+  last_guard_confidence_.reset();
+  last_display_motion_support_.reset();
+  guard_hits_ = 0;
+  guard_stream_active_ = false;
+  guard_protection_active_ = false;
+  guarded_visual_misses_ = 0;
   previous_output_phase_ = TrackingPhase::kTracking;
   last_initialization_ = result;
   initialized_ = true;
@@ -277,6 +361,13 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.detector.ready = detector_.available() && detector_.can_submit();
   result.plan = controller_.begin_frame(frame_id, timestamp_ms,
                                         result.detector.ready);
+  const auto& guard_config = controller_.config();
+  const bool guard_class = result.target_class.target_class_id &&
+      (*result.target_class.target_class_id == 0 ||
+       *result.target_class.target_class_id == 2);
+  const bool guard_stream = guard_config.suspected_detector_guard_enabled &&
+      guard_class && (result.plan.tracking_phase == TrackingPhase::kSuspected ||
+                      guard_stream_active_);
 
   std::optional<DetectorRequest> display_request;
   if (result.plan.request_detector && result.plan.detector_request) {
@@ -290,7 +381,8 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     } catch (const std::exception& error) {
       result.detector.error = error.what();
     }
-  } else if (!(visual_suspect_bright_ratio_ > 0.0F &&
+  } else if (!guard_stream &&
+             !(visual_suspect_bright_ratio_ > 0.0F &&
                previous_output_phase_ == TrackingPhase::kSuspected) &&
              adaptive_display_.should_request(result.plan.tracking_phase,
                                               timestamp_ms,
@@ -326,12 +418,18 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     if (recent != result.observations.end() &&
         bright_fraction(image, recent->bbox) <
             0.9F * median_brightness(trusted_brightness_)) {
-      result.plan.visual_occlusion_search = true;
+      const auto response = controller_.response_baseline_.evaluate(recent->metrics);
+      // A stronger response than the trusted baseline contradicts a visual
+      // occlusion inferred only from the scene line and patch brightness.
+      if (!response.reference || recent->metrics.psr <= response.reference->psr) {
+        result.plan.visual_occlusion_search = true;
+      }
     }
   }
   bool visual_hit = false;
   bool visual_ambiguous = false;
   bool visual_blocking_used = false;
+  bool visual_batch_valid = false;
   if (visual_suspect_bright_ratio_ > 0.0F &&
       previous_output_phase_ == TrackingPhase::kSuspected &&
       result.target_class.target_class_id == 2 &&
@@ -341,9 +439,15 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
                                      [](const TrackerObservation& observation) {
                                        return observation.template_kind == TemplateKind::kRecent;
                                      });
+    const float brightness_reference = median_brightness(trusted_brightness_);
+    const float observed_brightness = recent != result.observations.end()
+        ? bright_fraction(image, recent->bbox) : 0.0F;
     if (recent != result.observations.end() &&
-        bright_fraction(image, recent->bbox) <
-            visual_suspect_bright_ratio_ * median_brightness(trusted_brightness_)) {
+        observed_brightness < visual_suspect_bright_ratio_ * brightness_reference) {
+      if (brightness_reference > 0.0F) {
+        result.visual_probe_brightness_ratio = observed_brightness / brightness_reference;
+      }
+      result.visual_probe_ran = true;
       const auto crop = make_visual_crop(image, result.plan.motion_predicted_bbox);
       const ImageView canvas{crop.pixels.data(), 640, 640, 640U * 3U, 3};
       const DetectorRequest request{frame_id, timestamp_ms,
@@ -355,6 +459,8 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
       try {
         const auto detected = detector_.detect_blocking(canvas, request);
         if (detected) {
+          visual_batch_valid = detected->batch.source_frame_id == frame_id &&
+              detected->batch.purpose == DetectorRequestPurpose::kVisualOcclusion;
           result.detector.request_submitted = true;
           result.detector.batch_received = true;
           result.detector.batch_frame_id = detected->batch.source_frame_id;
@@ -380,6 +486,25 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
             if (distance < nearest_distance) {
               nearest_distance = distance;
               nearest_confidence = candidate.confidence;
+              result.visual_probe_nearest_bbox.reset();
+              result.visual_probe_nearest_confidence.reset();
+              result.visual_probe_nearest_iou_recent.reset();
+              const BBox mapped{
+                  crop.left + (candidate.bbox.x - 160.0F) * factor,
+                  crop.top + (candidate.bbox.y - 160.0F) * factor,
+                  candidate.bbox.width * factor,
+                  candidate.bbox.height * factor};
+              if (std::isfinite(mapped.x) && std::isfinite(mapped.y) &&
+                  std::isfinite(mapped.width) && std::isfinite(mapped.height) &&
+                  mapped.width > 0.0F && mapped.height > 0.0F) {
+                const BBox clipped = clip_bbox(mapped, image.width, image.height);
+                if (clipped.width > 0.0F && clipped.height > 0.0F) {
+                  result.visual_probe_nearest_bbox = clipped;
+                  result.visual_probe_nearest_confidence = candidate.confidence;
+                  result.visual_probe_nearest_iou_recent =
+                      bbox_iou(clipped, recent->bbox);
+                }
+              }
             }
             if (distance <= visual_suspect_max_center_px_ &&
                 candidate.confidence >= visual_suspect_min_confidence_) {
@@ -391,13 +516,54 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
               nearest_distance <= visual_suspect_max_center_px_ &&
               nearest_confidence >= visual_suspect_min_confidence_;
           visual_ambiguous = nearby_candidates > 1;
+          result.visual_probe_hit = visual_hit;
+          result.visual_probe_nearby_candidates = nearby_candidates;
+          if (std::isfinite(nearest_distance)) {
+            result.visual_probe_nearest_distance_px = nearest_distance;
+          }
         }
       } catch (const std::exception& error) {
         result.detector.error = error.what();
       }
     }
   }
+  bool visual_target_corrob = false;
+  // Clearing a suspicion needs stronger independent evidence than merely
+  // detecting a nearby object during the occlusion probe.
+  if (visual_hit && !visual_ambiguous && result.visual_probe_nearest_bbox &&
+      result.visual_probe_nearest_confidence &&
+      *result.visual_probe_nearest_confidence >=
+          std::max(visual_suspect_min_confidence_, 0.5F)) {
+    const auto recent = std::find_if(result.observations.begin(),
+                                     result.observations.end(),
+                                     [frame_id](const TrackerObservation& observation) {
+                                       return observation.frame_id == frame_id &&
+                                           observation.template_kind == TemplateKind::kRecent;
+                                     });
+    if (recent != result.observations.end() &&
+        controller_.motion_last_clean_trend_ &&
+        bbox_iou(*result.visual_probe_nearest_bbox, recent->bbox) >=
+            controller_.config().detector_confirmation_iou &&
+        controller_.evaluate(*recent, result.plan).quality == QualityLevel::kReliable) {
+      const auto response = controller_.response_baseline_.evaluate(recent->metrics);
+      if (response.reference) {
+        const bool jointly_degraded =
+            recent->metrics.psr < response.reference->psr *
+                (1.0F - 0.5F * controller_.config().response_psr_drop_ratio) &&
+            recent->metrics.apce < response.reference->apce *
+                (1.0F - 0.5F * controller_.config().response_apce_drop_ratio);
+        // A detector can agree with a tracker response on an occluder. The
+        // response peak must retain enough of its trusted distinctiveness
+        // before that agreement clears a shrinking-box suspicion.
+        const bool peak_distinct = response.reference->peak_margin > 0.0F &&
+            recent->metrics.peak_margin >=
+                0.25F * response.reference->peak_margin;
+        visual_target_corrob = !jointly_degraded && peak_distinct;
+      }
+    }
+  }
   if (visual_hit) {
+    result.visual_probe_target_corrob = visual_target_corrob;
     const bool consecutive = last_visual_hit_frame_ &&
         *last_visual_hit_frame_ + 1 == frame_id;
     const int next_streak = consecutive ? visual_hit_streak_ + 1 : 1;
@@ -421,9 +587,45 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     const bool safe_crosscheck = recent != result.observations.end() &&
         safe != result.observations.end() &&
         bbox_iou(recent->bbox, safe->bbox) >= 0.5F;
-    result.plan.visual_occlusion_search = safe_crosscheck ||
-        next_streak >= visual_suspect_consecutive_frames_ +
-            (ambiguous_streak ? 1 : 0);
+    result.plan.visual_occlusion_search = !visual_target_corrob &&
+        (safe_crosscheck ||
+         next_streak >= visual_suspect_consecutive_frames_ +
+             (ambiguous_streak ? 1 : 0));
+    if (visual_target_corrob) {
+      result.plan.suspected_detector_guard = true;
+      result.plan.visual_probe_target_corrob = true;
+    }
+  }
+  // Detector support that rescued a visible track must not keep protecting
+  // it after the visual probe has failed to find nearby evidence twice in
+  // consecutive SUSPECTED frames. Unprotected tracks keep the existing
+  // uncertainty budget, since a detector miss alone is not proof of loss.
+  if (visual_batch_valid) {
+    guarded_visual_misses_ = visual_hit ? 0 : guarded_visual_misses_ + 1;
+    if (guard_protection_active_ && guarded_visual_misses_ >= 2 &&
+        previous_output_phase_ == TrackingPhase::kSuspected) {
+      result.plan.visual_occlusion_search = true;
+    }
+  } else {
+    guarded_visual_misses_ = 0;
+  }
+  if (guard_stream && !visual_blocking_used &&
+      !result.plan.request_detector && result.detector.ready &&
+      (!last_guard_request_ms_ ||
+       timestamp_ms - *last_guard_request_ms_ >= guard_config.detector_interval_ms)) {
+    const DetectorRequest request{frame_id, timestamp_ms,
+        BBox{0.0F, 0.0F, float(image.width), float(image.height)},
+        std::numeric_limits<std::size_t>::max(), 0,
+        DetectorRequestPurpose::kSuspectedValidation};
+    result.detector.request_frame_id = frame_id;
+    result.detector.request_purpose = request.purpose;
+    try {
+      detector_.submit(image, request);
+      result.detector.request_submitted = true;
+      last_guard_request_ms_ = timestamp_ms;
+    } catch (const std::exception& error) {
+      result.detector.error = error.what();
+    }
   }
   // Poll after inference so a detector result completed while NanoTrack ran
   // can still participate in this frame's recovery decision without waiting.
@@ -450,19 +652,91 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
 
   std::optional<DetectorBatch> recovery_batch;
   std::optional<DetectorBatch> display_batch;
+  std::optional<DetectorBatch> guard_batch;
   if (detector_batch) {
     if (detector_batch->purpose == DetectorRequestPurpose::kDisplayRefresh) {
       display_batch = detector_batch;
     } else if (detector_batch->purpose == DetectorRequestPurpose::kSearchRecovery) {
       recovery_batch = detector_batch;
+    } else if (detector_batch->purpose == DetectorRequestPurpose::kSuspectedValidation) {
+      guard_batch = detector_batch;
     }
   }
+  auto next_guard_hits = guard_hits_;
+  auto next_guard_batch_frame_id = last_guard_batch_frame_id_;
+  auto next_guard_source_ms = last_guard_source_ms_;
+  auto next_guard_candidate_bbox = last_guard_candidate_bbox_;
+  auto next_guard_confidence = last_guard_confidence_;
+  const auto recent = std::find_if(result.observations.begin(),
+      result.observations.end(), [](const TrackerObservation& observation) {
+        return observation.template_kind == TemplateKind::kRecent;
+      });
+  if (guard_batch) {
+    std::optional<BBox> source_recent;
+    if (guard_batch->source_frame_id == frame_id &&
+        recent != result.observations.end()) {
+      source_recent = recent->bbox;
+    } else {
+      const auto source = std::find_if(guard_observations_.begin(),
+          guard_observations_.end(), [&](const GuardObservation& observation) {
+            return observation.frame_id == guard_batch->source_frame_id;
+          });
+      if (source != guard_observations_.end()) source_recent = source->recent_bbox;
+    }
+    const auto age = timestamp_ms - guard_batch->source_timestamp_ms;
+    const bool fresh = guard_class && age >= 0 &&
+        age <= guard_config.detector_stale_ms &&
+        guard_batch->source_frame_id <= frame_id &&
+        (!next_guard_batch_frame_id ||
+         guard_batch->source_frame_id > *next_guard_batch_frame_id);
+    const DetectorCandidate* match = nullptr;
+    int matches = 0;
+    if (fresh && source_recent && recent != result.observations.end()) {
+      for (const auto& candidate : guard_batch->candidates) {
+        if (candidate.class_id != *result.target_class.target_class_id ||
+            !std::isfinite(candidate.confidence) ||
+            candidate.confidence < guard_config.suspected_detector_guard_min_confidence ||
+            bbox_iou(candidate.bbox, *source_recent) <
+                guard_config.suspected_detector_guard_min_iou ||
+            bbox_iou(candidate.bbox, recent->bbox) <
+                guard_config.suspected_detector_guard_min_iou * 0.6F) continue;
+        match = &candidate;
+        ++matches;
+      }
+    }
+    next_guard_batch_frame_id = guard_batch->source_frame_id;
+    if (matches == 1) {
+      next_guard_hits = std::min(next_guard_hits + 1,
+          guard_config.suspected_detector_guard_required_hits);
+      next_guard_source_ms = guard_batch->source_timestamp_ms;
+      next_guard_candidate_bbox = match->bbox;
+      next_guard_confidence = match->confidence;
+    } else {
+      next_guard_hits = 0;
+      next_guard_source_ms.reset();
+      next_guard_candidate_bbox.reset();
+      next_guard_confidence.reset();
+    }
+  }
+  if (guard_stream && recent != result.observations.end() &&
+      next_guard_hits >= guard_config.suspected_detector_guard_required_hits &&
+      next_guard_source_ms && next_guard_candidate_bbox &&
+      timestamp_ms >= *next_guard_source_ms &&
+      timestamp_ms - *next_guard_source_ms <= guard_config.detector_stale_ms &&
+      bbox_iou(*next_guard_candidate_bbox, recent->bbox) >=
+          guard_config.suspected_detector_guard_min_iou * 0.6F) {
+    result.plan.suspected_detector_guard = true;
+  }
+  result.suspected_detector_guard_hits = next_guard_hits;
+  result.suspected_detector_guard_confidence = next_guard_confidence;
   // The finish call updates bounded tracking state in place. Keep its input
   // state until every fallible tracker callback has completed. The controller
   // already holds the pre-prediction checkpoint for the open frame.
   application_checkpoint.emplace(controller_);
   result.output =
       controller_.finish_frame(result.plan, result.observations, recovery_batch);
+  result.suspected_detector_guard_applied =
+      result.plan.suspected_detector_guard && result.output.accepted;
   if (result.plan.visual_occlusion_search &&
       result.output.tracking_phase == TrackingPhase::kSearching) {
     result.output.state_change_reason = "VISUAL_OCCLUSION_SEARCH";
@@ -504,6 +778,100 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
   result.output.display_bbox = adaptive_display_.update(
       result.output, result.target_class, result.adaptive_display);
   result.output.bbox = result.output.display_bbox;
+  // Reuse the periodic detector batch, but arbitrate tracking size separately
+  // from the display envelope. Two unique, consistent full-object detections
+  // can adjust the published size; NanoTrack still owns the center and crop.
+  if (!result.output.accepted || result.output.reacquired ||
+      result.output.tracking_phase != TrackingPhase::kTracking) {
+    pending_tracking_size_candidate_.reset();
+    tracking_size_candidate_hits_ = 0;
+    confirmed_tracking_size_candidate_.reset();
+    confirmed_tracking_size_source_ms_.reset();
+  } else if (display_batch &&
+             (!last_tracking_size_batch_frame_id_ ||
+              display_batch->source_frame_id > *last_tracking_size_batch_frame_id_)) {
+    last_tracking_size_batch_frame_id_ = display_batch->source_frame_id;
+    const auto age_ms = timestamp_ms - display_batch->source_timestamp_ms;
+    const auto candidate =
+        result.output.selected_template == TemplateKind::kRecent &&
+        result.output.quality == QualityLevel::kReliable && age_ms >= 0 &&
+        age_ms <= controller_.config().detector_stale_ms
+        ? select_tracking_size_candidate(*display_batch,
+            result.output.tracking_bbox, result.target_class.target_class_id,
+            controller_.config()) : std::nullopt;
+    if (candidate) {
+      tracking_size_candidate_hits_ = pending_tracking_size_candidate_ &&
+          bbox_iou(*pending_tracking_size_candidate_, *candidate) >=
+              controller_.config().detector_confirmation_iou
+          ? std::min(tracking_size_candidate_hits_ + 1,
+              controller_.config().confirmation_required) : 1;
+      pending_tracking_size_candidate_ = candidate;
+      if (tracking_size_candidate_hits_ >=
+          controller_.config().confirmation_required) {
+        confirmed_tracking_size_candidate_ = candidate;
+        confirmed_tracking_size_source_ms_ = display_batch->source_timestamp_ms;
+        result.detector_tracking_size_confirmed = true;
+      }
+    } else {
+      pending_tracking_size_candidate_.reset();
+      tracking_size_candidate_hits_ = 0;
+    }
+  }
+  // Two detector-confirmed display updates bound a tracker displacement
+  // without adding detector requests or feeding detector box size into motion.
+  // This can replace a stale frozen velocity only when both accepted tracker
+  // boxes still overlap and their measured speed is physically bounded.
+  if (!result.output.accepted || result.output.reacquired ||
+      result.output.tracking_phase != TrackingPhase::kTracking) {
+    last_display_motion_support_.reset();
+  } else if (result.adaptive_display.source == DisplayBoxSource::kDetectorConfirmed &&
+             result.output.selected_template == TemplateKind::kRecent) {
+    if (controller_.motion_freeze_since_ms_ &&
+        controller_.motion_last_clean_trend_ &&
+        last_display_motion_support_) {
+      const auto& previous = *last_display_motion_support_;
+      const auto& current = result.output.tracking_bbox;
+      const auto& config = controller_.config();
+      const auto elapsed_ms = timestamp_ms - previous.timestamp_ms;
+      if (elapsed_ms > 0 && elapsed_ms <= 2 * config.detector_stale_ms &&
+          bbox_iou(previous.tracking_bbox, current) >=
+              config.display_detection_consistency_iou) {
+        const float elapsed_s = static_cast<float>(elapsed_ms) / 1000.0F;
+        const float vx = (current.x + 0.5F * current.width -
+                          previous.tracking_bbox.x -
+                          0.5F * previous.tracking_bbox.width) / elapsed_s;
+        const float vy = (current.y + 0.5F * current.height -
+                          previous.tracking_bbox.y -
+                          0.5F * previous.tracking_bbox.height) / elapsed_s;
+        const float diagonal = std::hypot(current.width, current.height);
+        const MotionSnapshot prior_trend = *controller_.motion_last_clean_trend_;
+        const float trend_dot = vx * prior_trend.velocity_x +
+                                vy * prior_trend.velocity_y;
+        // A direction inferred from less than one pixel of expected travel
+        // over this detector-confirmed interval is below image resolution.
+        const float trusted_travel =
+            std::hypot(prior_trend.velocity_x, prior_trend.velocity_y) * elapsed_s;
+        if (std::hypot(vx, vy) <=
+                config.motion_max_speed_diagonals_per_s * diagonal &&
+            (trusted_travel < 1.0F || trend_dot >= 0.0F)) {
+          MotionSnapshot trend = prior_trend;
+          trend.velocity_x += config.motion_alpha * (vx - trend.velocity_x);
+          trend.velocity_y += config.motion_alpha * (vy - trend.velocity_y);
+          controller_.motion_.reanchor_preserving_velocity(current, trend,
+                                                           timestamp_ms);
+          controller_.motion_last_clean_trend_ =
+              controller_.motion_.snapshot(timestamp_ms);
+          controller_.search_motion_reference_ =
+              *controller_.motion_last_clean_trend_;
+          controller_.search_motion_reference_held_ = true;
+          result.output.motion_update_valid = true;
+          result.output.motion_gate_reason = "DETECTOR_CORROBORATED_TREND";
+        }
+      }
+    }
+    last_display_motion_support_ = DetectorMotionSupport{
+        timestamp_ms, result.output.tracking_bbox};
+  }
   result.runtime_ms = std::chrono::duration<float, std::milli>(
                           std::chrono::steady_clock::now() - total_start)
                           .count();
@@ -526,6 +894,257 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     trusted_brightness_.push_back(bright_fraction(image, result.output.tracking_bbox));
     if (trusted_brightness_.size() > 8) trusted_brightness_.pop_front();
   }
+  if (recent != result.observations.end()) {
+    guard_observations_.push_back(GuardObservation{frame_id, recent->bbox});
+    while (guard_observations_.size() > 8) guard_observations_.pop_front();
+  }
+  guard_stream_active_ = result.output.tracking_phase == TrackingPhase::kSuspected ||
+                         result.suspected_detector_guard_applied;
+  if (result.output.tracking_phase == TrackingPhase::kSearching ||
+      result.output.reacquired) {
+    guard_protection_active_ = false;
+    guarded_visual_misses_ = 0;
+  } else if (result.suspected_detector_guard_applied && result.output.accepted) {
+    guard_protection_active_ = true;
+  }
+  if (result.output.tracking_phase == TrackingPhase::kTracking) {
+    guarded_visual_misses_ = 0;
+  }
+  if (!guard_stream_active_) {
+    next_guard_hits = 0;
+    next_guard_source_ms.reset();
+    next_guard_candidate_bbox.reset();
+    next_guard_confidence.reset();
+  }
+  guard_hits_ = next_guard_hits;
+  last_guard_batch_frame_id_ = next_guard_batch_frame_id;
+  last_guard_source_ms_ = next_guard_source_ms;
+  last_guard_candidate_bbox_ = next_guard_candidate_bbox;
+  last_guard_confidence_ = next_guard_confidence;
+  // The controller and NanoTrack have already committed their own box. Only
+  // the published geometry uses detector evidence corroborated by an accepted
+  // Recent observation. The next search crop and visual-occlusion reference
+  // continue to use the internal tracker box.
+  const auto& size_config = controller_.config();
+  const std::int64_t size_retention_ms = std::max(
+      size_config.detector_stale_ms,
+      size_config.display_detector_max_interval_ms);
+  const bool retained_size_available = last_supported_published_bbox_ &&
+      last_published_support_ms_ && timestamp_ms >= *last_published_support_ms_ &&
+      timestamp_ms - *last_published_support_ms_ <= size_retention_ms;
+  const float retained_weight = retained_size_available
+      ? 1.0F - static_cast<float>(timestamp_ms - *last_published_support_ms_) /
+          static_cast<float>(size_retention_ms)
+      : 0.0F;
+  const auto retained_dimension = [&](float raw, float confirmed) {
+    return raw - retained_weight * (raw - confirmed);
+  };
+  if (result.output.accepted && !result.output.reacquired &&
+      result.output.accepted_observation_path == AcceptedObservationPath::kDirect &&
+      result.output.selected_template == TemplateKind::kRecent) {
+    const BBox tracker_box = result.output.tracking_bbox;
+    const BBox previous = published_tracking_bbox_.value_or(tracker_box);
+    const bool guard_size_supported = result.suspected_detector_guard_applied &&
+        next_guard_candidate_bbox.has_value();
+    const bool tracking_size_supported = confirmed_tracking_size_candidate_ &&
+        confirmed_tracking_size_source_ms_ &&
+        timestamp_ms >= *confirmed_tracking_size_source_ms_ &&
+        timestamp_ms - *confirmed_tracking_size_source_ms_ <=
+            controller_.config().detector_stale_ms;
+    // A smaller detector box may simply use a different envelope convention
+    // from a well-sized tracker. Require at least a 2:1 area disagreement
+    // before treating it as evidence of an oversized tracker response.
+    const bool strong_shrink_evidence = tracking_size_supported &&
+        confirmed_tracking_size_candidate_->width *
+            confirmed_tracking_size_candidate_->height <=
+            0.50F * tracker_box.width * tracker_box.height;
+    const bool size_supported = guard_size_supported || tracking_size_supported;
+    const bool support_recent = last_published_support_ms_ &&
+        timestamp_ms >= *last_published_support_ms_ &&
+        timestamp_ms - *last_published_support_ms_ <=
+            controller_.config().detector_stale_ms &&
+        last_supported_published_bbox_;
+    BBox target = guard_size_supported ? *next_guard_candidate_bbox :
+        tracking_size_supported ? *confirmed_tracking_size_candidate_ :
+        support_recent ? *last_supported_published_bbox_ : tracker_box;
+    const bool retained_smaller_width = !size_supported &&
+        retained_size_available &&
+        last_supported_published_bbox_->width < tracker_box.width;
+    const bool retained_smaller_height = !size_supported &&
+        retained_size_available &&
+        last_supported_published_bbox_->height < tracker_box.height;
+    if (retained_smaller_width) {
+      target.width = retained_dimension(
+          tracker_box.width, last_supported_published_bbox_->width);
+    }
+    if (retained_smaller_height) {
+      target.height = retained_dimension(
+          tracker_box.height, last_supported_published_bbox_->height);
+    }
+    if (tracking_size_supported && !guard_size_supported) {
+      // Two sensors agree on identity, but their size estimates can still
+      // differ. Give the detector half of the size correction and retain the
+      // NanoTrack center and the existing per-frame scale limit.
+      target.width = 0.5F * (tracker_box.width + target.width);
+      target.height = 0.5F * (tracker_box.height + target.height);
+    }
+    const float limit = std::min(0.10F,
+        controller_.config().max_accepted_scale_step_ratio);
+    const auto next_dimension = [&](float current, float raw, float detector,
+                                    bool smaller_supported) {
+      const float desired = smaller_supported ? detector : std::max(raw, detector);
+      return std::clamp(desired, current * (1.0F - limit),
+                        current * (1.0F + limit));
+    };
+    const bool smaller_width_supported =
+        !guard_size_supported &&
+        ((strong_shrink_evidence &&
+          confirmed_tracking_size_candidate_->width < tracker_box.width) ||
+         retained_smaller_width);
+    const bool smaller_height_supported =
+        !guard_size_supported &&
+        ((strong_shrink_evidence &&
+          confirmed_tracking_size_candidate_->height < tracker_box.height) ||
+         retained_smaller_height);
+    const float width = next_dimension(previous.width, tracker_box.width,
+        target.width, smaller_width_supported);
+    const float height = next_dimension(previous.height, tracker_box.height,
+        target.height, smaller_height_supported);
+    const float tracker_center_x = tracker_box.x + 0.5F * tracker_box.width;
+    const float tracker_center_y = tracker_box.y + 0.5F * tracker_box.height;
+    float desired_offset_x = 0.0F;
+    float desired_offset_y = 0.0F;
+    if (tracking_size_supported && !guard_size_supported) {
+      const auto& detector_box = *confirmed_tracking_size_candidate_;
+      const float tracker_area = tracker_box.width * tracker_box.height;
+      const float detector_area = detector_box.width * detector_box.height;
+      // A larger detector envelope can expose a tracker center bias caused
+      // by undersizing. Equal or smaller envelopes keep the tracker center.
+      // The two-hit identity gate above must already have passed.
+      const float weight = std::clamp(detector_area / tracker_area - 1.0F,
+                                      0.0F, 0.5F);
+      desired_offset_x = weight *
+          (detector_box.x + 0.5F * detector_box.width - tracker_center_x);
+      desired_offset_y = weight *
+          (detector_box.y + 0.5F * detector_box.height - tracker_center_y);
+    }
+    const float max_offset = controller_.config().accepted_center_max_correction_ratio *
+        std::hypot(tracker_box.width, tracker_box.height);
+    const float alpha = controller_.config().accepted_center_smoothing_alpha;
+    published_center_offset_x_ = std::clamp(
+        published_center_offset_x_ + alpha *
+            (desired_offset_x - published_center_offset_x_),
+        -max_offset, max_offset);
+    published_center_offset_y_ = std::clamp(
+        published_center_offset_y_ + alpha *
+            (desired_offset_y - published_center_offset_y_),
+        -max_offset, max_offset);
+    const float center_x = tracker_center_x + published_center_offset_x_;
+    const float center_y = tracker_center_y + published_center_offset_y_;
+    const BBox published = clip_bbox(
+        BBox{center_x - 0.5F * width, center_y - 0.5F * height,
+             width, height}, image.width, image.height);
+    result.detector_size_output_applied =
+        std::fabs(published.width - tracker_box.width) > 0.01F ||
+        std::fabs(published.height - tracker_box.height) > 0.01F;
+    result.detector_size_output_retained =
+        result.detector_size_output_applied &&
+        (retained_smaller_width || retained_smaller_height);
+    result.detector_center_output_applied =
+        std::hypot(published_center_offset_x_,
+                   published_center_offset_y_) > 0.01F;
+    result.output.tracking_bbox = published;
+    result.output.control_bbox = published;
+    published_tracking_bbox_ = published;
+    if (size_supported) {
+      // The per-frame cap can leave the published box far from a strongly
+      // corroborated smaller detector envelope. Carry that destination
+      // through a short detector gap, with the existing age decay and step
+      // limit, instead of remembering only the intermediate published size.
+      last_supported_published_bbox_ = strong_shrink_evidence
+          ? *confirmed_tracking_size_candidate_ : published;
+      last_published_support_ms_ = timestamp_ms;
+    }
+  } else {
+    const BBox tracker_box = result.output.tracking_bbox;
+    const bool retained_smaller_width = !result.output.reacquired &&
+        retained_size_available && published_tracking_bbox_ &&
+        last_supported_published_bbox_->width < tracker_box.width;
+    const bool retained_smaller_height = !result.output.reacquired &&
+        retained_size_available && published_tracking_bbox_ &&
+        last_supported_published_bbox_->height < tracker_box.height;
+    if (retained_smaller_width || retained_smaller_height) {
+      const BBox previous = *published_tracking_bbox_;
+      const float limit = std::min(0.10F,
+          size_config.max_accepted_scale_step_ratio);
+      const auto next_dimension = [&](float current, float target) {
+        return std::clamp(target, current * (1.0F - limit),
+                          current * (1.0F + limit));
+      };
+      const float width = next_dimension(previous.width,
+          retained_smaller_width ? retained_dimension(tracker_box.width,
+              last_supported_published_bbox_->width) : tracker_box.width);
+      const float height = next_dimension(previous.height,
+          retained_smaller_height ? retained_dimension(tracker_box.height,
+              last_supported_published_bbox_->height) : tracker_box.height);
+      const auto resized = [&](const BBox& box) {
+        return clip_bbox(BBox{box.x + 0.5F * (box.width - width),
+                              box.y + 0.5F * (box.height - height),
+                              width, height}, image.width, image.height);
+      };
+      const BBox published = resized(tracker_box);
+      result.output.tracking_bbox = published;
+      if (result.output.control_bbox.width > 0.0F &&
+          result.output.control_bbox.height > 0.0F) {
+        result.output.control_bbox = resized(result.output.control_bbox);
+      }
+      result.detector_size_output_applied =
+          std::fabs(published.width - tracker_box.width) > 0.01F ||
+          std::fabs(published.height - tracker_box.height) > 0.01F;
+      result.detector_size_output_retained =
+          result.detector_size_output_applied;
+      published_tracking_bbox_ = published;
+    } else {
+      published_tracking_bbox_.reset();
+      last_supported_published_bbox_.reset();
+      last_published_support_ms_.reset();
+    }
+    published_center_offset_x_ = 0.0F;
+    published_center_offset_y_ = 0.0F;
+  }
+  // A frozen motion predictor can be spatially separated from the most
+  // recently published tracker box when search starts. Ease only the outward
+  // prediction toward that independent motion hypothesis; its state, NanoTrack
+  // crop, detector arbitration and recovery evidence remain untouched.
+  const float search_alpha = controller_.config().search_output_smoothing_alpha;
+  const bool searching = result.output.tracking_phase == TrackingPhase::kSearching &&
+      !result.output.accepted && result.output.motion_input_frozen;
+  const BBox internal_box = result.output.tracking_bbox;
+  if (searching && search_alpha > 0.0F && last_published_output_bbox_) {
+    const BBox& previous = *last_published_output_bbox_;
+    const float previous_x = previous.x + 0.5F * previous.width;
+    const float previous_y = previous.y + 0.5F * previous.height;
+    const float internal_x = internal_box.x + 0.5F * internal_box.width;
+    const float internal_y = internal_box.y + 0.5F * internal_box.height;
+    if (previous_output_phase_ != TrackingPhase::kSearching) {
+      const float gap = std::hypot(internal_x - previous_x, internal_y - previous_y);
+      search_output_smoothing_active_ = gap > 0.25F *
+          std::hypot(internal_box.width, internal_box.height);
+    }
+    if (search_output_smoothing_active_) {
+      const float x = previous_x + search_alpha * (internal_x - previous_x);
+      const float y = previous_y + search_alpha * (internal_y - previous_y);
+      const BBox published = clip_bbox(
+          BBox{x - 0.5F * internal_box.width, y - 0.5F * internal_box.height,
+               internal_box.width, internal_box.height}, image.width, image.height);
+      result.output.tracking_bbox = published;
+      result.output.control_bbox = published;
+      result.search_output_smoothed = true;
+    }
+  } else {
+    search_output_smoothing_active_ = false;
+  }
+  last_published_output_bbox_ = result.output.tracking_bbox;
   previous_output_phase_ = result.output.tracking_phase;
   result.template_slot_revocation = pending_template_slot_revocation_;
   revocation_waiting_for_ack_ = result.template_slot_revocation.has_value();
