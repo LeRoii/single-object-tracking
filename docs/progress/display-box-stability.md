@@ -908,3 +908,50 @@
 
 - 协调对话请接收本提交与下一节 A8 测试候选身份，审查默认 0.5
   初始化门槛；开发板/吊舱表现仍须单独验证，不自动推广到生产契约。
+
+## 2026-11-20T20:54:06+08:00 0.5 初始化门槛 A8 隔离安装
+
+- 实际消费算法提交
+  `codex/rk3588-display-box-stability@a2025d3c8c8076728b3731c1fd72690ec52ffaac`，
+  A8 适配模板提交
+  `codex/rk3588-a8-cross-compile@3fffd207a62dfc87a25f3864311a9f2173663d77`；
+  工作树与前文相同。复现记录
+  `docs/deployments/rk3588-a8-init-confidence-20261120/`。
+  A8 适配仅追加每次点击的 `AI_INIT_CANDIDATE` / `AI_INIT_CLASS` 日志，
+  含检测类别、原始框、置信度和低置信拒绝原因；算法功能门槛只在
+  NanoTrack 源码。既有 0.25 detector 推理门槛不变。
+- WSL 输入包 `/tmp/a8-init-confidence-input.tar` SHA-256
+  `6ed4a583635383cf928040c5355495c954d92e04d74fe2aaf72ef19efc48e6bd`；
+  `build-inputs.sha256` SHA-256
+  `05a5858a7f9299a79e56913aec2a59344064cb0fdb2eb2dba836c57ed0c5721f`。
+  重新核对 WSL A8 库 SHA-256
+  `fec1c4326051446a90890132b03834d89ba9763a73237f34adcb09904032c040`，
+  两份 CMake 文件匹配固定哈希。WSL
+  `/home/wjm/a8-init-confidence-20261120` 执行 `bash build-wsl.sh` 成功，
+  AArch64 程序 SHA-256
+  `7f31a223d638253d69ed5d0be0ae2819c321419725872ed271345de54124672b`；
+  构建日志 SHA-256
+  `b618e5254b69259dce9afa6131cd57f5393fa892e237048646b3712cbe4a6305`；
+  三项回调/串口包装符号存在，原文件恢复检查日志 SHA-256
+  `b0ce570cbe87ad1060b1cdbe71a06e95e74fcad7c681f35e89cb5ed01381b7cb`。
+- 吊舱 `ok3588` 指纹与前文一致，隔离目录
+  `/app/nanotrack_rk3588_init_confidence_20261120`；传输包 SHA-256
+  `8608b4b8aacdaefb5796436f3b534a145323b5f0c40f0e00817f2c3b97486c16`。
+  七项模型及私有启动文件从前一隔离候选在吊舱内复制；模型清单七项、
+  `payload.sha256` 17 项全通过，后者自身 SHA-256
+  `f42cad4f9fbcc3adc812d3ebde584e19af0c96cff959d24b92a7a2c9d56d3276`。
+  原 `/app/bin/viewlink_app` SHA-256 保持
+  `46325de3d9ba8a5850af48b91c0189ee52a993e233c59858578099efc94a1e70`。
+- 执行 `sh start-test.sh --check` 输出 `CHECK OK; program not started`；
+  预检目录 `log/preflight-limit-0-3853-11103/`，输入/视频日志 SHA-256
+  `51ea197765589a6504fd287cb09cf9f5eebe98320dcaed298026bc1a801946a2` /
+  `fe59766ad4a5a5881dbf1704c7b7c7e40ae04a075581bfade961ee107e822c3a`。
+  `ldd` 未发现缺失依赖，预检后没有运行中的 `viewlink_app`。
+  该候选未实际启动模型或执行点击测试；吊舱效果等待用户人工反馈。
+
+### Handoff
+
+- 协调与交叉编译对话请核对本提交及新程序/配置/模型/日志身份；
+  该候选未做新开发板原生验证，不是协调批准的生产 handoff。
+  用户手动启动 `/app/nanotrack_rk3588_init_confidence_20261120/start-test.sh`，
+  后续运行日志中的 `AI_INIT_CANDIDATE` 可提供置信度实数和拒绝原因。
