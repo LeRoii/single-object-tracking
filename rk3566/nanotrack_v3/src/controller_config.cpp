@@ -136,6 +136,7 @@ void set_value(ControllerConfig& config,
   else if (key == "assisted_recovery_ms") config.assisted_recovery_ms = parse_integer(key, value);
   else if (key == "suspicion_enter_ms") config.suspicion_enter_ms = parse_integer(key, value);
   else if (key == "suspicion_clear_ms") config.suspicion_clear_ms = parse_integer(key, value);
+  else if (key == "recognized_suspect_min_failed_metrics") config.recognized_suspect_min_failed_metrics = parse_integer(key, value);
   else if (key == "unknown_suspect_min_failed_metrics") config.unknown_suspect_min_failed_metrics = parse_integer(key, value);
   else if (key == "unknown_response_grace_ms") config.unknown_response_grace_ms = parse_integer(key, value);
   else if (key == "unknown_response_recovery_ms") config.unknown_response_recovery_ms = parse_integer(key, value);
@@ -406,6 +407,10 @@ void validate_controller_config(const ControllerConfig& config) {
   }
   if (config.suspicion_clear_ms <= 0) {
     throw std::invalid_argument("suspicion_clear_ms must be positive");
+  }
+  if (config.recognized_suspect_min_failed_metrics < 1 ||
+      config.recognized_suspect_min_failed_metrics > 3) {
+    throw std::invalid_argument("recognized_suspect_min_failed_metrics must be 1, 2 or 3");
   }
   if (config.unknown_suspect_min_failed_metrics < 1 ||
       config.unknown_suspect_min_failed_metrics > 3) {
@@ -703,6 +708,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << to_string(config.recovery_policy) << '|'
          << config.suspicion_enter_ms << '|'
          << config.suspicion_clear_ms << '|'
+         << config.recognized_suspect_min_failed_metrics << '|'
          << config.unknown_suspect_min_failed_metrics << '|'
          << config.unknown_response_grace_ms << '|'
          << config.unknown_response_recovery_ms << '|'

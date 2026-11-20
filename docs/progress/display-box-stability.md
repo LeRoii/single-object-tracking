@@ -1108,3 +1108,40 @@
   伴随微小滞后；遮挡重捕获仍有独立风险。当前数据没有可用行人真值，
   也没有覆盖大目标、快速转弯、快速缩放及吊舱高速运动模糊，不能声称这些
   场景已验证。没有请求生产 handoff、默认值变更、部署或替换模型。
+
+## 2026-11-20T21:49:59+08:00 已识别目标 SUSPECTED 入口配置
+
+- 分支 `codex/rk3588-display-box-stability`，工作树
+  `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking`；
+  基于干净的 `42db51c924e8ba2247758990447a2493e4e60c4c`。
+  本轮仅消费本分支源码；开始时重核其他 RK3588 分支提交：开发板
+  `291e62d1cb4211cf32b2dfc160ade78305774044`、数据集
+  `6b927bc744a751a6b232f01ef6c8d0f119b924f2`、实验
+  `742b1f2de047ca02b7b783f3c58c9ca0cf67d33c`、交叉编译
+  `3fffd207a62dfc87a25f3864311a9f2173663d77`；没有消费它们的未集成候选。
+- 新增 `recognized_suspect_min_failed_metrics`，合法值 `1/2/3`；默认 `1`
+  完全保留已识别目标原行为。RK3588 候选配置显式写 `1`，用户可改为 `2` 或 `3`。
+  针对 ESTABLISHED/FIXED 普通已提交 Recent 模板的绝对分数/PSR/APCE/峰值区分度
+  不达可靠阈值数量计票。低于门槛且质量仍为 WEAK 的观测继续 TRACKING，
+  保留 WEAK 质量、暂停模板与响应基准学习；到达门槛进入 SUSPECTED。
+  已处于 SUSPECTED 时继续采用原恢复条件/计时。最低质量拒绝、几何、遮挡、
+  相对响应下降及恢复试用、搜索确认路径没有改入口门槛。UNKNOWN 仍使用独立配置。
+  默认值 `1` 时，原来多项失败直接搜索的路径也保持不变。
+- 配置解析、值域校验、配置指纹、session metadata 已纳入新值。
+  当前候选配置路径
+  `rk3566/nanotrack_v3/config/rk3588-display-stability-candidate.conf`，
+  SHA-256 `2f386b4bcc7c64210115324fbaed9d47c596d47ad3f0d4368e3dd8daef6bfaed`。
+- 主机实际执行：`cmake -S rk3566/nanotrack_v3 -B /tmp/rk3588-display-stability-build -DCMAKE_BUILD_TYPE=Release -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`；
+  `cmake --build /tmp/rk3588-display-stability-build -j4`；
+  `ctest --test-dir /tmp/rk3588-display-stability-build --output-on-failure -j4`。
+  观察 23/23 PASS。新增测试覆盖两种已识别状态、三种配置、四项全部组合、
+  低于门槛时持续跟踪但不学习、相对下降仍触发、最低分数/几何失败不被绕过；
+  UNKNOWN 既有回归继续通过。主机测试程序
+  `/tmp/rk3588-display-stability-build/test_long_term_controller` SHA-256
+  `b18804c1390d1912dad8783d3ab238a6cfc3c4501bb8448619be8cd75955a7a2`。
+- 证据边界：本轮为主机算法回归，未在 RK3588 开发板运行新候选、未交叉编译或
+  部署吊舱；也没有宣称运动目标表现已改善。新配置选择 `2/3` 后仍需用真实
+  目标检查误失锁和错误跟随之间的取舍。
+- Handoff：协调/开发板对话如需消费本候选，请核对本提交及上述配置 SHA-256，
+  并在同一视频和相同初始目标上比较 `1/2/3`，观察 SUSPECTED/SEARCHING 的
+  时间、真值 IoU 与误跟随。当前契约的生产 handoff 仍未批准。
