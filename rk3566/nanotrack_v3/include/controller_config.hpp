@@ -75,6 +75,8 @@ struct ControllerConfig {
   std::int64_t suspicion_enter_ms = 100;
   std::int64_t suspicion_clear_ms = 100;
   // Zero preserves the ordinary response-quality search policy.
+  // 1 preserves legacy entry; 2 counts distinct absolute/relative failures.
+  std::int64_t unknown_suspect_min_failed_metrics = 1;
   std::int64_t unknown_response_grace_ms = 0;
   // Continuous reliable response needed to clear UNKNOWN grace only.
   std::int64_t unknown_response_recovery_ms = 100;

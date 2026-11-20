@@ -273,6 +273,7 @@ SearchPlan LongTermController::begin_frame(std::uint64_t frame_id,
         motion_, shadow_motion_, tentative_control_, response_degraded_since_ms_,
         suspected_since_ms_, response_clean_since_ms_, unknown_grace_since_ms_,
         unknown_grace_reliable_since_ms_, unknown_grace_bbox_, unknown_grace_trace_,
+        unknown_search_trace_,
         unknown_grace_gap_pending_, motion_residual_history_,
         motion_recent_residuals_,
         motion_freeze_since_ms_, motion_clean_since_ms_,
@@ -739,6 +740,7 @@ void LongTermController::clear_unknown_grace() noexcept {
   unknown_grace_reliable_since_ms_.reset();
   unknown_grace_bbox_.reset();
   unknown_grace_trace_.reset();
+  unknown_search_trace_.reset();
   unknown_grace_gap_pending_ = false;
 }
 
@@ -762,6 +764,7 @@ void LongTermController::restore_prediction_checkpoint() noexcept {
   unknown_grace_reliable_since_ms_ = checkpoint.unknown_grace_reliable_since_ms;
   unknown_grace_bbox_ = checkpoint.unknown_grace_bbox;
   unknown_grace_trace_ = checkpoint.unknown_grace_trace;
+  unknown_search_trace_ = checkpoint.unknown_search_trace;
   unknown_grace_gap_pending_ = checkpoint.unknown_grace_gap_pending;
   motion_residual_history_ = std::move(checkpoint.motion_residual_history);
   motion_recent_residuals_ = std::move(checkpoint.motion_recent_residuals);
@@ -1106,8 +1109,32 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
     return RecentDisposition::kSearch;
   }
 
+  if (config_.unknown_suspect_min_failed_metrics == 2) {
+    output.unknown_response_vote_enabled = true;
+    output.unknown_absolute_failure_mask =
+        (metrics.raw_score < config_.reliable_score ? 1 : 0) |
+        (metrics.psr < config_.reliable_psr ? 2 : 0) |
+        (metrics.apce < config_.reliable_apce ? 4 : 0) |
+        (metrics.peak_margin < config_.reliable_peak_margin ? 8 : 0);
+    const bool long_dual_drop = response_baseline_.sustained_dual_drop(metrics);
+    output.unknown_relative_failure_mask =
+        (response.psr_drop || long_dual_drop ? 2 : 0) |
+        (response.apce_drop || long_dual_drop ? 4 : 0) |
+        (response.peak_margin_drop ? 8 : 0);
+    const int failures = output.unknown_absolute_failure_mask |
+                         output.unknown_relative_failure_mask;
+    for (int bit = 1; bit <= 8; bit <<= 1)
+      output.unknown_failed_metric_count += (failures & bit) != 0;
+    // Entry only: an existing grace episode still needs its timed recovery.
+    // Absolute and relative failures of the same metric contribute one vote.
+    if (!unknown_grace_since_ms_ && output.unknown_failed_metric_count < 2) {
+      output.unknown_learning_paused = output.unknown_failed_metric_count == 1;
+      clear_suspicion();
+      return RecentDisposition::kDirect;
+    }
+  }
   const RecentDisposition ordinary = assess_recent(plan, recent, response);
-  const bool reliable = recent.quality == QualityLevel::kReliable &&
+  const bool strict_reliable = recent.quality == QualityLevel::kReliable &&
       !response.psr_drop && !response.apce_drop &&
       !response.peak_margin_drop &&
       !response_baseline_.sustained_dual_drop(metrics) &&
@@ -1117,7 +1144,8 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
        metrics.apce >= response.reference->apce *
            (1.0F - 0.5F * config_.response_apce_drop_ratio));
   if (!unknown_grace_since_ms_) {
-    if (ordinary == RecentDisposition::kDirect) return ordinary;
+    if (ordinary == RecentDisposition::kDirect &&
+        !output.unknown_response_vote_enabled) return ordinary;
     unknown_grace_since_ms_ = plan.timestamp_ms;
   }
   output.unknown_grace_age_ms = plan.timestamp_ms - *unknown_grace_since_ms_;
@@ -1127,6 +1155,29 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
   const bool safe_conflict = safe && safe->quality == QualityLevel::kReliable &&
       bbox_iou(safe->observation.bbox, observation.bbox) <
           config_.template_agreement_iou;
+  // Recovery uses the same DISTINCT metric vote as entry, with the existing
+  // continuous recovery duration. A single failure still prohibits learning.
+  const bool reliable = output.unknown_response_vote_enabled
+      ? output.unknown_failed_metric_count < 2 && !safe_conflict
+      : strict_reliable;
+  // Search location evidence is separate from reliable response evidence.
+  // Hard gates above already passed; require continuous geometric agreement,
+  // but do not require recovery-level scores merely to choose where to search.
+  if (output.unknown_response_vote_enabled && !safe_conflict) {
+    const bool continues = unknown_search_trace_ &&
+        plan.timestamp_ms - unknown_search_trace_->last_ms <= config_.motion_max_dt_ms &&
+        bbox_iou(unknown_search_trace_->bbox, observation.bbox) >=
+            config_.template_agreement_iou;
+    if (!continues) {
+      unknown_search_trace_ = UnknownGraceTrace{observation.bbox,
+          plan.timestamp_ms, plan.timestamp_ms, 0, 0};
+    }
+    unknown_search_trace_->bbox = observation.bbox;
+    unknown_search_trace_->last_ms = plan.timestamp_ms;
+    ++unknown_search_trace_->frames;
+  } else {
+    unknown_search_trace_.reset();
+  }
   const bool stable_response =
       metrics.raw_score >= config_.reliable_score &&
       metrics.psr >= config_.reliable_psr &&
@@ -1165,7 +1216,10 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
     output.unknown_grace_reliable_ms =
         plan.timestamp_ms - *unknown_grace_reliable_since_ms_;
     if (output.unknown_grace_reliable_ms >= config_.unknown_response_recovery_ms) {
-      output.unknown_grace_exit_reason = "RECOVERED";
+      output.unknown_grace_exit_reason = output.unknown_response_vote_enabled
+          ? "RECOVERED_TWO_METRIC" : "RECOVERED";
+      output.unknown_learning_paused = output.unknown_response_vote_enabled &&
+          output.unknown_failed_metric_count == 1;
       clear_unknown_grace();
       clear_suspicion();
       return RecentDisposition::kDirect;
@@ -1176,7 +1230,8 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
   // One weak peak-margin sample no longer erases a sustained, spatially
   // coherent run. Require two separate clean-margin frames before trusting
   // the alternative recovery path; all ordinary hard gates remain active.
-  if (config_.unknown_response_stable_recovery_ms > 0 && stable_response &&
+  if (!output.unknown_response_vote_enabled &&
+      config_.unknown_response_stable_recovery_ms > 0 && stable_response &&
       recent.quality == QualityLevel::kReliable && unknown_grace_trace_ &&
       unknown_grace_trace_->frames >= 3 &&
       output.unknown_grace_stable_ms >=
@@ -2716,17 +2771,18 @@ ControllerOutput LongTermController::finish_frame(
     if (disposition == RecentDisposition::kSearch && selected) {
       selected->quality = QualityLevel::kRejected;
     }
+    const auto& search_trace = output.unknown_response_vote_enabled
+        ? unknown_search_trace_ : unknown_grace_trace_;
     if (config_.unknown_search_seed_min_ms > 0 && recent &&
         std::string(output.unknown_grace_exit_reason) == "TIMEOUT" &&
-        unknown_grace_trace_ && unknown_grace_trace_->frames >= 3 &&
-        unknown_grace_trace_->peak_clean_frames >= 1 &&
-        unknown_grace_trace_->last_ms - unknown_grace_trace_->since_ms >=
+        search_trace && search_trace->frames >= 3 &&
+        (output.unknown_response_vote_enabled || search_trace->peak_clean_frames >= 1) &&
+        search_trace->last_ms - search_trace->since_ms >=
             config_.unknown_search_seed_min_ms &&
-        plan.timestamp_ms - unknown_grace_trace_->last_ms <=
-            config_.motion_max_dt_ms &&
-        bbox_iou(unknown_grace_trace_->bbox, recent->observation.bbox) >=
+        plan.timestamp_ms - search_trace->last_ms <= config_.motion_max_dt_ms &&
+        bbox_iou(search_trace->bbox, recent->observation.bbox) >=
             config_.template_agreement_iou) {
-      const auto& candidate = unknown_grace_trace_->bbox;
+      const auto& candidate = search_trace->bbox;
       unknown_grace_search_seed = centered_box(
           candidate.x + 0.5F * candidate.width,
           candidate.y + 0.5F * candidate.height,
@@ -2961,7 +3017,8 @@ ControllerOutput LongTermController::finish_frame(
     output.area_log_change = selected->area_log_change;
     output.aspect_log_change = selected->aspect_log_change;
     if (ordinary_recent) {
-      accepted = selected->quality == QualityLevel::kReliable;
+      accepted = selected->quality == QualityLevel::kReliable ||
+                 output.unknown_learning_paused;
     } else if (!candidate_search_path && selected->quality == QualityLevel::kReliable &&
         !(config_.motion_search_enabled && occlusion_decision_.triggered) &&
         plan.hypothesis_source != HypothesisSource::kDetector) {
@@ -3067,7 +3124,7 @@ ControllerOutput LongTermController::finish_frame(
     }
     if (ordinary_recent && !recent_probation_) {
       response_baseline_.resume_tracking();
-      if (!plan.suspected_detector_guard) {
+      if (!plan.suspected_detector_guard && !output.unknown_learning_paused) {
         response_baseline_.observe_trusted(selected->observation.metrics);
       }
     }
@@ -3159,6 +3216,9 @@ ControllerOutput LongTermController::finish_frame(
   } else if (rollback_pending_) {
     // The committed heads ran this frame. Retire the abandoned staged slot
     // before a subsequent frame can request a new stage.
+  } else if (output.unknown_learning_paused) {
+    stable_frames_ = 0;
+    if (recent_probation_) output.template_action = TemplateAction::kRollbackRecent;
   } else if (recent_probation_) {
     if (accepted && probation_templates_agree &&
         output.quality == QualityLevel::kReliable && !output.reacquired &&

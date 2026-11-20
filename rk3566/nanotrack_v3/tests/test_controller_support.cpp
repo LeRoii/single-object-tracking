@@ -357,6 +357,7 @@ int main() {
              "assisted_recovery_ms=3000\n"
              "suspicion_enter_ms=120\n"
              "suspicion_clear_ms=180\n"
+             "unknown_suspect_min_failed_metrics=2\n"
              "unknown_response_grace_ms=800\n"
              "unknown_response_recovery_ms=60\n"
              "unknown_response_stable_recovery_ms=120\n"
@@ -413,11 +414,15 @@ int main() {
               "state timing overrides");
   expect_true(visible.suspicion_enter_ms == 120 &&
                   visible.suspicion_clear_ms == 180 &&
+                  visible.unknown_suspect_min_failed_metrics == 2 &&
                   visible.unknown_response_grace_ms == 800 &&
                   visible.unknown_response_recovery_ms == 60 &&
                   visible.unknown_response_stable_recovery_ms == 120 &&
                   visible.unknown_search_seed_min_ms == 120,
               "candidate suspicion timings parse explicitly");
+  ControllerConfig old_votes = visible;
+  old_votes.unknown_suspect_min_failed_metrics = 1;
+  expect_true(controller_config_identity(old_votes) != controller_config_identity(visible), "vote threshold affects config identity");
   ControllerConfig no_grace = visible;
   no_grace.unknown_response_grace_ms = 0;
   expect_true(controller_config_identity(no_grace) != controller_config_identity(visible),
@@ -447,6 +452,10 @@ int main() {
       write_file(config_path, key + "=" + value + "\n");
       expect_config_error(config_path, key);
     }
+  }
+  for (const std::string& value : {"0", "3", "-1", "1.5", "4294967298"}) {
+    write_file(config_path, "unknown_suspect_min_failed_metrics=" + value + "\n");
+    expect_config_error(config_path, "unknown_suspect_min_failed_metrics");
   }
   write_file(config_path, "unknown_response_grace_ms=-1\n");
   expect_config_error(config_path, "unknown_response_grace_ms");

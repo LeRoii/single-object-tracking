@@ -1,10 +1,21 @@
 # 生产交叉编译任务进度
 
-- 任务状态：`unknown_grace_source_integrated_main_debug_human_test_pending`
-- 最近核对：`2026-11-20T00:54:49+08:00`
+- 任务状态：`unknown_two_metric_recovery_integrated_locally_human_test_pending`
+- 最近核对：`2026-11-20T11:47:16+08:00`
 - 核对分支/工作树：`main` / `/home/u20/single-object-tracking/.worktrees/occlusion-main-integration`；`Debug` / `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking`
-- 核对基线：`main@4eea40485298561b2f187f07e48879a6cf132956`、`Debug@417a265e318bc1861703b80677e6fa7bb2dbfd1e`；通用源码消费 `073efdc578f50117119e9beebb251c6b410cc6b8`
+- 核对基线：本轮 `Debug@af9e5dbbac08c07b35e8f3c8ad6917d19af0b0e2`；通用源码实际消费 `e91a490910952efdaf7878d6b51db693d0597b70`，结果为本节所在提交。
 - 责任边界：确认能够取得协调对话指定的最新开发板验证结果，并使用现有交叉编译流程成功生成生产产物。
+
+## 2026-11-20T11:47:16+08:00 UNKNOWN 两项策略及恢复/搜索连续性集成
+
+- 用户要求合并当前改动，按此前约定集成到本地main和Debug；本节目标 `Debug` / `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking`，干净起点 `af9e5dbbac08c07b35e8f3c8ad6917d19af0b0e2`。实际消费跨编译已提交 `e91a490910952efdaf7878d6b51db693d0597b70`，其中算法提交 `99567634db1bfdf8cf59bbd5f5d01631e5057272` 与 `b486a8db8d6411bfc4649eaeb82a274f34c0d028`。本节随源码形成结果提交，可由本分支 `git log -1 --format=%H -- docs/progress/cross-compile.md` 查询。远端起点核对main `80fa51e02a9692136e1f69c17d804eba681dc9e7`、Debug `af9e5dbbac08c07b35e8f3c8ad6917d19af0b0e2`；开发板 `291e62d1cb4211cf32b2dfc160ade78305774044`、数据 `6b927bc744a751a6b232f01ef6c8d0f119b924f2`、实验 `742b1f2de047ca02b7b783f3c58c9ca0cf67d33c` 未消费。
+- 8个通用算法/配置解析/日志/测试文件精确取自已提交源码；保留两分支界面差异，Debug十个专有交互文件未变。新增 `rk3566/nanotrack_v3/config/rk3588-unknown-recovery-consistency.conf`，与已部署候选controller配置逐字节相同，SHA-256 `7adee7d651ff861f658b7b6f0bc4f212ab89da89cbcf126eec8fbbe6ff2991f6`。通过既有 `--controller-config` 入口选择该配置即可启用UNKNOWN两项失败、1500ms容忍、60ms恢复与120ms连续临时位置搜索起点；全局默认仍保持原兼容行为。单项异常跟踪但暂停学习，绝对/相对指标去重；几何和已识别目标分流保持原样。
+- `git diff e91a490 -- <8 files>` 零差异，两个分支上述9项文件一致，`git diff --cached --check`通过。实际 `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-integrate-current-debug -DENABLE_RKNN_RUNTIME=OFF` 与 `cmake --build /tmp/nt-integrate-current-debug -j2`成功；两边CTests依次运行避免共用/tmp冲突，本分支 `ctest --test-dir /tmp/nt-integrate-current-debug --output-on-failure -j2` **23/23 PASS**。配置日志SHA `01e521307d39401b3d0c9713b762309e3d79750ace7f185113acd6a87824aebe`、构建日志 `e6b6a533722c2af5a6ba7eceddf4175842c8f8addb1b4f7b2b2d2eb5e0185817`、CTest日志 `96ef9c3f57f21a2527ca27b4169c5b5343c35124c832a3ea444b68551904b91d`，路径分别为 `/tmp/nt-integrate-current-debug-configure.log`、`/tmp/nt-integrate-current-debug-build.log`、`/tmp/nt-integrate-current-debug-ctest.log`；主机test_long_term_controller `658b573a4d6219eb91f3a020589c8dd880687c98d730c9c4b13d61ad9319f732`。本轮不改Python评测代码，未重复其既有回归。
+- 仅源码集成；本轮未连接/改变吊舱进程、未交叉编译新二进制、未新增板端或人测验收。原部署仍绑定b486a8d、程序 `c18b5277029f79754f03d0031aa51a0fdbc7af6c5f06aa7c595d3d70be2a5e6e`，部署候选不能自动视为生产批准。本轮用户请求合并，尚未推送远端。部署专用脚本/工件记录保留跨编译分支。
+
+### Handoff
+
+- 请协调、开发板和后续Debug任务接收本节集成提交，复核源码和新增显式配置；合并不改变共享STATUS/集成契约的生产handoff裁决。原部署效果尚待人工测试，不能以主机23项通过替代板端或原目标身份验证。共享进度仍由协调对话自行更新，本任务未代发消息。
 
 ## 2026-11-20T00:54:49+08:00 UNKNOWN 通用源码集成至 main 与 Debug
 

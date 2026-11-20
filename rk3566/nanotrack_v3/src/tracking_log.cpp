@@ -1072,6 +1072,15 @@ TrackingLogRow make_tracking_log_row(const RuntimeFrameResult& result,
   row.tracker_ms = result.tracker_ms;
   row.runtime_ms = result.runtime_ms;
   row.note = note;
+  if (output.unknown_response_vote_enabled) {
+    if (!row.note.empty()) row.note += ";";
+    row.note += "UNKNOWN_RESPONSE_VOTE(abs=" +
+        std::to_string(output.unknown_absolute_failure_mask) + ";rel=" +
+        std::to_string(output.unknown_relative_failure_mask) + ";failed=" +
+        std::to_string(output.unknown_failed_metric_count) + ";learning_paused=" +
+        std::to_string(output.unknown_learning_paused ? 1 : 0) + ")";
+  }
+
   if (std::string_view(output.recovery_reason) == "IDENTITY_CONFLICT" ||
       std::string_view(output.recovery_reason) == "AWAITING_CONFIRMATION" ||
       std::string_view(output.recovery_reason) == "RECOVERY_STAGED") {
@@ -1219,6 +1228,7 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.max_reacquisition_center_distance =
       config.max_reacquisition_center_distance;
   metadata.motion_search_enabled = config.motion_search_enabled;
+  metadata.unknown_suspect_min_failed_metrics = config.unknown_suspect_min_failed_metrics;
   metadata.unknown_response_grace_ms = config.unknown_response_grace_ms;
   metadata.unknown_response_recovery_ms = config.unknown_response_recovery_ms;
   metadata.unknown_response_stable_recovery_ms =
@@ -1422,6 +1432,8 @@ std::string tracking_session_metadata_json(
          << ",\n"
          << "  \"motion_search_enabled\": "
          << (metadata.motion_search_enabled ? "true" : "false") << ",\n"
+         << "  \"unknown_suspect_min_failed_metrics\": "
+         << metadata.unknown_suspect_min_failed_metrics << ",\n"
          << "  \"unknown_response_grace_ms\": "
          << metadata.unknown_response_grace_ms << ",\n"
          << "  \"unknown_response_recovery_ms\": "
