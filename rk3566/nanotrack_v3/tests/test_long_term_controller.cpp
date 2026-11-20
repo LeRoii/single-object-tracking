@@ -4268,6 +4268,83 @@ void test_4768_response_events_search_location() {
   expect_true(c.current_bbox().x>3400,"4768 search seed does not rewrite trusted state");
 }
 
+void test_recognized_response_entry_threshold() {
+  using namespace nanotrack;
+  const BBox box{100, 80, 30, 30};
+  const ResponseMetrics clean{0.95F, 0.94F, 8.0F, 18.0F, 0.30F};
+  const auto step = [&](ResolvedControllerFixture& c, int id,
+                        const ResponseMetrics& metrics, BBox observed) {
+    auto plan = c.begin_frame(id, id * 40, false);
+    auto observation = reliable_observation(plan, TemplateKind::kRecent,
+                                             observed, id);
+    observation.metrics = metrics;
+    return c.finish_frame(plan, {observation}, std::nullopt);
+  };
+  for (int threshold = 1; threshold <= 3; ++threshold) {
+    ControllerConfig cfg;
+    cfg.recognized_suspect_min_failed_metrics = threshold;
+    cfg.reliable_psr = 4.2F;
+    cfg.weak_psr = 4.0F;
+    cfg.reliable_apce = 8.0F;
+    cfg.reliable_peak_margin = 0.04F;
+    cfg.weak_peak_margin = 0.02F;
+    auto established = make_fixed_target_class(2, true);
+    established.status = TargetClassStatus::kEstablished;
+    for (const auto& target : {make_fixed_target_class(2, true), established}) {
+      for (int mask = 0; mask < 16; ++mask) {
+        ResolvedControllerFixture c(cfg);
+        c.initialize(box, 0, 0, {400, 300}, target);
+        auto m = clean;
+        if (mask & 1) m.raw_score = 0.70F;
+        if (mask & 2) m.psr = 4.1F;
+        if (mask & 4) m.apce = 7.0F;
+        if (mask & 8) m.peak_margin = 0.03F;
+        int count = 0;
+        for (int bit = 1; bit <= 8; bit <<= 1) count += (mask & bit) != 0;
+        auto out = step(c, 1, m, box);
+        const TrackingPhase expected_phase = count < threshold
+            ? TrackingPhase::kTracking
+            : threshold == 1 && count > 1
+                ? TrackingPhase::kSearching : TrackingPhase::kSuspected;
+        expect_true(out.accepted == (count < threshold) &&
+                        out.tracking_phase == expected_phase,
+                    "recognized absolute-response entry follows configured vote count");
+        if (count > 0 && count < threshold) {
+          expect_true(out.quality == QualityLevel::kWeak &&
+                          c.stable_frames_ == 0 &&
+                          !c.response_baseline_.evaluate(m).reference,
+                      "subthreshold recognized response preserves weak quality and pauses learning");
+        }
+      }
+    }
+    if (threshold == 3) {
+      ResolvedControllerFixture c(cfg);
+      c.initialize(box, 0, 0, {400, 300}, make_fixed_target_class(2, true));
+      auto one = clean; one.psr = 4.1F;
+      for (int id = 1; id <= 30; ++id) {
+        auto out = step(c, id, one, box);
+        expect_true(out.accepted && c.stable_frames_ == 0,
+                    "persistent single metric failure does not build learning history");
+      }
+      auto two = one; two.apce = 7.0F;
+      c.response_baseline_.observe_trusted(clean);
+      for (int i = 1; i < cfg.occlusion_reference_window; ++i)
+        c.response_baseline_.observe_trusted(clean);
+      auto relative = step(c, 31, two, box);
+      expect_true(!relative.accepted &&
+                      relative.tracking_phase == TrackingPhase::kSuspected,
+                  "relative response decline remains an independent trigger");
+      c.initialize(box, 0, 0, {400, 300}, make_fixed_target_class(2, true));
+      auto weak_floor = one; weak_floor.raw_score = 0.54F;
+      expect_true(!step(c, 1, weak_floor, box).accepted,
+                  "weak score floor cannot be bypassed by recognized vote count");
+      c.initialize(box, 0, 0, {400, 300}, make_fixed_target_class(2, true));
+      expect_true(!step(c, 1, one, {300, 80, 30, 30}).accepted,
+                  "geometry rejection cannot be bypassed by recognized vote count");
+    }
+  }
+}
+
 void test_unknown_three_metric_entry_and_recovery() {
   using namespace nanotrack;
   ControllerConfig cfg;
@@ -4342,6 +4419,7 @@ void test_unknown_three_metric_entry_and_recovery() {
 }
 
 int main() {
+  test_recognized_response_entry_threshold();
   test_unknown_three_metric_entry_and_recovery();
   test_4768_response_events_search_location();
   test_unknown_two_metric_recovery_and_search_continuity();

@@ -86,6 +86,9 @@ struct ControllerConfig {
   // Candidate defaults pending calibration.
   std::int64_t suspicion_enter_ms = 100;
   std::int64_t suspicion_clear_ms = 100;
+  // Recognized targets: distinct absolute response failures needed to enter SUSPECTED.
+  // One preserves the existing behavior; UNKNOWN uses its separate threshold.
+  std::int64_t recognized_suspect_min_failed_metrics = 1;
   // Zero preserves the ordinary response-quality search policy.
   // 1 preserves legacy entry; 2 counts distinct absolute/relative failures.
   std::int64_t unknown_suspect_min_failed_metrics = 1;

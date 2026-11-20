@@ -1010,6 +1010,12 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
       static_cast<int>(metrics.peak_margin < config_.weak_peak_margin);
   const bool isolated_response_dip =
       reliable_failures == 1 && weak_failures <= 1;
+  const bool recognized = target_class_.status != TargetClassStatus::kUnknown;
+  // Only weak (not rejected) observations may continue below the configured
+  // entry count. Hard quality, geometry and visual-occlusion exits stay intact.
+  const bool recognized_below_entry = recognized && reliable_failures > 0 &&
+      reliable_failures < config_.recognized_suspect_min_failed_metrics &&
+      recent.quality == QualityLevel::kWeak;
   if (recent.quality == QualityLevel::kRejected && !isolated_response_dip) {
     return RecentDisposition::kSearch;
   }
@@ -1048,7 +1054,12 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
     clear_suspicion();
     return RecentDisposition::kDirect;
   }
-  const bool degraded = isolated_response_dip || drops >= 2 ||
+  const bool recognized_entry_failure = recognized &&
+      config_.recognized_suspect_min_failed_metrics > 1 &&
+      reliable_failures >= config_.recognized_suspect_min_failed_metrics &&
+      recent.quality == QualityLevel::kWeak;
+  const bool degraded = (isolated_response_dip && !recognized_below_entry) ||
+                        recognized_entry_failure || drops >= 2 ||
                         response_baseline_.sustained_dual_drop(metrics) ||
                         partial_visibility || joint_response_not_recovered ||
                         (motion_inconsistent && (drops > 0 || response_weak));
@@ -1070,6 +1081,9 @@ LongTermController::RecentDisposition LongTermController::assess_recent(
   }
 
   response_degraded_since_ms_.reset();
+  if (recognized_below_entry && !suspected_since_ms_) {
+    return RecentDisposition::kDirect;
+  }
   if (recent.quality != QualityLevel::kReliable) return RecentDisposition::kSearch;
   if (!suspected_since_ms_) return RecentDisposition::kDirect;
   if (!response_clean_since_ms_) response_clean_since_ms_ = plan.timestamp_ms;
@@ -2713,6 +2727,7 @@ ControllerOutput LongTermController::finish_frame(
       bbox_iou(probation_template->observation.bbox, recent->observation.bbox) >=
           config_.template_agreement_iou;
   std::optional<EvaluatedObservation> selected;
+  bool recognized_learning_paused = false;
   bool force_confirmation = false;
   if (ordinary_recent) {
     selected = recent;
@@ -2766,6 +2781,10 @@ ControllerOutput LongTermController::finish_frame(
                             target_class_.status == TargetClassStatus::kUnknown
           ? assess_unknown_grace(plan, *recent, safe, response, output)
           : assess_recent(plan, *recent, response);
+      recognized_learning_paused =
+          target_class_.status != TargetClassStatus::kUnknown &&
+          disposition == RecentDisposition::kDirect &&
+          recent->quality == QualityLevel::kWeak;
     }
     if (disposition == RecentDisposition::kTentative) {
       publish_tentative(plan, *selected, output);
@@ -3022,7 +3041,7 @@ ControllerOutput LongTermController::finish_frame(
     output.aspect_log_change = selected->aspect_log_change;
     if (ordinary_recent) {
       accepted = selected->quality == QualityLevel::kReliable ||
-                 output.unknown_learning_paused;
+                 output.unknown_learning_paused || recognized_learning_paused;
     } else if (!candidate_search_path && selected->quality == QualityLevel::kReliable &&
         !(config_.motion_search_enabled && occlusion_decision_.triggered) &&
         plan.hypothesis_source != HypothesisSource::kDetector) {
@@ -3104,6 +3123,7 @@ ControllerOutput LongTermController::finish_frame(
     defer_recovery_acceptance(plan, *selected, output);
   } else if (accepted) {
     accept_observation(plan, *selected, acceptance_path, output, response);
+    if (recognized_learning_paused) stable_frames_ = 0;
     const bool response_degraded = response.psr_drop || response.apce_drop ||
                                    response.peak_margin_drop;
     if (plan.suspected_detector_guard) {
@@ -3128,7 +3148,8 @@ ControllerOutput LongTermController::finish_frame(
     }
     if (ordinary_recent && !recent_probation_) {
       response_baseline_.resume_tracking();
-      if (!plan.suspected_detector_guard && !output.unknown_learning_paused) {
+      if (!plan.suspected_detector_guard && !output.unknown_learning_paused &&
+          !recognized_learning_paused) {
         response_baseline_.observe_trusted(selected->observation.metrics);
       }
     }

@@ -339,6 +339,7 @@ struct TrackingSessionMetadata {
   std::int64_t local_recovery_ms = 0;
   std::int64_t assisted_recovery_ms = 0;
   std::int64_t unknown_suspect_min_failed_metrics = 1;
+  std::int64_t recognized_suspect_min_failed_metrics = 1;
   std::int64_t unknown_response_grace_ms = 0;
   std::int64_t unknown_response_recovery_ms = 0;
   std::int64_t unknown_response_stable_recovery_ms = 0;

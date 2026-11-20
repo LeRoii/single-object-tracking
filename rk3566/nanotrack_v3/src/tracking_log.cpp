@@ -1237,6 +1237,8 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
       config.max_reacquisition_center_distance;
   metadata.motion_search_enabled = config.motion_search_enabled;
   metadata.unknown_suspect_min_failed_metrics = config.unknown_suspect_min_failed_metrics;
+  metadata.recognized_suspect_min_failed_metrics =
+      config.recognized_suspect_min_failed_metrics;
   metadata.unknown_response_grace_ms = config.unknown_response_grace_ms;
   metadata.unknown_response_recovery_ms = config.unknown_response_recovery_ms;
   metadata.unknown_response_stable_recovery_ms =
@@ -1457,6 +1459,8 @@ std::string tracking_session_metadata_json(
          << (metadata.motion_search_enabled ? "true" : "false") << ",\n"
          << "  \"unknown_suspect_min_failed_metrics\": "
          << metadata.unknown_suspect_min_failed_metrics << ",\n"
+         << "  \"recognized_suspect_min_failed_metrics\": "
+         << metadata.recognized_suspect_min_failed_metrics << ",\n"
          << "  \"unknown_response_grace_ms\": "
          << metadata.unknown_response_grace_ms << ",\n"
          << "  \"unknown_response_recovery_ms\": "

@@ -365,6 +365,7 @@ int main() {
              "assisted_recovery_ms=3000\n"
              "suspicion_enter_ms=120\n"
              "suspicion_clear_ms=180\n"
+             "recognized_suspect_min_failed_metrics=3\n"
              "unknown_suspect_min_failed_metrics=2\n"
              "unknown_response_grace_ms=800\n"
              "unknown_response_recovery_ms=60\n"
@@ -431,6 +432,7 @@ int main() {
               "state timing overrides");
   expect_true(visible.suspicion_enter_ms == 120 &&
                   visible.suspicion_clear_ms == 180 &&
+                  visible.recognized_suspect_min_failed_metrics == 3 &&
                   visible.unknown_suspect_min_failed_metrics == 2 &&
                   visible.unknown_response_grace_ms == 800 &&
                   visible.unknown_response_recovery_ms == 60 &&
@@ -438,6 +440,10 @@ int main() {
                   visible.unknown_search_seed_min_ms == 120,
               "candidate suspicion timings parse explicitly");
   ControllerConfig old_votes = visible;
+  old_votes.recognized_suspect_min_failed_metrics = 1;
+  expect_true(controller_config_identity(old_votes) != controller_config_identity(visible),
+              "recognized entry threshold affects config identity");
+  old_votes = visible;
   old_votes.unknown_suspect_min_failed_metrics = 1;
   expect_true(controller_config_identity(old_votes) != controller_config_identity(visible), "vote threshold affects config identity");
   ControllerConfig three_votes = visible;
@@ -482,6 +488,13 @@ int main() {
       expect_config_error(config_path, key);
     }
   }
+  for (const std::string& value : {"0", "4", "-1", "1.5", "4294967298"}) {
+    write_file(config_path, "recognized_suspect_min_failed_metrics=" + value + "\n");
+    expect_config_error(config_path, "recognized_suspect_min_failed_metrics");
+  }
+  write_file(config_path, "recognized_suspect_min_failed_metrics=2\n");
+  expect_true(load_controller_config(config_path).recognized_suspect_min_failed_metrics == 2,
+              "two failed metrics is a valid recognized entry threshold");
   for (const std::string& value : {"0", "4", "-1", "1.5", "4294967298"}) {
     write_file(config_path, "unknown_suspect_min_failed_metrics=" + value + "\n");
     expect_config_error(config_path, "unknown_suspect_min_failed_metrics");
