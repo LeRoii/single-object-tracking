@@ -1,6 +1,7 @@
 #include "adaptive_display_box.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -62,7 +63,9 @@ void AdaptiveDisplayBox::initialize(const BBox& tracking_bbox,
   runtime_p95_ms_ = 0.0F;
   runtime_updates_since_cadence_ = 0;
   stability_targets_.clear();
+  stability_pending_jump_.reset();
   stability_motion_hold_frames_ = 0;
+  stability_warmup_frames_ = 0;
 
   BBox envelope = tracking_bbox;
   if (target_class.selected_candidate) {
@@ -249,7 +252,47 @@ BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
     stability_targets_.push_back(target);
     stability_targets_.push_back(target);
   }
-  stability_targets_.push_back(target);
+  // A two-frame center blend is the most filtering a small target can afford:
+  // a several-pixel delay consumes a large fraction of its visible extent.
+  // Keep its size on the original responsive path.
+  if (std::min(target.width, target.height) < 64.0F) {
+    const BBox& previous = stability_targets_.back();
+    const float alpha = config_.display_stability_center_alpha;
+    const float cx = center_x(previous) +
+        alpha * (center_x(target) - center_x(previous));
+    const float cy = center_y(previous) +
+        alpha * (center_y(target) - center_y(previous));
+    stability_targets_.push_back(target);
+    if (stability_targets_.size() > 5) stability_targets_.pop_front();
+    stability_pending_jump_.reset();
+    stability_motion_hold_frames_ = 0;
+    return clip_bbox(BBox{cx - 0.5F * target.width, cy - 0.5F * target.height,
+                          target.width, target.height},
+                     frame_size_.width, frame_size_.height);
+  }
+  BBox sample = target;
+  const BBox& previous = stability_targets_.back();
+  const bool large_jump =
+      std::fabs(center_x(target) - center_x(previous)) >
+          0.5F * std::max(target.width, previous.width) ||
+      std::fabs(center_y(target) - center_y(previous)) >
+          0.5F * std::max(target.height, previous.height);
+  if (large_jump) {
+    const bool confirmed = stability_pending_jump_ &&
+        std::fabs(center_x(target) - center_x(*stability_pending_jump_)) <=
+            0.25F * std::max(target.width, stability_pending_jump_->width) &&
+        std::fabs(center_y(target) - center_y(*stability_pending_jump_)) <=
+            0.25F * std::max(target.height, stability_pending_jump_->height);
+    if (confirmed) {
+      stability_pending_jump_.reset();
+    } else {
+      stability_pending_jump_ = target;
+      sample = previous;
+    }
+  } else {
+    stability_pending_jump_.reset();
+  }
+  stability_targets_.push_back(sample);
   if (stability_targets_.size() > 5) stability_targets_.pop_front();
   const std::size_t count = stability_targets_.size();
   const BBox& a = stability_targets_[count - 3];
@@ -259,32 +302,37 @@ BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
   const float target_cy = median3(center_y(a), center_y(b), center_y(c));
   const float target_width = median3(a.width, b.width, c.width);
   const float target_height = median3(a.height, b.height, c.height);
-  const BBox& oldest_a = stability_targets_[0];
-  const BBox& oldest_b = stability_targets_[1];
-  const BBox& oldest_c = stability_targets_[2];
-  const float first_cx = median3(center_x(oldest_a), center_x(oldest_b),
-                                 center_x(oldest_c));
-  const float first_cy = median3(center_y(oldest_a), center_y(oldest_b),
-                                 center_y(oldest_c));
-  const float motion_x = std::max(2.0F, 0.08F * display_bbox_.width);
-  const float motion_y = std::max(2.0F, 0.08F * display_bbox_.height);
-  const bool sustained_motion =
-      (std::fabs(target_cx - first_cx) > motion_x &&
-       std::fabs(center_x(a) - first_cx) <= 0.5F * display_bbox_.width &&
-       std::fabs(center_x(c) - center_x(a)) > motion_x &&
-       (center_x(b) - center_x(a)) *
-           (center_x(c) - center_x(b)) > 0.0F) ||
-      (std::fabs(target_cy - first_cy) > motion_y &&
-       std::fabs(center_y(a) - first_cy) <= 0.5F * display_bbox_.height &&
-       std::fabs(center_y(c) - center_y(a)) > motion_y &&
-       (center_y(b) - center_y(a)) *
-           (center_y(c) - center_y(b)) > 0.0F);
+  bool sustained_motion = false;
+  if (count == 5) {
+    // The median of all pairwise slopes rejects one isolated jump and an
+    // alternating left/right measurement while retaining sustained velocity.
+    std::array<float, 10> slopes_x{};
+    std::array<float, 10> slopes_y{};
+    std::size_t index = 0;
+    for (std::size_t i = 0; i < 5; ++i) {
+      for (std::size_t j = i + 1; j < 5; ++j) {
+        const float frames = static_cast<float>(j - i);
+        slopes_x[index] = (center_x(stability_targets_[j]) -
+                           center_x(stability_targets_[i])) / frames;
+        slopes_y[index] = (center_y(stability_targets_[j]) -
+                           center_y(stability_targets_[i])) / frames;
+        ++index;
+      }
+    }
+    std::sort(slopes_x.begin(), slopes_x.end());
+    std::sort(slopes_y.begin(), slopes_y.end());
+    const float velocity_x = 0.5F * (slopes_x[4] + slopes_x[5]);
+    const float velocity_y = 0.5F * (slopes_y[4] + slopes_y[5]);
+    sustained_motion =
+        std::fabs(velocity_x) > std::max(0.5F, 0.025F * display_bbox_.width) ||
+        std::fabs(velocity_y) > std::max(0.5F, 0.025F * display_bbox_.height);
+  }
   if (sustained_motion) stability_motion_hold_frames_ = 3;
   if (stability_motion_hold_frames_ > 0) {
     --stability_motion_hold_frames_;
     // When the image actually moves, preserve the pre-existing display path.
     // A static-scene filter must not leave a small moving target behind.
-    return target;
+    return sample;
   }
   const float center_deadband_x = std::max(1.0F, display_bbox_.width *
       config_.display_stability_center_deadband_ratio);
@@ -387,18 +435,29 @@ BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
   }
 
   if (config_.display_stability_enabled &&
-      output.tracking_phase == TrackingPhase::kTracking && output.accepted &&
-      !first_update_ && !output.reacquired) {
-    target = stabilized_target(target);
-  } else if (config_.display_stability_enabled && first_update_ &&
-             output.tracking_phase == TrackingPhase::kTracking && output.accepted) {
-    stability_targets_.clear();
-    stability_targets_.push_back(target);
-    stability_targets_.push_back(target);
-    stability_motion_hold_frames_ = 0;
+      output.tracking_phase == TrackingPhase::kTracking && output.accepted) {
+    if (first_update_ || output.reacquired) {
+      stability_targets_.clear();
+      stability_targets_.push_back(target);
+      stability_targets_.push_back(target);
+      stability_pending_jump_.reset();
+      stability_motion_hold_frames_ = 0;
+      stability_warmup_frames_ = output.reacquired ? 3 : 0;
+    } else if (stability_warmup_frames_ > 0) {
+      // Immediately after SUSPECTED or reacquisition, keep the original
+      // responsive display path while gathering a reliable motion window.
+      if (stability_targets_.empty()) stability_targets_.push_back(target);
+      stability_targets_.push_back(target);
+      if (stability_targets_.size() > 5) stability_targets_.pop_front();
+      --stability_warmup_frames_;
+    } else {
+      target = stabilized_target(target);
+    }
   } else {
     stability_targets_.clear();
+    stability_pending_jump_.reset();
     stability_motion_hold_frames_ = 0;
+    stability_warmup_frames_ = 3;
   }
   display_bbox_ = smooth_toward(target, center_alpha);
   if (output.tracking_phase == TrackingPhase::kTracking && output.accepted) {

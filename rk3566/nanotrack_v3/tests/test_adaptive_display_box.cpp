@@ -379,12 +379,45 @@ void test_small_moving_target_does_not_lag() {
                       100.0F - 3.0F * frame, 40, 40};
     const BBox shown = display.update(tracking_output(moving),
                                        TargetClassState{}, diagnostics);
-    if (frame >= 5) {
-      expect_true(std::fabs(center_x(shown) - center_x(moving)) < 2.0F &&
-                      std::fabs(shown.y - moving.y) < 2.0F,
-                  "small sustained target motion bypasses static display hold");
+    expect_true(std::fabs(center_x(shown) - center_x(moving)) < 1.5F &&
+                    std::fabs(shown.y - moving.y) < 1.1F,
+                "small target uses only a two-frame center blend");
+  }
+  float min_cx = 1000.0F;
+  float max_cx = -1000.0F;
+  for (int frame = 0; frame < 20; ++frame) {
+    const BBox noisy{148.0F + (frame % 2 ? 6.0F : -6.0F), 64, 40, 40};
+    const BBox shown = display.update(tracking_output(noisy),
+                                      TargetClassState{}, diagnostics);
+    if (frame >= 2) {
+      min_cx = std::min(min_cx, center_x(shown));
+      max_cx = std::max(max_cx, center_x(shown));
     }
   }
+  expect_true(max_cx - min_cx < 4.0F,
+              "small stationary target still reduces alternating center jitter");
+}
+
+void test_persistent_large_jump_is_eventually_followed() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_center_smoothing_alpha = 1.0F;
+  value.display_stability_enabled = true;
+  const BBox initial{100, 100, 100, 100};
+  const BBox jumped{280, 100, 100, 100};
+  AdaptiveDisplayBox display(value);
+  AdaptiveDisplayDiagnostics diagnostics;
+  display.initialize(initial, TargetClassState{}, FrameSize{500, 500});
+  display.update(tracking_output(initial), TargetClassState{}, diagnostics);
+  const BBox first = display.update(tracking_output(jumped),
+                                     TargetClassState{}, diagnostics);
+  expect_true(close(center_x(first), center_x(initial)),
+              "one large measurement is held until another frame confirms it");
+  display.update(tracking_output(jumped), TargetClassState{}, diagnostics);
+  const BBox persistent = display.update(tracking_output(jumped),
+                                          TargetClassState{}, diagnostics);
+  expect_true(std::fabs(center_x(persistent) - center_x(jumped)) < 2.0F,
+              "a persistent large target displacement eventually follows the target");
 }
 
 }  // namespace
@@ -400,6 +433,7 @@ int main() {
   test_display_stability_rejects_static_jitter_and_single_spike();
   test_display_stability_follows_persistent_motion_and_scale();
   test_small_moving_target_does_not_lag();
+  test_persistent_large_jump_is_eventually_followed();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;
