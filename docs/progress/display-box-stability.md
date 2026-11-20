@@ -384,3 +384,113 @@
   原始显示框最大坐标差约 0.005px（文本输出精度）。
   这仍只是主机重放，不是新源码板端结果；下一步以本提交在 RK3588
   原生编译并实际复测两段静止 ROI 与运动车辆，核对视频和日志。
+
+## 2026-11-20T14:03:33+08:00 图像锚定候选的 RK3588 原生验证
+
+- 本轮实际消费本分支已提交源码
+  `76a2df65f75449155263027708ebd9d759438eff`，从本机
+  `main@cd81e0d5e656d65b981e6d499f938e4b5f3e14b5` 派生；工作树为
+  `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking`。
+  板端使用该提交的 Git archive
+  `/home/neardi/Project/SOT/rk3588-display-stability-76a2df6.tar`，
+  SHA-256 `c78ec1ba1b07d2b4cb8a995d807366b1eb90ecc86fa776d24939e832db1c05bd`；
+  解包、编译和运行位于隔离目录
+  `/home/neardi/Project/SOT/nt-display-stability-76a2df6`。
+- 开发板 `neardi@192.168.1.106`，RK3588 NEARDI LKD3588，Linux
+  `6.1.84`，RKNN API `2.1.0 (967d001cc8@2024-08-07T19:28:19)`、
+  driver `0.9.8`。原生构建命令：
+  `cmake -S rk3566/nanotrack_v3 -B build-native -DCMAKE_BUILD_TYPE=Release -DENABLE_RKNN_RUNTIME=ON -DBUILD_TESTING=ON -DRKNN_INCLUDE_DIR=/home/neardi/Project/SOT/nt-ten-target-33f34ba/assets -DRKNN_LIBRARY=/usr/lib/librknnrt.so`、
+  `cmake --build build-native -j4`、
+  `ctest --test-dir build-native --output-on-failure -j4`。
+  观察到 23/23 PASS；`runs/ctest.log` SHA-256
+  `b770b1916f5bf2cc42543e90f88b4a932a13e9a13d128d66b36ea7e928312747`；
+  程序 `build-native/nanotrack_v3` SHA-256
+  `141b060e2f59d649d0c2b800a9c1ed2763edbe19dca001d8d821b5473e38cc18`。
+- 板端输入视频的 SHA-256 已重核：静止 4K 视频
+  `assets/pod_static_visible_20261120.mp4`
+  `8dea64988e3766a410d601a59ca14f49550d0d9c57a3beacbe9aeb78bdf4bd80`，
+  车辆视频 `assets/occ_video_1.mp4`
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`。
+  RK3588 template/search/head RKNN 和 tracker manifest 哈希分别为
+  `eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55`、
+  `d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee`、
+  `4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5`、
+  `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`；
+  与 `integration-contract.yaml` 中的 RK3588 模型身份一致。本轮没有配置
+  detector，未知类别目标没有消费 detector 模型或标签。
+- 候选配置 SHA-256
+  `3411ec9f9c19a8666e117e4ac82d8084f2b7a118e8850ea0b60c08c1277bca67`；
+  关闭 `display_stability_enabled` 和 `display_static_anchor_enabled` 的
+  对照配置 SHA-256
+  `adb7ace425fbbbb1e6f97463f53a1fb5d006238a1d0c12275381d5eed0c578b4`。
+  每个 ROI 在同一板端程序运行，例如：
+
+  ```bash
+  ./build-native/nanotrack_v3 \
+    --video assets/pod_static_visible_20261120.mp4 \
+    --bbox 990,70,150,220 \
+    --model-dir /home/neardi/Project/SOT/nt-ten-target-33f34ba/assets/models \
+    --sensor visible \
+    --controller-config rk3566/nanotrack_v3/config/rk3588-display-stability-candidate.conf \
+    --output-size 480x270 --max-frames 1800 \
+    --output-video runs/monitor-edge-minute-candidate.avi \
+    --output-boxes runs/monitor-edge-minute-candidate.csv \
+    --session-metadata runs/monitor-edge-minute-candidate.metadata.json
+  ```
+
+  关闭组更换配置和同名 `off` 输出。右把手使用 `(1485,675,55,195)`，
+  车辆使用 `(992,582,37,39)` 及 canonical 视频，车辆为 271 帧。
+- 边缘 1800 帧关闭/开启组的追踪框、状态、接受标记逐帧一致，均为
+  已接受 TRACKING。第 15--1799 帧显示来源为 `STATIC_IMAGE_ANCHOR`。
+  从第 30 帧起显示中心二阶差分 p95 `17.41659 → 0px`，最大单帧中心
+  位移 `19.45064 → 0px`，尺寸二阶差分 p99 `0.800% → 0%`。
+  第 1176 帧追踪中心距锚定显示中心约 270.48px，但并排画面确认
+  第 14、1176、1790 帧新显示框仍围住原静止边缘；关闭组已沿边缘漂移。
+  关闭/开启 CSV SHA-256 分别为
+  `c673816152eba1c3f1152028e28958795cdcd1055c7c07bb6da552545306a611` /
+  `7d84946ab243060f2d0ce85c548f52f2ef4e77c854b8a4bd14b27bae69eec006`。
+- 精确右把手 1800 帧均已接受 TRACKING，第 15--1799 帧锚定。
+  与上一版关闭组逐帧追踪框/状态完全一致，显示中心二阶差分 p95
+  `1.68769 → 0px`，尺寸二阶差分 p99 `1.6776% → 0%`；第 30、900、1790 帧
+  新框仍围住同一右把手。当前候选 CSV SHA-256
+  `729506cac6769079759a5494f1132a4763ce31328d3416357caa9f1b11aeac6e`；
+  复用的关闭组来自
+  `/home/neardi/Project/SOT/nt-display-stability-1bf0f29/runs/isolated-right-handle-minute-off.csv`，
+  板端/本机 SHA-256 一致，为
+  `f2fa27e09c1595ffd98e7dca3d563c6e0e435805ed2ab15c88f3522a94e3c30f`。
+- 车辆 271 帧开关两组追踪框/状态/接受标记逐帧一致；均为已接受
+  TRACKING 241 帧、SUSPECTED 16 帧、SEARCHING 14 帧，新锚定没有触发。
+  对可见且已接受的 241 帧，按车目标标注计算的显示 IoU 平均
+  `0.764377 → 0.761071`，低于 0.5 的帧两组相同，均为
+  `[188,191,192,193,194,195,196]`；排除 169--181 的估计真值。
+  显示中心最大差 3.349px；第 54 帧抽看新框仍跟随同一白车。
+  关闭/开启 CSV SHA-256 分别为
+  `d25afa06e0b19a476a752b1664e8f8b1af0ebf04b00cf5185c2e3986ba621603` /
+  `c84be79af5bb60dbd06bc170dc771816815291971ee4f31fda739c558e817daf`。
+- 并排视频用 `tools/render_display_comparison.cpp` 将 CSV 中的真正
+  `display_bbox` 绘在原视频上，再由 `ffmpeg -c:v libx264 -preset veryfast
+  -crf 23 -pix_fmt yuv420p` 转 MP4；左为关闭、右为开启。板端 `runs/`
+  下 `edge-compare.mp4`、`handle-compare.mp4`、`car-compare.mp4`
+  SHA-256 分别为
+  `b29b5520c1ce08e2e2c2b54f2db58b62fb061e568b5043181478800dbc3bcf92`、
+  `244da887edbd04c953c12aa210a8be76a6d4c557dad35504f6861c3e8f6f0e28`、
+  `ce333a0b71b437e1187dad26654ad14fcc618999c5aa0aa66f734d3c8630736d`；
+  均已在板端重算校验。原程序 `--output-video` 仍绘制 `control_bbox`，
+  不能拿它评价显示框。逐帧运行日志和 session metadata 保留在同一
+  `runs/` 目录；它们绑定此次 RKNN runtime、配置和每次运行输入。
+- 结论边界：此候选在上述静止目标的**显示路径**上消除了整分钟抖动，
+  并在这段运动车辆视频没有触发静止锚定。图像锚定是在视频像素不变时
+  固定显示框，不修正 NanoTrack 追踪位置或伺服控制；边缘追踪框本身
+  严重漂移说明不能把此候选称为追踪质量修复。还没有真实吊舱实时测试、
+  人工观感反馈或生产 A8 部署；移动目标覆盖范围只有这段车辆视频。
+  `display_static_anchor_enabled` 在代码默认关闭，须经协调集成和后续
+  人工验证才能考虑作为实际吊舱配置。
+
+### Handoff 更新
+
+- 协调对话请消费 `76a2df65f75449155263027708ebd9d759438eff` 及本节
+  源码归档、程序、配置、模型、视频和三组 CSV/并排视频哈希，决定是否
+  将显示路径候选集成到最新基线。此前各版失败记录保留。
+- 开发板验证对话可用本节隔离目录复核原生运行结果；生产交叉编译对话
+  只能在协调者批准最新 board handoff 后消费该提交。`STATUS.md` 与
+  `integration-contract.yaml` 仍由协调对话维护，本任务不修改。
