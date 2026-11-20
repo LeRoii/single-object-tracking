@@ -83,6 +83,7 @@ class AdaptiveDisplayBox {
     int x = 0;
     int y = 0;
     std::uint8_t gray = 0;
+    std::uint8_t tile = 0;
   };
   std::vector<AnchorPixel> static_anchor_pixels_;
   int static_anchor_same_frames_ = 0;
