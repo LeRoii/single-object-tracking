@@ -1306,6 +1306,7 @@ std::string tracking_session_metadata_json(
       metadata.target_class_match_config.min_roi_coverage,
       metadata.target_class_match_config.max_center_ratio,
       metadata.target_class_match_config.ambiguity_margin,
+      metadata.target_class_match_config.min_confidence,
       metadata.initialization_detector.total_detector_ms,
   };
   for (const double value : numeric_values) {
@@ -1356,7 +1357,9 @@ std::string tracking_session_metadata_json(
          << ", \"max_center_ratio\": "
          << metadata.target_class_match_config.max_center_ratio
          << ", \"ambiguity_margin\": "
-         << metadata.target_class_match_config.ambiguity_margin << "},\n"
+         << metadata.target_class_match_config.ambiguity_margin
+         << ", \"min_confidence\": "
+         << metadata.target_class_match_config.min_confidence << "},\n"
          << "  \"initialization_detector\": {\"request_count\": "
          << metadata.initialization_detector.request_count
          << ", \"complete_count\": "

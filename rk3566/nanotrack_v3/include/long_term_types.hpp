@@ -125,13 +125,17 @@ enum class TargetClassReason {
   kDetectorUnavailable, kDetectorError
 };
 enum class TargetClassCandidateRejection {
-  kNone, kInvalidBox, kInvalidClass, kInvalidConfidence, kNoMatch
+  kNone, kInvalidBox, kInvalidClass, kInvalidConfidence,
+  kLowConfidence, kNoMatch
 };
 
 struct TargetClassMatchConfig {
   float min_roi_coverage = 0.50F;
   float max_center_ratio = 0.60F;
   float ambiguity_margin = 0.10F;
+  // Only candidates above this score may be compared with a clicked ROI.
+  // Zero disables the filter for diagnostic/legacy comparisons.
+  float min_confidence = 0.50F;
 };
 
 struct TargetClassCandidateMatch {

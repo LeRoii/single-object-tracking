@@ -65,7 +65,9 @@ TargetClassState establish_target_class(
       config.min_roi_coverage > 1 || !std::isfinite(config.max_center_ratio) ||
       config.max_center_ratio <= 0 || config.max_center_ratio > 2 ||
       !std::isfinite(config.ambiguity_margin) || config.ambiguity_margin < 0 ||
-      config.ambiguity_margin > 1)
+      config.ambiguity_margin > 1 ||
+      !std::isfinite(config.min_confidence) || config.min_confidence < 0 ||
+      config.min_confidence >= 1)
     throw std::invalid_argument("invalid target class match config");
 
   auto state = make_unknown_target_class(TargetClassReason::kNoMatch);
@@ -84,6 +86,11 @@ TargetClassState establish_target_class(
       match.rejection = TargetClassCandidateRejection::kInvalidClass;
     } else if (!std::isfinite(c.confidence)) {
       match.rejection = TargetClassCandidateRejection::kInvalidConfidence;
+    } else if (config.min_confidence > 0 &&
+               c.confidence <= config.min_confidence) {
+      // Reject before ROI coverage and center-distance comparison. A nearby
+      // false detection must not establish a class or enlarge the display box.
+      match.rejection = TargetClassCandidateRejection::kLowConfidence;
     } else {
       const auto& d = match.clipped_bbox;
       const double intersection =
