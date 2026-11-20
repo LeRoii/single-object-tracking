@@ -122,7 +122,10 @@ void AdaptiveDisplayBox::capture_static_anchor(const ImageView& image,
   for (int y = top; y < bottom; y += step) {
     for (int x = left; x < right; x += step) {
       const auto gray = grayscale_at(image, x, y);
-      static_anchor_pixels_.push_back(AnchorPixel{x, y, gray});
+      const int tile_x = std::min(3, (x - left) * 4 / (right - left));
+      const int tile_y = std::min(3, (y - top) * 4 / (bottom - top));
+      static_anchor_pixels_.push_back(AnchorPixel{
+          x, y, gray, static_cast<std::uint8_t>(tile_y * 4 + tile_x)});
       sum += gray;
       squared += static_cast<double>(gray) * gray;
     }
@@ -153,13 +156,28 @@ bool AdaptiveDisplayBox::static_anchor_holds(
     return false;
   }
   std::uint64_t sum = 0;
+  std::array<std::uint64_t, 16> tile_sums{};
+  std::array<int, 16> tile_counts{};
   for (const AnchorPixel& sample : static_anchor_pixels_) {
-    sum += std::abs(static_cast<int>(grayscale_at(image, sample.x, sample.y)) -
-                    static_cast<int>(sample.gray));
+    const int difference = std::abs(
+        static_cast<int>(grayscale_at(image, sample.x, sample.y)) -
+        static_cast<int>(sample.gray));
+    sum += difference;
+    tile_sums[sample.tile] += difference;
+    ++tile_counts[sample.tile];
   }
   const float mean_difference = static_cast<float>(sum) /
       static_cast<float>(static_anchor_pixels_.size());
-  if (mean_difference <= 14.0F) {
+  float max_tile_difference = 0.0F;
+  for (std::size_t tile = 0; tile < tile_sums.size(); ++tile) {
+    if (tile_counts[tile] >= 8) {
+      max_tile_difference = std::max(max_tile_difference,
+          static_cast<float>(tile_sums[tile]) / tile_counts[tile]);
+    }
+  }
+  // A narrow edge can move while the mean over its whole ROI remains low.
+  // Require both global and local image content to remain at the anchor.
+  if (mean_difference <= 14.0F && max_tile_difference <= 32.0F) {
     static_anchor_changed_frames_ = 0;
     ++static_anchor_same_frames_;
     if (!static_anchor_active_ && static_anchor_same_frames_ >= 15) {
@@ -168,7 +186,8 @@ bool AdaptiveDisplayBox::static_anchor_holds(
     }
   } else {
     static_anchor_same_frames_ = 0;
-    static_anchor_changed_frames_ += mean_difference > 20.0F ? 2 : 1;
+    static_anchor_changed_frames_ +=
+        mean_difference > 20.0F || max_tile_difference > 40.0F ? 2 : 1;
     if (static_anchor_changed_frames_ >= 3) {
       static_anchor_retired_ = true;
       static_anchor_active_ = false;

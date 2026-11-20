@@ -534,6 +534,61 @@ void test_static_image_anchor_rejects_tracker_drift_and_releases_on_change() {
               "searching retires the previous image anchor");
 }
 
+void test_static_image_anchor_releases_on_local_edge_motion() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_center_smoothing_alpha = 1.0F;
+  value.display_stability_enabled = true;
+  value.display_static_anchor_enabled = true;
+  std::vector<std::uint8_t> pixels(400 * 400 * 3, 80);
+  for (int y = 100; y < 200; ++y) {
+    for (int x = 100; x < 200; ++x) {
+      const std::uint8_t gray = x < 150 ? 20 : 220;
+      for (int channel = 0; channel < 3; ++channel)
+        pixels[(y * 400 + x) * 3 + channel] = gray;
+    }
+  }
+  const ImageView image{pixels.data(), 400, 400, 400 * 3, 3};
+  const BBox initial{100, 100, 100, 100};
+  AdaptiveDisplayBox display(value);
+  AdaptiveDisplayDiagnostics diagnostics;
+  display.initialize(initial, TargetClassState{}, FrameSize{400, 400}, &image);
+  for (int frame = 0; frame < 20; ++frame)
+    display.update(tracking_output(BBox{100.0F + 2.0F * frame, 100, 100, 100}),
+                   TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source == DisplayBoxSource::kStaticImageAnchor,
+              "unchanged edge establishes a display anchor");
+
+  auto set_corner = [&](std::uint8_t gray) {
+    for (int y = 100; y < 125; ++y) {
+      for (int x = 100; x < 125; ++x) {
+        for (int channel = 0; channel < 3; ++channel)
+          pixels[(y * 400 + x) * 3 + channel] = gray;
+      }
+    }
+  };
+  // This patch changes 5% of the ROI mean but one spatial tile by 80 levels.
+  set_corner(100);
+  display.update(tracking_output(BBox{140, 100, 100, 100}),
+                 TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source == DisplayBoxSource::kStaticImageAnchor,
+              "one changed frame does not release the anchor");
+  set_corner(20);
+  display.update(tracking_output(BBox{142, 100, 100, 100}),
+                 TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source == DisplayBoxSource::kStaticImageAnchor,
+              "a recovered frame resets the release counter");
+  set_corner(100);
+  display.update(tracking_output(BBox{144, 100, 100, 100}),
+                 TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source == DisplayBoxSource::kStaticImageAnchor,
+              "local change requires confirmation");
+  display.update(tracking_output(BBox{146, 100, 100, 100}),
+                 TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source != DisplayBoxSource::kStaticImageAnchor,
+              "persistent local edge change releases the anchor");
+}
+
 }  // namespace
 
 int main() {
@@ -550,6 +605,7 @@ int main() {
   test_persistent_large_jump_is_eventually_followed();
   test_narrow_tall_handle_filters_size_jitter();
   test_static_image_anchor_rejects_tracker_drift_and_releases_on_change();
+  test_static_image_anchor_releases_on_local_edge_motion();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;
