@@ -1,0 +1,4 @@
+source=ba465d4b17bba2946e82fafdf283f6c911293ea8
+adapter_source=3fffd207a62dfc87a25f3864311a9f2173663d77
+feature=unknown_three_metric_display_step_bound
+status=isolated_candidate_human_test_pending
