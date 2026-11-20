@@ -825,3 +825,53 @@
 - 协调及交叉编译对话请接收本次提交、候选配置和后续 A8 工件哈希，
   将三项失败门槛和显示框限步作为独立候选审查；不要据主机回放或安装
   推断真实吊舱效果。原先两项门槛候选及其测试日志保持可追溯。
+
+## 2026-11-20T20:42:00+08:00 A8 v2 隔离候选已安装
+
+- 实际消费算法提交
+  `codex/rk3588-display-box-stability@ba465d4b17bba2946e82fafdf283f6c911293ea8`，
+  A8 适配模板来自
+  `codex/rk3588-a8-cross-compile@3fffd207a62dfc87a25f3864311a9f2173663d77`。
+  复现记录及清单在
+  `docs/deployments/rk3588-a8-display-stability-v2-20261120/`。
+  WSL 输入包 `/tmp/a8-display-stability-v2-input.tar` SHA-256
+  `83abe1a83250ccb78cb1927d38cff9565d5a172803a5e36579ddf920d3951fda`；
+  `build-inputs.sha256` SHA-256
+  `75b1501ac80f71171c5c3c3acc9232747dc45988391dfb24a132ca734b9deb03`。
+- WSL `wjm@192.168.1.105:2222` 的
+  `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/A8_libs/libviewlink.a`
+  重新核对 SHA-256
+  `fec1c4326051446a90890132b03834d89ba9763a73237f34adcb09904032c040`，
+  两个 CMake 输入亦与构建脚本固定哈希一致。
+  在 `/home/wjm/a8-display-stability-v2-20261120` 执行
+  `bash build-wsl.sh`，内部 `BUILD_JOBS=4 ./run.sh --platform A8` 成功。
+  AArch64 程序 SHA-256
+  `a7cdf62095fdcdeeafb107988c509d85055b7ed816ca48b85541d9f772d54c43`；
+  构建日志 SHA-256
+  `cb27c9555430e5696cb8f0862604efaf3e8e4de199d3aeb47820c4b4d41199a7`；
+  `__wrap_tracker_detector_init`、`__wrap_do_tracker_detector`、
+  `__wrap_write_serial` 均存在。WSL 原文件恢复检查日志 SHA-256
+  `b0ce570cbe87ad1060b1cdbe71a06e95e74fcad7c681f35e89cb5ed01381b7cb`。
+- 吊舱 `ok3588` (`root@192.168.2.119`) ED25519 指纹
+  `SHA256:ukCnmiyhU3GFmsFCdm99JvNqe7dh+rFD0xlKiyGTt7w`。
+  独立安装目录 `/app/nanotrack_rk3588_display_stability_v2_20261120`；
+  传输包 SHA-256
+  `3f0860665eac32b9c9f186b350cb767a2bf98fcc8118e8f6fe035f0707be3a7f`。
+  程序和配置哈希与 WSL/本机一致；`payload.sha256` SHA-256
+  `231ec279519c950d754fc0cf80f8095f9c8f716508f9a9ba6acd9c7a40fb66f1`，
+  17 项校验通过，七项模型清单亦通过。模型、私有启动文件从旧候选在
+  吊舱内复制，未导出私有配置；原 `/app/bin/viewlink_app` SHA-256
+  `46325de3d9ba8a5850af48b91c0189ee52a993e233c59858578099efc94a1e70` 未变。
+- 执行 `sh start-test.sh --check`，输出 `CHECK OK; program not started`。
+  预检目录 `log/preflight-limit-0-2485-5000/` 的输入/视频日志 SHA-256
+  分别为 `51ea197765589a6504fd287cb09cf9f5eebe98320dcaed298026bc1a801946a2`
+  / `fe08d7756877e246ff904c5591d5b5d8e6530c86c44ed29d977244a038b7118f`。
+  `ldd` 未发现缺失依赖，预检后无 `viewlink_app` 进程。
+  默认 `AI_CONTROL_LIMIT=0`、`AI_DEBUG_IMAGES=0`，UNKNOWN 三项失败门槛开启。
+  未执行实际程序启动、模型初始化、点选追踪；人工效果仍待用户报告。
+
+### Handoff
+
+- 请协调和交叉编译对话核对本提交、上述输入/输出哈希和用户后续运行日志。
+  本版是独立人工测试候选，没有新开发板原生验证，亦不是共享契约批准的
+  生产 handoff；不要把吊舱安装/预检记为跟踪效果验收。
