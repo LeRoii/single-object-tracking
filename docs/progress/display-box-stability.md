@@ -1001,3 +1001,110 @@
   审核是否同步 `STATUS.md` 和 `integration-contract.yaml`；
   请交叉编译、开发板任务在各自工作树消费前复核提交及工件哈希。
   本地合并与主机回归不构成开发板或真实吊舱验收，也不授权正式生产交付。
+
+## 2026-11-20T21:20:59+08:00 已识别运动车辆显示开关实验
+
+- 用户授权使用既有真值数据检验当前显示稳定方法对运动车辆/行人的帮助。
+  本轮没有修改算法、候选默认值、A8 库或吊舱程序；使用可连接的 RK3588 开发板
+  `neardi@192.168.1.106`，没有操作吊舱。实验脚本/探针不是生产源码修改。
+- 分支 `codex/rk3588-display-box-stability`，工作树
+  `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking`；
+  实际消费干净的 `390b849f7e95cc778fdee6aa6e7b441f73056e55`（本机 main 同提交）。
+  重核工作线：board `291e62d1cb4211cf32b2dfc160ade78305774044`、dataset
+  `6b927bc744a751a6b232f01ef6c8d0f119b924f2`、experiment
+  `742b1f2de047ca02b7b783f3c58c9ca0cf67d33c`、cross
+  `3fffd207a62dfc87a25f3864311a9f2173663d77`。没有消费这些分支的未集成源码；
+  模型和 car001/car002 真值按现有 `integration-contract.yaml` 逐项核验。
+- 数据：`/home/u20/single-object-tracking/data/occ_video_1/1.mp4`，SHA-256
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`，
+  1920×1080、30 FPS、271 帧。car001/car002 的 labels manifest 分别
+  `9ec01854884126350f93e1af3a4aee002d38ce7c2d50c71c78de0f1a8dc0a648` /
+  `2f0e78ab1123cb035c87efa06171f1057c108f38b06fcc5c1ed3a3ec63fdbe98`；
+  标签逐文件以及 metadata/status 清单匹配契约。car001 可见框包含既有
+  accepted_candidate 标注，不夸大成人工逐帧新复核；遮挡估计框不参与普通 IoU。
+- 板端原生目录 `/home/neardi/Project/SOT/nt-display-moving-390b849`；源码包
+  `/tmp/display-moving-390b849.tar` SHA-256
+  `1c0112ae13b6a5eecdda9b37f17e19adc7939321f11ebae6f4d1a23ad13e628e`。
+  Release/RKNN 原生编译成功，CTest **23/23 PASS**。
+  原程序 SHA-256 `0a480c90e3f1e222571423b9e6f90ea1f2ae7038e109aeeb449b807488f0e8bb`。
+  Linux `6.1.84`；运行 metadata 实报 RKNN API `2.1.0`、driver `0.9.8`；
+  `/usr/lib/librknnrt.so` SHA-256
+  `0f1c5db6c649c8705759308aa56ecffc3295c7eb465f9ec9170882f44004aa8d`。
+- 使用 `/home/neardi/Project/SOT/nt-ten-target-33f34ba/assets/models/` 的官方
+  NanoTrack 三模型及 manifest，哈希与契约一致；检测器必须使用
+  `assets/releases/yolov8n-visdrone9-rk3588-fp16-v1/models/` 中的 RK3588
+  VisDrone9 模型/manifest（不能用 assets/models 下遗留的 COCO manifest）。
+  模型/manifest/labels 分别为
+  `8d35dc59ef004bb97c0d24982e0d54c6196a18cb301856506f923ebf6b59c85c` /
+  `ac2b536c3a46761138ecc67a2be865890b8bc0bbe2fb7195c2bb8b12d34049c9` /
+  `41942118d0d70371171f9cf215f5047a6e1ba253f5ae2cd612864085d0617992`。
+  全部输入完整路径/哈希保存在 `probe/inputs.sha256` 及实验 manifest。
+- 初始化 ROI：car001 `(992,582,37,39)`，car002 `(967,513,42,42)`。
+  两车均自动得到 `ESTABLISHED / class_id=2`，原始 detector 置信度分别
+  `0.793945` / `0.758301`；因此本轮是已识别目标证据。
+  `on.conf` 即当前候选，SHA-256
+  `4dafcabf08a7ae68c79ca9895f4b382583bd214397829dfeb60ba9f511f966f7`；
+  off 只把 `display_stability_enabled` 改 false，SHA-256
+  `f68e69f355c25dfa9ec5ad5456da0e660987811d286773d7a136289c8d7ad646`。
+  没有同时修改 UNKNOWN 容忍门槛或几何门槛。
+
+### 同输入对照方法与结果
+
+- 首先每车独立运行 on/off。异步 detector 完成时机使后段控制器轨迹不同，
+  因而没有把独立运行之间的差异当作显示开关的因果效果。
+- 在独立目录 `/home/neardi/Project/SOT/nt-display-moving-390b849-probe`
+  从相同提交重新构建一次性诊断程序，加入两个 `AdaptiveDisplayBox` 影子实例。
+  每帧使用同一个控制器输出、类别、图像、detector batch 及 runtime 样本，
+  只改变显示稳定开关；影子结果仅写 CSV，不反馈给控制器/检测器/模板。
+  以 live-on 和 live-off 各做两车完整回放，共四条共享输入的对照轨迹。
+  与当前 live 开关相同的影子结果，在四次各 271 帧上逐坐标差均为 **0**。
+  诊断程序 SHA-256
+  `ed3dd7cf04e215e589c4ddf8e36fc5316ed52db3c804abb69aff836e7175ec1a`；
+  修改后的 runtime SHA-256
+  `fc05c09d0026469809f9dab8d65097a2f3328c982653b4fe43e3ad711d26b7d8`。
+  单 runtime 实验探针没有交付 A8，也不是实时性能基准。
+- 下表使用 live-on 提供的同一输入轨迹。car001 只统计遮挡前帧 0–168 中
+  168 个可见且 accepted TRACKING 帧；car002 统计全段中 250 个同条件帧。
+  中心二阶差分描述轨迹的高频变化，不能把其中真实运动都叫噪声。
+
+| 指标（关闭 → 开启） | car001 | car002 |
+| --- | --- | --- |
+| 显示中心二阶差分 P95（原图像素） | 5.393 → 3.754（下降 30.4%） | 4.561 → 2.758（下降 39.5%） |
+| 平均显示 IoU | 0.785285 → 0.782955 | 0.764087 → 0.763092 |
+| 平均中心误差（像素） | 3.470 → 3.585 | 1.605 → 1.694 |
+| 沿真值运动方向的中位滞后（像素，正为落后） | −0.001 → 0.859 | −0.159 → 0.365 |
+| 扣除真值运动后的中心二阶差分 P95 | 4.519 → 4.988 | 3.130 → 3.296 |
+| 宽高二阶差分 P95 | 没有变化 | 没有变化 |
+
+- live-off 提供的输入轨迹也呈相同趋势：car001 遮挡前中心二阶差分下降30.4%，
+  car002 下降31.0%；IoU 小幅下降。结果支持“视觉轨迹平滑”，不支持“框位置
+  更准确”。扣除真值运动后的残差没有改善，且包含标注噪声，不能选择性省略。
+- 已检查第30/90/150/168/184/230帧对照图。两车正常跟踪时框仍落在同一车辆上，
+  开启没有改善原有尺寸偏小。两车显示框最大面积都低于 `80×80`，实际主要
+  使用 `0.65×当前中心 + 0.35×前一帧中心` 的小框分支，宽高保留原路径。
+  静止图像锚定仅对 UNKNOWN 初始化，本轮已识别车辆没有使用；UNKNOWN 容忍
+  策略同样不能当作已识别车辆收益。不能把本结果推广到大框的强平滑分支。
+- 另一个必须保留的边界：car001 遮挡后恢复不稳定。一次 live-on 轨迹在169帧
+  进入搜索并一直搜索至270；一次 live-off 轨迹在182帧确认恢复，之后逐渐
+  偏离真值。全可见帧 IoU 已在 metrics.json 保留（约0.52），没有把失败尾段
+  删除后声称全序列通过。这些独立运行存在异步时序差异，不能据此归因于
+  显示开关；显示影子两路共享该失败，不能修复失配或错误重捕获。
+
+### 工件、复现与 Handoff
+
+- 本机原始日志、逐帧 CSV/JSONL、metadata 和对照视频保留于
+  `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking/artifacts/display-moving-390b849/`。
+  板端对应两个目录的 `runs/` 保留原始证据。视频 `car001-compare.mp4`、
+  `car002-compare.mp4` 为黄色真值、左关闭/右开启的同输入显示框；裁剪窗口
+  随真值移动，只用于近看框贴合，不能用背景运动判断吊舱速度。解码尺寸
+  1440×560、30 FPS、每段271帧。原生 `*-control.avi` 画的是控制框，不用它
+  冒充显示框视频。
+- `docs/experiments/rk3588-display-moving-20261120/` 保存实际使用的
+  run-board.sh / run-probe.sh、影子探针及安装脚本、GT评分/渲染脚本、
+  metrics.json、manifest.json。manifest 列出所有保留工件 SHA-256、
+  源码/程序/模型身份、实际构建及运行命令；大工件不进 Git。
+- Handoff：请协调对话及开发板/交叉编译对话接收这份实验记录：当前显示稳定
+  对小型已识别运动车辆有轻度视觉平滑收益，但无定位精度或尺寸稳定收益，
+  伴随微小滞后；遮挡重捕获仍有独立风险。当前数据没有可用行人真值，
+  也没有覆盖大目标、快速转弯、快速缩放及吊舱高速运动模糊，不能声称这些
+  场景已验证。没有请求生产 handoff、默认值变更、部署或替换模型。
