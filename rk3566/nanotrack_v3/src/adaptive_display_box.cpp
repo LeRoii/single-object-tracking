@@ -37,6 +37,13 @@ float outside_deadband(float error, float deadband, float alpha) {
   return std::copysign(alpha * (std::fabs(error) - deadband), error);
 }
 
+std::uint8_t grayscale_at(const ImageView& image, int x, int y) {
+  const auto* pixel = image.data + static_cast<std::size_t>(y) *
+      image.stride_bytes + static_cast<std::size_t>(x) * 3;
+  return static_cast<std::uint8_t>((114 * pixel[0] + 587 * pixel[1] +
+                                    299 * pixel[2] + 500) / 1000);
+}
+
 }  // namespace
 
 AdaptiveDisplayBox::AdaptiveDisplayBox(const ControllerConfig& config)
@@ -45,7 +52,8 @@ AdaptiveDisplayBox::AdaptiveDisplayBox(const ControllerConfig& config)
 
 void AdaptiveDisplayBox::initialize(const BBox& tracking_bbox,
                                     const TargetClassState& target_class,
-                                    FrameSize frame_size) {
+                                    FrameSize frame_size,
+                                    const ImageView* image) {
   frame_size_ = frame_size;
   initialized_ = true;
   initialized_from_detector_ = target_class.selected_candidate.has_value();
@@ -66,6 +74,11 @@ void AdaptiveDisplayBox::initialize(const BBox& tracking_bbox,
   stability_pending_jump_.reset();
   stability_motion_hold_frames_ = 0;
   stability_warmup_frames_ = 0;
+  static_anchor_pixels_.clear();
+  static_anchor_same_frames_ = 0;
+  static_anchor_changed_frames_ = 0;
+  static_anchor_active_ = false;
+  static_anchor_retired_ = false;
 
   BBox envelope = tracking_bbox;
   if (target_class.selected_candidate) {
@@ -82,6 +95,86 @@ void AdaptiveDisplayBox::initialize(const BBox& tracking_bbox,
   display_bbox_ = clip_bbox(envelope, frame_size.width, frame_size.height);
   last_trusted_bbox_ = display_bbox_;
   set_transform(tracking_bbox, display_bbox_, 1.0F);
+  if (config_.display_stability_enabled &&
+      config_.display_static_anchor_enabled && image &&
+      target_class.status == TargetClassStatus::kUnknown) {
+    capture_static_anchor(*image, tracking_bbox);
+  }
+}
+
+void AdaptiveDisplayBox::capture_static_anchor(const ImageView& image,
+                                                const BBox& tracking_bbox) {
+  if (!image.data || image.channels != 3 ||
+      image.width != frame_size_.width || image.height != frame_size_.height ||
+      image.stride_bytes < static_cast<std::size_t>(image.width) * 3 ||
+      !valid_box(tracking_bbox)) return;
+  const int left = std::clamp(static_cast<int>(std::floor(tracking_bbox.x)),
+                              0, image.width - 1);
+  const int top = std::clamp(static_cast<int>(std::floor(tracking_bbox.y)),
+                             0, image.height - 1);
+  const int right = std::clamp(static_cast<int>(std::ceil(
+      tracking_bbox.x + tracking_bbox.width)), left + 1, image.width);
+  const int bottom = std::clamp(static_cast<int>(std::ceil(
+      tracking_bbox.y + tracking_bbox.height)), top + 1, image.height);
+  const int step = std::max(1, (std::max(right - left, bottom - top) + 63) / 64);
+  double sum = 0.0;
+  double squared = 0.0;
+  for (int y = top; y < bottom; y += step) {
+    for (int x = left; x < right; x += step) {
+      const auto gray = grayscale_at(image, x, y);
+      static_anchor_pixels_.push_back(AnchorPixel{x, y, gray});
+      sum += gray;
+      squared += static_cast<double>(gray) * gray;
+    }
+  }
+  const double count = static_cast<double>(static_anchor_pixels_.size());
+  if (count < 64.0 || squared / count - (sum / count) * (sum / count) < 100.0)
+    static_anchor_pixels_.clear();
+}
+
+bool AdaptiveDisplayBox::static_anchor_holds(
+    const ImageView& image, const ControllerOutput& output) {
+  if (static_anchor_pixels_.empty() || static_anchor_retired_) return false;
+  if (output.reacquired || output.tracking_phase == TrackingPhase::kSearching) {
+    static_anchor_retired_ = true;
+    static_anchor_active_ = false;
+    return false;
+  }
+  if (output.tracking_phase != TrackingPhase::kTracking || !output.accepted) {
+    static_anchor_active_ = false;
+    static_anchor_same_frames_ = 0;
+    return false;
+  }
+  if (!image.data || image.channels != 3 || image.width != frame_size_.width ||
+      image.height != frame_size_.height ||
+      image.stride_bytes < static_cast<std::size_t>(image.width) * 3) {
+    static_anchor_retired_ = true;
+    static_anchor_active_ = false;
+    return false;
+  }
+  std::uint64_t sum = 0;
+  for (const AnchorPixel& sample : static_anchor_pixels_) {
+    sum += std::abs(static_cast<int>(grayscale_at(image, sample.x, sample.y)) -
+                    static_cast<int>(sample.gray));
+  }
+  const float mean_difference = static_cast<float>(sum) /
+      static_cast<float>(static_anchor_pixels_.size());
+  if (mean_difference <= 14.0F) {
+    static_anchor_changed_frames_ = 0;
+    ++static_anchor_same_frames_;
+    if (!static_anchor_active_ && static_anchor_same_frames_ >= 15) {
+      static_anchor_box_ = display_bbox_;
+      static_anchor_active_ = true;
+    }
+  } else {
+    static_anchor_same_frames_ = 0;
+    static_anchor_changed_frames_ += mean_difference > 20.0F ? 2 : 1;
+    if (static_anchor_changed_frames_ >= 3) {
+      static_anchor_retired_ = true;
+      static_anchor_active_ = false;
+    }
+  }
+  return static_anchor_active_;
 }
 
 bool AdaptiveDisplayBox::should_request(TrackingPhase phase,
@@ -376,7 +469,8 @@ BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
 
 BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
                                 const TargetClassState& target_class,
-                                AdaptiveDisplayDiagnostics& diagnostics) {
+                                AdaptiveDisplayDiagnostics& diagnostics,
+                                const ImageView* image) {
   if (output.reacquired && output.accepted && initialized_ &&
       config_.adaptive_display_enabled &&
       valid_box(output.tracking_bbox)) {
@@ -461,6 +555,12 @@ BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
     stability_pending_jump_.reset();
     stability_motion_hold_frames_ = 0;
     stability_warmup_frames_ = 3;
+  }
+  if (config_.display_stability_enabled &&
+      config_.display_static_anchor_enabled && image &&
+      static_anchor_holds(*image, output)) {
+    target = static_anchor_box_;
+    diagnostics.source = DisplayBoxSource::kStaticImageAnchor;
   }
   display_bbox_ = smooth_toward(target, center_alpha);
   if (output.tracking_phase == TrackingPhase::kTracking && output.accepted) {

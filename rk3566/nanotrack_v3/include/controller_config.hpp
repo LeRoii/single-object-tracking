@@ -61,6 +61,9 @@ struct ControllerConfig {
   // Optional display-only stabilization. It never changes the tracker or
   // control boxes published by the controller.
   bool display_stability_enabled = false;
+  // For an unknown target whose initial image patch stays unchanged, hold
+  // its display box at the established location until the image changes.
+  bool display_static_anchor_enabled = false;
   float display_stability_center_deadband_ratio = 0.04F;
   float display_stability_size_deadband_ratio = 0.03F;
   float display_stability_center_alpha = 0.65F;

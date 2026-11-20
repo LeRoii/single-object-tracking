@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -445,6 +446,94 @@ void test_narrow_tall_handle_filters_size_jitter() {
               "long narrow textured target uses the size stability path");
 }
 
+void test_static_image_anchor_rejects_tracker_drift_and_releases_on_change() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_center_smoothing_alpha = 1.0F;
+  value.display_stability_enabled = true;
+  value.display_static_anchor_enabled = true;
+  std::vector<std::uint8_t> pixels(400 * 400 * 3, 80);
+  for (int y = 100; y < 200; ++y) {
+    for (int x = 100; x < 200; ++x) {
+      const std::uint8_t gray = x < 150 ? 20 : 220;
+      for (int channel = 0; channel < 3; ++channel)
+        pixels[(y * 400 + x) * 3 + channel] = gray;
+    }
+  }
+  const ImageView image{pixels.data(), 400, 400, 400 * 3, 3};
+  AdaptiveDisplayBox display(value);
+  AdaptiveDisplayDiagnostics diagnostics;
+  const BBox initial{100, 100, 100, 100};
+  display.initialize(initial, TargetClassState{}, FrameSize{400, 400}, &image);
+  float held_x = 0.0F;
+  for (int frame = 0; frame < 30; ++frame) {
+    const BBox drifting{100.0F + 2.0F * frame, 100, 100, 100};
+    const BBox shown = display.update(tracking_output(drifting),
+                                      TargetClassState{}, diagnostics, &image);
+    if (frame == 20) held_x = shown.x;
+    if (frame > 20) {
+      expect_true(close(shown.x, held_x, 1e-3F) &&
+                      diagnostics.source == DisplayBoxSource::kStaticImageAnchor,
+                  "unchanged textured image holds display despite tracker drift");
+    }
+  }
+  for (int y = 100; y < 200; ++y) {
+    for (int x = 100; x < 200; ++x) {
+      for (int channel = 0; channel < 3; ++channel)
+        pixels[(y * 400 + x) * 3 + channel] = 100;
+    }
+  }
+  display.update(tracking_output(BBox{160, 100, 100, 100}),
+                 TargetClassState{}, diagnostics, &image);
+  const BBox released = display.update(
+      tracking_output(BBox{162, 100, 100, 100}),
+      TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source != DisplayBoxSource::kStaticImageAnchor &&
+                  released.x > held_x + 2.0F,
+              "persistent visual change releases the static display anchor");
+
+  std::fill(pixels.begin(), pixels.end(), 80);
+  AdaptiveDisplayBox flat(value);
+  flat.initialize(initial, TargetClassState{}, FrameSize{400, 400}, &image);
+  for (int frame = 0; frame < 20; ++frame)
+    flat.update(tracking_output(BBox{100.0F + 2.0F * frame, 100, 100, 100}),
+                TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source != DisplayBoxSource::kStaticImageAnchor,
+              "a textureless patch cannot establish an image anchor");
+
+  for (int y = 100; y < 200; ++y) {
+    for (int x = 100; x < 200; ++x) {
+      const std::uint8_t gray = x < 150 ? 20 : 220;
+      for (int channel = 0; channel < 3; ++channel)
+        pixels[(y * 400 + x) * 3 + channel] = gray;
+    }
+  }
+  const TargetClassState known = established(2, initial);
+  AdaptiveDisplayBox classified(value);
+  classified.initialize(initial, known, FrameSize{400, 400}, &image);
+  for (int frame = 0; frame < 20; ++frame)
+    classified.update(tracking_output(BBox{100.0F + 2.0F * frame,
+                                            100, 100, 100}),
+                      known, diagnostics, &image);
+  expect_true(diagnostics.source != DisplayBoxSource::kStaticImageAnchor,
+              "classified targets retain their existing display path");
+
+  AdaptiveDisplayBox lost(value);
+  lost.initialize(initial, TargetClassState{}, FrameSize{400, 400}, &image);
+  for (int frame = 0; frame < 20; ++frame)
+    lost.update(tracking_output(initial), TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source == DisplayBoxSource::kStaticImageAnchor,
+              "unchanged image initially establishes an anchor");
+  ControllerOutput searching = tracking_output(initial);
+  searching.tracking_phase = TrackingPhase::kSearching;
+  searching.accepted = false;
+  lost.update(searching, TargetClassState{}, diagnostics, &image);
+  for (int frame = 0; frame < 20; ++frame)
+    lost.update(tracking_output(initial), TargetClassState{}, diagnostics, &image);
+  expect_true(diagnostics.source != DisplayBoxSource::kStaticImageAnchor,
+              "searching retires the previous image anchor");
+}
+
 }  // namespace
 
 int main() {
@@ -460,6 +549,7 @@ int main() {
   test_small_moving_target_does_not_lag();
   test_persistent_large_jump_is_eventually_followed();
   test_narrow_tall_handle_filters_size_jitter();
+  test_static_image_anchor_rejects_tracker_drift_and_releases_on_change();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;

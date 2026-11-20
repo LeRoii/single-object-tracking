@@ -214,6 +214,7 @@ const char* to_string(DisplayBoxSource value) {
     case DisplayBoxSource::kSuspectedFrozen: return "SUSPECTED_FROZEN";
     case DisplayBoxSource::kSearchPredicted: return "SEARCH_PREDICTED";
     case DisplayBoxSource::kReacquisitionBlend: return "REACQUISITION_BLEND";
+    case DisplayBoxSource::kStaticImageAnchor: return "STATIC_IMAGE_ANCHOR";
   }
   return "UNKNOWN";
 }

@@ -115,6 +115,7 @@ void set_value(ControllerConfig& config,
   else if (key == "display_center_smoothing_alpha") config.display_center_smoothing_alpha = parse_float(key, value);
   else if (key == "display_max_size_step_ratio") config.display_max_size_step_ratio = parse_float(key, value);
   else if (key == "display_stability_enabled") config.display_stability_enabled = parse_bool(key, value);
+  else if (key == "display_static_anchor_enabled") config.display_static_anchor_enabled = parse_bool(key, value);
   else if (key == "display_stability_center_deadband_ratio") config.display_stability_center_deadband_ratio = parse_float(key, value);
   else if (key == "display_stability_size_deadband_ratio") config.display_stability_size_deadband_ratio = parse_float(key, value);
   else if (key == "display_stability_center_alpha") config.display_stability_center_alpha = parse_float(key, value);
@@ -633,6 +634,7 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.display_center_smoothing_alpha << '|'
          << config.display_max_size_step_ratio << '|'
          << config.display_stability_enabled << '|'
+         << config.display_static_anchor_enabled << '|'
          << config.display_stability_center_deadband_ratio << '|'
          << config.display_stability_size_deadband_ratio << '|'
          << config.display_stability_center_alpha << '|'

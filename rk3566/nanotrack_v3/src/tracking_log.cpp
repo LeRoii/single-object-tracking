@@ -1224,6 +1224,7 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
   metadata.display_center_smoothing_alpha =
       config.display_center_smoothing_alpha;
   metadata.display_stability_enabled = config.display_stability_enabled;
+  metadata.display_static_anchor_enabled = config.display_static_anchor_enabled;
   metadata.display_stability_center_deadband_ratio =
       config.display_stability_center_deadband_ratio;
   metadata.display_stability_size_deadband_ratio =
@@ -1431,6 +1432,8 @@ std::string tracking_session_metadata_json(
          << metadata.display_center_smoothing_alpha << ",\n"
          << "  \"display_stability_enabled\": "
          << (metadata.display_stability_enabled ? "true" : "false") << ",\n"
+         << "  \"display_static_anchor_enabled\": "
+         << (metadata.display_static_anchor_enabled ? "true" : "false") << ",\n"
          << "  \"display_stability_center_deadband_ratio\": "
          << metadata.display_stability_center_deadband_ratio << ",\n"
          << "  \"display_stability_size_deadband_ratio\": "
