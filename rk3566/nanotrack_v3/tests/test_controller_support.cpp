@@ -356,6 +356,8 @@ int main() {
              "display_stability_size_deadband_ratio=0.03\n"
              "display_stability_center_alpha=0.65\n"
              "display_stability_size_alpha=0.25\n"
+             "display_stability_max_center_step_ratio=0.75\n"
+             "display_stability_max_center_lag_ratio=1.0\n"
              "accepted_center_max_correction_ratio=0.30\n"
              "max_reacquisition_center_distance=0.80\n"
              "uncertain_ms=200\n"
@@ -416,7 +418,9 @@ int main() {
                   std::fabs(visible.display_stability_center_deadband_ratio - 0.04F) < 1e-6F &&
                   std::fabs(visible.display_stability_size_deadband_ratio - 0.03F) < 1e-6F &&
                   std::fabs(visible.display_stability_center_alpha - 0.65F) < 1e-6F &&
-                  std::fabs(visible.display_stability_size_alpha - 0.25F) < 1e-6F,
+                  std::fabs(visible.display_stability_size_alpha - 0.25F) < 1e-6F &&
+                  std::fabs(visible.display_stability_max_center_step_ratio - 0.75F) < 1e-6F &&
+                  std::fabs(visible.display_stability_max_center_lag_ratio - 1.0F) < 1e-6F,
               "display stability profile parses all parameters");
   expect_near(visible.accepted_center_max_correction_ratio, 0.30F, 1e-6F,
               "accepted center correction ratio parses explicitly");
@@ -436,6 +440,18 @@ int main() {
   ControllerConfig old_votes = visible;
   old_votes.unknown_suspect_min_failed_metrics = 1;
   expect_true(controller_config_identity(old_votes) != controller_config_identity(visible), "vote threshold affects config identity");
+  ControllerConfig three_votes = visible;
+  three_votes.unknown_suspect_min_failed_metrics = 3;
+  expect_true(controller_config_identity(three_votes) != controller_config_identity(visible),
+              "three-vote threshold affects config identity");
+  ControllerConfig faster_display = visible;
+  faster_display.display_stability_max_center_step_ratio = 1.0F;
+  expect_true(controller_config_identity(faster_display) != controller_config_identity(visible),
+              "display catch-up limit affects config identity");
+  ControllerConfig farther_display = visible;
+  farther_display.display_stability_max_center_lag_ratio = 0.5F;
+  expect_true(controller_config_identity(farther_display) != controller_config_identity(visible),
+              "display observation distance affects config identity");
   ControllerConfig no_grace = visible;
   no_grace.unknown_response_grace_ms = 0;
   expect_true(controller_config_identity(no_grace) != controller_config_identity(visible),
@@ -466,10 +482,13 @@ int main() {
       expect_config_error(config_path, key);
     }
   }
-  for (const std::string& value : {"0", "3", "-1", "1.5", "4294967298"}) {
+  for (const std::string& value : {"0", "4", "-1", "1.5", "4294967298"}) {
     write_file(config_path, "unknown_suspect_min_failed_metrics=" + value + "\n");
     expect_config_error(config_path, "unknown_suspect_min_failed_metrics");
   }
+  write_file(config_path, "unknown_suspect_min_failed_metrics=3\n");
+  expect_true(load_controller_config(config_path).unknown_suspect_min_failed_metrics == 3,
+              "three failed metrics is a valid UNKNOWN entry threshold");
   write_file(config_path, "unknown_response_grace_ms=-1\n");
   expect_config_error(config_path, "unknown_response_grace_ms");
   for (const std::string& value : {"0", "-1", "1.5"}) {

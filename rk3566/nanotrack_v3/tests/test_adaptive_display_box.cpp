@@ -417,8 +417,74 @@ void test_persistent_large_jump_is_eventually_followed() {
   display.update(tracking_output(jumped), TargetClassState{}, diagnostics);
   const BBox persistent = display.update(tracking_output(jumped),
                                           TargetClassState{}, diagnostics);
-  expect_true(std::fabs(center_x(persistent) - center_x(jumped)) < 2.0F,
-              "a persistent large target displacement eventually follows the target");
+  expect_true(center_x(persistent) > center_x(initial) &&
+                  center_x(persistent) - center_x(initial) <= 150.01F,
+              "confirmed large displacement catches up in bounded steps");
+  BBox settled = persistent;
+  for (int frame = 0; frame < 8; ++frame)
+    settled = display.update(tracking_output(jumped),
+                             TargetClassState{}, diagnostics);
+  expect_true(std::fabs(center_x(settled) - center_x(jumped)) < 8.0F,
+              "persistent displacement reaches its target after bounded catch-up");
+}
+
+void test_fast_motion_and_suspected_recovery_have_bounded_display_steps() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_center_smoothing_alpha = 1.0F;
+  value.display_stability_enabled = true;
+  value.display_stability_max_center_step_ratio = 0.75F;
+  const BBox initial{368, 1000, 128, 128};
+  AdaptiveDisplayDiagnostics diagnostics;
+  AdaptiveDisplayBox moving(value);
+  moving.initialize(initial, TargetClassState{}, FrameSize{3840, 2160});
+  moving.update(tracking_output(initial), TargetClassState{}, diagnostics);
+  float prior = center_x(moving.current());
+  for (int frame = 1; frame <= 20; ++frame) {
+    const BBox tracked{368.0F + 70.0F * frame, 1000, 128, 128};
+    const BBox shown = moving.update(tracking_output(tracked),
+                                     TargetClassState{}, diagnostics);
+    expect_true(center_x(shown) - prior <= 96.01F,
+                "rapid motion never releases accumulated display lag in one frame");
+    if (frame >= 4) {
+      expect_true(center_x(tracked) - center_x(shown) < 128.1F,
+                  "sustained raw motion bypasses the stale large-jump hold");
+    }
+    prior = center_x(shown);
+  }
+
+  AdaptiveDisplayBox recovering(value);
+  recovering.initialize(initial, TargetClassState{}, FrameSize{3840, 2160});
+  recovering.update(tracking_output(initial), TargetClassState{}, diagnostics);
+  for (int frame = 1; frame <= 12; ++frame) {
+    ControllerOutput suspected = tracking_output(
+        BBox{368.0F + 70.0F * frame, 1000, 128, 128});
+    suspected.tracking_phase = TrackingPhase::kSuspected;
+    suspected.accepted = false;
+    suspected.observation_present = true;
+    suspected.control_bbox = BBox{368.0F + 30.0F * frame, 1000, 128, 128};
+    const float previous = center_x(recovering.current());
+    const BBox shown = recovering.update(suspected, TargetClassState{}, diagnostics);
+    expect_true(center_x(shown) - previous <= 96.01F,
+                "provisional display correction remains step-limited");
+    if (frame >= 4) {
+      expect_true(center_x(suspected.tracking_bbox) - center_x(shown) <= 128.1F,
+                  "provisional display remains within one box width of observation");
+    }
+  }
+  const float before_recovery = center_x(recovering.current());
+  const BBox tracked{368.0F + 70.0F * 13.0F, 1000, 128, 128};
+  const BBox first = recovering.update(tracking_output(tracked),
+                                       TargetClassState{}, diagnostics);
+  expect_true(center_x(first) - before_recovery <= 96.01F &&
+                  center_x(first) > before_recovery,
+              "SUSPECTED to TRACKING catches up without a one-frame snap");
+  for (int frame = 0; frame < 30; ++frame)
+    recovering.update(tracking_output(tracked), TargetClassState{}, diagnostics);
+  expect_true(std::fabs(center_x(recovering.current()) - center_x(tracked)) < 8.0F,
+              "display reaches the true tracking position after recovery: shown=" +
+                  std::to_string(center_x(recovering.current())) +
+                  " tracked=" + std::to_string(center_x(tracked)));
 }
 
 void test_narrow_tall_handle_filters_size_jitter() {
@@ -603,6 +669,7 @@ int main() {
   test_display_stability_follows_persistent_motion_and_scale();
   test_small_moving_target_does_not_lag();
   test_persistent_large_jump_is_eventually_followed();
+  test_fast_motion_and_suspected_recovery_have_bounded_display_steps();
   test_narrow_tall_handle_filters_size_jitter();
   test_static_image_anchor_rejects_tracker_drift_and_releases_on_change();
   test_static_image_anchor_releases_on_local_edge_motion();

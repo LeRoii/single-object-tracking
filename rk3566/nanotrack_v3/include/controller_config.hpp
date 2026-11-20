@@ -68,6 +68,8 @@ struct ControllerConfig {
   float display_stability_size_deadband_ratio = 0.03F;
   float display_stability_center_alpha = 0.65F;
   float display_stability_size_alpha = 0.25F;
+  float display_stability_max_center_step_ratio = 0.75F;
+  float display_stability_max_center_lag_ratio = 1.0F;
   float display_detection_consistency_iou = 0.50F;
   int display_detection_confirmations = 2;
   int display_reacquisition_blend_frames = 5;

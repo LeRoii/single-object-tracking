@@ -120,6 +120,8 @@ void set_value(ControllerConfig& config,
   else if (key == "display_stability_size_deadband_ratio") config.display_stability_size_deadband_ratio = parse_float(key, value);
   else if (key == "display_stability_center_alpha") config.display_stability_center_alpha = parse_float(key, value);
   else if (key == "display_stability_size_alpha") config.display_stability_size_alpha = parse_float(key, value);
+  else if (key == "display_stability_max_center_step_ratio") config.display_stability_max_center_step_ratio = parse_float(key, value);
+  else if (key == "display_stability_max_center_lag_ratio") config.display_stability_max_center_lag_ratio = parse_float(key, value);
   else if (key == "display_detection_consistency_iou") config.display_detection_consistency_iou = parse_float(key, value);
   else if (key == "display_detection_confirmations") config.display_detection_confirmations = parse_int(key, value);
   else if (key == "display_reacquisition_blend_frames") config.display_reacquisition_blend_frames = parse_int(key, value);
@@ -358,7 +360,9 @@ void validate_controller_config(const ControllerConfig& config) {
       config.display_stability_center_deadband_ratio,
       config.display_stability_size_deadband_ratio,
       config.display_stability_center_alpha,
-      config.display_stability_size_alpha};
+      config.display_stability_size_alpha,
+      config.display_stability_max_center_step_ratio,
+      config.display_stability_max_center_lag_ratio};
   for (const float value : display_ratios) {
     if (!std::isfinite(value) || value < 0.0F || value > 1.0F) {
       throw std::invalid_argument("adaptive display ratios must be in [0,1]");
@@ -368,6 +372,8 @@ void validate_controller_config(const ControllerConfig& config) {
       config.display_center_smoothing_alpha <= 0.0F ||
       config.display_stability_center_alpha <= 0.0F ||
       config.display_stability_size_alpha <= 0.0F ||
+      config.display_stability_max_center_step_ratio <= 0.0F ||
+      config.display_stability_max_center_lag_ratio <= 0.0F ||
       config.display_max_size_step_ratio <= 0.0F ||
       config.display_detection_consistency_iou <= 0.0F ||
       config.display_detection_confirmations < 1 ||
@@ -401,9 +407,9 @@ void validate_controller_config(const ControllerConfig& config) {
   if (config.suspicion_clear_ms <= 0) {
     throw std::invalid_argument("suspicion_clear_ms must be positive");
   }
-  if (config.unknown_suspect_min_failed_metrics != 1 &&
-      config.unknown_suspect_min_failed_metrics != 2) {
-    throw std::invalid_argument("unknown_suspect_min_failed_metrics must be 1 or 2");
+  if (config.unknown_suspect_min_failed_metrics < 1 ||
+      config.unknown_suspect_min_failed_metrics > 3) {
+    throw std::invalid_argument("unknown_suspect_min_failed_metrics must be 1, 2 or 3");
   }
   if (config.unknown_response_grace_ms < 0) {
     throw std::invalid_argument("unknown_response_grace_ms must be nonnegative");
@@ -639,6 +645,8 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.display_stability_size_deadband_ratio << '|'
          << config.display_stability_center_alpha << '|'
          << config.display_stability_size_alpha << '|'
+         << config.display_stability_max_center_step_ratio << '|'
+         << config.display_stability_max_center_lag_ratio << '|'
          << config.display_detection_consistency_iou << '|'
          << config.display_detection_confirmations << '|'
          << config.display_reacquisition_blend_frames << '|'

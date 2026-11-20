@@ -76,6 +76,7 @@ class AdaptiveDisplayBox {
   BBox display_bbox_{};
   BBox last_trusted_bbox_{};
   std::deque<BBox> stability_targets_;
+  std::deque<BBox> stability_raw_targets_;
   std::optional<BBox> stability_pending_jump_;
   int stability_motion_hold_frames_ = 0;
   int stability_warmup_frames_ = 0;
