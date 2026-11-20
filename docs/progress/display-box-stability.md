@@ -536,3 +536,95 @@
   用三处静止 ROI、运动车辆和相机平移视频复测；特别核对平移后
   的显示框是否跟上图像，而非只核对锚定来源。当前最新修改尚未
   有 RK3588 原生证据，也未形成新的协调 Handoff。
+
+## 2026-11-20T14:28:34+08:00 局部运动释放版的 RK3588 复测
+
+- 实际消费本分支源码
+  `9253f4b6cf0edec3e4a9fe9674bb976ed59d7295`；该提交只在
+  `AdaptiveDisplayBox` 的图像锚定释放检测、单测及本进度文件改动，
+  不修改追踪/控制/模板路径。Git archive 位于板端
+  `/home/neardi/Project/SOT/nt-display-stability-9253f4b/assets/rk3588-display-stability-9253f4b.tar`，
+  SHA-256 `0ffe7f1141179f5b6a311a6c6d5b7605fd50e89266b1a614697ff4b040c3181b`。
+  隔离工作目录 `/home/neardi/Project/SOT/nt-display-stability-9253f4b`。
+- 板端仍为 `neardi@192.168.1.106`、RK3588 LKD3588、Linux `6.1.84`、
+  RKNN API `2.1.0` / driver `0.9.8`；模型取自上节相同目录，
+  template/search/head/manifest 四项 SHA-256 再次核对，分别为
+  `eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55`、
+  `d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee`、
+  `4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5`、
+  `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`。
+  原生 CMake / build / CTest 命令同上节；观察 23/23 PASS，
+  `runs/ctest.log` SHA-256
+  `dd4a1afe28f0131892c0e958c26387532377252f5e1172f6cb9090618997a10b`；
+  `build-native/nanotrack_v3` SHA-256
+  `a7d2789b61f6f7153338a9ff07ddb225bc8185b14f0c32d2e413ca46a9dcb183`。
+  配置仍为候选 `3411ec9f9c19a8666e117e4ac82d8084f2b7a118e8850ea0b60c08c1277bca67`，
+  关闭组 `adb7ace425fbbbb1e6f97463f53a1fb5d006238a1d0c12275381d5eed0c578b4`；
+  初次合成回放因忘记在新目录生成关闭组配置而立即报错，补齐并核验
+  与上一轮同 SHA 后重新运行；当前同名 `off.log` 是成功回放日志，
+  首次报错只保留在本任务终端输出中。
+- 使用静止 4K 视频 `8dea64988e3766a410d601a59ca14f49550d0d9c57a3beacbe9aeb78bdf4bd80`
+  和同样三处 ROI，分别完整回放 1800 帧。边缘、左把手、右把手各
+  1800 帧均保持已接受 TRACKING，`STATIC_IMAGE_ANCHOR` 均为第
+  15--1799 帧；与上一版同 ROI 的追踪框、显示框、状态和来源
+  逐帧完全相同，局部分区门没有在静止视频误释放。
+  三处显示中心二阶差分 p95 分别为 `0px`，尺寸二阶差分 p99
+  分别为 `0%`（从第 30 帧起）。本版 `runs/` 下边缘、左把手、
+  右把手 CSV SHA-256 依次为
+  `702ec093df3c5ac662d93fa9de4a85bb26825abab1a168bc0a0ef0f31954afd6`、
+  `3e5a73bb78ba9aa03c30e54fd3675cbab4b8a601f42ff21fb5bc18140b444b8a`、
+  `29eca3b6e8f80c95a0dc401c1e7967f4ed28c7351e02d4242858a639908d4cba`。
+  左把手第 30、900、1790 帧新显示框始终围住同一把手；
+  `runs/left-handle-9253f4b-compare.mp4` SHA-256
+  `e8829711baa07f659de75a14ddc322a306796ceabb272fd58da258eabd8a0bc5`，
+  1600×720、1800 帧，板端解码帧数和哈希已复核。边缘/右把手
+  并排视频沿用上节同像素输出的已核验文件，本目录 `runs/` 下有
+  指向它们的链接。
+- 运动车辆仍用 canonical 视频
+  `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`
+  和 `(992,582,37,39)`，271 帧无静止锚定；与上一版程序的追踪框、
+  显示框、状态、显示来源逐帧一致，因此前节的可见已接受 241 帧
+  平均显示 IoU `0.761071` 仍适用。`runs/car-candidate.csv` SHA-256
+  `3c62c07c55e786800af8f36e5628ca0778e4ad46b4f36134f0d1d17800fad08d`。
+- 使用本机同一 4K 视频生成的**合成相机平移**边缘 800×600 片段，
+  SHA-256 `e9dad2e5a73dff071e0eb4d6d270b71af61e9854ea41f6137e5687eca05534ef`，
+  初始框 `(190,70,150,220)`；同一板端新程序的关闭/开启组
+  追踪和控制框逐帧完全相同，均 120 帧 TRACKING。另用旧版板端
+  程序 SHA-256
+  `141b060e2f59d649d0c2b800a9c1ed2763edbe19dca001d8d821b5473e38cc18`
+  在相同视频和开启配置回放：旧版第 15--119 帧一直锚定，
+  新版第 15--41 帧锚定、第 42 帧释放，之后持续跟随追踪位置。
+  三组 CSV SHA-256：关闭
+  `771821b1cc922b8dd46a4c865f0df8cf7d6f13bac7444abf4f09c02bb355c9e5`、
+  旧版开启 `ad0b922e74a91e95cc97b4dd02607740ec2e0de78192f4860b46ccbe31632868`、
+  新版开启 `6232763584f1ccd78459903079f81d6397d40cd619167c6373afd61d93ec460a`。
+  真正 `display_bbox` 的旧/新版并排视频为
+  `runs/edge-shift-old-new-compare.mp4`，SHA-256
+  `da2623d6ee7d817b2d35fdf53b5a3c05774cff405f4f41c6827c3929aa3d0dc1`，
+  3200×1200、120 帧。第 60 帧画面中新版仍围住移动后的边缘拐点，
+  旧版留在先前高度。该输入为人工裁切和平移，用来证伪旧门槛，
+  不等同真实吊舱相机运动。
+- 另一段合成右把手平移视频 SHA-256
+  `19e62a27a55443bac8ccb7740e5f1726587c989906a6e0b9831835c321d15f91`，
+  初始框 `(185,175,55,195)`。新版板端第 15--33 帧锚定，第 34 帧
+  释放；120 帧中 TRACKING 115 帧、SUSPECTED 5 帧。
+  `runs/handle-camera-shift-candidate.csv` SHA-256
+  `1977258ad9ff5f4977dfcab64a07f236baf8bad34872894df0a9878263312432`。
+  平移输入只验证锚定释放，没有该合成片段的独立目标真值，
+  不宣称其后每帧跟踪正确。
+- `runs/` 还保留每次运行的 `.log` 与 `.metadata.json`，供核对
+  配置指纹、RKNN runtime、输入身份和逐帧状态；文件 SHA-256 可在
+  板端 `sha256sum runs/*candidate.{log,metadata.json}` 复核。
+  本轮仍只完成隔离开发板候选，未验证真实吊舱上位机观感或 A8 显示链，
+  未改变协调契约或正式生产 handoff。
+
+### Handoff 更新
+
+- 最新待协调审查的源码改为
+  `9253f4b6cf0edec3e4a9fe9674bb976ed59d7295`，替代本文件较早
+  Handoff 所列 `76a2df6` 作为代码候选。请连同本节精确程序、配置、
+  模型、输入、CSV 和并排视频哈希审查；静止视频优点与相机运动释放
+  均需保留。其他任务要消费此结果须先核对提交和工件哈希。
+- 是否集成到 `main`/`Debug` 或作为生产 A8 输入，由协调对话依最新
+  `STATUS.md`、`integration-contract.yaml` 和人工观感反馈另行决定。
+  真实吊舱运行与效果验收仍属人工边界，本任务不作已批准交付声明。
