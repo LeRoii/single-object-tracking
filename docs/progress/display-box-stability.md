@@ -628,3 +628,20 @@
 - 是否集成到 `main`/`Debug` 或作为生产 A8 输入，由协调对话依最新
   `STATUS.md`、`integration-contract.yaml` 和人工观感反馈另行决定。
   真实吊舱运行与效果验收仍属人工边界，本任务不作已批准交付声明。
+
+## 2026-11-20T14:31:34+08:00 A8 显示输出接线只读核对
+
+- 只读核对交叉编译工作树
+  `codex/rk3588-a8-cross-compile@3fffd207a62dfc87a25f3864311a9f2173663d77`；
+  该工作树干净。实际读取文件
+  `docs/deployments/rk3588-a8-recovery-consistency-20261120/native-lib_impl.cpp`，
+  SHA-256 `0d0078aea3984f5f4abf67fbdd435745cff0dbd391e0cc55b653958fb41d19ab`。
+  `set_frame_outputs()` 将 `result.output.display_bbox` 转为 `display_box`，
+  写入 `track_box_result.rect[1]` 和 `rect_show`；`rect[0]` 独立使用
+  `tracking_bbox` 或控制限幅框。这表明该 A8 适配源码具备本候选
+  显示框接线，但没有据此声称当前吊舱二进制已包含本候选，也没有
+  证明宿主库绘制时未覆盖 `rect_show`。
+- Handoff：交叉编译对话若后续消费本候选，应在协调者批准的最新
+  board handoff 上集成 `9253f4b` 的显示源码，核对 `rect_show` /
+  `rect[1]` 在实际 A8 程序中的返回后行为，并保留 `rect[0]`
+  控制语义。该适配文件仅被只读核对，未从另一工作树复制或修改。
