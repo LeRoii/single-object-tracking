@@ -3955,7 +3955,323 @@ void test_unknown_grace_observed_response_patterns() {
                   std::to_string(sixth.unknown_grace_peak_clean_frames));
 }
 
+
+void test_unknown_two_metric_entry() {
+  using namespace nanotrack;
+  ControllerConfig cfg;
+  cfg.unknown_response_grace_ms = 1500;
+  cfg.unknown_response_recovery_ms = 60;
+  cfg.unknown_suspect_min_failed_metrics = 2;
+  cfg.reliable_psr = 4.2F;
+  cfg.weak_psr = 4.0F;
+  cfg.reliable_apce = 8.0F;
+  cfg.reliable_peak_margin = 0.04F;
+  cfg.weak_peak_margin = 0.02F;
+  const BBox target{100,80,30,30};
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  const ResponseMetrics clean{0.95F,0.94F,8.0F,18.0F,0.30F};
+  const auto step = [&](ResolvedControllerFixture& c, int id,
+                        const ResponseMetrics& metrics, BBox box) {
+    auto plan=c.begin_frame(id,id*40,false);
+    auto obs=reliable_observation(plan,TemplateKind::kRecent,box,id);
+    obs.metrics=metrics;
+    return c.finish_frame(plan,{obs},std::nullopt);
+  };
+  for (int mask=1;mask<16;++mask) {
+    ResolvedControllerFixture c(cfg); c.initialize(target,0,0,{400,300},unknown);
+    auto m=clean;
+    if(mask&1)m.raw_score=0.70F;
+    if(mask&2)m.psr=3.9F;
+    if(mask&4)m.apce=3.0F;
+    if(mask&8)m.peak_margin=0.001F;
+    int count=0; for(int bit=1;bit<=8;bit<<=1)count+=(mask&bit)!=0;
+    auto out=step(c,1,m,target);
+    expect_true(out.unknown_failed_metric_count==count,"distinct metric count");
+    expect_true(count==1 ? out.accepted && out.tracking_phase==TrackingPhase::kTracking && out.unknown_learning_paused : !out.accepted && out.unknown_grace_active && out.tracking_phase==TrackingPhase::kSuspected,"single accepted, multiple suspected");
+  }
+  ResolvedControllerFixture c(cfg); c.initialize(target,0,0,{400,300},unknown);
+  for(int i=0;i<24;++i)c.response_baseline_.observe_trusted(clean);
+  auto single=clean; single.psr=3.9F; // Absolute + relative PSR is ONE metric.
+  for(int id=1;id<=60;++id) {
+    auto out=step(c,id,single,{100.0F+id*.1F,80,30,30});
+    expect_true(out.accepted && out.unknown_learning_paused && !out.unknown_grace_active && out.unknown_failed_metric_count==1 && out.template_action==TemplateAction::kNone,"single failure follows for >1500ms without learning");
+    expect_true(out.quality!=QualityLevel::kReliable,"do not relabel low response reliable");
+    RuntimeFrameResult logged; logged.output=out;
+    const auto row=make_tracking_log_row(logged,"existing");
+    expect_true(row.note.find("existing;UNKNOWN_RESPONSE_VOTE(abs=2;rel=2;failed=1;learning_paused=1)")!=std::string::npos,"existing note and deduplicated failure telemetry retained");
+  }
+  auto reference=c.response_baseline_.evaluate(single).reference;
+  expect_true(reference && reference->psr==8.0F && c.stable_frames_==0,"single failures cannot poison baseline or stage template");
+  auto two=single; two.peak_margin=0.25F; // Relative-only second metric.
+  auto entered=step(c,61,two,target);
+  expect_true(entered.unknown_grace_active && entered.unknown_failed_metric_count==2,"absolute and relative distinct failures share entry rule");
+  auto held=step(c,62,single,target);
+  expect_true(held.unknown_grace_active && !held.accepted,"one good metric cannot reset active grace");
+  for(int id=63;id<=99;++id)step(c,id,two,target);
+  auto lost=step(c,100,two,target);
+  expect_true(lost.tracking_phase==TrackingPhase::kSearching,"two failures expire original 1500ms budget");
+  c.initialize(target,0,0,{400,300},unknown);
+  auto floor=single; floor.raw_score=.54F;
+  expect_true(std::string(step(c,1,floor,target).unknown_grace_exit_reason)=="SCORE_FLOOR","raw floor unchanged");
+  c.initialize(target,0,0,{400,300},unknown);
+  expect_true(std::string(step(c,1,single,{300,80,30,30}).unknown_grace_exit_reason)=="GEOMETRY","position hard gate unchanged");
+  c.initialize(target,0,0,{400,300},unknown);
+  expect_true(std::string(step(c,1,single,{100,80,20,30}).unknown_grace_exit_reason)=="GEOMETRY","shrink hard gate unchanged");
+  c.initialize(target,0,0,{400,300},unknown);
+  auto p=c.begin_frame(1,40,false);
+  expect_true(c.finish_frame(p,{},std::nullopt).tracking_phase==TrackingPhase::kSearching,"missing observation still searches");
+  c.initialize(target,0,0,{400,300},unknown);
+  auto both=clean;both.psr=3.9F;both.apce=3.0F;
+  step(c,1,both,target);
+  p=c.begin_frame(2,300,false);auto obs=reliable_observation(p,TemplateKind::kRecent,target);obs.metrics=clean;
+  expect_true(std::string(c.finish_frame(p,{obs},std::nullopt).unknown_grace_exit_reason)=="INPUT_GAP","grace input gap unchanged");
+  c.initialize(target,0,0,{400,300},unknown);
+  step(c,1,both,target);
+  step(c,2,clean,target);step(c,3,clean,target);
+  expect_true(step(c,4,clean,target).accepted,"60ms continuous recovery retained");
+  c.initialize(target,0,0,{400,300},unknown);
+  for(int i=0;i<24;++i)c.response_baseline_.observe_trusted(clean);
+  auto relative=clean;relative.psr=5.8F;relative.apce=12.0F;
+  auto relout=step(c,1,relative,target);
+  expect_true(relout.unknown_absolute_failure_mask==0 && relout.unknown_failed_metric_count==2 && relout.unknown_grace_active,"two relative failures trigger without absolute failures");
+  // Known classes and the disabled grace switch keep the baseline decisions.
+  for(int kind=0;kind<3;++kind) {
+    auto candidate=cfg;
+    if(kind==2)candidate.unknown_response_grace_ms=0;
+    auto baseline=candidate;baseline.unknown_suspect_min_failed_metrics=1;
+    auto cls=kind==2?unknown:make_fixed_target_class(0,true);
+    if(kind==1)cls.status=TargetClassStatus::kEstablished;
+    ResolvedControllerFixture old(baseline), now(candidate);
+    old.initialize(target,0,0,{400,300},cls);now.initialize(target,0,0,{400,300},cls);
+    for(int id=1;id<=25;++id) {
+      auto m=id%4==0?both:single;
+      const auto a=step(old,id,m,target), b=step(now,id,m,target);
+      expect_true(a.mode==b.mode && a.accepted==b.accepted && a.template_action==b.template_action && a.tracking_bbox.x==b.tracking_bbox.x && a.tracking_bbox.width==b.tracking_bbox.width && !b.unknown_learning_paused,"known/disabled policy parity");
+    }
+  }
+  auto trial=cfg;trial.stable_frames_for_update=1;trial.recent_update_interval_ms=1;
+  for(bool conflict:{false,true}) {
+    ResolvedControllerFixture t(trial);t.initialize(target,0,0,{400,300},unknown);
+    expect_true(step(t,1,clean,target).template_action==TemplateAction::kStageRecent,"stage fixture");
+    auto plan=t.begin_frame(2,80,false);
+    auto recent=reliable_observation(plan,TemplateKind::kRecent,target);recent.metrics=single;
+    auto staged=reliable_observation(plan,TemplateKind::kStaged,conflict?BBox{180,80,30,30}:target);staged.metrics=clean;
+    auto out=t.finish_frame(plan,{recent,staged},std::nullopt);
+    expect_true(out.template_action==TemplateAction::kRollbackRecent && !t.recent_probation_,"single failure rolls back pending learning");
+    expect_true(conflict ? out.tracking_phase==TrackingPhase::kSearching : out.accepted && out.unknown_learning_paused,"template geometry conflict remains hard");
+  }
+  // Aborting a frame must not leave a new suspicion timer behind.
+  c.initialize(target,0,0,{400,300},unknown);
+  p=c.begin_frame(1,40,false);auto invalid=reliable_observation(p,TemplateKind::kRecent,target);
+  invalid.metrics=both;
+  try {c.finish_frame(p,{invalid,invalid},std::nullopt);} catch(const std::invalid_argument&) {}
+  expect_true(!c.unknown_grace_since_ms_,"aborted vote does not leave grace timer");
+  expect_true(step(c,1,single,target).accepted,"retry accepts single failure");
+
+}
+
+
+void test_unknown_two_metric_recovery_and_search_continuity() {
+  using namespace nanotrack;
+  ControllerConfig cfg;
+  cfg.unknown_response_grace_ms = 200;
+  cfg.unknown_response_recovery_ms = 60;
+  cfg.unknown_search_seed_min_ms = 120;
+  cfg.template_agreement_iou = .5F;
+  cfg.unknown_suspect_min_failed_metrics = 2;
+  cfg.unknown_response_stable_recovery_ms = 120;
+  cfg.stable_frames_for_update = 100;
+  cfg.motion_search_enabled = true;
+  cfg.reliable_psr = 4.2F;
+  cfg.weak_psr = 4.0F;
+  cfg.reliable_apce = 8.0F;
+  cfg.reliable_peak_margin = 0.04F;
+  cfg.weak_peak_margin = 0.02F;
+  const BBox target{100,80,30,30};
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  const ResponseMetrics clean{.95F,.94F,8,18,.30F};
+  const ResponseMetrics two{.95F,.94F,3.5F,7,.30F};
+  const ResponseMetrics single{.95F,.94F,3.5F,18,.30F};
+  auto step = [&](ResolvedControllerFixture& c, int id, const ResponseMetrics& m,
+                  BBox box, bool conflict=false) {
+    auto p=c.begin_frame(id,id*40,false);
+    auto obs=reliable_observation(p,TemplateKind::kRecent,box,id);obs.metrics=m;
+    std::vector<TrackerObservation> observations{obs};
+    if(conflict) observations.push_back(reliable_observation(p,TemplateKind::kSafe,{box.x+15,80,30,30},id));
+    return c.finish_frame(p,observations,std::nullopt);
+  };
+  // Every single failing dimension may recover; absolute+relative is one vote.
+  for(int bit=1;bit<=8;bit<<=1) {
+    ResolvedControllerFixture c(cfg);c.initialize(target,0,0,{400,300},unknown);
+    for(int i=0;i<24;++i)c.response_baseline_.observe_trusted(clean);
+    step(c,1,two,target);
+    auto one=clean;
+    if(bit==1)one.raw_score=.70F;
+    if(bit==2)one.psr=3.5F;
+    if(bit==4)one.apce=7;
+    if(bit==8)one.peak_margin=.01F;
+    expect_true(step(c,2,one,target).unknown_grace_active,"one sample cannot clear grace");
+    expect_true(step(c,3,one,target).unknown_grace_active,"40ms cannot clear 60ms recovery");
+    auto out=step(c,4,one,target);
+    expect_true(out.accepted && out.unknown_learning_paused &&
+                    out.tracking_phase==TrackingPhase::kTracking &&
+                    std::string(out.unknown_grace_exit_reason)=="RECOVERED_TWO_METRIC" &&
+                    out.template_action==TemplateAction::kNone,
+                "single-metric recovery follows position without learning");
+    expect_true(c.stable_frames_==0 && !c.unknown_search_trace_,"recovery resets trace and learning streak");
+    auto baseline=c.response_baseline_.evaluate(one).reference;
+    expect_true(baseline && baseline->psr==8 && baseline->apce==18 && baseline->peak_margin==.30F,
+                "single-failure recovery cannot poison baseline");
+  }
+  ResolvedControllerFixture interrupted(cfg);interrupted.initialize(target,0,0,{400,300},unknown);
+  step(interrupted,1,two,target);step(interrupted,2,single,target);
+  step(interrupted,3,two,target);step(interrupted,4,single,target);step(interrupted,5,two,target);
+  auto expired=step(interrupted,6,single,target);
+  expect_true(expired.tracking_phase==TrackingPhase::kSearching &&
+                  std::string(expired.unknown_grace_exit_reason)=="TIMEOUT",
+              "isolated one-failure frames do not renew 200ms budget");
+  // The legacy stable-response shortcut cannot bypass a second relative failure.
+  ResolvedControllerFixture relative(cfg);relative.initialize(target,0,0,{400,300},unknown);
+  for(int i=0;i<24;++i)relative.response_baseline_.observe_trusted(clean);
+  auto rel=clean;rel.psr=5.8F;rel.peak_margin=.20F;
+  for(int id=1;id<=5;++id)expect_true(step(relative,id,rel,target).unknown_grace_active,"two relative failures cannot recover via alternate rule");
+  expect_true(step(relative,6,rel,target).tracking_phase==TrackingPhase::kSearching,"relative two-failure timeout");
+  // Recovery-level scores are not required to place a SEARCH crop.
+  ResolvedControllerFixture c(cfg);c.initialize(target,0,0,{400,300},unknown);
+  for(int id=1;id<=5;++id) {
+    auto out=step(c,id,two,{100.0F+id*3,80,30,30});
+    expect_true(out.unknown_grace_active && !out.accepted && out.template_action==TemplateAction::kNone,"weak trace is provisional");
+  }
+  const auto before=c.unknown_search_trace_;
+  c.begin_frame(6,240,false);c.abort_frame();
+  expect_true(before && c.unknown_search_trace_ && c.unknown_search_trace_->frames==before->frames &&
+                  c.unknown_search_trace_->bbox.x==before->bbox.x,"abort restores search trace");
+  auto out=step(c,6,two,{118,80,30,30});
+  expect_true(out.tracking_phase==TrackingPhase::kSearching && !out.accepted && !out.reacquired &&
+                  std::string(out.motion_gate_reason)=="SEARCH_REANCHORED_GRACE_TRACE",
+              "timeout searches continuous weak observations, never declares recovery");
+  expect_near(out.tracking_bbox.x,118,.01F,"search does not jump back to initial x=100");
+  expect_near(c.current_bbox().x,100,.01F,"search seed does not commit trusted bbox");
+  auto next=c.begin_frame(7,280,false);
+  expect_near(next.predicted_bbox.x,118,.01F,"next search crop uses seed");c.abort_frame();
+  c.initialize(target,0,0,{400,300},unknown);
+  expect_true(!c.unknown_search_trace_,"new click clears search trace");
+  // Missing/invalid/ambiguous geometry and input gaps cannot reuse a stale trace.
+  for(int fault=0;fault<5;++fault) {
+    c.initialize(target,0,0,{400,300},unknown);
+    for(int id=1;id<=5;++id)step(c,id,two,{100.0F+id*3,80,30,30});
+    ControllerOutput failed;
+    if(fault==0) {auto p=c.begin_frame(6,240,false);failed=c.finish_frame(p,{},std::nullopt);}
+    if(fault==1) {auto m=two;m.raw_score=.54F;failed=step(c,6,m,{118,80,30,30});}
+    if(fault==2) failed=step(c,6,two,{300,80,30,30});
+    if(fault==3) {auto p=c.begin_frame(6,450,false);auto obs=reliable_observation(p,TemplateKind::kRecent,{118,80,30,30});obs.metrics=two;failed=c.finish_frame(p,{obs},std::nullopt);}
+    if(fault==4) failed=step(c,6,two,{118,80,30,30},true);
+    expect_true(failed.tracking_phase==TrackingPhase::kSearching &&
+                    std::string(failed.motion_gate_reason)!="SEARCH_REANCHORED_GRACE_TRACE" &&
+                    !c.unknown_search_trace_,"hard failure or safe conflict cannot seed search fault="+std::to_string(fault));
+  }
+  auto off=cfg;off.unknown_search_seed_min_ms=0;
+  ResolvedControllerFixture disabled(off);disabled.initialize(target,0,0,{400,300},unknown);
+  for(int id=1;id<=5;++id)step(disabled,id,two,{100.0F+id*3,80,30,30});
+  expect_true(std::string(step(disabled,6,two,{118,80,30,30}).motion_gate_reason)!="SEARCH_REANCHORED_GRACE_TRACE","search seed switch off retained");
+}
+
+
+void test_4768_response_events_search_location() {
+  using namespace nanotrack;
+  // Captured metrics, timestamps and centers from run manual-limit-0-162-4768,
+  // frames 145..195; fixed 128x128 boxes isolate response/seed policy.
+  // This is an observation-event regression, NOT image or raw-geometry replay.
+  struct Event { std::int64_t ms; float score, peak, psr, apce, margin, x, y; };
+  const Event events[] = {
+    {183050, 0.979784F, 0.965654F, 6.362811F, 18.632545F, 0.069713F, 3587.673095F, 612.019593F},
+    {183111, 0.999169F, 0.970436F, 7.042240F, 19.229528F, 0.182711F, 3585.620605F, 606.150665F},
+    {183169, 0.999136F, 0.960322F, 6.707219F, 17.712112F, 0.200032F, 3582.203613F, 606.825287F},
+    {183207, 0.995505F, 0.991995F, 5.341125F, 14.130881F, 0.150553F, 3570.593262F, 618.380218F},
+    {183245, 0.989347F, 0.983485F, 5.403189F, 14.621182F, 0.140317F, 3557.630615F, 629.105652F},
+    {183282, 0.993747F, 0.940549F, 4.822944F, 12.688972F, 0.171790F, 3508.865967F, 654.018433F},
+    {183319, 0.962568F, 0.967902F, 4.877440F, 13.546349F, 0.061699F, 3480.508545F, 657.628570F},
+    {183350, 0.993436F, 0.929120F, 4.964982F, 13.071945F, 0.172982F, 3435.553223F, 678.781403F},
+    {183381, 0.900530F, 0.921430F, 4.195019F, 11.339211F, 0.046796F, 3415.589356F, 700.926330F},
+    {183414, 0.912202F, 0.922292F, 4.009970F, 10.448754F, 0.126011F, 3358.492676F, 705.875031F},
+    {183447, 0.963472F, 0.926512F, 4.444378F, 11.834739F, 0.146511F, 3307.222779F, 711.296051F},
+    {183480, 0.957397F, 0.917870F, 4.100801F, 10.667705F, 0.146971F, 3257.039185F, 734.937042F},
+    {183514, 0.887302F, 0.904820F, 4.488099F, 12.062373F, 0.117577F, 3200.981567F, 741.539185F},
+    {183549, 0.928279F, 0.901360F, 4.205832F, 10.998777F, 0.122858F, 3148.010620F, 767.038391F},
+    {183582, 0.921570F, 0.839488F, 3.512019F, 8.852178F, 0.050444F, 3072.064087F, 769.656464F},
+    {183614, 0.835215F, 0.881114F, 3.698291F, 9.396825F, 0.100397F, 3016.715332F, 775.329559F},
+    {183647, 0.978814F, 0.843491F, 4.527738F, 11.957208F, 0.100475F, 2940.012817F, 795.632080F},
+    {183680, 0.806777F, 0.863316F, 3.802504F, 9.708063F, 0.073432F, 2886.427856F, 798.832794F},
+    {183714, 0.831896F, 0.795561F, 4.026729F, 10.540221F, 0.115672F, 2803.615356F, 824.599671F},
+    {183747, 0.912748F, 0.856478F, 4.157039F, 10.929807F, 0.166134F, 2719.102174F, 822.367461F},
+    {183781, 0.915658F, 0.842907F, 3.454042F, 8.531586F, 0.113865F, 2643.202881F, 844.071442F},
+    {183817, 0.946941F, 0.839736F, 4.039795F, 10.451530F, 0.136090F, 2565.256348F, 843.728912F},
+    {183848, 0.803328F, 0.835005F, 2.985966F, 6.998049F, 0.056206F, 2521.844116F, 873.149231F},
+    {183881, 0.913136F, 0.761050F, 3.668737F, 9.180239F, 0.062408F, 2409.725587F, 859.547211F},
+    {183914, 0.842604F, 0.884163F, 2.855547F, 6.684698F, 0.039743F, 2408.942139F, 846.464936F},
+    {183950, 0.889481F, 0.821829F, 3.694999F, 9.263009F, 0.096379F, 2339.735596F, 836.201477F},
+    {183983, 0.805785F, 0.830236F, 2.644177F, 5.935658F, 0.054224F, 2306.622437F, 819.607513F},
+    {184016, 0.765287F, 0.815060F, 2.641358F, 5.938473F, 0.048614F, 2264.375610F, 837.453430F},
+    {184050, 0.698844F, 0.795821F, 2.273237F, 4.892012F, 0.019923F, 2216.648682F, 826.937988F},
+    {184081, 0.763043F, 0.813223F, 2.336686F, 5.052275F, 0.022384F, 2174.527955F, 845.051544F},
+    {184115, 0.740784F, 0.819475F, 2.330031F, 5.065371F, 0.023014F, 2128.706421F, 836.126617F},
+    {184149, 0.830594F, 0.846002F, 2.435628F, 5.360813F, 0.052491F, 2085.026856F, 856.712525F},
+    {184182, 0.816845F, 0.834515F, 2.593158F, 5.798341F, 0.100426F, 2045.331299F, 871.015228F},
+    {184215, 0.858778F, 0.863255F, 2.719011F, 6.158961F, 0.059081F, 2012.343994F, 856.956635F},
+    {184248, 0.935405F, 0.870471F, 2.958400F, 6.820524F, 0.127081F, 1981.230652F, 873.133300F},
+    {184281, 0.914367F, 0.873221F, 2.824074F, 6.413503F, 0.113345F, 1951.030945F, 889.152436F},
+    {184317, 0.937840F, 0.895144F, 3.192798F, 7.523058F, 0.134359F, 1912.799927F, 909.029785F},
+    {184349, 0.927757F, 0.923203F, 3.172513F, 7.584979F, 0.067179F, 1914.835266F, 895.097107F},
+    {184382, 0.950273F, 0.911086F, 3.152322F, 7.447253F, 0.120788F, 1874.934875F, 921.021484F},
+    {184415, 0.950869F, 0.944921F, 3.462235F, 8.620594F, 0.080563F, 1875.190674F, 919.482117F},
+    {184448, 0.936110F, 0.928466F, 3.379165F, 8.245376F, 0.123910F, 1864.974548F, 939.107544F},
+    {184483, 0.930521F, 0.926703F, 3.512040F, 8.713310F, 0.107717F, 1854.411865F, 933.473846F},
+    {184515, 0.946695F, 0.929924F, 3.023612F, 7.139421F, 0.083652F, 1848.022400F, 934.422668F},
+    {184548, 0.922482F, 0.919379F, 3.063864F, 7.370431F, 0.079507F, 1878.214416F, 926.820526F},
+    {184583, 0.935935F, 0.933425F, 3.312863F, 8.032754F, 0.143507F, 1869.368164F, 948.855286F},
+    {184615, 0.933915F, 0.936180F, 3.442736F, 8.483337F, 0.104298F, 1859.246460F, 944.040467F},
+    {184648, 0.924073F, 0.905665F, 3.277839F, 7.891243F, 0.066437F, 1846.620850F, 943.697937F},
+    {184682, 0.957873F, 0.904020F, 4.157117F, 10.768084F, 0.047511F, 1832.892944F, 961.276124F},
+    {184715, 0.979668F, 0.901994F, 3.147870F, 7.537784F, 0.003678F, 1805.527648F, 968.807403F},
+    {184751, 0.969843F, 0.958025F, 3.619673F, 9.205346F, 0.078650F, 1788.004455F, 972.386017F},
+    {184784, 0.973944F, 0.962596F, 3.652763F, 9.154176F, 0.134287F, 1799.173339F, 971.476593F},
+  };
+  ControllerConfig cfg;
+  cfg.unknown_suspect_min_failed_metrics=2;
+  cfg.unknown_response_grace_ms=1500;
+  cfg.unknown_response_recovery_ms=60;
+  cfg.unknown_response_stable_recovery_ms=120;
+  cfg.unknown_search_seed_min_ms=120;
+  cfg.template_agreement_iou=.5F;
+  cfg.motion_search_enabled=true;
+  cfg.stable_frames_for_update=100;
+  cfg.reliable_score=.8F;cfg.reliable_psr=4.2F;cfg.reliable_apce=8;cfg.reliable_peak_margin=.04F;
+  cfg.weak_score=.55F;cfg.weak_psr=4;cfg.weak_apce=4;cfg.weak_peak_margin=.02F;
+  cfg.response_psr_drop_ratio=.25F;cfg.response_apce_drop_ratio=.30F;
+  ResolvedControllerFixture c(cfg);
+  c.initialize({3582,610,128,128},144,182880,{3840,2160},make_unknown_target_class(TargetClassReason::kNoMatch));
+  ControllerOutput out;
+  int frame=145;
+  for(const auto& e:events) {
+    auto p=c.begin_frame(frame,e.ms,false);
+    auto obs=reliable_observation(p,TemplateKind::kRecent,{e.x,e.y,128,128},frame);
+    obs.metrics={e.score,e.peak,e.psr,e.apce,e.margin};
+    out=c.finish_frame(p,{obs},std::nullopt);
+    if(frame==150)expect_true(out.unknown_grace_active && out.unknown_failed_metric_count==2,"4768 relative two-metric entry retained");
+    ++frame;
+  }
+  expect_true(out.tracking_phase==TrackingPhase::kSearching && !out.accepted &&
+                  std::string(out.unknown_grace_exit_reason)=="TIMEOUT" &&
+                  std::string(out.motion_gate_reason)=="SEARCH_REANCHORED_GRACE_TRACE",
+              "4768 sustained two-plus failures still time out but retain search continuity");
+  expect_near(out.tracking_bbox.x,events[50].x,.01F,"4768 search center stays at latest provisional center");
+  expect_true(c.current_bbox().x>3400,"4768 search seed does not rewrite trusted state");
+}
+
 int main() {
+  test_4768_response_events_search_location();
+  test_unknown_two_metric_recovery_and_search_continuity();
+  test_unknown_two_metric_entry();
   test_unknown_response_grace();
   test_unknown_grace_independent_recovery_timing();
   test_unknown_ordinary_probation_grace_and_search_anchor();

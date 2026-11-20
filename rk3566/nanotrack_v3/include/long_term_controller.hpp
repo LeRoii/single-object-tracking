@@ -122,6 +122,12 @@ struct ControllerOutput {
   bool template_probation_active = false;
   const char* template_transition_reason = "NONE";
   const char* state_change_reason = "NONE";
+  // Diagnostic masks: score=1, PSR=2, APCE=4, peak margin=8.
+  bool unknown_response_vote_enabled = false;
+  int unknown_absolute_failure_mask = 0;
+  int unknown_relative_failure_mask = 0;
+  int unknown_failed_metric_count = 0;
+  bool unknown_learning_paused = false;
   bool unknown_grace_active = false;
   std::int64_t unknown_grace_age_ms = 0;
   std::int64_t unknown_grace_reliable_ms = 0;
@@ -422,6 +428,7 @@ class LongTermController {
     std::optional<std::int64_t> unknown_grace_reliable_since_ms;
     std::optional<BBox> unknown_grace_bbox;
     std::optional<UnknownGraceTrace> unknown_grace_trace;
+    std::optional<UnknownGraceTrace> unknown_search_trace;
     bool unknown_grace_gap_pending;
     std::vector<float> motion_residual_history;
     std::vector<float> motion_recent_residuals;
@@ -459,6 +466,7 @@ class LongTermController {
   std::optional<std::int64_t> unknown_grace_reliable_since_ms_;
   std::optional<BBox> unknown_grace_bbox_;
   std::optional<UnknownGraceTrace> unknown_grace_trace_;
+  std::optional<UnknownGraceTrace> unknown_search_trace_;
   bool unknown_grace_gap_pending_ = false;
   std::optional<MotionSnapshot> search_motion_reference_;
   bool search_motion_reference_held_ = false;
