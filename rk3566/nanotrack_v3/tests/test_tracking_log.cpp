@@ -229,7 +229,7 @@ void test_recent_safe_serialization() {
   const auto csv = tracking_csv_header();
   const auto json = tracking_frame_json(row);
   for (const auto& expected : {
-           "\"schema_version\":16", "\"tracking_phase\":\"SUSPECTED\"",
+           "\"schema_version\":17", "\"tracking_phase\":\"SUSPECTED\"",
            "\"observation_valid\":false", "\"observation_present\":true",
            "\"trusted_for_state_update\":false", "\"control_source\":\"OBSERVATION\"",
            "\"rect0_source\":\"RECENT_OBSERVATION\"", "\"active_template\":\"RECENT\"",
@@ -263,7 +263,7 @@ void test_recent_safe_profile_metadata() {
   apply_controller_config_metadata(metadata, config);
   const auto json = tracking_session_metadata_json(metadata);
 
-  expect_true(contains(json, "\"schema_version\": 16,\n") &&
+  expect_true(contains(json, "\"schema_version\": 17,\n") &&
                   contains(json, "\"template_policy\": \"recent_safe_v1\",\n") &&
                   contains(json, "\"recovery_policy\": \"unified_candidates_v1\",\n") &&
                   contains(json, "|recent_safe_v1|unified_candidates_v1|") &&
@@ -338,6 +338,7 @@ void test_adaptive_coast_serialization() {
   config.accepted_center_smoothing_alpha = 0.35F;
   config.display_center_smoothing_alpha = 0.80F;
   config.display_stability_enabled = true;
+  config.display_static_anchor_enabled = true;
   config.display_stability_center_deadband_ratio = 0.04F;
   config.display_stability_size_deadband_ratio = 0.03F;
   config.display_stability_center_alpha = 0.65F;
@@ -377,6 +378,7 @@ void test_adaptive_coast_serialization() {
                   contains(json, "\"accepted_center_smoothing_alpha\": 0.350000") &&
                   contains(json, "\"display_center_smoothing_alpha\": 0.800000") &&
                   contains(json, "\"display_stability_enabled\": true") &&
+                  contains(json, "\"display_static_anchor_enabled\": true") &&
                   contains(json, "\"display_stability_center_deadband_ratio\": 0.040000") &&
                   contains(json, "\"display_stability_size_deadband_ratio\": 0.030000") &&
                   contains(json, "\"display_stability_center_alpha\": 0.650000") &&
@@ -436,7 +438,7 @@ void test_adaptive_coast_serialization() {
 }  // namespace
 
 int main() {
-  expect_true(nanotrack::kTrackingSchemaVersion == 16 &&
+  expect_true(nanotrack::kTrackingSchemaVersion == 17 &&
                   nanotrack::tracking_csv_header().find("template_transition_result") != std::string::npos &&
                   nanotrack::tracking_csv_header().find("trusted_for_state_update") != std::string::npos &&
                   nanotrack::tracking_csv_header().find("motion_update_valid") != std::string::npos &&
@@ -444,7 +446,7 @@ int main() {
                   nanotrack::tracking_csv_header().find("unknown_grace_exit_reason") != std::string::npos &&
                   nanotrack::tracking_csv_header().find("unknown_grace_stable_ms") != std::string::npos &&
                   nanotrack::tracking_csv_header().find("unknown_grace_peak_clean_frames") != std::string::npos,
-              "schema v16 exposes UNKNOWN corroborated recovery diagnostics");
+              "schema v17 exposes UNKNOWN corroborated recovery diagnostics");
 
   using namespace nanotrack;
   test_tracking_artifact_paths();
@@ -577,8 +579,8 @@ int main() {
         "detector_recovery_enabled"}) {
     expect_true(contains(header, column), "CSV has exact detector column " + column);
   }
-  expect_true(encoded.rfind("16,", 0) == 0 && kTrackingSchemaVersion == 16,
-              "tracking rows carry schema version 12 exactly once");
+  expect_true(encoded.rfind("17,", 0) == 0 && kTrackingSchemaVersion == 17,
+              "tracking rows carry schema version 17 exactly once");
   expect_true(contains(encoded, "ESTABLISHED,2,UNIQUE_MATCH,1"),
               "CSV writes established class and recovery gate");
   expect_true(contains(encoded, "\"worker, stopped\nretry \"\"disabled\"\"\""),
@@ -859,7 +861,7 @@ int main() {
                   contains(json, "\"detector_error\": \"worker, stopped\\nretry \\\"disabled\\\"\"") &&
                   contains(json, "\"detector_ms\": 15.000000"),
               "same-frame initialization history retains order, result diagnostics and null optionals");
-  expect_true(contains(json, "\"schema_version\": 16") &&
+  expect_true(contains(json, "\"schema_version\": 17") &&
                   contains(json, "\"detector_target_mode\": \"SUBTARGET\"") &&
                   contains(json,
                            "\"detector_candidate_max_center_ratio\": 0.150000") &&

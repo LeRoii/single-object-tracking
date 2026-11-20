@@ -11,7 +11,7 @@
 
 namespace nanotrack {
 
-constexpr int kTrackingSchemaVersion = 16;
+constexpr int kTrackingSchemaVersion = 17;
 
 class MonotonicVideoClock {
  public:
@@ -328,6 +328,7 @@ struct TrackingSessionMetadata {
   float accepted_center_smoothing_alpha = 1.0F;
   float display_center_smoothing_alpha = 1.0F;
   bool display_stability_enabled = false;
+  bool display_static_anchor_enabled = false;
   float display_stability_center_deadband_ratio = 0.0F;
   float display_stability_size_deadband_ratio = 0.0F;
   float display_stability_center_alpha = 1.0F;

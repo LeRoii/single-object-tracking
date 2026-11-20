@@ -351,6 +351,7 @@ int main() {
              "accepted_center_smoothing_alpha=0.45\n"
              "display_center_smoothing_alpha=0.80\n"
              "display_stability_enabled=true\n"
+             "display_static_anchor_enabled=true\n"
              "display_stability_center_deadband_ratio=0.04\n"
              "display_stability_size_deadband_ratio=0.03\n"
              "display_stability_center_alpha=0.65\n"
@@ -411,6 +412,7 @@ int main() {
   expect_near(visible.display_center_smoothing_alpha, 0.80F, 1e-6F,
               "display center smoothing alpha parses independently");
   expect_true(visible.display_stability_enabled &&
+                  visible.display_static_anchor_enabled &&
                   std::fabs(visible.display_stability_center_deadband_ratio - 0.04F) < 1e-6F &&
                   std::fabs(visible.display_stability_size_deadband_ratio - 0.03F) < 1e-6F &&
                   std::fabs(visible.display_stability_center_alpha - 0.65F) < 1e-6F &&

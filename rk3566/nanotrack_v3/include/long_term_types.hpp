@@ -70,6 +70,7 @@ enum class DisplayBoxSource {
   kSuspectedFrozen,
   kSearchPredicted,
   kReacquisitionBlend,
+  kStaticImageAnchor,
 };
 enum class DetectorBatchStatus {
   kNone,

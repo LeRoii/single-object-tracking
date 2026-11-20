@@ -275,7 +275,7 @@ TargetClassInitializationResult LongTermRuntime::initialize(
   controller_.initialize(initial_bbox, frame_id, timestamp_ms,
                          FrameSize{image.width, image.height}, result.target_class);
   adaptive_display_.initialize(initial_bbox, result.target_class,
-                               FrameSize{image.width, image.height});
+                               FrameSize{image.width, image.height}, &image);
   result.display_bbox = adaptive_display_.current();
   tracker_.initialize(image, initial_bbox);
   trusted_brightness_.clear();
@@ -776,7 +776,7 @@ RuntimeFrameResult LongTermRuntime::process_frame(const ImageView& image,
     adaptive_display_.ingest(*display_batch, result.output, result.target_class);
   }
   result.output.display_bbox = adaptive_display_.update(
-      result.output, result.target_class, result.adaptive_display);
+      result.output, result.target_class, result.adaptive_display, &image);
   result.output.bbox = result.output.display_bbox;
   // Reuse the periodic detector batch, but arbitrate tracking size separately
   // from the display envelope. Two unique, consistent full-object detections

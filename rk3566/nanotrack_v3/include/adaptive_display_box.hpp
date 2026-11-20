@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <vector>
 
 namespace nanotrack {
 
@@ -26,7 +27,8 @@ class AdaptiveDisplayBox {
 
   void initialize(const BBox& tracking_bbox,
                   const TargetClassState& target_class,
-                  FrameSize frame_size);
+                  FrameSize frame_size,
+                  const ImageView* image = nullptr);
   bool should_request(TrackingPhase phase,
                       std::int64_t timestamp_ms,
                       bool detector_ready) const;
@@ -38,7 +40,8 @@ class AdaptiveDisplayBox {
               const TargetClassState& target_class);
   BBox update(const ControllerOutput& output,
               const TargetClassState& target_class,
-              AdaptiveDisplayDiagnostics& diagnostics);
+              AdaptiveDisplayDiagnostics& diagnostics,
+              const ImageView* image = nullptr);
   void observe_runtime(float runtime_ms);
   const BBox& current() const { return display_bbox_; }
 
@@ -54,6 +57,10 @@ class AdaptiveDisplayBox {
   BBox projected(const BBox& tracking_bbox) const;
   BBox smooth_toward(const BBox& target, float center_alpha);
   BBox stabilized_target(const BBox& target);
+  void capture_static_anchor(const ImageView& image,
+                             const BBox& tracking_bbox);
+  bool static_anchor_holds(const ImageView& image,
+                           const ControllerOutput& output);
   void set_transform(const BBox& tracking_bbox, const BBox& envelope, float alpha);
   std::optional<BBox> select_candidate(const DetectorBatch& batch,
                                        const BBox& tracking_bbox,
@@ -72,6 +79,17 @@ class AdaptiveDisplayBox {
   std::optional<BBox> stability_pending_jump_;
   int stability_motion_hold_frames_ = 0;
   int stability_warmup_frames_ = 0;
+  struct AnchorPixel {
+    int x = 0;
+    int y = 0;
+    std::uint8_t gray = 0;
+  };
+  std::vector<AnchorPixel> static_anchor_pixels_;
+  int static_anchor_same_frames_ = 0;
+  int static_anchor_changed_frames_ = 0;
+  bool static_anchor_active_ = false;
+  bool static_anchor_retired_ = false;
+  BBox static_anchor_box_{};
   EnvelopeTransform transform_{};
   std::optional<BBox> pending_candidate_;
   int pending_confirmations_ = 0;
