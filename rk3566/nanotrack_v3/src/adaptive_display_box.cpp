@@ -252,10 +252,10 @@ BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
     stability_targets_.push_back(target);
     stability_targets_.push_back(target);
   }
-  // A two-frame center blend is the most filtering a small target can afford:
-  // a several-pixel delay consumes a large fraction of its visible extent.
-  // Keep its size on the original responsive path.
-  if (std::min(target.width, target.height) < 64.0F) {
+  // A two-frame center blend is the most filtering a truly small target can
+  // afford: a several-pixel delay consumes a large fraction of its area.
+  // Use both dimensions so a long, narrow handle still gets size filtering.
+  if (target.width * target.height < 80.0F * 80.0F) {
     const BBox& previous = stability_targets_.back();
     const float alpha = config_.display_stability_center_alpha;
     const float cx = center_x(previous) +
