@@ -69,6 +69,7 @@ class AdaptiveDisplayBox {
   BBox display_bbox_{};
   BBox last_trusted_bbox_{};
   std::deque<BBox> stability_targets_;
+  int stability_motion_hold_frames_ = 0;
   EnvelopeTransform transform_{};
   std::optional<BBox> pending_candidate_;
   int pending_confirmations_ = 0;

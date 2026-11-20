@@ -64,9 +64,88 @@
 3. 同时检查真实运动和重新捕获时显示框拖尾、框与目标错位；若只降低抖动却
    失去对目标的贴合，不接受此参数。
 
+## 2026-11-20T12:42:19+08:00 首版板端实测与修正
+
+- 板端：`neardi@192.168.1.106`，`Rockchip RK3588 NEARDI LKD3588`，
+  Linux `6.1.84`，RKNN API `2.1.0 (967d001cc8@2024-08-07T19:28:19)`，
+  driver `0.9.8`。独立目录：
+  `/home/neardi/Project/SOT/nt-display-stability-748c27a`，没有覆盖其他运行目录。
+- 首版源码为 `748c27ae0dc622f45d7874cf437a51ba6ef42130` 的 Git archive，
+  `assets/rk3588-display-stability-748c27a.tar` SHA-256
+  `262f24fcea41e2c368bc8f16a3dbc84c00068cd4fcbe35549458a508e8a77465`。
+  板端原生构建：
+  `cmake -S rk3566/nanotrack_v3 -B build-native -DCMAKE_BUILD_TYPE=Release -DENABLE_RKNN_RUNTIME=ON -DBUILD_TESTING=ON -DRKNN_INCLUDE_DIR=/home/neardi/Project/SOT/nt-ten-target-33f34ba/assets -DRKNN_LIBRARY=/usr/lib/librknnrt.so`，
+  `cmake --build build-native -j4`，`ctest --test-dir build-native --output-on-failure -j4`。
+  观察：23/23 PASS；`runs/ctest.log` SHA-256
+  `8f8e9ef70a8edcd14962039140dc9b744f2851aaef77e35cee24e95d2cd1b451`；
+  `build-native/nanotrack_v3` SHA-256
+  `d84c2e088533d1fd4d8987705e9612adb138950cb645c21326530ffa24db1738`。
+- 板端模型组来自
+  `/home/neardi/Project/SOT/nt-ten-target-33f34ba/assets/models`，
+  SHA-256：template `eaf7f80f134d4ba5016b2c33620a631111a4143d5f4fdcea744ddc77bf137d55`，
+  search `d3cb0e3879df6a1272adb59bf501324f1f8f55b58309d3c4da4a731b600973ee`，
+  head `4da379f54093d79f02775e90bfea33ebee0837c6fc73a324499279b4c57807c5`，
+  tracker manifest `3599d7339ee4e3a8062e130549fdc868c29a1eeb3549745380f144e7fd985261`。
+  四项与 `integration-contract.yaml` 的 RK3588 模型身份一致。运行未配置 detector，
+  因此没有消费 detector label；把手初始化记录为 `UNKNOWN`。
+- 板端静止视频与主机 SHA-256 一致。板端关闭配置
+  `rk3566/nanotrack_v3/config/rk3588-display-stability-off.conf` 是仅将
+  `display_stability_enabled` 改为 `false` 的对照，SHA-256
+  `2ba13535000c555c4ca45d774476a5dcf5a9be3e408c857aeae81aff9250a494`；
+  开启配置为上述候选配置的 `02748132...`。
+- 实际回放命令以每个 ROI、开关分别运行；例如完整把手：
+
+  ```bash
+  ./build-native/nanotrack_v3 \
+    --video assets/pod_static_visible_20261120.mp4 \
+    --bbox 1375,650,100,240 \
+    --model-dir /home/neardi/Project/SOT/nt-ten-target-33f34ba/assets/models \
+    --sensor visible \
+    --controller-config rk3566/nanotrack_v3/config/rk3588-display-stability-candidate.conf \
+    --output-size 480x270 --max-frames 1800 \
+    --output-video runs/handle-minute-candidate.avi \
+    --output-boxes runs/handle-minute-candidate.csv \
+    --session-metadata runs/handle-minute-candidate.metadata.json
+  ```
+
+  关闭组只换配置和输出文件名。第二把手 `(1450,650,100,240)`、显示器边缘
+  `(990,70,150,220)`、无纹理柜门 `(1710,370,220,200)` 各运行 300 帧。
+  完整把手 1800 帧均为已接受 TRACKING，两组 tracking box、状态逐帧完全一致；
+  显示中心二阶差分 p95 从 `5.4645` 降为 `0.0000675` 像素，尺寸二阶差分
+  p99 从 `1.099%` 降为 `0.0896%`。候选的显示/跟踪中心最大相距 `5.034` 像素；
+  视频首、中、末抽帧仍围住同一把手。第二把手前 300 帧中心二阶差分 p95
+  `6.856 → 0.000145` 像素。显示器边缘 `13.316 → 2.210` 像素，
+  但候选仍有单帧 `10.27` 像素位移、显示/跟踪中心最大相距 `26.687` 像素。
+  无纹理柜门只有初始化帧被接受，不具备持续跟踪抖动评价条件。
+- 原 `--output-video` 画的是 `control_bbox`，所以同组开关 AVI 字节相同，
+  不能用于显示框验收。新增 `tools/render_display_comparison.cpp` 将 CSV 的
+  `display_bbox` 叠回同一原视频，输出左侧关闭、右侧开启的并排视频。
+  板端 `runs/handle-minute-display-compare.mp4` SHA-256
+  `7322a7221f32cc801370129037a131c3f085a5cbf77fa02c09a7517106a3ef08`；
+  `runs/right-handle-display-compare.mp4` 为
+  `ac15ed78ff5e89e7c59c65fbd60fb79cb8a3cf9f45d4415220185a5ccb0a3957`；
+  `runs/monitor-edge-display-compare.mp4` 为
+  `cadcdf98d00dae5153f5127afa0d654bf49839357836816087be65070633cc20`。
+  本机编译与运行命令：
+  `c++ -O2 -std=c++17 rk3566/nanotrack_v3/tools/render_display_comparison.cpp -o /tmp/render-display-comparison $(pkg-config --cflags --libs opencv4)`；
+  `/tmp/render-display-comparison INPUT.mp4 OFF.csv ON.csv 1240,560,480,420 1800 OUTPUT.avi`。
+- **首版失败，暂不交付**：使用已核验的契约视频 `occ_video_1/1.mp4`
+  SHA-256 `eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d`
+  与 car001 初始化框 `(992,582,37,39)` 做 271 帧运动测试，开关两组 tracking box
+  和状态相同，但候选显示框滞后最大 `17.94` 像素；第 54 帧显示框与可见目标标签
+  IoU 从基线 `0.7999` 降到 `0.3098`。有效可见且被接受的 241 帧平均 IoU
+  `0.7644 → 0.6328`；这组标签的 36--168、182--270 帧为经抽样复核的候选真值，
+  169--181 为估计框，以上统计已排除后者。不能用静止把手降抖掩盖运动退化。
+- 因此同一工作线新增持续运动旁路：三帧中值和五帧窗口判断移动，
+  确认后在短保持期内沿用原显示目标；静止时才使用强去抖。
+  新增小目标连续移动单测，原静止交替抖动与孤立跳点单测继续通过。
+  此修正尚未在板端测试，旧首版数据保留，不会重命名为修正版结果。
+
 ## Handoff
 
 - 协调对话需要接收此分支最终提交、候选配置与测试工件哈希，并决定是否集成。
   目前主机候选未获得板端验证，不可列为正式交付。
 - 板端验证对话需要接收本任务最终提交与输入视频哈希；实际消费前核对
   源码、配置、模型与运行工件身份，勿把本文件当成实测结论。
+- 首版静止场景虽显著降抖，但运动目标真值已证实明显滞后，故协调对话不得
+  集成 `748c27a` 为默认显示策略；需等待本工作线运动旁路修正版的板端复测。

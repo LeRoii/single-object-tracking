@@ -62,6 +62,7 @@ void AdaptiveDisplayBox::initialize(const BBox& tracking_bbox,
   runtime_p95_ms_ = 0.0F;
   runtime_updates_since_cadence_ = 0;
   stability_targets_.clear();
+  stability_motion_hold_frames_ = 0;
 
   BBox envelope = tracking_bbox;
   if (target_class.selected_candidate) {
@@ -249,14 +250,42 @@ BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
     stability_targets_.push_back(target);
   }
   stability_targets_.push_back(target);
-  if (stability_targets_.size() > 3) stability_targets_.pop_front();
-  const BBox& a = stability_targets_[0];
-  const BBox& b = stability_targets_[1];
-  const BBox& c = stability_targets_[2];
+  if (stability_targets_.size() > 5) stability_targets_.pop_front();
+  const std::size_t count = stability_targets_.size();
+  const BBox& a = stability_targets_[count - 3];
+  const BBox& b = stability_targets_[count - 2];
+  const BBox& c = stability_targets_[count - 1];
   const float target_cx = median3(center_x(a), center_x(b), center_x(c));
   const float target_cy = median3(center_y(a), center_y(b), center_y(c));
   const float target_width = median3(a.width, b.width, c.width);
   const float target_height = median3(a.height, b.height, c.height);
+  const BBox& oldest_a = stability_targets_[0];
+  const BBox& oldest_b = stability_targets_[1];
+  const BBox& oldest_c = stability_targets_[2];
+  const float first_cx = median3(center_x(oldest_a), center_x(oldest_b),
+                                 center_x(oldest_c));
+  const float first_cy = median3(center_y(oldest_a), center_y(oldest_b),
+                                 center_y(oldest_c));
+  const float motion_x = std::max(2.0F, 0.08F * display_bbox_.width);
+  const float motion_y = std::max(2.0F, 0.08F * display_bbox_.height);
+  const bool sustained_motion =
+      (std::fabs(target_cx - first_cx) > motion_x &&
+       std::fabs(center_x(a) - first_cx) <= 0.5F * display_bbox_.width &&
+       std::fabs(center_x(c) - center_x(a)) > motion_x &&
+       (center_x(b) - center_x(a)) *
+           (center_x(c) - center_x(b)) > 0.0F) ||
+      (std::fabs(target_cy - first_cy) > motion_y &&
+       std::fabs(center_y(a) - first_cy) <= 0.5F * display_bbox_.height &&
+       std::fabs(center_y(c) - center_y(a)) > motion_y &&
+       (center_y(b) - center_y(a)) *
+           (center_y(c) - center_y(b)) > 0.0F);
+  if (sustained_motion) stability_motion_hold_frames_ = 3;
+  if (stability_motion_hold_frames_ > 0) {
+    --stability_motion_hold_frames_;
+    // When the image actually moves, preserve the pre-existing display path.
+    // A static-scene filter must not leave a small moving target behind.
+    return target;
+  }
   const float center_deadband_x = std::max(1.0F, display_bbox_.width *
       config_.display_stability_center_deadband_ratio);
   const float center_deadband_y = std::max(1.0F, display_bbox_.height *
@@ -366,8 +395,10 @@ BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
     stability_targets_.clear();
     stability_targets_.push_back(target);
     stability_targets_.push_back(target);
+    stability_motion_hold_frames_ = 0;
   } else {
     stability_targets_.clear();
+    stability_motion_hold_frames_ = 0;
   }
   display_bbox_ = smooth_toward(target, center_alpha);
   if (output.tracking_phase == TrackingPhase::kTracking && output.accepted) {

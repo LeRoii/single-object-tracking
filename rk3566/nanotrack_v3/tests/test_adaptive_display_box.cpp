@@ -344,7 +344,7 @@ void test_display_stability_follows_persistent_motion_and_scale() {
     const BBox moving{400.0F + 4.0F * frame, 300, 100, 100};
     shown = stable.update(tracking_output(moving), TargetClassState{}, diagnostics);
   }
-  expect_true(center_x(shown) > 510.0F && center_x(shown) < 530.0F,
+  expect_true(center_x(shown) > 510.0F && center_x(shown) <= 530.0F,
               "persistent four-pixel-per-frame motion is followed without large lag");
   for (int frame = 0; frame < 30; ++frame) {
     const BBox grown{480, 300, 120, 110};
@@ -364,6 +364,29 @@ void test_display_stability_follows_persistent_motion_and_scale() {
               "search prediction still uses its existing display behavior");
 }
 
+void test_small_moving_target_does_not_lag() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_center_smoothing_alpha = 1.0F;
+  value.display_stability_enabled = true;
+  const BBox initial{100, 100, 40, 40};
+  AdaptiveDisplayBox display(value);
+  AdaptiveDisplayDiagnostics diagnostics;
+  display.initialize(initial, TargetClassState{}, FrameSize{500, 500});
+  display.update(tracking_output(initial), TargetClassState{}, diagnostics);
+  for (int frame = 1; frame <= 12; ++frame) {
+    const BBox moving{100.0F + 4.0F * frame,
+                      100.0F - 3.0F * frame, 40, 40};
+    const BBox shown = display.update(tracking_output(moving),
+                                       TargetClassState{}, diagnostics);
+    if (frame >= 5) {
+      expect_true(std::fabs(center_x(shown) - center_x(moving)) < 2.0F &&
+                      std::fabs(shown.y - moving.y) < 2.0F,
+                  "small sustained target motion bypasses static display hold");
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -376,6 +399,7 @@ int main() {
   test_display_center_is_independent_of_tracking_smoothing();
   test_display_stability_rejects_static_jitter_and_single_spike();
   test_display_stability_follows_persistent_motion_and_scale();
+  test_small_moving_target_does_not_lag();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;
