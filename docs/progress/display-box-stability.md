@@ -1145,3 +1145,37 @@
 - Handoff：协调/开发板对话如需消费本候选，请核对本提交及上述配置 SHA-256，
   并在同一视频和相同初始目标上比较 `1/2/3`，观察 SUSPECTED/SEARCHING 的
   时间、真值 IoU 与误跟随。当前契约的生产 handoff 仍未批准。
+
+## 2026-11-20T21:54:53+08:00 本机 main / Debug 集成
+
+- 本任务工作线 `codex/rk3588-display-box-stability`，工作树
+  `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking`；
+  实际集成输入为已提交候选 `42db51c924e8ba2247758990447a2493e4e60c4c`
+  （运动车辆实验记录）及 `1b9fa1136aef17365aaa6a88394b3d9ef67be657`
+  （已识别目标 `1/2/3` 指标配置、算法与回归）。没有消费其他工作树未提交文件。
+- 本机 `main` 工作树
+  `/home/u20/single-object-tracking/.worktrees/occlusion-main-integration`，
+  开始时干净的 `390b849f7e95cc778fdee6aa6e7b441f73056e55`，
+  `git merge --ff-only codex/rk3588-display-box-stability` 后到代码提交
+  `1b9fa1136aef17365aaa6a88394b3d9ef67be657`。该精确源码已在任务工作树
+  执行主机 CTest 23/23 PASS；快进未改变源码，不重复同一测试。
+- 本机 `Debug` 工作树
+  `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking`，
+  开始时干净的 `c3f51ea19c1ad9104e6f4cc3a2b0d52569ce9619`。
+  与旧 main 的算法/配置/本任务进度文件内容相同，但历史提交不同；
+  合并 `main` 时这些同内容文件出现文本冲突，采用新 main 版本；
+  `docs/progress/cross-compile.md` 保留 Debug 版本。交互点击、CLI、
+  主函数及对应测试十个 Debug 独有文件经合并前 HEAD 比较确认未改。
+  合并提交 `eb10577a1720abcdfbe504b8f4b483dfcd7d0bff`，
+  新 `long_term_controller.cpp` 及 RK3588 配置与 main 字节一致。
+  在 Debug 上实际执行 `cmake -S rk3566/nanotrack_v3 -B /tmp/rk3588-debug-recognized-merge-build -DCMAKE_BUILD_TYPE=Release -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、
+  `cmake --build /tmp/rk3588-debug-recognized-merge-build -j4`、
+  `ctest --test-dir /tmp/rk3588-debug-recognized-merge-build --output-on-failure -j4`，
+  观察 **23/23 PASS**；`git diff --cached --check` 通过。
+- 当前范围仍为本机分支集成。没有推送远端；本轮没有新 RK3588 板端运行、
+  A8 交叉编译、吊舱部署或人工验收。`integration-contract.yaml` 的正式生产
+  handoff 没有因这次合并而自动批准。
+- Handoff：协调对话及开发板/交叉编译对话若消费这次修改，请在各自工作树
+  核对本机 `main`、`Debug` 最新提交及配置 SHA-256
+  `2f386b4bcc7c64210115324fbaed9d47c596d47ad3f0d4368e3dd8daef6bfaed`，
+  不能仅据上述主机 CTest 宣称真实吊舱表现改善。
