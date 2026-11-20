@@ -114,6 +114,11 @@ void set_value(ControllerConfig& config,
   else if (key == "display_detector_blend_alpha") config.display_detector_blend_alpha = parse_float(key, value);
   else if (key == "display_center_smoothing_alpha") config.display_center_smoothing_alpha = parse_float(key, value);
   else if (key == "display_max_size_step_ratio") config.display_max_size_step_ratio = parse_float(key, value);
+  else if (key == "display_stability_enabled") config.display_stability_enabled = parse_bool(key, value);
+  else if (key == "display_stability_center_deadband_ratio") config.display_stability_center_deadband_ratio = parse_float(key, value);
+  else if (key == "display_stability_size_deadband_ratio") config.display_stability_size_deadband_ratio = parse_float(key, value);
+  else if (key == "display_stability_center_alpha") config.display_stability_center_alpha = parse_float(key, value);
+  else if (key == "display_stability_size_alpha") config.display_stability_size_alpha = parse_float(key, value);
   else if (key == "display_detection_consistency_iou") config.display_detection_consistency_iou = parse_float(key, value);
   else if (key == "display_detection_confirmations") config.display_detection_confirmations = parse_int(key, value);
   else if (key == "display_reacquisition_blend_frames") config.display_reacquisition_blend_frames = parse_int(key, value);
@@ -348,7 +353,11 @@ void validate_controller_config(const ControllerConfig& config) {
       config.display_unknown_padding_x, config.display_unknown_padding_y,
       config.display_detector_blend_alpha, config.display_max_size_step_ratio,
       config.display_detection_consistency_iou,
-      config.display_center_smoothing_alpha};
+      config.display_center_smoothing_alpha,
+      config.display_stability_center_deadband_ratio,
+      config.display_stability_size_deadband_ratio,
+      config.display_stability_center_alpha,
+      config.display_stability_size_alpha};
   for (const float value : display_ratios) {
     if (!std::isfinite(value) || value < 0.0F || value > 1.0F) {
       throw std::invalid_argument("adaptive display ratios must be in [0,1]");
@@ -356,6 +365,8 @@ void validate_controller_config(const ControllerConfig& config) {
   }
   if (config.display_detector_blend_alpha <= 0.0F ||
       config.display_center_smoothing_alpha <= 0.0F ||
+      config.display_stability_center_alpha <= 0.0F ||
+      config.display_stability_size_alpha <= 0.0F ||
       config.display_max_size_step_ratio <= 0.0F ||
       config.display_detection_consistency_iou <= 0.0F ||
       config.display_detection_confirmations < 1 ||
@@ -621,6 +632,11 @@ std::string controller_config_identity(const ControllerConfig& config) {
          << config.display_detector_blend_alpha << '|'
          << config.display_center_smoothing_alpha << '|'
          << config.display_max_size_step_ratio << '|'
+         << config.display_stability_enabled << '|'
+         << config.display_stability_center_deadband_ratio << '|'
+         << config.display_stability_size_deadband_ratio << '|'
+         << config.display_stability_center_alpha << '|'
+         << config.display_stability_size_alpha << '|'
          << config.display_detection_consistency_iou << '|'
          << config.display_detection_confirmations << '|'
          << config.display_reacquisition_blend_frames << '|'

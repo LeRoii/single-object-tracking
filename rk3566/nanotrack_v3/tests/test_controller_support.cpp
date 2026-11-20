@@ -350,6 +350,11 @@ int main() {
              "accepted_scale_output_hysteresis_px=0.65\n"
              "accepted_center_smoothing_alpha=0.45\n"
              "display_center_smoothing_alpha=0.80\n"
+             "display_stability_enabled=true\n"
+             "display_stability_center_deadband_ratio=0.04\n"
+             "display_stability_size_deadband_ratio=0.03\n"
+             "display_stability_center_alpha=0.65\n"
+             "display_stability_size_alpha=0.25\n"
              "accepted_center_max_correction_ratio=0.30\n"
              "max_reacquisition_center_distance=0.80\n"
              "uncertain_ms=200\n"
@@ -405,6 +410,12 @@ int main() {
               "accepted center smoothing alpha parses explicitly");
   expect_near(visible.display_center_smoothing_alpha, 0.80F, 1e-6F,
               "display center smoothing alpha parses independently");
+  expect_true(visible.display_stability_enabled &&
+                  std::fabs(visible.display_stability_center_deadband_ratio - 0.04F) < 1e-6F &&
+                  std::fabs(visible.display_stability_size_deadband_ratio - 0.03F) < 1e-6F &&
+                  std::fabs(visible.display_stability_center_alpha - 0.65F) < 1e-6F &&
+                  std::fabs(visible.display_stability_size_alpha - 0.25F) < 1e-6F,
+              "display stability profile parses all parameters");
   expect_near(visible.accepted_center_max_correction_ratio, 0.30F, 1e-6F,
               "accepted center correction ratio parses explicitly");
   expect_near(visible.max_reacquisition_center_distance, 0.80F, 1e-6F,

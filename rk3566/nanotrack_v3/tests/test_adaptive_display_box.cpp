@@ -1,5 +1,6 @@
 #include "adaptive_display_box.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -273,6 +274,96 @@ void test_display_center_is_independent_of_tracking_smoothing() {
               "search prediction retains the original 35 percent center smoothing");
 }
 
+void test_display_stability_rejects_static_jitter_and_single_spike() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_center_smoothing_alpha = 1.0F;
+  value.display_stability_enabled = true;
+  const BBox initial{400, 300, 100, 100};
+  AdaptiveDisplayBox stable(value);
+  AdaptiveDisplayDiagnostics diagnostics;
+  stable.initialize(initial, TargetClassState{}, FrameSize{1000, 800});
+  stable.update(tracking_output(initial), TargetClassState{}, diagnostics);
+
+  const BBox spike{470, 360, 70, 130};
+  const BBox after_spike = stable.update(tracking_output(spike),
+                                         TargetClassState{}, diagnostics);
+  expect_true(close(center_x(after_spike), center_x(initial)) &&
+                  close(after_spike.width, initial.width),
+              "one-frame tracker spike cannot displace the display box");
+
+  float min_cx = center_x(initial);
+  float max_cx = min_cx;
+  float min_width = initial.width;
+  float max_width = min_width;
+  float max_step = 0.0F;
+  float previous_cx = min_cx;
+  for (int frame = 0; frame < 60; ++frame) {
+    const float sign = frame % 2 == 0 ? 1.0F : -1.0F;
+    const BBox noisy{400 + sign * 6, 300 - sign * 6,
+                     100 + sign * 8, 100 - sign * 8};
+    const BBox shown = stable.update(tracking_output(noisy),
+                                     TargetClassState{}, diagnostics);
+    const float cx = center_x(shown);
+    min_cx = std::min(min_cx, cx);
+    max_cx = std::max(max_cx, cx);
+    min_width = std::min(min_width, shown.width);
+    max_width = std::max(max_width, shown.width);
+    max_step = std::max(max_step, std::fabs(cx - previous_cx));
+    previous_cx = cx;
+  }
+  expect_true(max_cx - min_cx < 5.0F && max_step < 4.0F &&
+                  max_width - min_width < 4.0F,
+              "stationary alternating center and size noise stays visually small: center_range=" +
+                  std::to_string(max_cx - min_cx) + " max_step=" +
+                  std::to_string(max_step) + " width_range=" +
+                  std::to_string(max_width - min_width));
+
+  value.display_stability_enabled = false;
+  AdaptiveDisplayBox baseline(value);
+  baseline.initialize(initial, TargetClassState{}, FrameSize{1000, 800});
+  baseline.update(tracking_output(initial), TargetClassState{}, diagnostics);
+  const BBox baseline_spike = baseline.update(tracking_output(spike),
+                                              TargetClassState{}, diagnostics);
+  expect_true(center_x(baseline_spike) - center_x(initial) > 50.0F,
+              "disabled switch preserves the previous immediate center output");
+}
+
+void test_display_stability_follows_persistent_motion_and_scale() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_center_smoothing_alpha = 1.0F;
+  value.display_stability_enabled = true;
+  const BBox initial{400, 300, 100, 100};
+  AdaptiveDisplayBox stable(value);
+  AdaptiveDisplayDiagnostics diagnostics;
+  stable.initialize(initial, TargetClassState{}, FrameSize{1000, 800});
+  stable.update(tracking_output(initial), TargetClassState{}, diagnostics);
+  BBox shown = initial;
+  for (int frame = 1; frame <= 20; ++frame) {
+    const BBox moving{400.0F + 4.0F * frame, 300, 100, 100};
+    shown = stable.update(tracking_output(moving), TargetClassState{}, diagnostics);
+  }
+  expect_true(center_x(shown) > 510.0F && center_x(shown) < 530.0F,
+              "persistent four-pixel-per-frame motion is followed without large lag");
+  for (int frame = 0; frame < 30; ++frame) {
+    const BBox grown{480, 300, 120, 110};
+    shown = stable.update(tracking_output(grown), TargetClassState{}, diagnostics);
+  }
+  expect_true(shown.width > 115.0F && shown.height > 105.0F &&
+                  center_x(shown) > 535.0F,
+              "persistent target scale and center changes eventually reach the display");
+
+  ControllerOutput searching = tracking_output(BBox{480, 300, 120, 110});
+  searching.tracking_phase = TrackingPhase::kSearching;
+  searching.accepted = false;
+  searching.control_bbox = BBox{500, 300, 120, 110};
+  shown = stable.update(searching, TargetClassState{}, diagnostics);
+  expect_true(diagnostics.source == DisplayBoxSource::kSearchPredicted &&
+                  center_x(shown) > 540.0F && center_x(shown) < 560.0F,
+              "search prediction still uses its existing display behavior");
+}
+
 }  // namespace
 
 int main() {
@@ -283,6 +374,8 @@ int main() {
   test_adaptive_cadence();
   test_reacquisition_rebases_display_scale();
   test_display_center_is_independent_of_tracking_smoothing();
+  test_display_stability_rejects_static_jitter_and_single_spike();
+  test_display_stability_follows_persistent_motion_and_scale();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;

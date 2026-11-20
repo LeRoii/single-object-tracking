@@ -58,6 +58,13 @@ struct ControllerConfig {
   float display_detector_blend_alpha = 0.20F;
   float display_center_smoothing_alpha = 1.00F;
   float display_max_size_step_ratio = 0.05F;
+  // Optional display-only stabilization. It never changes the tracker or
+  // control boxes published by the controller.
+  bool display_stability_enabled = false;
+  float display_stability_center_deadband_ratio = 0.04F;
+  float display_stability_size_deadband_ratio = 0.03F;
+  float display_stability_center_alpha = 0.65F;
+  float display_stability_size_alpha = 0.25F;
   float display_detection_consistency_iou = 0.50F;
   int display_detection_confirmations = 2;
   int display_reacquisition_blend_frames = 5;

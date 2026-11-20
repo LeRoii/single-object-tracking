@@ -27,6 +27,15 @@ bool valid_box(const BBox& bbox) {
          bbox.width > 0.0F && bbox.height > 0.0F;
 }
 
+float median3(float a, float b, float c) {
+  return std::max(std::min(a, b), std::min(std::max(a, b), c));
+}
+
+float outside_deadband(float error, float deadband, float alpha) {
+  if (std::fabs(error) <= deadband) return 0.0F;
+  return std::copysign(alpha * (std::fabs(error) - deadband), error);
+}
+
 }  // namespace
 
 AdaptiveDisplayBox::AdaptiveDisplayBox(const ControllerConfig& config)
@@ -52,6 +61,7 @@ void AdaptiveDisplayBox::initialize(const BBox& tracking_bbox,
   runtime_samples_.clear();
   runtime_p95_ms_ = 0.0F;
   runtime_updates_since_cadence_ = 0;
+  stability_targets_.clear();
 
   BBox envelope = tracking_bbox;
   if (target_class.selected_candidate) {
@@ -230,6 +240,60 @@ BBox AdaptiveDisplayBox::smooth_toward(const BBox& target, float center_alpha) {
                    frame_size_.width, frame_size_.height);
 }
 
+BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
+  // A causal three-frame median removes a solitary tracker spike. Keep the
+  // first two samples at the initialized target, so the first real change
+  // must persist for another frame before it moves the displayed box.
+  if (stability_targets_.empty()) {
+    stability_targets_.push_back(target);
+    stability_targets_.push_back(target);
+  }
+  stability_targets_.push_back(target);
+  if (stability_targets_.size() > 3) stability_targets_.pop_front();
+  const BBox& a = stability_targets_[0];
+  const BBox& b = stability_targets_[1];
+  const BBox& c = stability_targets_[2];
+  const float target_cx = median3(center_x(a), center_x(b), center_x(c));
+  const float target_cy = median3(center_y(a), center_y(b), center_y(c));
+  const float target_width = median3(a.width, b.width, c.width);
+  const float target_height = median3(a.height, b.height, c.height);
+  const float center_deadband_x = std::max(1.0F, display_bbox_.width *
+      config_.display_stability_center_deadband_ratio);
+  const float center_deadband_y = std::max(1.0F, display_bbox_.height *
+      config_.display_stability_center_deadband_ratio);
+  const float size_deadband_w = std::max(0.5F, display_bbox_.width *
+      config_.display_stability_size_deadband_ratio);
+  const float size_deadband_h = std::max(0.5F, display_bbox_.height *
+      config_.display_stability_size_deadband_ratio);
+  // Alternating measurements are likely box jitter. A consistent direction
+  // across three raw frames is treated as real target motion. A large residual
+  // also gets the fast path so a true jump does not remain far behind.
+  const bool moving_x = (center_x(b) - center_x(a)) *
+      (center_x(c) - center_x(b)) > 1.0F;
+  const bool moving_y = (center_y(b) - center_y(a)) *
+      (center_y(c) - center_y(b)) > 1.0F;
+  const float error_x = target_cx - center_x(display_bbox_);
+  const float error_y = target_cy - center_y(display_bbox_);
+  const float alpha_x = moving_x || std::fabs(error_x) > 8.0F * center_deadband_x
+      ? config_.display_stability_center_alpha
+      : 0.20F * config_.display_stability_center_alpha;
+  const float alpha_y = moving_y || std::fabs(error_y) > 8.0F * center_deadband_y
+      ? config_.display_stability_center_alpha
+      : 0.20F * config_.display_stability_center_alpha;
+  const float cx = center_x(display_bbox_) + outside_deadband(
+      error_x, center_deadband_x, alpha_x);
+  const float cy = center_y(display_bbox_) + outside_deadband(
+      error_y, center_deadband_y, alpha_y);
+  const float width = display_bbox_.width + outside_deadband(
+      target_width - display_bbox_.width, size_deadband_w,
+      config_.display_stability_size_alpha);
+  const float height = display_bbox_.height + outside_deadband(
+      target_height - display_bbox_.height, size_deadband_h,
+      config_.display_stability_size_alpha);
+  return clip_bbox(BBox{cx - 0.5F * width, cy - 0.5F * height,
+                        width, height}, frame_size_.width, frame_size_.height);
+}
+
 BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
                                 const TargetClassState& target_class,
                                 AdaptiveDisplayDiagnostics& diagnostics) {
@@ -293,6 +357,18 @@ BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
     }
   }
 
+  if (config_.display_stability_enabled &&
+      output.tracking_phase == TrackingPhase::kTracking && output.accepted &&
+      !first_update_ && !output.reacquired) {
+    target = stabilized_target(target);
+  } else if (config_.display_stability_enabled && first_update_ &&
+             output.tracking_phase == TrackingPhase::kTracking && output.accepted) {
+    stability_targets_.clear();
+    stability_targets_.push_back(target);
+    stability_targets_.push_back(target);
+  } else {
+    stability_targets_.clear();
+  }
   display_bbox_ = smooth_toward(target, center_alpha);
   if (output.tracking_phase == TrackingPhase::kTracking && output.accepted) {
     last_trusted_bbox_ = display_bbox_;
