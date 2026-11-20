@@ -1109,7 +1109,7 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
     return RecentDisposition::kSearch;
   }
 
-  if (config_.unknown_suspect_min_failed_metrics == 2) {
+  if (config_.unknown_suspect_min_failed_metrics >= 2) {
     output.unknown_response_vote_enabled = true;
     output.unknown_absolute_failure_mask =
         (metrics.raw_score < config_.reliable_score ? 1 : 0) |
@@ -1127,8 +1127,9 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
       output.unknown_failed_metric_count += (failures & bit) != 0;
     // Entry only: an existing grace episode still needs its timed recovery.
     // Absolute and relative failures of the same metric contribute one vote.
-    if (!unknown_grace_since_ms_ && output.unknown_failed_metric_count < 2) {
-      output.unknown_learning_paused = output.unknown_failed_metric_count == 1;
+    if (!unknown_grace_since_ms_ &&
+        output.unknown_failed_metric_count < config_.unknown_suspect_min_failed_metrics) {
+      output.unknown_learning_paused = output.unknown_failed_metric_count > 0;
       clear_suspicion();
       return RecentDisposition::kDirect;
     }
@@ -1156,9 +1157,10 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
       bbox_iou(safe->observation.bbox, observation.bbox) <
           config_.template_agreement_iou;
   // Recovery uses the same DISTINCT metric vote as entry, with the existing
-  // continuous recovery duration. A single failure still prohibits learning.
+  // continuous recovery duration. Any failed metric still prohibits learning.
   const bool reliable = output.unknown_response_vote_enabled
-      ? output.unknown_failed_metric_count < 2 && !safe_conflict
+      ? output.unknown_failed_metric_count <
+            config_.unknown_suspect_min_failed_metrics && !safe_conflict
       : strict_reliable;
   // Search location evidence is separate from reliable response evidence.
   // Hard gates above already passed; require continuous geometric agreement,
@@ -1217,9 +1219,11 @@ LongTermController::RecentDisposition LongTermController::assess_unknown_grace(
         plan.timestamp_ms - *unknown_grace_reliable_since_ms_;
     if (output.unknown_grace_reliable_ms >= config_.unknown_response_recovery_ms) {
       output.unknown_grace_exit_reason = output.unknown_response_vote_enabled
-          ? "RECOVERED_TWO_METRIC" : "RECOVERED";
+          ? (config_.unknown_suspect_min_failed_metrics == 3
+                 ? "RECOVERED_THREE_METRIC" : "RECOVERED_TWO_METRIC")
+          : "RECOVERED";
       output.unknown_learning_paused = output.unknown_response_vote_enabled &&
-          output.unknown_failed_metric_count == 1;
+          output.unknown_failed_metric_count > 0;
       clear_unknown_grace();
       clear_suspicion();
       return RecentDisposition::kDirect;

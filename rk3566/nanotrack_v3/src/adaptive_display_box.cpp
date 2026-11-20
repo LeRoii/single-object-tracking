@@ -71,6 +71,7 @@ void AdaptiveDisplayBox::initialize(const BBox& tracking_bbox,
   runtime_p95_ms_ = 0.0F;
   runtime_updates_since_cadence_ = 0;
   stability_targets_.clear();
+  stability_raw_targets_.clear();
   stability_pending_jump_.reset();
   stability_motion_hold_frames_ = 0;
   stability_warmup_frames_ = 0;
@@ -364,6 +365,23 @@ BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
     stability_targets_.push_back(target);
     stability_targets_.push_back(target);
   }
+  stability_raw_targets_.push_back(target);
+  if (stability_raw_targets_.size() > 3) stability_raw_targets_.pop_front();
+  bool sustained_raw_motion = false;
+  if (stability_raw_targets_.size() == 3) {
+    const auto& a = stability_raw_targets_[0];
+    const auto& b = stability_raw_targets_[1];
+    const auto& c = stability_raw_targets_[2];
+    const float dx1 = center_x(b) - center_x(a);
+    const float dy1 = center_y(b) - center_y(a);
+    const float dx2 = center_x(c) - center_x(b);
+    const float dy2 = center_y(c) - center_y(b);
+    const float minimum_step = 0.10F * std::max(target.width, target.height);
+    const float length1 = std::hypot(dx1, dy1);
+    const float length2 = std::hypot(dx2, dy2);
+    sustained_raw_motion = length1 > minimum_step && length2 > minimum_step &&
+        dx1 * dx2 + dy1 * dy2 > 0.5F * length1 * length2;
+  }
   // A two-frame center blend is the most filtering a truly small target can
   // afford: a several-pixel delay consumes a large fraction of its area.
   // Use both dimensions so a long, narrow handle still gets size filtering.
@@ -389,7 +407,7 @@ BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
           0.5F * std::max(target.width, previous.width) ||
       std::fabs(center_y(target) - center_y(previous)) >
           0.5F * std::max(target.height, previous.height);
-  if (large_jump) {
+  if (large_jump && !sustained_raw_motion) {
     const bool confirmed = stability_pending_jump_ &&
         std::fabs(center_x(target) - center_x(*stability_pending_jump_)) <=
             0.25F * std::max(target.width, stability_pending_jump_->width) &&
@@ -554,8 +572,10 @@ BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
       output.tracking_phase == TrackingPhase::kTracking && output.accepted) {
     if (first_update_ || output.reacquired) {
       stability_targets_.clear();
+      stability_raw_targets_.clear();
       stability_targets_.push_back(target);
       stability_targets_.push_back(target);
+      stability_raw_targets_.push_back(target);
       stability_pending_jump_.reset();
       stability_motion_hold_frames_ = 0;
       stability_warmup_frames_ = output.reacquired ? 3 : 0;
@@ -565,23 +585,67 @@ BBox AdaptiveDisplayBox::update(const ControllerOutput& output,
       if (stability_targets_.empty()) stability_targets_.push_back(target);
       stability_targets_.push_back(target);
       if (stability_targets_.size() > 5) stability_targets_.pop_front();
+      stability_raw_targets_.push_back(target);
+      if (stability_raw_targets_.size() > 3) stability_raw_targets_.pop_front();
       --stability_warmup_frames_;
     } else {
       target = stabilized_target(target);
     }
   } else {
     stability_targets_.clear();
+    stability_raw_targets_.clear();
     stability_pending_jump_.reset();
     stability_motion_hold_frames_ = 0;
     stability_warmup_frames_ = 3;
   }
+  bool static_anchor_held = false;
   if (config_.display_stability_enabled &&
       config_.display_static_anchor_enabled && image &&
       static_anchor_holds(*image, output)) {
     target = static_anchor_box_;
     diagnostics.source = DisplayBoxSource::kStaticImageAnchor;
+    static_anchor_held = true;
   }
-  display_bbox_ = smooth_toward(target, center_alpha);
+  BBox next = smooth_toward(target, center_alpha);
+  if (config_.display_stability_enabled &&
+      !first_update_ && !output.reacquired && !static_anchor_held &&
+      ((output.tracking_phase == TrackingPhase::kTracking && output.accepted) ||
+       (output.tracking_phase == TrackingPhase::kSuspected &&
+        output.observation_present)) &&
+      (output.tracking_phase == TrackingPhase::kSuspected ||
+       !stability_pending_jump_)) {
+    // Keep the visible box near the current observation. In SUSPECTED this is
+    // provisional evidence, so the bound applies only to display, never to
+    // trusted tracker state or the host control rectangle.
+    const BBox reference = projected(output.tracking_bbox);
+    const float lag_x = center_x(reference) - center_x(next);
+    const float lag_y = center_y(reference) - center_y(next);
+    const float lag = std::hypot(lag_x, lag_y);
+    const float max_lag = config_.display_stability_max_center_lag_ratio *
+        std::max(reference.width, reference.height);
+    if (lag > max_lag) {
+      const float scale = (lag - max_lag) / lag;
+      next = clip_bbox(BBox{
+          next.x + lag_x * scale, next.y + lag_y * scale,
+          next.width, next.height}, frame_size_.width, frame_size_.height);
+    }
+    // If an old backlog already exceeds that distance, approach the bound
+    // over several frames rather than releasing the whole backlog at once.
+    const float dx = center_x(next) - center_x(display_bbox_);
+    const float dy = center_y(next) - center_y(display_bbox_);
+    const float distance = std::hypot(dx, dy);
+    const float max_step = config_.display_stability_max_center_step_ratio *
+        std::max({display_bbox_.width, display_bbox_.height,
+                  next.width, next.height});
+    if (distance > max_step) {
+      const float scale = max_step / distance;
+      next = clip_bbox(BBox{
+          center_x(display_bbox_) + dx * scale - 0.5F * next.width,
+          center_y(display_bbox_) + dy * scale - 0.5F * next.height,
+          next.width, next.height}, frame_size_.width, frame_size_.height);
+    }
+  }
+  display_bbox_ = next;
   if (output.tracking_phase == TrackingPhase::kTracking && output.accepted) {
     last_trusted_bbox_ = display_bbox_;
   }

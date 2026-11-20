@@ -789,3 +789,39 @@
   不改 `STATUS.md` 或 `integration-contract.yaml`。用户在吊舱执行
   `sh /app/nanotrack_rk3588_display_stability_20261120/start-test.sh` 后，
   需反馈显示框贴合与稳定性；停止脚本同目录 `stop-test.sh`。
+
+## 2026-11-20T20:26:00+08:00 三项失败门槛及显示框跳跃修正
+
+- 本轮基线为本分支 `469d968399ecb0ec0caafffc78ff138653a71f26`，
+  工作树 `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking`。
+  重新核对交叉编译任务提交
+  `3fffd207a62dfc87a25f3864311a9f2173663d77`；共享契约的
+  `development_board_validation.latest_handoff.available=false`。尚未消费新板端候选。
+- `UNKNOWN` 响应质量入 SUSPECTED 的去重计票门槛由 2 项变成配置的 3 项；
+  恢复确认沿用相同门槛，任意一项失败仍暂停模板学习。最低分数、几何、
+  试用模板回退和已识别类别路径不变。配置文件
+  `rk3566/nanotrack_v3/config/rk3588-display-stability-candidate.conf`
+  SHA-256 `4dafcabf08a7ae68c79ca9895f4b382583bd214397829dfeb60ba9f511f966f7`。
+- 同时针对 1892 日志中的显示框冻结后跳跃，增加连续原始运动识别，
+  对显示框向临时跟踪观测的滞后设一框尺寸目标上界、每帧 0.75 框尺寸
+  移动上界。仅改显示输出；`rect[0]` 跟踪/控制位置、模板、伺服逻辑不变。
+  1892 原始日志 `/tmp/display-run-1892/frames.csv` SHA-256
+  `faa5d1bc5dd1f60eb11ba5a415707cb3f1670b1b017d8de215c4aacd2af28c4d`。
+- 主机执行 `cmake --build /tmp/rk3588-display-stability-build -j4` 和
+  `ctest --test-dir /tmp/rk3588-display-stability-build --output-on-failure -j4`；
+  23/23 PASS，日志 `/tmp/display-v2-ctest-final.log` SHA-256
+  `6e7a64d5caff087104b5dc35974120e111125b225000888363defd9c7cfb8041`。
+  测试覆盖 UNKNOWN 0--4 项失败、恢复/学习暂停、硬门槛和显示框连续运动。
+  将 1892 的框位置/状态回放到显示模块，三处旧显示跳跃约
+  827/495/365 px，候选各跟踪段最大单帧约 78/80/96 px；候选
+  `/tmp/display-v2-1892-replay.csv` SHA-256
+  `ef711dc32a924369aa597fbf56b193ef037c67e71563ece10e2dfb9afc3b0dcd`。
+  这仅是位置/状态回放，没有原始图像及闭环伺服反馈，实际效果待用户测试。
+- 用户此前要求这类跟进可跳过开发板验证，本版没有新 RK3588 原生运行；
+  后续 A8 构建与吊舱安装只作为隔离的人工测试候选，不作为正式生产交付。
+
+### Handoff
+
+- 协调及交叉编译对话请接收本次提交、候选配置和后续 A8 工件哈希，
+  将三项失败门槛和显示框限步作为独立候选审查；不要据主机回放或安装
+  推断真实吊舱效果。原先两项门槛候选及其测试日志保持可追溯。

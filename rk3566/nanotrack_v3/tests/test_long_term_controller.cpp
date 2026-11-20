@@ -4268,7 +4268,81 @@ void test_4768_response_events_search_location() {
   expect_true(c.current_bbox().x>3400,"4768 search seed does not rewrite trusted state");
 }
 
+void test_unknown_three_metric_entry_and_recovery() {
+  using namespace nanotrack;
+  ControllerConfig cfg;
+  cfg.unknown_response_grace_ms = 1500;
+  cfg.unknown_response_recovery_ms = 60;
+  cfg.unknown_suspect_min_failed_metrics = 3;
+  cfg.reliable_score = 0.80F;
+  cfg.reliable_psr = 4.2F;
+  cfg.weak_psr = 4.0F;
+  cfg.reliable_apce = 8.0F;
+  cfg.reliable_peak_margin = 0.04F;
+  const BBox box{100, 80, 30, 30};
+  const ResponseMetrics clean{0.95F, 0.94F, 8.0F, 18.0F, 0.30F};
+  const auto unknown = make_unknown_target_class(TargetClassReason::kNoMatch);
+  const auto step = [&](ResolvedControllerFixture& c, int id,
+                        const ResponseMetrics& metrics, BBox observed) {
+    auto plan = c.begin_frame(id, id * 40, false);
+    auto observation = reliable_observation(plan, TemplateKind::kRecent,
+                                             observed, id);
+    observation.metrics = metrics;
+    return c.finish_frame(plan, {observation}, std::nullopt);
+  };
+  for (int mask = 0; mask < 16; ++mask) {
+    ResolvedControllerFixture c(cfg);
+    c.initialize(box, 0, 0, {400, 300}, unknown);
+    auto metrics = clean;
+    if (mask & 1) metrics.raw_score = 0.70F;
+    if (mask & 2) metrics.psr = 3.9F;
+    if (mask & 4) metrics.apce = 3.0F;
+    if (mask & 8) metrics.peak_margin = 0.001F;
+    int count = 0;
+    for (int bit = 1; bit <= 8; bit <<= 1) count += (mask & bit) != 0;
+    const auto output = step(c, 1, metrics, box);
+    expect_true(output.unknown_failed_metric_count == count,
+                "three-vote policy counts distinct failed metrics");
+    expect_true(count < 3
+                    ? output.accepted &&
+                          output.tracking_phase == TrackingPhase::kTracking &&
+                          output.unknown_learning_paused == (count > 0)
+                    : !output.accepted && output.unknown_grace_active &&
+                          output.tracking_phase == TrackingPhase::kSuspected,
+                "three-vote policy enters SUSPECTED only at three failures");
+  }
+  ResolvedControllerFixture c(cfg);
+  c.initialize(box, 0, 0, {400, 300}, unknown);
+  auto three = clean;
+  three.raw_score = 0.70F;
+  three.psr = 3.9F;
+  three.apce = 3.0F;
+  auto two = three;
+  two.apce = clean.apce;
+  expect_true(step(c, 1, three, box).unknown_grace_active,
+              "three failures begin grace");
+  expect_true(step(c, 2, two, box).unknown_grace_active &&
+                  step(c, 3, two, box).unknown_grace_active,
+              "two-failure recovery still needs a continuous interval");
+  const auto recovered = step(c, 4, two, box);
+  expect_true(recovered.accepted && recovered.unknown_learning_paused &&
+                  std::string(recovered.unknown_grace_exit_reason) ==
+                      "RECOVERED_THREE_METRIC",
+              "two failing metrics recover after 60 ms but pause learning");
+  c.initialize(box, 0, 0, {400, 300}, unknown);
+  auto floor = two;
+  floor.raw_score = 0.54F;
+  expect_true(std::string(step(c, 1, floor, box).unknown_grace_exit_reason) ==
+                  "SCORE_FLOOR",
+              "raw score floor remains a hard gate");
+  c.initialize(box, 0, 0, {400, 300}, unknown);
+  expect_true(std::string(step(c, 1, two, {300, 80, 30, 30})
+                  .unknown_grace_exit_reason) == "GEOMETRY",
+              "geometry remains a hard gate");
+}
+
 int main() {
+  test_unknown_three_metric_entry_and_recovery();
   test_4768_response_events_search_location();
   test_unknown_two_metric_recovery_and_search_continuity();
   test_unknown_two_metric_entry();
