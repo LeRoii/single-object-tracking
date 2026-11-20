@@ -955,3 +955,49 @@
   该候选未做新开发板原生验证，不是协调批准的生产 handoff。
   用户手动启动 `/app/nanotrack_rk3588_init_confidence_20261120/start-test.sh`，
   后续运行日志中的 `AI_INIT_CANDIDATE` 可提供置信度实数和拒绝原因。
+
+## 2026-11-20T21:02:10+08:00 当前工作线本地集成至 main 与 Debug
+
+- 用户要求合并目前的改动；本任务分支/工作树为
+  `codex/rk3588-display-box-stability@872e302f2d2ffe02235786cdb960a55f3868f4cb` /
+  `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking`，
+  含 21 个从 `main@cd81e0d5e656d65b981e6d499f938e4b5f3e14b5`
+  派生的已提交修订。本次实际消费的是这组已提交的算法、测试、配置、
+  对照工具、部署记录及本任务进度；没有复制工作树未提交修改。
+  其他任务分支未消费；交叉编译模板仍绑定
+  `codex/rk3588-a8-cross-compile@3fffd207a62dfc87a25f3864311a9f2173663d77`。
+- 目标 `main` 工作树
+  `/home/u20/single-object-tracking/.worktrees/occlusion-main-integration`
+  从干净的 `cd81e0d5e656d65b981e6d499f938e4b5f3e14b5` 快进至
+  源码集成提交 `872e302f2d2ffe02235786cdb960a55f3868f4cb`。
+  目标 `Debug` 工作树
+  `/home/u20/.codex/worktrees/integrate-adaptive-debug/single-object-tracking`
+  从干净的 `56e0035959715dec37cb0d027abd2de6cb73cca6`
+  顺序 cherry-pick 21 个修订，源码集成提交
+  `6c42b336af69e66e791d681ceb128f246da963ee`。
+  64 项本轮改动文件在两目标分支的 Git blob 完全一致；
+  `Debug` 独有的交互界面/配置入口保持其原有差异，无冲突。
+- 两目标分别执行
+  `cmake -S rk3566/nanotrack_v3 -B /tmp/nt-display-merge-{main,debug} -DCMAKE_BUILD_TYPE=Release -DENABLE_RKNN_RUNTIME=OFF -DBUILD_TESTING=ON`、
+  `cmake --build ... -j4`；构建均成功。CTest 顺序执行以免共用
+  `/tmp` 工件冲突，两边 **23/23 PASS**。main/Debug CTest 日志
+  `/tmp/nt-display-merge-main-ctest.log` /
+  `/tmp/nt-display-merge-debug-ctest.log` SHA-256 分别为
+  `99f25883a4c0cbf3a590ef5d75823c5f6f81e671f41ff9e6823109bf708677a6` /
+  `d8f93f52f88978865b02a85d494802ca28f8df88791c8d531d301b78ffc3210c`；
+  构建日志 SHA-256 分别为
+  `5c7d1663947fe47e80edf05991e630c3297c41bd8c7e06b54cf05ac2e001264c` /
+  `d585cc16b22564c2ec915d701d1ea87ba92e7b5caef12e31a9bb7c488e9f6f15`。
+  两目标集成后工作树干净。
+- 没有推送远端；本地 `origin/main@80fa51e02a9692136e1f69c17d804eba681dc9e7`、
+  `origin/Debug@af9e5dbbac08c07b35e8f3c8ad6917d19af0b0e2` 未由本任务改变。
+  此次没有重新生成 A8 程序、开发板原生验证或新的吊舱人工点选结果；
+  既有隔离 A8 候选身份与上节一致，协调契约的
+  `development_board_validation.latest_handoff.available=false` 未改变。
+
+### Handoff
+
+- 请协调对话接收上述 `main` / `Debug` 本地源码集成提交及本记录，
+  审核是否同步 `STATUS.md` 和 `integration-contract.yaml`；
+  请交叉编译、开发板任务在各自工作树消费前复核提交及工件哈希。
+  本地合并与主机回归不构成开发板或真实吊舱验收，也不授权正式生产交付。
