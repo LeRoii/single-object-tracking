@@ -696,3 +696,34 @@
   不证明所有实际转台速度下的显示贴合，也不证明追踪框始终准确。
   Handoff 仍为候选源码 `9253f4b`，需要人工结合静止与移动对照视频
   判断观感；未提升为真实吊舱或生产交付结论。
+
+## 2026-11-20T19:12:13+08:00 人工观看对照视频反馈
+
+- 本任务分支 `codex/rk3588-display-box-stability`，工作树
+  `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking`，
+  反馈前干净提交 `e57602899ebf91b93a98f0dd49b50021486dae94`；
+  算法源码候选仍为 `9253f4b6cf0edec3e4a9fe9674bb976ed59d7295`，
+  从本机 `main@cd81e0d5e656d65b981e6d499f938e4b5f3e14b5` 派生。
+- 用户观看的三个已核验并排视频为本机
+  `/tmp/display-v6/edge-compare.mp4`、
+  `/tmp/display-v6/handle-compare.mp4`、
+  `/tmp/display-v6/edge-camera-slow-shift-compare.mp4`，SHA-256 分别为
+  `b29b5520c1ce08e2e2c2b54f2db58b62fb061e568b5043181478800dbc3bcf92`、
+  `244da887edbd04c953c12aa210a8be76a6d4c557dad35504f6861c3e8f6f0e28`、
+  `00962c44d61fdbba71b680b39a35047a0804166aa030a023fcd1af5fda234425`。
+  三项本轮均已重算 SHA-256；同哈希视频也保留在板端隔离目录
+  `/home/neardi/Project/SOT/nt-display-stability-9253f4b/runs/`，
+  前两项为指向上一版同像素视频的链接。
+- 用户对“右侧新显示框的稳定感和目标贴合是否达到想要的效果”
+  明确回复“达到预期”。这构成上述**录制视频对照**的人工观感认可，
+  结合前文 1800 帧边缘/把手逐帧稳定性和 RK3588 原生验证，
+  本分支显示稳定性开发目标在所录素材与已测选点上达成。
+  反馈不等同真实吊舱上位机运行或生产 A8 验收，亦不批准跨任务
+  集成；`STATUS.md`、`integration-contract.yaml` 保持协调对话所有。
+
+### Handoff 更新
+
+- 协调对话请消费算法提交 `9253f4b6cf0edec3e4a9fe9674bb976ed59d7295`
+  及本分支最新进度记录，核对上文板端程序、配置、模型、输入、CSV、
+  视频哈希，并登记“录制视频观感达到预期”的人工反馈。是否合入
+  `main`/`Debug` 和生产 A8 交付由协调对话按其门槛另行决定。
