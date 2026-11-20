@@ -223,11 +223,15 @@ TargetClassInitializationResult LongTermRuntime::initialize(
       result.target_class = establish_target_class(
           initial_bbox, FrameSize{image.width, image.height}, {candidate},
           target_class_config_.class_count, target_class_config_.match_config);
-      if (!result.target_class.selected_candidate) {
+      if (!result.target_class.selected_candidate &&
+          result.target_class.candidates.front().rejection !=
+              TargetClassCandidateRejection::kLowConfidence) {
         throw std::invalid_argument("clicked detector candidate is invalid");
       }
-      result.target_class.selected_candidate->original_index =
-          selection.selected_candidate_index;
+      if (result.target_class.selected_candidate) {
+        result.target_class.selected_candidate->original_index =
+            selection.selected_candidate_index;
+      }
       result.target_class.candidates.front().original_index =
           selection.selected_candidate_index;
     } else {

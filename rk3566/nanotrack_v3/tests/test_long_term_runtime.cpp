@@ -1155,6 +1155,42 @@ void test_target_class_initialization(const nanotrack::ImageView& image) {
                   same_bbox(tracker.committed_bbox, roi) && tracker.commit_calls == 0 &&
                   tracker.infer_calls == 0 && detector.submit_calls == 0,
               "initialization never substitutes detector geometry or commits tracking");
+  {
+    FakeTracker gated_tracker;
+    FakeDetector gated_detector;
+    gated_detector.enabled = true;
+    gated_detector.blocking_batch = batch;
+    gated_detector.blocking_batch->candidates[0].confidence = 0.5F;
+    LongTermRuntime gated_runtime(config, gated_tracker, gated_detector, auto_config);
+    const auto rejected = gated_runtime.initialize(image, roi, 7, 280);
+    expect_true(rejected.target_class.status == TargetClassStatus::kUnknown &&
+                    rejected.target_class.reason == TargetClassReason::kNoMatch &&
+                    rejected.target_class.candidates.size() == 1 &&
+                    rejected.target_class.candidates[0].rejection ==
+                        TargetClassCandidateRejection::kLowConfidence &&
+                    same_bbox(rejected.display_bbox, roi) &&
+                    same_bbox(gated_tracker.committed_bbox, roi),
+                "low-confidence detection cannot establish class or expand display");
+    gated_detector.blocking_batch->candidates[0].confidence = 0.500001F;
+    const auto accepted = gated_runtime.initialize(image, roi, 8, 320);
+    expect_true(accepted.target_class.status == TargetClassStatus::kEstablished &&
+                    accepted.target_class.target_class_id == 2 &&
+                    same_bbox(gated_tracker.committed_bbox, roi),
+                "same detector geometry can establish class only above 0.5");
+    gated_detector.blocking_batch->candidates[0].confidence = 0.5F;
+    InitializationClassSelection clicked_low;
+    clicked_low.mode = InitializationClassMode::kClickedDetector;
+    clicked_low.detection = DetectorBlockingResult{9003, *gated_detector.blocking_batch};
+    clicked_low.selected_candidate_index = 0;
+    const auto clicked_fallback = gated_runtime.initialize(
+        image, roi, 9, 360, std::move(clicked_low));
+    expect_true(clicked_fallback.target_class.status == TargetClassStatus::kUnknown &&
+                    clicked_fallback.target_class.candidates[0].rejection ==
+                        TargetClassCandidateRejection::kLowConfidence &&
+                    same_bbox(clicked_fallback.display_bbox, roi) &&
+                    same_bbox(gated_tracker.committed_bbox, roi),
+                "low-confidence clicked detector candidate falls back to manual ROI");
+  }
   expect_true(same_bbox(detector.blocking_request.roi, BBox{0, 0, 200, 120}) &&
                   detector.blocking_request.max_candidates ==
                       std::numeric_limits<std::size_t>::max() &&

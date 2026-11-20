@@ -836,6 +836,7 @@ int main() {
                   contains(json, "\"min_roi_coverage\": 0.600000") &&
                   contains(json, "\"max_center_ratio\": 0.700000") &&
                   contains(json, "\"ambiguity_margin\": 0.200000") &&
+                  contains(json, "\"min_confidence\": 0.500000") &&
                   contains(json, "\"mean_detector_ms\": 8.000000") &&
                   contains(json, "\"request_count\": 3") &&
                   contains(json, "\"complete_count\": 1") &&

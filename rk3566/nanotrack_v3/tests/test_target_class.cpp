@@ -17,7 +17,7 @@ void near(float value, float wanted, const std::string& message) {
 }
 TargetClassState match(const BBox& roi,
                        const std::vector<DetectorCandidate>& candidates,
-                       TargetClassMatchConfig config = {}) {
+                       TargetClassMatchConfig config = {0.50F, 0.60F, 0.10F, 0.0F}) {
   return establish_target_class(roi, {200, 200}, candidates, 4, config);
 }
 void established(const TargetClassState& state, int id, std::size_t index,
@@ -86,7 +86,7 @@ void three_class_epsilon_chain_preserves_strongest_competitor() {
   const auto state = match({20, 20, 20, 20}, {
       {{20, 20, 20, 20}, 0.5F, 0},
       {{20, 20, 20, 20}, 0.500005F, 1},
-      {{20, 20, 20, 20}, 0.500010F, 2}}, {0.5F, 0.6F, 0});
+      {{20, 20, 20, 20}, 0.500010F, 2}}, {0.5F, 0.6F, 0, 0});
   unknown(state, TargetClassReason::kAmbiguous, "three-class epsilon chain");
   expect(state.best_class_id == 2 && state.runner_up_class_id == 1,
          "epsilon chain retains strongest competing class");
@@ -151,6 +151,29 @@ void equality_at_all_three_thresholds() {
   auto rejected = match({20, 20, 20, 20}, {{{20, 20, 9.9F, 20}, 1, 0}}, {0.5F, 0.01F, 0.1F});
   unknown(rejected, TargetClassReason::kNoMatch, "below coverage threshold");
 }
+void initialization_confidence_gate() {
+  const BBox roi{20, 20, 20, 20};
+  const auto threshold = TargetClassMatchConfig{};
+  const auto low = match(roi, {{{20, 20, 20, 20}, 0.49F, 2},
+                               {{20, 20, 20, 20}, 0.50F, 2}}, threshold);
+  unknown(low, TargetClassReason::kNoMatch, "confidence at or below 0.5");
+  for (const auto& candidate : low.candidates) {
+    expect(!candidate.eligible &&
+               candidate.rejection == TargetClassCandidateRejection::kLowConfidence &&
+               candidate.roi_coverage == 0.0F && candidate.center_ratio == 0.0F,
+           "low-confidence candidate rejected before spatial comparison");
+  }
+  const auto mixed = match(roi, {{{20, 20, 20, 20}, 0.50F, 2},
+                                 {{20, 20, 20, 20}, 0.500001F, 1}}, threshold);
+  established(mixed, 1, 1, "candidate strictly above 0.5");
+  expect(mixed.candidates[0].rejection == TargetClassCandidateRejection::kLowConfidence &&
+             mixed.candidates[1].eligible && mixed.candidates[1].roi_coverage == 1.0F,
+         "only high-confidence candidate reaches distance matching");
+  bool invalid = false;
+  try { (void)match(roi, {}, {0.5F, 0.6F, 0.1F, 1.0F}); }
+  catch (const std::invalid_argument&) { invalid = true; }
+  expect(invalid, "invalid confidence gate rejected");
+}
 void construction_and_invalid_roi() {
   for (bool available : {false, true}) {
     const auto fixed = make_fixed_target_class(2, available);
@@ -174,7 +197,7 @@ int main() {
   cross_class_winner_and_ambiguity(); clipped_boxes_and_invalid_candidates();
   three_class_epsilon_chain_preserves_strongest_competitor();
   deterministic_same_class_ties(); equality_at_all_three_thresholds();
-  construction_and_invalid_roi();
+  initialization_confidence_gate(); construction_and_invalid_roi();
   if (failures) return 1;
   std::cout << "target class tests passed\n";
 }

@@ -119,6 +119,7 @@ const char* to_string(TargetClassCandidateRejection value) {
     case TargetClassCandidateRejection::kInvalidBox: return "INVALID_BOX";
     case TargetClassCandidateRejection::kInvalidClass: return "INVALID_CLASS";
     case TargetClassCandidateRejection::kInvalidConfidence: return "INVALID_CONFIDENCE";
+    case TargetClassCandidateRejection::kLowConfidence: return "LOW_CONFIDENCE";
     case TargetClassCandidateRejection::kNoMatch: return "NO_MATCH";
   }
   return "UNKNOWN";
