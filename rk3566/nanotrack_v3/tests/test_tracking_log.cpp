@@ -337,6 +337,11 @@ void test_adaptive_coast_serialization() {
   config.accepted_scale_output_hysteresis_px = 0.75F;
   config.accepted_center_smoothing_alpha = 0.35F;
   config.display_center_smoothing_alpha = 0.80F;
+  config.display_stability_enabled = true;
+  config.display_stability_center_deadband_ratio = 0.04F;
+  config.display_stability_size_deadband_ratio = 0.03F;
+  config.display_stability_center_alpha = 0.65F;
+  config.display_stability_size_alpha = 0.25F;
   config.accepted_center_max_correction_ratio = 0.25F;
   config.max_reacquisition_center_distance = 0.75F;
   config.motion_search_enabled = true;
@@ -371,6 +376,11 @@ void test_adaptive_coast_serialization() {
                   contains(json, "\"accepted_scale_output_hysteresis_px\": 0.750000") &&
                   contains(json, "\"accepted_center_smoothing_alpha\": 0.350000") &&
                   contains(json, "\"display_center_smoothing_alpha\": 0.800000") &&
+                  contains(json, "\"display_stability_enabled\": true") &&
+                  contains(json, "\"display_stability_center_deadband_ratio\": 0.040000") &&
+                  contains(json, "\"display_stability_size_deadband_ratio\": 0.030000") &&
+                  contains(json, "\"display_stability_center_alpha\": 0.650000") &&
+                  contains(json, "\"display_stability_size_alpha\": 0.250000") &&
                   contains(json, "\"accepted_center_max_correction_ratio\": 0.250000") &&
                   contains(json, "\"max_reacquisition_center_distance\": 0.750000") &&
                   contains(json, "\"search_reacquisition_requires_detector\": true") &&

@@ -53,6 +53,7 @@ class AdaptiveDisplayBox {
   BBox padded(const BBox& bbox, std::optional<int> class_id) const;
   BBox projected(const BBox& tracking_bbox) const;
   BBox smooth_toward(const BBox& target, float center_alpha);
+  BBox stabilized_target(const BBox& target);
   void set_transform(const BBox& tracking_bbox, const BBox& envelope, float alpha);
   std::optional<BBox> select_candidate(const DetectorBatch& batch,
                                        const BBox& tracking_bbox,
@@ -67,6 +68,7 @@ class AdaptiveDisplayBox {
   std::optional<int> class_id_;
   BBox display_bbox_{};
   BBox last_trusted_bbox_{};
+  std::deque<BBox> stability_targets_;
   EnvelopeTransform transform_{};
   std::optional<BBox> pending_candidate_;
   int pending_confirmations_ = 0;

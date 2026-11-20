@@ -1223,6 +1223,13 @@ void apply_controller_config_metadata(TrackingSessionMetadata& metadata,
       config.accepted_center_smoothing_alpha;
   metadata.display_center_smoothing_alpha =
       config.display_center_smoothing_alpha;
+  metadata.display_stability_enabled = config.display_stability_enabled;
+  metadata.display_stability_center_deadband_ratio =
+      config.display_stability_center_deadband_ratio;
+  metadata.display_stability_size_deadband_ratio =
+      config.display_stability_size_deadband_ratio;
+  metadata.display_stability_center_alpha = config.display_stability_center_alpha;
+  metadata.display_stability_size_alpha = config.display_stability_size_alpha;
   metadata.accepted_center_max_correction_ratio =
       config.accepted_center_max_correction_ratio;
   metadata.max_reacquisition_center_distance =
@@ -1422,6 +1429,16 @@ std::string tracking_session_metadata_json(
          << metadata.accepted_center_smoothing_alpha << ",\n"
          << "  \"display_center_smoothing_alpha\": "
          << metadata.display_center_smoothing_alpha << ",\n"
+         << "  \"display_stability_enabled\": "
+         << (metadata.display_stability_enabled ? "true" : "false") << ",\n"
+         << "  \"display_stability_center_deadband_ratio\": "
+         << metadata.display_stability_center_deadband_ratio << ",\n"
+         << "  \"display_stability_size_deadband_ratio\": "
+         << metadata.display_stability_size_deadband_ratio << ",\n"
+         << "  \"display_stability_center_alpha\": "
+         << metadata.display_stability_center_alpha << ",\n"
+         << "  \"display_stability_size_alpha\": "
+         << metadata.display_stability_size_alpha << ",\n"
          << "  \"accepted_center_max_correction_ratio\": "
          << metadata.accepted_center_max_correction_ratio << ",\n"
          << "  \"max_reacquisition_center_distance\": "
