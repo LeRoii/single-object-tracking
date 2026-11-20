@@ -727,3 +727,65 @@
   及本分支最新进度记录，核对上文板端程序、配置、模型、输入、CSV、
   视频哈希，并登记“录制视频观感达到预期”的人工反馈。是否合入
   `main`/`Debug` 和生产 A8 交付由协调对话按其门槛另行决定。
+
+## 2026-11-20T20:00:00+08:00 A8 隔离候选已部署，等待手动测试
+
+- 本轮干净起点 `codex/rk3588-display-box-stability@f4c6ef8a151fa43c9720f18fbd604d77c6dbc625`；工作树
+  `/home/u20/.codex/worktrees/display-box-stability/single-object-tracking`。
+  实际消费本分支算法提交 `9253f4b6cf0edec3e4a9fe9674bb976ed59d7295`、
+  `codex/rk3588-a8-cross-compile@3fffd207a62dfc87a25f3864311a9f2173663d77`
+  中的 A8 适配/诊断模板（适配原件 SHA-256
+  `0d0078aea3984f5f4abf67fbdd435745cff0dbd391e0cc55b653958fb41d19ab`），
+  以及吊舱现有七项 RK3588 模型清单，SHA-256
+  `1ff2ad62b3ac7090bc650ff66d677b19a6d5249b89da4c6007abd71caabf5508`。
+  其他任务候选和未提交内容未消费；共享契约的
+  `development_board_validation.latest_handoff.available=false` 仍保持。
+- 用户允许给 `wjm@192.168.1.105:2222` 增加本机公钥。实查
+  `/home/u20/.ssh/id_ed25519_github_codex.pub` 对应条目已在远端
+  `authorized_keys`，没有重复添加；本轮 `ssh -i ... -p 2222` 免密登录成功。
+  WSL A8 库 `/home/wjm/viewpro_gimbal_zp/rk3566/gimbal_tracker/A8_libs/libviewlink.a`
+  重新核对 SHA-256
+  `fec1c4326051446a90890132b03834d89ba9763a73237f34adcb09904032c040`。
+- 部署记录及复现输入在
+  `docs/deployments/rk3588-a8-display-stability-20261120/`。
+  `build-inputs.sha256` SHA-256
+  `cc013a9b00bfe7f766ee6f442a8a25483c7810aeb456bd0b205780ae695c9983`；
+  WSL `/home/wjm/a8-display-stability-20261120` 实际执行
+  `bash build-wsl.sh`（内部 `BUILD_JOBS=4 ./run.sh --platform A8`）成功。
+  输出 AArch64 ELF `/home/wjm/a8-display-stability-20261120/viewlink_app`
+  SHA-256 `625e62203700a4cfd5d52dd529f38631aa2624fed0e9b3201e317a709f3cedec`；
+  构建日志 SHA-256 `f04b58c04d43b0f0f4ecf33ef11f539e2f3b209f06c948b2e9f59353f06f835d`。
+  初始化、回调、串口的三个 `__wrap_` 符号均存在；仅见既有
+  `control_output_safety.hpp` 未用参数告警。WSL 原文件逐项恢复，
+  `restored-check.log` SHA-256
+  `b0ce570cbe87ad1060b1cdbe71a06e95e74fcad7c681f35e89cb5ed01381b7cb`。
+- 吊舱 `root@192.168.2.119` 为 `ok3588`、AArch64，主机 ED25519 指纹
+  `SHA256:ukCnmiyhU3GFmsFCdm99JvNqe7dh+rFD0xlKiyGTt7w`。独立安装
+  `/app/nanotrack_rk3588_display_stability_20261120`；传输包 SHA-256
+  `aa9539657fe77859d9095fa97d19fea2e9adcf78161f9aaf88c3477e63c9a9b8`，
+  新程序与 WSL 哈希一致。私有 `systemconf.seed.ini`、`with-video-config`
+  和已核验模型只在吊舱内部从旧隔离目录复制；未导出私有配置内容。
+  模型及 17 项 payload 在吊舱逐项校验通过；`payload.sha256` SHA-256
+  `b5ac6f53f57c41805dd30086a78e83831a22d4c2ef99619aab484c410a623453`。
+  开启显示稳定性的 `controller.conf` SHA-256
+  `3411ec9f9c19a8666e117e4ac82d8084f2b7a118e8850ea0b60c08c1277bca67`；
+  关闭对照 `controller-off.conf` SHA-256
+  `7adee7d651ff861f658b7b6f0bc4f212ab89da89cbcf126eec8fbbe6ff2991f6`。
+  算法输出限幅、诊断存图默认均关闭；原 A8 库、串口协议未变。
+- 吊舱 `sh start-test.sh --check` 实际输出 `CHECK OK; program not started`，
+  预检目录 `log/preflight-limit-0-654-1841`，其中 `input-check.log` /
+  `video-preflight.log` SHA-256 分别为
+  `33c3399f6a2bc71280c024b44dd48f8b21887030b68ec6c18d07e7124ea801d3` /
+  `6819d0bd2897163ce42475600d2da96b680430eeebeb8baf0659d337d68d56f4`。
+  按启动脚本 `LD_LIBRARY_PATH=/app/lib:/usr/lib` 执行 `ldd` 无缺失依赖；
+  最终无 `viewlink_app` 进程。原厂 `/app/bin/viewlink_app` 哈希仍为
+  `46325de3d9ba8a5850af48b91c0189ee52a993e233c59858578099efc94a1e70`。
+  本轮没有新程序模型初始化、点选跟踪或吊舱人工效果结论。
+
+### Handoff
+
+- 请协调和交叉编译对话接收本轮记录提交、上述源码/库/程序/配置/模型身份。
+  这是用户授权的独立 A8 吊舱测试候选，未形成协调批准的生产 handoff，
+  不改 `STATUS.md` 或 `integration-contract.yaml`。用户在吊舱执行
+  `sh /app/nanotrack_rk3588_display_stability_20261120/start-test.sh` 后，
+  需反馈显示框贴合与稳定性；停止脚本同目录 `stop-test.sh`。

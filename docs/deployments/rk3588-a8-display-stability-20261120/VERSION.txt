@@ -1,0 +1,4 @@
+source=9253f4b6cf0edec3e4a9fe9674bb976ed59d7295
+adapter_source=3fffd207a62dfc87a25f3864311a9f2173663d77
+feature=display_stability_enabled
+status=isolated_candidate_human_test_pending
