@@ -323,9 +323,12 @@ BBox AdaptiveDisplayBox::stabilized_target(const BBox& target) {
     std::sort(slopes_y.begin(), slopes_y.end());
     const float velocity_x = 0.5F * (slopes_x[4] + slopes_x[5]);
     const float velocity_y = 0.5F * (slopes_y[4] + slopes_y[5]);
+    // Bypass the strong filter only for unmistakably rapid motion. A slow
+    // tracker drift on a static edge must not release a large accumulated
+    // display offset in one frame.
     sustained_motion =
-        std::fabs(velocity_x) > std::max(0.5F, 0.025F * display_bbox_.width) ||
-        std::fabs(velocity_y) > std::max(0.5F, 0.025F * display_bbox_.height);
+        std::fabs(velocity_x) > std::max(2.0F, 0.10F * display_bbox_.width) ||
+        std::fabs(velocity_y) > std::max(2.0F, 0.10F * display_bbox_.height);
   }
   if (sustained_motion) stability_motion_hold_frames_ = 3;
   if (stability_motion_hold_frames_ > 0) {
