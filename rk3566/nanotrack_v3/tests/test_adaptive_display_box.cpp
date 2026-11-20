@@ -420,6 +420,31 @@ void test_persistent_large_jump_is_eventually_followed() {
               "a persistent large target displacement eventually follows the target");
 }
 
+void test_narrow_tall_handle_filters_size_jitter() {
+  using namespace nanotrack;
+  auto value = config();
+  value.display_center_smoothing_alpha = 1.0F;
+  value.display_stability_enabled = true;
+  const BBox initial{100, 100, 55, 195};
+  AdaptiveDisplayBox display(value);
+  AdaptiveDisplayDiagnostics diagnostics;
+  display.initialize(initial, TargetClassState{}, FrameSize{500, 500});
+  display.update(tracking_output(initial), TargetClassState{}, diagnostics);
+  float min_width = initial.width;
+  float max_width = initial.width;
+  for (int frame = 0; frame < 30; ++frame) {
+    const float sign = frame % 2 ? 1.0F : -1.0F;
+    const BBox noisy{100 + sign * 2.0F, 100,
+                     55 + sign * 2.0F, 195 - sign * 3.0F};
+    const BBox shown = display.update(tracking_output(noisy),
+                                      TargetClassState{}, diagnostics);
+    min_width = std::min(min_width, shown.width);
+    max_width = std::max(max_width, shown.width);
+  }
+  expect_true(max_width - min_width < 2.0F,
+              "long narrow textured target uses the size stability path");
+}
+
 }  // namespace
 
 int main() {
@@ -434,6 +459,7 @@ int main() {
   test_display_stability_follows_persistent_motion_and_scale();
   test_small_moving_target_does_not_lag();
   test_persistent_large_jump_is_eventually_followed();
+  test_narrow_tall_handle_filters_size_jitter();
   if (failures != 0) return 1;
   std::cout << "adaptive display box tests passed\n";
   return 0;
