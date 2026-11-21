@@ -1,5 +1,19 @@
 # 多对话项目状态总表
 
+## 2026-11-21 RK3588 八目标真值登记
+
+- 已核对 GitHub `main@be7e70d7c0538ba6ca4fc29f65dfec3821c18463` 与数据集分支
+  `codex/occ-eight-target-ground-truth@6b927bc744a751a6b232f01ef6c8d0f119b924f2`。
+  正式包生成及多事件评估器源码提交为 `acc855d0b45c9d1449e9e25b9e08573be1698c5c`；
+  分支尚未合入 `main`。本次只登记已核验的真值身份，评估器代码仍须单独集成和验证。
+- `data/occ_video_1/ground_truth/car_003` 至 `car_010` 对应用户确认的第 1～8 号点位；
+  八包共 1993 帧可见框、115 帧完全遮挡、60 帧画面外。视频与八包清单 SHA-256
+  已在本机复核，八包 `labels.sha256`、`checksums.sha256` 校验均通过；逐包哈希见
+  [`integration-contract.yaml`](integration-contract.yaml) 的 `test_data.formal_ground_truth_packages`。
+  数据目录受 Git 忽略，不随 GitHub 提交传输；其他机器消费前必须取得数据并复核哈希。
+- 数据集分支的评估器单测 `24/24 PASS`、八组与真值一致的合成日志 CLI PASS 是接线证据，
+  不是八目标真实算法或 RK3588 板端通过。正式生产 handoff 仍为 `false`。
+
 ## RK3588 当前工作线（2026-11-17 核对）
 
 当前硬件为 RK3588。下方四任务表及 `integration-contract.yaml` 仍保留上次协调

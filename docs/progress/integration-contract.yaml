@@ -1,5 +1,5 @@
 schema_version: 2
-updated_at: "2026-11-15T15:43:25+08:00"
+updated_at: "2026-11-21T21:16:26+08:00"
 coordinator_baseline:
   branch: main
   commit: "6d052b54b40cad8254b4b0fd6be1201d22147b12"
@@ -29,6 +29,39 @@ workflow:
 test_data:
   policy: canonical_for_all_non_training_algorithm_tests
   training_excluded: true
+  formal_ground_truth_packages:
+    status: identity_registered_evaluator_integration_pending
+    source_branch: codex/occ-eight-target-ground-truth
+    source_commit: "acc855d0b45c9d1449e9e25b9e08573be1698c5c"
+    handoff_commit: "6b927bc744a751a6b232f01ef6c8d0f119b924f2"
+    source_branch_integrated_into_main: false
+    data_in_git: false
+    host_root: /home/u20/single-object-tracking/data/occ_video_1/ground_truth
+    video_sha256: "eb319be66c7b5ae32a02025954ecc6a0f99fb860108f8d2ad4eda509f4c42c7d"
+    mapping: "user points 1-8 map in order to car_003-car_010"
+    total_visible_bbox_frames: 1993
+    total_full_occlusion_frames: 115
+    total_out_of_view_frames: 60
+    packages:
+      car_003: "a73ecf34177a3b08cb645a32a236cb0f5ce69cbf5d1382ebfed90279e4eefa35"
+      car_004: "c04048811d0e91c28d835035d1bc2bd6d66d511672bfc9b8c09625b1e6cc1379"
+      car_005: "497e7e67f7d70dd127bed2999d03198aa32029c1abfd14f28047a2e403c3e51a"
+      car_006: "a94b5bbf9ec02a90004d64a5a6ad7fd94e5857795daf2d7df414f0dbab21776d"
+      car_007: "9a1fe3e6735dd63996d877c826e62836356675d841ff84207096be66aede3d3d"
+      car_008: "08e767aec2f7fd8b405d6f90c1cbb2ca8e9b9727a784156b374cfdea2c866adb"
+      car_009: "2c85fb097a845730bd9ed86402ae829000d63ca93e31cd9296dcee7cab882117"
+      car_010: "5c56d98b583120cb1fef755768e70c3b0e8b5d93e4d3460847497fa463c9f2da"
+    package_hash_file: checksums.sha256
+    verification: "2026-11-21: video SHA-256 and all eight package/label manifests verified on host"
+    evaluator: scripts/evaluate_occ_video_1.py
+    evaluator_source_commit: "acc855d0b45c9d1449e9e25b9e08573be1698c5c"
+    evaluator_test_evidence: "24/24 unit tests and 8/8 synthetic CLI wiring checks reported in docs/progress/board-validation.md at handoff_commit"
+    real_rk3588_algorithm_evaluation: null
+    note: >-
+      These are formal ground-truth identities for evaluation. The package files
+      are ignored by Git and must be transferred and hash-verified on each consumer.
+      The evaluator implementation remains on the source branch until integrated;
+      synthetic CLI checks do not establish actual algorithm or board acceptance.
   canonical_dataset:
     name: occ_video_1
     host_root: /home/u20/single-object-tracking/data/occ_video_1
